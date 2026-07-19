@@ -7,6 +7,7 @@
 
 mod daemon_cmd;
 mod check_deadline;
+mod health;
 mod inputs;
 mod query;
 mod root;
@@ -465,6 +466,20 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
     } else if cli.mcp {
         crate::mcp::run_mcp(programs, db.as_deref(), root)
     } else if cli.check || cli.diag_json {
+        // Class-14 rail: pre-commit `--check` in a linked worktree with no warm
+        // db refuses the cold build (each agent-worktree commit was minting a
+        // ~600MB orphan under roots/). Green-by-skip with a loud note; the
+        // explicit `--db` form is exempt (the caller named a target on purpose).
+        // `cli.db` moved into `db` above; "no explicit --db" is exactly
+        // `db.is_none() || db_defaulted` here.
+        if db.is_none() || db_defaulted {
+            if let Some(reason) = crate::hook::refuse_worktree_cold_check(&root) {
+                eprintln!("[check] {reason}"); // @eprintln-ok: final user-facing skip note at CLI top level
+                tracing::warn!(root = %root.display(), "class-14 worktree cold-build refused");
+                crate::trace::finish_chrome_trace();
+                std::process::exit(0);
+            }
+        }
         // Class-13 stale-binary rail: `--check` is the third named surface
         // (docs/failure-modes.md:300-327) — the pre-commit/agent-turn hook
         // path that answered from a stale install during freeze #1.

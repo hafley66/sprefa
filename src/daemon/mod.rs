@@ -379,6 +379,14 @@ fn init_daemon_tracing() {
         .compact()
         .with_filter(filter);
     let home = daemon_home();
+    // The event trail (`src/eventlog.rs`) is only ever installed HERE: ticks
+    // happen in the daemon, not in one-shot CLI runs, and `set_home` must land
+    // before the registry below is built so the layer's first `on_event` finds
+    // `TRAIL` already set. `crate::eventlog::EventLayer` claims exactly
+    // `eventlog::EVENT_TARGET` and passes every other event straight through
+    // (see its `Layer::on_event` doc comment), so it composes onto this stack
+    // the same no-op-elsewhere way `chrome_layer()` does.
+    crate::eventlog::set_home(&home);
     // DL_TRACE_CHROME composes the same way here as it does in
     // `crate::trace::init` for a one-shot: absent -> `chrome_layer` returns
     // `None` -> no layer installed, zero overhead. `shutdown_cleanup` below
@@ -388,6 +396,7 @@ fn init_daemon_tracing() {
         .with(crate::trace::dl_log_layer(&home))
         .with(crate::trace::error_log_layer(&home))
         .with(crate::trace::chrome_layer())
+        .with(crate::eventlog::EventLayer)
         .try_init();
 }
 

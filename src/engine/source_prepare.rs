@@ -437,9 +437,29 @@ fn parse_work_path(
     let content: Arc<str> = Arc::from(reader(&abs)?);
     let hash = blake3::hash(content.as_bytes()).to_hex().to_string();
     let key = (job.repo.clone(), job.path.clone(), job.rev.clone());
-    if prev.get(&key).is_some_and(|row| row.0 == hash) {
+    let prior = prev.get(&key).map(|row| row.0.clone());
+    if prior.as_deref() == Some(hash.as_str()) {
         return Ok(Some(ParsedWorkPath::Unchanged));
     }
+    // THE change verdict: this path is about to be re-extracted. Record WHY,
+    // with both hashes. Emitting only on this branch bounds the volume to the
+    // changed set (the unchanged majority returns above), so a 700-file corpus
+    // with 15 real changes writes 15 rows, not 700.
+    //
+    // `reason` is the diagnostic that matters. `hash_differs` means the bytes
+    // genuinely moved. `no_prior_row` means the meta table had no entry for
+    // this (repo, path, rev) key at all — which counts as changed even when
+    // the file on disk has not been touched, and is the shape to suspect when
+    // a root reports the same changed-path count tick after tick while the
+    // filesystem shows no mtime movement (2026-07-19 incident).
+    crate::eventlog::emit("path_change_verdict", None, serde_json::json!({
+        "repo": job.repo,
+        "path": job.path,
+        "rev": job.rev,
+        "reason": if prior.is_some() { "hash_differs" } else { "no_prior_row" },
+        "old_hash": prior,
+        "new_hash": hash,
+    }));
     let mtime = std::fs::metadata(&abs)
         .ok()
         .map(|meta| mtime_secs(&meta))

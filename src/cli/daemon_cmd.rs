@@ -9,7 +9,7 @@ use std::path::Path;
 
 use super::root;
 
-const VERBS: &str = "verbs: status start [--foreground] stop restart install uninstall drop <root> [--purge] load load-once rows jobs await-settle url why invocations [--limit N]";
+const VERBS: &str = "verbs: status start [--foreground] stop restart install uninstall drop <root> [--purge] load load-once rows jobs await-settle url why invocations [--limit N] events [--kind K] [--root R] [--limit N] health [--top N] [--root PATH] [--no-dupes]";
 
 /// Route `start`/`stop`/`restart` through the OS service manager (plan
 /// section 3.5.2: `dl daemon start/stop/restart` become thin launchctl/
@@ -212,6 +212,12 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
             }
             Ok(0)
         }
+        "health" => {
+            // Storage-health report over the file trail alone (roots.json +
+            // read-only db opens) — like `why`, it answers regardless of
+            // daemon state and never contends for the write lock.
+            super::health::run(&args[1..])
+        }
         "invocations" => {
             // Reads only `<home>/invocations.db` — no engine lock — so it
             // answers regardless of daemon state. An open row whose pid is
@@ -219,6 +225,30 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
             // process, not daemon tick).
             let limit: usize = flag_value(args, "--limit").and_then(|s| s.parse().ok()).unwrap_or(50);
             print!("{}", crate::invlog::report_recent(limit));
+            Ok(0)
+        }
+        "events" => {
+            // Reads only `<home>/events.jsonl[.1]` — no socket, no lock — so it
+            // answers regardless of daemon state, same contract as `why` and
+            // `invocations` one level up. Unlike `why` (which samples activity
+            // every 2s and renders a human string), this replays the ARGUMENTS
+            // of each discrete IO event — which paths changed, which file was
+            // written — see `eventlog.rs`'s module doc for why that
+            // distinction is the whole point.
+            let kind = flag_value(args, "--kind");
+            let root_filter = flag_value(args, "--root");
+            let limit: usize = flag_value(args, "--limit").and_then(|s| s.parse().ok()).unwrap_or(100);
+            let rows = crate::eventlog::read(&crate::daemon::daemon_home(), kind, root_filter, limit);
+            for row in rows {
+                let ts_ms = row["ts"].as_i64().unwrap_or(0);
+                let kind = row["kind"].as_str().unwrap_or("");
+                let root_base = Path::new(row["root"].as_str().unwrap_or(""))
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let data = row["data"].to_string();
+                println!("{} {kind} {root_base} {data}", hhmmss_local(ts_ms));
+            }
             Ok(0)
         }
         "await-settle" => {
@@ -251,6 +281,8 @@ fn print_help() {
     eprintln!("  jobs                           list the tick/sink-drain job queue (newest first)"); // @eprintln-ok: usage/help text
     eprintln!("  await-settle [--ms N]          wait for the root to become quiescent"); // @eprintln-ok: usage/help text
     eprintln!("  url                            print the daemon's HTTP base URL (from http.json)"); // @eprintln-ok: usage/help text
+    eprintln!("  health [--top N] [--root PATH] [--no-dupes]  storage report: per-db weights, orphan roots, dupe rels"); // @eprintln-ok: usage/help text
+    eprintln!("  events [--kind K] [--root R] [--limit N]  replay the IO event trail (args of each discrete event, not samples)"); // @eprintln-ok: usage/help text
     eprintln!("options: --db PATH, --tray (start); --ms N (await-settle)"); // @eprintln-ok: usage/help text
 }
 
@@ -410,6 +442,22 @@ fn arg<'a>(args: &'a [String], idx: usize, usage: &str) -> Result<&'a str> {
     args.get(idx)
         .map(String::as_str)
         .ok_or_else(|| anyhow!("usage: {usage}"))
+}
+
+/// Render an epoch-milliseconds timestamp (as `eventlog::read` rows carry) as
+/// `HH:MM:SS` — plain seconds-of-day integer arithmetic, no `chrono`/`time`
+/// dependency (none exists in this project; `dl daemon events` output does not
+/// warrant adding one). UTC, not the host's zone offset: getting a true local
+/// offset without a time crate means an unsafe `libc::localtime_r` call for a
+/// one-line clock stamp, which is not worth it here — see the task's own
+/// "keep it simple" allowance.
+fn hhmmss_local(epoch_ms: i64) -> String {
+    let epoch_s = epoch_ms.div_euclid(1000);
+    let secs_of_day = epoch_s.rem_euclid(86_400);
+    let hour = secs_of_day / 3600;
+    let minute = (secs_of_day % 3600) / 60;
+    let second = secs_of_day % 60;
+    format!("{hour:02}:{minute:02}:{second:02}")
 }
 
 /// Value following `name` in `args` (e.g. `--ms 5000`).

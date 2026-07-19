@@ -214,3 +214,4 @@ mod db_ratio;
 mod stale_binary;
 mod source_rule_extra_atom;
 mod scan_narrowing;
+mod worktree_cold_check;

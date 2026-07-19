@@ -134,6 +134,19 @@ impl ServedRoot {
                     tracing::warn!("[{}] cold-start enqueue {family}/{shard}: {e}", self.root_label());
                 }
             }
+            // The other end of `cold_extract_node` above: the full node list
+            // this tick just fanned out onto the queue, collected once (not
+            // emitted per enqueue call).
+            let staged_json: Vec<Value> = report.cold_staged.iter()
+                .map(|(family, shard, priority)| json!({
+                    "family": family, "shard": shard, "priority": priority,
+                }))
+                .collect();
+            crate::eventlog::emit(
+                "cold_staged_enqueued",
+                Some(&self.root),
+                json!({ "tick": tick_next, "nodes": staged_json }),
+            );
         }
         self.settled.store(report.is_settled(), Ordering::Relaxed);
         self.restamp_cadence(&cadence);
@@ -162,6 +175,24 @@ impl ServedRoot {
             crate::activity::Phase::Reconcile,
             format!("{} changed path(s)", paths.len()),
         );
+        // The event trail's whole reason to exist: the phantom-15 incident
+        // (2026-07-19) had ten ticks of "15 changed path(s)" with no way to
+        // learn which 15, or why. `paths` is the answer to that question —
+        // write it down in full, not as a count, before it's discarded below.
+        // `trigger` distinguishes an inline RPC-caused tick (`reqid::current()`
+        // is `Some` only inside a live request scope on this thread) from an
+        // organic one (file watcher / poll timer), per `reqid`'s own doc.
+        crate::eventlog::emit_paths(
+            "file_changed",
+            Some(&self.root),
+            paths,
+            json!({
+                "tick": tick_next,
+                "trigger": crate::reqid::current()
+                    .map(|id| format!("rpc:{id}"))
+                    .unwrap_or_else(|| "organic".to_string()),
+            }),
+        );
         let prog = lock(&self.prog);
         let mut eng = lock(&self.eng);
         eng.tick_paths(&prog, paths, quiet)?;
@@ -189,6 +220,15 @@ impl ServedRoot {
         crate::activity::set(
             crate::activity::Phase::ParseExtract,
             format!("cold-extract {family} shard {shard}"),
+        );
+        // One extraction-family fan-out node, run under the engine mutex below.
+        // The `tick`/`why` sample would only ever show "cold-extract {family}
+        // shard {shard}" for whichever node happens to be running at the 2s
+        // sample point; the event records every node that actually ran.
+        crate::eventlog::emit(
+            "cold_extract_node",
+            Some(&self.root),
+            json!({ "tick": tick_now, "family": family, "shard": shard }),
         );
         {
             let prog = lock(&self.prog);
@@ -542,6 +582,29 @@ impl ServedRoot {
         }
         self.touch();
         if !advances.is_empty() {
+            // The change-detection comparison this function drives: `eng.observe_ref`
+            // above returned `Some((old, new))` per ref that moved — this is
+            // precisely the "which test fired, old vs new value" the phantom-15
+            // incident needed and never had. Record every ref's old/new rev and
+            // the worktree files that moved between them, one batched event
+            // (not one per ref/file) covering the whole git-event pass.
+            let advances_json: Vec<Value> = advances.iter().map(|(repo, name, old, new, files)| {
+                json!({
+                    "repo": repo,
+                    "ref": name,
+                    "old": old,
+                    "new": new,
+                    "files": files,
+                })
+            }).collect();
+            crate::eventlog::emit(
+                "git_ref_advanced",
+                Some(&self.root),
+                json!({
+                    "tick": self.tick_count.load(Ordering::Relaxed),
+                    "advances": advances_json,
+                }),
+            );
             self.broadcast_rev_advanced(&advances);
         }
         (advances.len(), changed)

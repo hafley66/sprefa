@@ -476,7 +476,7 @@ port_non_port_flow_edge(from_node, to_node) <-
 # Factor the two seed classes into their own recursive rels so the original
 # port_reach offender is just a union of precomputed reaches.
 #
-# port_of_reach is the expensive half: it walks a long graph. Cut the number
+# port_of_reach_rec is the expensive half: it walks a long graph. Cut the number
 # of fixpoint iterations by materializing five-hop edges and stepping five
 # edges at once in the recursive rule (the intermediate nodes cannot be port_of
 # sources, so the composed path respects the halting rule). Seed rules cover
@@ -502,9 +502,11 @@ port_non_port_flow_edge_5hop(from_node, to_node) <-
   port_non_port_flow_edge_2hop(from_node, mid_node),
   port_non_port_flow_edge_3hop(mid_node, to_node).
 
-# Factor the length-1..5 seed joins out of port_of_reach into separate
+# Factor the length-1..5 seed joins out of port_of_reach_rec into separate
 # intermediates so the recursive relation is just a base case plus the five-hop
-# step. The public port_reach contents are unchanged.
+# step. The public port_reach contents are unchanged. (port_of_reach itself was
+# a pure rename of port_of_reach_rec; dropped 2026-07-19, port_reach now reads
+# port_of_reach_rec directly.)
 rel port_of_reach_len1(port: text, node: text).
 port_of_reach_len1(port, to_node) <-
   port_of_reach_seed(port, mid_node),
@@ -546,9 +548,6 @@ port_of_reach_rec(port, to_node) <-
   port_of_reach_rec(port, mid_node),
   port_non_port_flow_edge_5hop(mid_node, to_node).
 
-rel port_of_reach(port: text, node: text).
-port_of_reach(port, node) <- port_of_reach_rec(port, node).
-
 rel port_out_reach(port: text, node: text).
 port_out_reach(port, node) <- port_out_reach_seed(port, node).
 port_out_reach(port, to_node) <-
@@ -556,7 +555,7 @@ port_out_reach(port, to_node) <-
   port_non_port_flow_edge(mid_node, to_node).
 
 rel port_reach(port: text, node: text).
-port_reach(port, node) <- port_of_reach(port, node).
+port_reach(port, node) <- port_of_reach_rec(port, node).
 port_reach(port, node) <- port_out_reach(port, node).
 
 # port_edge: the contracted port-to-port wire. Two landing shapes -- another

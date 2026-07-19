@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use rusqlite::{Connection, Row, ToSql};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -94,7 +94,29 @@ pub struct Db {
     /// (relation name, rows actually inserted). Collected in memory and flushed
     /// once at tick end into `_write_ledger`; never a per-row write.
     write_ledger: RefCell<Vec<(String, usize)>>,
+    /// Process-local memo of `_strings.id` values this connection has already
+    /// durably committed. `StringId` is content-derived, so the same working
+    /// set of source text re-hashes to the same ids every tick; without this,
+    /// a warm-db restart re-offers the ENTIRE interned string set to
+    /// `INSERT OR IGNORE` even when almost none of it changed (measured: one
+    /// changed file, 1,207,064 rows offered to `_strings`, 146 accepted —
+    /// failure-modes class 25). Lives on `Db` — one per served root's
+    /// connection, never a global static, or root B could skip an insert
+    /// root A made into a DIFFERENT database file. `flush_syms` is the only
+    /// writer, and only from a flush it can prove committed (see there for
+    /// the rollback-safety argument). Capped (`STRING_CACHE_CAP`) so a huge
+    /// corpus can't grow this unbounded; the cap just clears the set, which
+    /// only causes re-offering, never a wrongly-skipped insert.
+    persisted_strings: RefCell<HashSet<i64>>,
 }
+
+/// Cap on `Db::persisted_strings`. At ~1.2M live strings measured on the
+/// sprefa root, this leaves headroom for several times that before the cache
+/// clears itself (see `flush_syms`). A `HashSet<i64>` this size costs tens of
+/// MB, not the ~10MB back-of-envelope for the raw `u64`s alone, but is still
+/// a modest, bounded, process-local cost — no bloom filter, no eviction
+/// policy beyond "clear and let it refill".
+const STRING_CACHE_CAP: usize = 4_000_000;
 
 /// One statement running more than this many times in a tick is almost certainly
 /// a per-row loop that escaped the plural API. Chunked batches stay well under it
@@ -261,6 +283,7 @@ pub fn open(path: Option<&str>) -> Result<Db> {
         pending_syms,
         _memory_budget: memory,
         write_ledger: RefCell::new(Vec::new()),
+        persisted_strings: RefCell::new(HashSet::new()),
     })
 }
 
@@ -846,14 +869,22 @@ impl Db {
         let head_params: Vec<rusqlite::types::Value> = head.iter().map(Into::into).collect();
         let chunk_size = PARAM_BUDGET.saturating_sub(head.len()).max(1);
         let mut total = 0usize;
+        let mut n_stmts = 0usize;
         for chunk in keys.chunks(chunk_size) {
             let sql = sql(chunk.len());
             let mut params: Vec<rusqlite::types::Value> = head_params.clone();
             params.extend(chunk.iter().map(Into::into));
             let refs: Vec<&dyn ToSql> = params.iter().map(|v| v as &dyn ToSql).collect();
+            n_stmts += 1;
             total += self.conn.execute(&sql, refs.as_slice())
                 .map_err(|e| sql_err(rel, &sql, e))?;
         }
+        // Event trail: ONE row per batch call (same discipline as
+        // `insert_rows_keyed`) — `keys` is the input key-set size, `rows` the
+        // rows-affected sum, `statements` the chunk count.
+        crate::eventlog::emit("db_write", None, serde_json::json!({
+            "table": rel, "keys": keys.len(), "rows": total, "statements": n_stmts,
+        }));
         Ok(total)
     }
 
@@ -1260,6 +1291,7 @@ impl Db {
         let owns_tx = multi && self.conn.is_autocommit();
         if owns_tx { self.conn.execute_batch("BEGIN").map_err(|e| sql_err(table, "BEGIN", e))?; }
         let mut total = 0;
+        let mut n_stmts = 0usize;
         for chunk in rows.chunks(chunk_rows) {
             let tuple = format!("({})", vec!["?"; ncol].join(","));
             let values = vec![tuple; chunk.len()].join(", ");
@@ -1270,6 +1302,7 @@ impl Db {
                 Value::Null => rusqlite::types::Value::Null,
             }).collect();
             let refs: Vec<&dyn ToSql> = params.iter().map(|v| v as &dyn ToSql).collect();
+            n_stmts += 1;
             match self.conn.execute(&sql, refs.as_slice()) {
                 Ok(n) => total += n,
                 Err(e) => {
@@ -1289,10 +1322,30 @@ impl Db {
                 .to_string();
             self.write_ledger.borrow_mut().push((rel, total));
         }
+        // Event trail: ONE row per batch call, never per row inserted. `rows`
+        // is the input batch size (the collected set this call was handed);
+        // `rows_affected` is the post-`OR IGNORE` count (can be < `rows` when
+        // some were already present); `statements` is the chunk count (1
+        // unless the batch blew the SQLite param budget). No root: `Db` is
+        // not root-scoped (one `Db` per served root's connection, but the
+        // type itself carries no path), so this rides process-wide
+        // (root=None) and the reader correlates by pid/time.
+        crate::eventlog::emit("db_write", None, serde_json::json!({
+            "table": table, "rows": rows.len(), "rows_affected": total, "statements": n_stmts,
+        }));
         Ok(total)
     }
 
     /// Drain a `SymSink`'s queued interns into ONE batched `_strings` insert.
+    ///
+    /// Before touching SQL, dedup + collision-check the FULL pending set (the
+    /// existing guard, unchanged) — this must run over everything the sink
+    /// collected, not just what we intend to send, or a genuine collision
+    /// between two different texts hashing to the same id could go
+    /// undetected because the id in question happened to already be cached.
+    /// Only AFTER that check narrows `by_id` down to `_strings` ids not
+    /// already known-persisted (`persisted_strings`) — that's the actual
+    /// waste this cuts (see the field's doc comment on `Db`).
     pub fn flush_syms(&self, sink: &mut crate::spine::SymSink) -> Result<usize> {
         use std::collections::BTreeMap;
         let pending = sink.drain();
@@ -1312,10 +1365,40 @@ impl Db {
                 }
             }
         }
-        let rows: Vec<Vec<Value>> = by_id.into_iter()
+        let already_persisted = self.persisted_strings.borrow();
+        let to_send: Vec<(i64, String)> = by_id.into_iter()
+            .filter(|(id, _)| !already_persisted.contains(id))
+            .collect();
+        drop(already_persisted);
+        if to_send.is_empty() { return Ok(0); }
+        let attempted_ids: Vec<i64> = to_send.iter().map(|(id, _)| *id).collect();
+        let rows: Vec<Vec<Value>> = to_send.into_iter()
             .map(|(id, text)| vec![Value::Int(id), Value::Text(text)])
             .collect();
-        self.insert_rows("_strings", &["id", "content"], &rows)
+
+        // Rollback safety: mark ids persisted ONLY when this flush ran outside
+        // any caller-owned transaction. `insert_rows` begins+commits its own
+        // transaction when autocommit (multi-chunk case) or issues a single
+        // auto-committing statement (small-batch case) whenever autocommit
+        // was already true at entry — either way, an `Ok` return then means
+        // every id in `attempted_ids` is durably in `_strings` (an
+        // `INSERT OR IGNORE` that landed 0 rows for an id only happens
+        // because that id was ALREADY there). If autocommit was false, this
+        // flush is riding inside a transaction some caller still owns; that
+        // caller can still roll back after we return, which would silently
+        // revert the row while the cache kept claiming it durable. So in
+        // that case we simply don't cache this batch — conservative, not
+        // wrong: the same ids just get re-offered next time.
+        let was_autocommit = self.is_autocommit();
+        let total = self.insert_rows("_strings", &["id", "content"], &rows)?;
+        if was_autocommit {
+            let mut persisted = self.persisted_strings.borrow_mut();
+            if persisted.len() + attempted_ids.len() > STRING_CACHE_CAP {
+                persisted.clear();
+            }
+            persisted.extend(attempted_ids);
+        }
+        Ok(total)
     }
 }
 
@@ -1540,6 +1623,98 @@ mod tests {
 
         let count: i64 = db.query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
         assert_eq!(count, 0, "caller rollback must undo every helper-written chunk");
+    }
+
+    fn create_strings_table(db: &Db) {
+        db.exec_on(
+            "_strings",
+            "CREATE TABLE _strings (id INTEGER PRIMARY KEY, content TEXT NOT NULL)",
+        ).unwrap();
+    }
+
+    #[test]
+    fn flush_syms_skips_ids_already_persisted() {
+        let db = open(None).unwrap();
+        create_strings_table(&db);
+
+        let mut first = crate::spine::SymSink::new();
+        first.sym("RedundantWriteVolume");
+        assert_eq!(db.flush_syms(&mut first).unwrap(), 1, "first flush actually inserts the row");
+
+        // Same text, same content-derived id: a fresh SymSink standing in for
+        // the next tick's re-offer of the same working set. `flush_syms` must
+        // short-circuit before ever calling `insert_rows` — assert via the
+        // per-tick statement counter, not just the return value (a 0 return
+        // would also happen if SQL ran and `OR IGNORE` discarded it).
+        db.tick_begin();
+        let mut second = crate::spine::SymSink::new();
+        second.sym("RedundantWriteVolume");
+        assert_eq!(db.flush_syms(&mut second).unwrap(), 0);
+        assert!(
+            db.tick_end().is_none(),
+            "a cache-hit flush must never reach insert_rows/SQL at all"
+        );
+
+        let count: i64 = db.query_one("_strings", "SELECT COUNT(*) FROM _strings", &[], |r| Ok(r.get(0)?)).unwrap();
+        assert_eq!(count, 1, "the string is still durably present exactly once");
+    }
+
+    #[test]
+    fn flush_syms_does_not_cache_ids_from_a_caller_owned_transaction_that_rolls_back() {
+        let db = open(None).unwrap();
+        create_strings_table(&db);
+
+        db.begin_immediate().unwrap();
+        let mut sink = crate::spine::SymSink::new();
+        sink.sym("RolledBackIntern");
+        assert_eq!(db.flush_syms(&mut sink).unwrap(), 1);
+        db.rollback().unwrap();
+
+        let count_after_rollback: i64 = db.query_one(
+            "_strings", "SELECT COUNT(*) FROM _strings", &[], |r| Ok(r.get(0)?),
+        ).unwrap();
+        assert_eq!(count_after_rollback, 0, "the row must not survive the caller's rollback");
+
+        // Because the flush happened inside a still-open caller transaction,
+        // `flush_syms` must NOT have marked the id persisted. If it had, this
+        // second flush (now outside any transaction) would wrongly believe
+        // the string is already durable and skip re-sending it — leaving the
+        // string permanently missing from `_strings` while a `Sym` built
+        // from it is trusted to resolve. Re-offering must still land it.
+        let mut retry = crate::spine::SymSink::new();
+        retry.sym("RolledBackIntern");
+        assert_eq!(db.flush_syms(&mut retry).unwrap(), 1, "must re-offer after the rollback, not skip it");
+
+        let count_after_retry: i64 = db.query_one(
+            "_strings", "SELECT COUNT(*) FROM _strings", &[], |r| Ok(r.get(0)?),
+        ).unwrap();
+        assert_eq!(count_after_retry, 1);
+    }
+
+    #[test]
+    fn flush_syms_collision_guard_fires_even_when_the_id_is_already_cached() {
+        let db = open(None).unwrap();
+        create_strings_table(&db);
+
+        let id = crate::spine::StringId::of("alpha");
+        let mut prime = crate::spine::SymSink::new();
+        prime.sym("alpha");
+        assert_eq!(db.flush_syms(&mut prime).unwrap(), 1, "alpha's id is now in persisted_strings");
+
+        // A same-id, different-text pending pair — what a real `StringId`
+        // hash collision would hand `flush_syms`, fabricated via
+        // `push_raw` since forcing an actual blake3 collision isn't
+        // practical in a test. `alpha` is a cache hit (primed above); the
+        // bogus second text under the SAME id must still trip the
+        // collision bail, proving that check runs over the full pending
+        // set BEFORE the already-persisted filter narrows it — a filter
+        // that ran first would drop both entries by id alone and never
+        // compare their texts, silently hiding the collision.
+        let mut sink = crate::spine::SymSink::new();
+        sink.push_raw(id, "alpha");
+        sink.push_raw(id, "collides-with-alpha");
+        let err = db.flush_syms(&mut sink).unwrap_err();
+        assert!(err.to_string().contains("StringId collision"), "unexpected error: {err}");
     }
 
     // Build a table shaped like a df rel: a wide full-row PRIMARY KEY over an

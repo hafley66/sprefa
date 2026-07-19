@@ -234,6 +234,20 @@ impl Engine {
         self.write_ledger.borrow_mut().clear();
         let tick = self.tick_seq.get() + 1;
         self.tick_seq.set(tick);
+        // `trigger` mirrors `tick_paths_with_policy`'s: `Some` only inside a
+        // live RPC request scope on this thread (`crate::reqid::scope`), so an
+        // organic full tick (boot, poll loop, `.dl` reload) reads "organic".
+        crate::eventlog::emit(
+            "tick_start",
+            Some(&self.root()),
+            serde_json::json!({
+                "tick": tick,
+                "kind": "full",
+                "trigger": crate::reqid::current()
+                    .map(|id| format!("rpc:{id}"))
+                    .unwrap_or_else(|| "organic".to_string()),
+            }),
+        );
         self.adjacency_cache.borrow_mut().take();
         // Rewrite any rel headed by both a source/extract rule and a derived
         // rule into hidden twins + a synthesized union, BEFORE rule
@@ -927,6 +941,23 @@ impl Engine {
         for (key, digest) in &pending_digests {
             self.save_rel_digest(key, digest)?;
         }
+        // The out-of-band content-digest test that fires for `daemon:`/
+        // `effect:`/`async:`/`hook:`/`port:`/seed-baseline keys above: which of
+        // them moved this tick, batched into one event rather than one emit
+        // per rel (there are only ever a handful of these keys per tick).
+        // This is the class of comparison the phantom-15 incident needed
+        // instrumented — an old-vs-new digest test deciding "this rel's
+        // content changed" with the result thrown away — for the EDB-injected/
+        // off-tick-written rels; the per-path file content-hash test for the
+        // WORK source-file case lives in `source_prepare.rs` (see report).
+        if !pending_digests.is_empty() {
+            let moved_keys: Vec<String> = pending_digests.iter().map(|(key, _)| key.clone()).collect();
+            crate::eventlog::emit(
+                "digest_moved",
+                Some(&self.root()),
+                serde_json::json!({ "tick": tick, "keys": moved_keys }),
+            );
+        }
         let der_ms = t_der.elapsed().as_secs_f64() * 1000.0;
 
         if !quiet {
@@ -1116,6 +1147,30 @@ impl Engine {
             effects_inflight: inflight_effects,
             total_ms: t_tick.elapsed().as_millis() as u64,
         });
+        // The event-trail twin of the perflog record above: rows written
+        // (extracted/retracted), the per-phase strategy (`derived_strategy`)
+        // and which derived rels actually rebuilt vs were skipped, wall time,
+        // and the tick number — everything `dl daemon why`'s 2s sample would
+        // otherwise collapse into a single human string.
+        crate::eventlog::emit(
+            "tick_end",
+            Some(&self.root()),
+            serde_json::json!({
+                "tick": tick,
+                "kind": "full",
+                "wall_ms": t_tick.elapsed().as_millis() as u64,
+                "files_parsed": recon.parsed,
+                "files_total": recon.total,
+                "extracted": recon.extracted,
+                "retracted": recon.retracted,
+                "derived_strategy": derived_strategy,
+                "derived_rebuilt": &self.last_derived_rebuilt,
+                "derived_skipped": &self.last_derived_skipped,
+                "changed_rels": &changed_rels,
+                "full_reason": full_reason,
+                "effects_inflight": inflight_effects,
+            }),
+        );
         self.clear_exe_identity_cache();
         Ok(TickReport {
             changed,
@@ -1268,6 +1323,23 @@ impl Engine {
         self.write_ledger.borrow_mut().clear();
         let tick = self.tick_seq.get() + 1;
         self.tick_seq.set(tick);
+        // The incremental counterpart of `tick_report`'s `tick_start`: `changed`
+        // is the file watcher's actual delta (every fallback path above already
+        // returned before this point, so reaching here means the incremental
+        // path is really going to run over exactly these paths). `trigger`
+        // reads the same request-scope thread-local as the full tick.
+        crate::eventlog::emit_paths(
+            "tick_start",
+            Some(&self.root()),
+            changed,
+            serde_json::json!({
+                "tick": tick,
+                "kind": "incremental",
+                "trigger": crate::reqid::current()
+                    .map(|id| format!("rpc:{id}"))
+                    .unwrap_or_else(|| "organic".to_string()),
+            }),
+        );
 
         // Win D: `module_rels_needed` (not the narrower `module_rels_used`) so
         // a program reading only type_link/call_edge still gets the module
@@ -1573,6 +1645,28 @@ impl Engine {
             effects_inflight: 0,
             total_ms: tick_ms as u64,
         });
+        // The event-trail twin of the perflog record above, and the direct fix
+        // for the phantom-15 incident: `changed` is the FULL path list this
+        // incremental tick reconciled (not `changed.len()`, which is all the
+        // `[tick]` debug log above carries, and only when slow enough to log
+        // at all — this event fires every incremental tick regardless of
+        // `tick_log_ms`). `extracted`/`retracted` are rows written.
+        crate::eventlog::emit_paths(
+            "tick_end",
+            Some(&self.root()),
+            changed,
+            serde_json::json!({
+                "tick": tick,
+                "kind": "incremental",
+                "wall_ms": tick_ms,
+                "extracted": extracted,
+                "retracted": retracted,
+                "derived_strategy": if need_full { "full" } else if rebuilt.is_empty() { "unchanged" } else { "scoped" },
+                "derived_rebuilt": &rebuilt,
+                "derived_skipped": &self.last_derived_skipped,
+                "full_reason": full_reason,
+            }),
+        );
         self.clear_exe_identity_cache();
         Ok(PathTickOutcome::Incremental)
     }

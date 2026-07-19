@@ -44,7 +44,7 @@ fn parse_ratio_threshold(raw: Option<String>) -> f64 {
 /// subset. Best-effort: an unreadable entry contributes 0 rather than
 /// aborting the whole verdict; a symlink loop is bounded by `ignore`'s own
 /// walk (it does not follow symlinks by default).
-fn corpus_bytes(root: &Path) -> u64 {
+pub(crate) fn corpus_bytes(root: &Path) -> u64 {
     let mut walk = ignore::WalkBuilder::new(root);
     walk.hidden(false).filter_entry(|entry| {
         if entry.file_name() == ".git" {

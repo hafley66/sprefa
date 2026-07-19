@@ -27,6 +27,8 @@ subcommand:
 | `dl daemon drop <root> [--purge]` | deregister one root (`--purge` deletes its db) |
 | `dl daemon start [prog]` | detach a background singleton; `--foreground` runs it here (debug) |
 | `dl daemon await-settle [--ms N]` | block until the cwd root is quiescent |
+| `dl daemon health` | storage report: per-db weights, orphan root dirs, duplicate rels — file-trail only, works with the daemon down |
+| `dl daemon events [--kind K] [--root R] [--limit N]` | replay the IO event trail — the ARGUMENTS of each discrete event (which paths changed, which file was written), not a cost sample; file-trail only, works with the daemon down |
 
 Source: [src/cli/](../src/cli/) (flag parsing + dispatch),
 [src/daemon/](../src/daemon/) (singleton + registry + spawn-if-missing
@@ -265,6 +267,8 @@ nearest `.dl/` ancestor, or `DL_DAEMON_ROOT` for a spawned helper):
 | `dl daemon load-once <script>` | eval a script once on a throwaway engine, print `?` results, persist nothing; starts the singleton first if down |
 | `dl daemon rows <rel>` | print a relation's current rows for the cwd root |
 | `dl daemon await-settle [--ms N]` | block until the cwd root is quiescent (`await_quiescent` RPC), print `settled=<bool> tick=<n>`, exit 0 (settled) or 3 (timed out) |
+| `dl daemon health [--top N] [--root PATH] [--no-dupes]` | storage report per root db: dbstat buckets (rel tables / indexes / internal), heaviest tables with rows+bytes, orphan `roots/` dirs vs `roots.json` (class 14), identical-rowset rel pairs (`EXCEPT` both ways), static copy-rule scan, db/corpus ratio (class 17). Read-only opens, no socket — answers while the daemon is live, wedged, or down |
+| `dl daemon events [--kind K] [--root R] [--limit N]` | replay `<home>/events.jsonl[.1]`, newest last, optionally filtered by `kind`/`root` substring, tailed to `--limit` (default 100). Prints one line per event: `HH:MM:SS kind root-basename {compact json data}`. Unlike `why` (which samples the activity slot every 2s and renders a human-readable cost string — "15 changed path(s)") this records the ARGUMENTS of each discrete IO event as it happens — which paths changed, which file was written — so causality ("which 15 files?") is reconstructible after the fact, not just the cost. Reads the file trail only, no socket, no lock — answers while the daemon is wedged, crashed, or down. See `src/eventlog.rs` |
 
 ## Environment variables
 

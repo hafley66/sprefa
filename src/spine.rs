@@ -120,6 +120,17 @@ impl SymSink {
         self.flushed = true;
         std::mem::take(&mut self.pending)
     }
+
+    /// Test-only: queue a fabricated (id, text) pair directly, bypassing
+    /// `StringId::of`. Exists so `db::tests` can simulate a genuine
+    /// `StringId` hash collision (two different texts sharing one id)
+    /// without needing an actual blake3 collision, to check `flush_syms`'s
+    /// collision guard still fires when one of the colliding texts happens
+    /// to match an already-persisted-cache hit.
+    #[cfg(test)]
+    pub(crate) fn push_raw(&mut self, id: StringId, text: &str) {
+        self.pending.push((id, text.to_string()));
+    }
 }
 
 #[cfg(debug_assertions)]

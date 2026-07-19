@@ -444,6 +444,48 @@ fn inproc_db_is_cold(db_path: Option<&str>) -> bool {
     }
 }
 
+/// A linked git worktree's `.git` is a FILE (`gitdir: ...`), never a dir.
+fn is_linked_worktree(root: &Path) -> bool {
+    root.join(".git").is_file()
+}
+
+/// Failure-modes class 14 rail: `Some(reason)` when a `--check` run must NOT
+/// cold-build this root's db. Fires only when ALL of: the root is a linked
+/// worktree, its shared per-root db is blank/absent, and the root is not
+/// registered in `roots.json`. The incident shape: every agent worktree's
+/// pre-commit `dl --check` cold-built a ~600MB `roots/<key>/db.sqlite` that
+/// became an orphan the moment the worktree was deleted (2026-07-19, three
+/// 593MB orphans in one overnight fleet wave). A deliberately served worktree
+/// (registered) and a warmed db both pass; `DL_ALLOW_WORKTREE_COLD=1` is the
+/// explicit escape hatch.
+pub fn refuse_worktree_cold_check(root: &Path) -> Option<String> {
+    if std::env::var("DL_ALLOW_WORKTREE_COLD").ok().as_deref() == Some("1") {
+        return None;
+    }
+    if !is_linked_worktree(root) {
+        return None;
+    }
+    let db_path = crate::daemon::root_db_path(root);
+    if !inproc_db_is_cold(Some(&db_path.to_string_lossy())) {
+        return None;
+    }
+    let canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let registered = crate::daemon::read_roots_json().iter().any(|rec| {
+        rec.root.canonicalize().unwrap_or_else(|_| rec.root.clone()) == canon
+    });
+    if registered {
+        return None;
+    }
+    Some(format!(
+        "linked-worktree root {} has no warm db — cold build refused \
+         (failure-modes class 14: a commit hook must never cold-build; the db \
+         would orphan under roots/ when the worktree is deleted). Check runs \
+         green-by-skip here. To really check this root: run from the main \
+         checkout, `dl daemon start` inside it, or set DL_ALLOW_WORKTREE_COLD=1.",
+        root.display()
+    ))
+}
+
 /// The whole hook body — stdin drain, event parse, daemon-first emit-rel read,
 /// render — runs on the deadline worker thread. `cold_skip` (deadline active)
 /// refuses to start a cold in-process build: it can never fit under the hook

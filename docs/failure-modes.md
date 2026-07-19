@@ -349,16 +349,37 @@ sites but not against new code. **missing** = nothing.
 - HOW IT BIT US: "pre-commit `dl --check` in throwaway worktrees cold-starts a
   daemon and hangs — every delegated agent hit it" (CLAUDE.md:70(i)). The same
   shape produced freeze #1 with real numbers (class 13:
-  chat_log/20260717.3.big-wins-13-14-15-arch-expr-lab-freeze-rca.md:14).
-- THE LAW: a commit hook must never cold-start a daemon — blank-db roots take
-  the inline path or skip.
-- THE RAIL: MISSING. The fix shape is named but unbuilt: "worktree-root
-  detection or a hook fast-path for blank-db roots" (CLAUDE.md:70(i)).
-  Proposed rail: in the hook, if the root's db is blank (or the root is a
-  linked worktree), run `dl --check --no-daemon` inline instead of daemon
-  autostart.
-- SAY THIS TO AN AGENT: Never let a hook cold-start the daemon — on a blank-db
-  or worktree root, run `dl --check --no-daemon` inline or skip the check.
+  chat_log/20260717.3.big-wins-13-14-15-arch-expr-lab-freeze-rca.md:14). The
+  storage receipt landed 2026-07-19: the overnight fleet wave minted three
+  593MB orphan root dbs — keys 5658fb5a59d0f252, c22f2b330d2dd1f7,
+  ea3041acfc1af14c, ~1.86GB total — one per agent worktree, each cold-built by
+  that worktree's pre-commit hook and each verified absent from `roots.json`.
+  The worktrees were deleted; the dbs stayed under `roots/` with nothing
+  pointing at them.
+- THE LAW: a commit hook must never cold-start a daemon or cold-build a db —
+  blank-db roots take the inline path or skip. A root that is not registered in
+  `roots.json` must never have a db built for it as a side effect of a check.
+- THE RAIL: enforced. `hook::refuse_worktree_cold_check(&root)` (src/hook.rs:461,
+  with the `is_linked_worktree` helper at :448) returns `Some(reason)` only when
+  ALL of: the root's `.git` is a FILE (linked worktree), its `roots/<key>/db.sqlite`
+  is blank or absent, and the root is absent from `roots.json` (canonicalized
+  compare). The `cli.check || cli.diag_json` arm calls it at src/cli/mod.rs:476 —
+  before the stale-binary check and before any db work — prints `[check] {reason}`
+  to stderr and exits 0: green-by-skip, never a hook-blocking exit 2. Skipped when
+  an explicit `--db` was passed. `DL_ALLOW_WORKTREE_COLD=1` is the escape hatch and
+  runs the real check. Fail-pre-fix test: tests/it/worktree_cold_check.rs — 3 tests
+  (skip-in-worktree asserting zero bytes written under `roots/`, escape-hatch
+  builds, main-checkout `.git` dir untouched).
+- DETECTION SIDE: `dl daemon health` (src/cli/health.rs) reports orphan `roots/`
+  dirs — directories present under `roots/` with no matching entry in
+  `roots.json` — so an orphan minted before this rail, or by any other path,
+  surfaces without a manual `du` sweep. See docs/daemon.md.
+- SAY THIS TO AN AGENT: the rail exists — a `--check` in an unregistered linked
+  worktree with a cold db skips green and builds nothing. If you need it to
+  really run there, register the root (`dl daemon start` inside it), run from
+  the main checkout, or set `DL_ALLOW_WORKTREE_COLD=1`. Never widen the guard
+  into a path that lets a hook cold-build. Run `dl daemon health` to find
+  orphan root dbs.
 
 ## 15. Dishonest change flags
 
@@ -706,6 +727,69 @@ sites but not against new code. **missing** = nothing.
   in `ManuallyDrop` and close them only on explicit paths, leaking on
   abnormal death.
 
+## 25. Redundant write volume on unchanged content-derived data
+
+- WHAT IT LOOKS LIKE: a daemon restart against a WARM db, with exactly ONE
+  source file changed, still offers close to the entire interned working set
+  to `INSERT OR IGNORE` every tick — SQLite silently discards nearly all of
+  it, but the engine paid the row-construction, statement-build, and B-tree
+  probe cost for every discarded row anyway. Nothing crashes and nothing
+  looks wrong from the query surface; the only visible symptom is a rebuild
+  writing far more disk than the database it produces.
+- HOW IT BIT US (2026-07-19, measured via the new `events.jsonl` IO trail):
+  `dl daemon events` recorded, on a one-file-changed warm restart, 1,207,064
+  rows offered to `_strings` with only 146 accepted (99.99% waste); across
+  all tables the same restart offered 1,777,188 rows and landed 555,896
+  (68.7% wasted). This is a large share of why a rebuild writes 7.7GB of disk
+  to produce an 893MB database. RCA: `Engine::insert_spine_strings`
+  (src/engine/meta.rs:1490) iterates every `Value::Text` cell across the rows
+  being written, queues each into a fresh `spine::SymSink`, and calls
+  `Db::flush_syms`. `StringId` is content-derived (`StringId::of` hashes the
+  text, src/spine.rs:52) — a string persisted in an earlier tick re-hashes to
+  the identical id every later tick, and its `INSERT OR IGNORE` is silently
+  discarded. Nothing anywhere remembered which ids were already durable, so
+  every tick re-offered the entire working set from scratch. THE DETECTION
+  GAP IS PART OF THE STORY: this was invisible before the IO event trail
+  existed — a per-table row count alone (`rows` in `_write_ledger`) never
+  distinguished "offered" from "affected", so 99.99% waste read identically
+  to a healthy write in every prior receipt. `dl daemon events` recording
+  offered-vs-affected per batch call is what finally surfaced it.
+- THE LAW: a write path over content-derived ids must remember, per process
+  per database, which ids it has already durably committed, and skip
+  re-offering them — offering an id already known present is pure waste with
+  zero correctness benefit, and the waste compounds every tick a working set
+  stays warm.
+- THE RAIL: enforced. `Db::flush_syms` (src/db.rs) now holds
+  `persisted_strings: RefCell<HashSet<i64>>` on `Db` itself — one per served
+  root's connection, never a global static, so root B can never skip an
+  insert root A made into a DIFFERENT database file. The FULL pending set is
+  still deduped and collision-checked exactly as before (two different texts
+  hashing to the same id is still a loud bail) BEFORE any cache filtering
+  narrows it down — filtering first would let a same-id different-text
+  collision hide behind a cache hit. An id is added to the cache ONLY when
+  the flush that wrote it ran with SQLite in autocommit mode at entry (no
+  caller-owned transaction wrapping it): in that case `insert_rows` either
+  begins+commits its own transaction (multi-chunk path) or issues one
+  auto-committing statement (small-batch path), so an `Ok` return proves
+  every attempted id is durably in `_strings`. A flush riding inside a
+  caller-owned transaction is NOT cached — that caller can still roll back
+  after `flush_syms` returns, which would silently revert the row while the
+  cache kept claiming it durable; skipping the cache there just means those
+  ids get re-offered next time, never wrongly skipped. The cache is capped
+  (`STRING_CACHE_CAP` = 4,000,000) and clears itself whole if exceeded — a
+  cleared cache only causes re-offering, never a wrongly-skipped insert.
+  Tests: `flush_syms_skips_ids_already_persisted`,
+  `flush_syms_does_not_cache_ids_from_a_caller_owned_transaction_that_rolls_back`,
+  `flush_syms_collision_guard_fires_even_when_the_id_is_already_cached`
+  (src/db.rs).
+- SAY THIS TO AN AGENT: a content-derived id (hash-of-text, hash-of-coord)
+  that gets re-offered to `INSERT OR IGNORE` every tick even when unchanged
+  is pure waste, not a correctness issue — the fix is a process-local
+  already-persisted cache on the connection-owning type, populated ONLY from
+  writes provable to have committed (check autocommit state before the call,
+  not after), never a global static across roots, and never skip the
+  within-batch collision guard by filtering before it runs.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
@@ -723,7 +807,7 @@ sites but not against new code. **missing** = nothing.
 | 11 | co-heading source+derived | enforced | — |
 | 12 | ambient config in tests | half | hermetic-by-default it-test harness (fail when `SPREFA_CONFIG` unset); fix the in-tree syntax.md regen (PLANS.md:17) |
 | 13 | stale-binary verification | half | hook compares installed `build_id` (src/cli/daemon.rs:209) against the worktree target; refuse or warn on mismatch |
-| 14 | pre-commit worktree hang | missing | worktree-root detection or hook fast-path for blank-db roots (CLAUDE.md:70(i)) |
+| 14 | pre-commit worktree hang / orphan root dbs | enforced | — (`refuse_worktree_cold_check` src/hook.rs:461 wired at src/cli/mod.rs:476, green-by-skip exit 0, `DL_ALLOW_WORKTREE_COLD=1` escape hatch; fail-pre-fix tests/it/worktree_cold_check.rs; detection side = `dl daemon health` orphan-roots report) |
 | 15 | dishonest change flags | half | waiver-audit the 25 HEAD findings, promote `.dl/dishonest-flag.dl` to error severity (792cc902) |
 | 16 | kill-respawn cold-restart loop | half | `--hook` is attach-only since 2026-07-18 (never autostarts; sub-second self-deadline); still missing: `--check` autostart-once + backoff, mid-cold digest persistence, kill-mid-cold resume it-test |
 | 17 | unbounded db growth | half | boot verdict line (db bytes, corpus bytes, ratio) + `--check` ceiling warn; diet steps 1+3 landed (norm drop, -60% `_strings` on fixture); 4a WITHOUT ROWID landed on vouched Rust-authored junctions (`pk_never_null` vouch, 17 autoindex twins dropped; see the step-4a NULL-in-PK incident in this class) — `.dl`-declared junctions (flow_edge, df_edge_src_kind) still open pending a derived-nullability story; step 2 index audit open |

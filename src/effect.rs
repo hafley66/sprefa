@@ -192,10 +192,49 @@ impl ShellEffectExec {
         // truncated so a giant inlined body stays one readable line. This is the
         // "what request am I about to make" half of the ghcacher-style log.
         tracing::debug!(target: "dl::effect", kind, cmd = %preview(&cmdline), "spawn");
-        let output = cmd.output()?;
+        // Event trail: the resolved args (hole values), redacted per-key — this
+        // is the "we should be able to see every input-output event" record,
+        // distinct from the human `dl::effect` trace above (a truncated string
+        // preview, not queryable args). Emitted before the spawn so a request
+        // that never returns (a hang) still leaves a call row.
+        crate::eventlog::emit(
+            "effect_call",
+            Some(self.cwd.as_path()),
+            serde_json::json!({ "kind": kind, "args": redact_args(args) }),
+        );
+        let started = std::time::Instant::now();
+        let output = match cmd.output() {
+            Ok(o) => o,
+            Err(e) => {
+                crate::eventlog::emit(
+                    "effect_result",
+                    Some(self.cwd.as_path()),
+                    serde_json::json!({
+                        "kind": kind,
+                        "success": false,
+                        "exit_code": serde_json::Value::Null,
+                        "bytes": 0,
+                        "duration_ms": started.elapsed().as_millis() as i64,
+                    }),
+                );
+                return Err(e.into());
+            }
+        };
+        let duration_ms = started.elapsed().as_millis() as i64;
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         tracing::debug!(target: "dl::effect", kind, exit = ?output.status.code(),
             bytes = stdout.len(), "result");
+        crate::eventlog::emit(
+            "effect_result",
+            Some(self.cwd.as_path()),
+            serde_json::json!({
+                "kind": kind,
+                "success": output.status.success(),
+                "exit_code": output.status.code(),
+                "bytes": stdout.len(),
+                "duration_ms": duration_ms,
+            }),
+        );
         // nonzero exit WITH stdout is the findings-exist convention (the `cmd` op
         // shares it); nonzero with empty stdout is a broken command — be loud.
         if !output.status.success() && stdout.trim().is_empty() {
@@ -226,6 +265,59 @@ impl EffectExec for ShellEffectExec {
         Ok(stdout.lines().filter(|l| !l.is_empty())
             .map(|l| split_tsv(l, nout)).collect())
     }
+}
+
+/// Argument key-name fragments that mark a `sh`/`sh!`/`sh*` effect arg as
+/// carrying a credential, matched case-insensitively as a SUBSTRING (so
+/// `gh_token`, `GITHUB_TOKEN`, `apiKey`, `auth_header` all hit). The codebase
+/// has no prior token-handling convention to follow: effect args normally
+/// reach the shell via `$k` env substitution (see `spawn_stdout`) and a
+/// template is expected to source its own secrets from the process env
+/// rather than a `.dl`-bound arg, but a rule CAN bind one (a per-repo PAT
+/// threaded through as an ordinary arg), so the event trail treats every arg
+/// as untrusted by default. A key match wins even when the value itself
+/// looks harmless.
+const SENSITIVE_KEY_FRAGMENTS: &[&str] = &[
+    "token", "secret", "password", "passwd", "auth", "key", "credential",
+    "cookie", "bearer", "apikey",
+];
+
+/// Value-shape check for a credential riding in under an innocuous key name
+/// (`url`, `endpoint`): HTTP Basic-auth-in-URL (`https://user:pass@host/...`)
+/// and the common vendor token prefixes (GitHub PAT/OAuth, Slack, a generic
+/// `sk-`/bearer-style API key).
+fn looks_like_credential(value: &str) -> bool {
+    if let Some(after_scheme) = value.split("://").nth(1) {
+        if let Some(at) = after_scheme.find('@') {
+            if !after_scheme[..at].contains('/') {
+                return true;
+            }
+        }
+    }
+    const VALUE_PREFIXES: &[&str] = &[
+        "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "sk-", "xox", "Bearer ",
+    ];
+    VALUE_PREFIXES.iter().any(|p| value.starts_with(p))
+}
+
+/// Redact an effect arg map for the event trail: a key matching
+/// `SENSITIVE_KEY_FRAGMENTS`, or a value shaped like a credential, is replaced
+/// with the literal string `"<redacted>"` — the field NAME still lands (so
+/// the trail shows an arg was there), the value never does. Everything else
+/// copies through unchanged. Used only for the `effect_call` event; the real
+/// `args` map handed to the executor is untouched.
+fn redact_args(args: &serde_json::Map<String, serde_json::Value>) -> serde_json::Value {
+    let mut out = serde_json::Map::with_capacity(args.len());
+    for (k, v) in args {
+        let key_hits = SENSITIVE_KEY_FRAGMENTS.iter().any(|f| k.to_lowercase().contains(f));
+        let value_hits = v.as_str().is_some_and(looks_like_credential);
+        if key_hits || value_hits {
+            out.insert(k.clone(), serde_json::Value::String("<redacted>".to_string()));
+        } else {
+            out.insert(k.clone(), v.clone());
+        }
+    }
+    serde_json::Value::Object(out)
 }
 
 /// Split one stdout LINE into `nout` tab-separated slots (the per-row form of

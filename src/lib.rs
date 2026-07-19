@@ -26,6 +26,7 @@ pub mod docs_cmd;
 pub mod embed;
 pub mod engine;
 pub mod effect;
+pub mod eventlog;
 pub mod frontend;
 pub mod hook;
 pub mod identity;
