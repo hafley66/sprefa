@@ -81,7 +81,7 @@ embed-fastembed = []
 embed-candle = []
 
 [dependencies]
-rusqlite = { version = "0.31", features = ["bundled", "functions", "trace"] }
+rusqlite = { version = "0.32.1", features = ["bundled", "functions", "trace"] }
 regex = "1"
 globset = "0.4"
 ignore = "0.4"
@@ -213,6 +213,8 @@ fd-lock = "=4.0.4"
 # 3.2); a no-op on macOS (returns `Ok(())` immediately when `NOTIFY_SOCKET` is
 # unset, verified in the vendored source — no cfg-gating needed).
 sd-notify = "=0.5.0"
+apalis = "=1.0.0-rc.9"
+apalis-sqlite = "=1.0.0-rc.8"
 
 [build-dependencies]
 # Compiles the vendored grammar C sources (vendor/grammars/) into the crate.
