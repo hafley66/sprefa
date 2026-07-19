@@ -326,12 +326,14 @@ arch_df_native(src_url, dst_url, via) <-
   src_url != dst_url.
 
 # ── rails ────────────────────────────────────────────────────────────────────
-# golden MUST-resolve: reconcile.rs flushes its stmt timings through derive.rs'
-# save_stmt_ms (reconcile.rs:436 today). If the ladder ever drops this edge,
-# the resolver regressed.
-diag(path: "src/engine/reconcile.rs", line: 1, severity: "error", code: "arch-golden-missing",
+# golden MUST-resolve: the source pass flushes its stmt timings through
+# derive.rs' save_stmt_ms (term_extract.rs today — split out of reconcile.rs
+# in the 2026-07-18 file-budget decomp; both files carry the
+# engine/20-reconcile marker). If the ladder ever drops this edge, the
+# resolver regressed.
+diag(path: "src/engine/term_extract.rs", line: 1, severity: "error", code: "arch-golden-missing",
      msg: "golden edge gone: engine/20-reconcile -> engine/50-derive via save_stmt_ms no longer resolves") <-
-  src("src/engine/reconcile.rs"),
+  src("src/engine/term_extract.rs"),
   !arch_flow_resolved("engine/20-reconcile", "engine/50-derive", "save_stmt_ms", _).
 
 # golden MUST-NOT-resolve: Vec::new in parse.rs once resolved into meta.rs'
@@ -390,5 +392,5 @@ diag(path: path, line: 1, severity: "warn", code: "scip-stale-file",
 ? flow_scip_beyond_resolved(src_url, dst_url).
 ? arch_df(src_url, dst_url, via).
 ? arch_df_native(src_url, dst_url, via).
-? edge_receipt(caller_path: "src/engine/reconcile.rs", call_line, called, def_path: "src/engine/derive.rs", rung).
+? edge_receipt(caller_path: "src/engine/term_extract.rs", call_line, called, def_path: "src/engine/derive.rs", rung).
 ? diag(path, line, severity, code, msg).
