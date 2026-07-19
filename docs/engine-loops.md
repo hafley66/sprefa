@@ -6,7 +6,7 @@ that arc: for each loop, what wakes it, what it logs now, and how it exits —
 the thing nobody could answer before `dl daemon why` + this arc's
 leveled logging landed.
 
-Runtime shape: the daemon's tokio shell (`src/daemon_shell/mod.rs`) is one
+Runtime shape: the daemon's tokio shell (`src/daemon/shell/mod.rs`) is one
 `new_multi_thread` runtime, `worker_threads(2)`, holding a single `ShellCtx {
 rt, cancel: CancellationToken, job_notify: Arc<Notify>, broadcast_tx }`. Every
 shell task selects on `ctx.cancel.cancelled()`; the engine itself is reached
@@ -16,7 +16,7 @@ law).
 ## Daemon shell loops
 
 ### 1. Per-root watcher — `watch_task`
-`src/daemon_shell/watch.rs:24` (main loop `:83`, inner debounce loop `:121`)
+`src/daemon/shell/watch.rs:24` (main loop `:83`, inner debounce loop `:121`)
 
 - **Wakes on**: `tokio::select!` on `ctx.cancel.cancelled()` vs
   `tokio::time::timeout(1s, rx.recv())` on the notify-fed mpsc channel (OS fs
@@ -31,7 +31,7 @@ law).
   root's lifetime; never a normal-completion exit.
 
 ### 2. Live job dispatcher — `worker_loop`
-`src/daemon_shell/jobs.rs:39` (loop `:45`); spawned N-per-runtime by
+`src/daemon/shell/jobs.rs:39` (loop `:45`); spawned N-per-runtime by
 `jobs::spawn` (`:23`)
 
 - **Wakes on**: `tokio::sync::Notify` doorbell (`ctx.job_notify.notified()`,
@@ -77,7 +77,7 @@ law).
   process exits.
 
 ### 5. Idle-timeout self-reap — `idle_task`
-`src/daemon_shell/timers.rs:15` (loop `:17`)
+`src/daemon/shell/timers.rs:15` (loop `:17`)
 
 - **Wakes on**: `tokio::time::interval(IDLE_TICK_SECS)` ticker, raced against
   `ctx.cancel.cancelled()`.
@@ -87,7 +87,7 @@ law).
   then `std::process::exit(0)` — a hard process exit, not a loop return.
 
 ### 6. Poll / sink-drain timer — `poll_task`
-`src/daemon_shell/timers.rs:47` (loop `:53`), scan body `poll_scan` (`:66`)
+`src/daemon/shell/timers.rs:47` (loop `:53`), scan body `poll_scan` (`:66`)
 
 - **Wakes on**: `tokio::time::interval(secs)`, first tick consumed up front so
   the first scan waits a full interval; raced against cancellation.
@@ -98,7 +98,7 @@ law).
 - **Exits**: returns on `ctx.cancel.cancelled()`; never otherwise.
 
 ### 7. Subscriber-push broadcast (no loop of its own)
-`ShellCtx.broadcast_tx` (`src/daemon_shell/mod.rs`), a `tokio::sync::broadcast`
+`ShellCtx.broadcast_tx` (`src/daemon/shell/mod.rs`), a `tokio::sync::broadcast`
 channel
 
 - The former hand-written pump task (`spawn_subscriber_pump`, owned the
@@ -109,14 +109,14 @@ channel
   and is ignored (best-effort push, same policy as before).
 
 ### 8/8b. (retired) UDS accept + per-connection loops
-`src/daemon_shell/uds.rs` was deleted in the axum adoption arc (plan section
+`src/daemon/shell/uds.rs` was deleted in the axum adoption arc (plan section
 2.4): the UDS socket now serves the SAME axum router as TCP (section 9), so
 the hand-written accept loop and per-connection frame loop no longer exist.
 The `[access]` line per request (request id, `surface=sock`, method, root,
 ms, ok, byte counts) is logged from the shared `/rpc` handler instead.
 
 ### 9. axum serve loops (TCP + UDS) — `http::spawn_tcp` / `http::spawn_uds`
-`src/daemon_shell/http.rs`, `axum::serve(...)` in each
+`src/daemon/shell/http.rs`, `axum::serve(...)` in each
 
 - **Wakes on**: `axum::serve(listener, app).with_graceful_shutdown(cancel.cancelled())`
   — the accept loop lives inside the axum/hyper crate, not hand-written here.
@@ -128,7 +128,7 @@ ms, ok, byte counts) is logged from the shared `/rpc` handler instead.
 - **Exits**: graceful shutdown driven by `cancel.cancelled()`.
 
 ### 10. Signal handler — `spawn_signal`
-`src/daemon_shell/mod.rs:169` (not a `loop{}`, a single `tokio::select!`)
+`src/daemon/shell/mod.rs:169` (not a `loop{}`, a single `tokio::select!`)
 
 - **Logs**: SIGINT/SIGTERM handler-unavailable (warn), SIGINT/SIGTERM —
   shutting down (info). Fires once, cancels the token, task ends (feeds loops

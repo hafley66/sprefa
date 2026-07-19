@@ -43,8 +43,8 @@ Total sites: 422
 | src/engine/derive.rs | 5 |
 | src/engine/query.rs | 5 |
 | src/agent.rs | 4 |
-| src/daemon_read.rs | 4 |
-| src/daemon_shell/http.rs | 4 |
+| src/daemon/read.rs | 4 |
+| src/daemon/shell/http.rs | 4 |
 | src/engine/generation.rs | 4 |
 | src/engine/mod.rs | 4 |
 | src/engine/pipeline/source_stage_tests.rs | 4 |
@@ -53,7 +53,7 @@ Total sites: 422
 | src/setup.rs | 4 |
 | src/cli/inputs.rs | 3 |
 | src/engine/scan.rs | 3 |
-| src/propose.rs | 3 |
+| src/propose/mod.rs | 3 |
 | src/rels/mod.rs | 3 |
 | src/setup/hooks.rs | 3 |
 | src/setup/wire.rs | 3 |
@@ -65,8 +65,8 @@ Total sites: 422
 | src/frontend.rs | 2 |
 | src/rels/analysis.rs | 2 |
 | src/activity.rs | 1 |
-| src/daemon_http.rs | 1 |
-| src/daemon_shell/watch.rs | 1 |
+| src/daemon/http_discovery.rs | 1 |
+| src/daemon/shell/watch.rs | 1 |
 | src/db.rs | 1 |
 | src/engine/extract/mod.rs | 1 |
 | src/engine/pipeline/full_sources.rs | 1 |
@@ -86,12 +86,12 @@ Total sites: 35
 | file | line-matches |
 | --- | --- |
 | src/daemon.rs | 12 |
-| src/daemon_shell/http.rs | 10 |
-| src/daemon_shell/uds.rs | 4 |
+| src/daemon/shell/http.rs | 10 |
+| src/daemon/shell/uds.rs | 4 |
 | src/hook.rs | 4 |
-| src/daemon_shell/mod.rs | 2 |
+| src/daemon/shell/mod.rs | 2 |
 | src/mcp.rs | 2 |
-| src/daemon_http.rs | 1 |
+| src/daemon/http_discovery.rs | 1 |
 
 ### 1.3 database (rusqlite-style method calls)
 
@@ -156,9 +156,9 @@ Total sites: 86
 | src/activity.rs | 4 |
 | src/engine/mod.rs | 4 |
 | src/jobq/tests.rs | 4 |
-| src/daemon_read.rs | 3 |
-| src/daemon_shell/jobs.rs | 3 |
-| src/daemon_shell/watch.rs | 3 |
+| src/daemon/read.rs | 3 |
+| src/daemon/shell/jobs.rs | 3 |
+| src/daemon/shell/watch.rs | 3 |
 | src/db.rs | 3 |
 | src/engine/extract/mod.rs | 2 |
 | src/engine/family/mod.rs | 2 |
@@ -196,7 +196,7 @@ Total sites: 16
 | src/cli/mod.rs | 5 |
 | src/watchdog.rs | 2 |
 | src/cli/daemon.rs | 1 |
-| src/daemon_shell/timers.rs | 1 |
+| src/daemon/shell/timers.rs | 1 |
 | src/tray.rs | 1 |
 
 ## 2. LOCK TOPOLOGY
@@ -248,7 +248,7 @@ After excluding non-lock `.read()`/`.write()` (e.g. `std::io::Read`, `OpenOption
 | src/perflog.rs | 3 |
 | src/db.rs | 3 |
 | src/engine/repo.rs | 3 |
-| src/daemon_read.rs | 2 |
+| src/daemon/read.rs | 2 |
 | src/tray.rs | 1 |
 | src/jobq/mod.rs | 1 |
 
@@ -266,8 +266,8 @@ Total helper-based acquisitions: 83
 | src/daemon.rs | 60 |
 | src/jobq/tests.rs | 10 |
 | src/jobq/mod.rs | 9 |
-| src/daemon_shell/watch.rs | 3 |
-| src/daemon_shell/timers.rs | 1 |
+| src/daemon/shell/watch.rs | 3 |
+| src/daemon/shell/timers.rs | 1 |
 
 ### 2c. Named locks appearing most often at acquisition sites
 
@@ -350,18 +350,18 @@ Distinct external crates imported in `src/`: 22.
 
 | crate | files | use-line count | using files |
 | --- | --- | --- | --- |
-| anyhow | 66 | 66 | src/anchor.rs, src/channel.rs, src/cli/check_deadline.rs, src/cli/daemon.rs, src/cli/inputs.rs, src/cli/mod.rs, src/cli/query.rs, src/cli/root.rs, src/config.rs, src/corpus.rs, src/daemon.rs, src/daemon_http.rs, src/daemon_read.rs, src/daemon_shell/http.rs, src/daemon_shell/watch.rs, src/db.rs, src/docs_cmd.rs, src/effect.rs, src/embed/candle_be.rs, src/embed/fastembed_be.rs, src/embed/mod.rs, src/embed/stub.rs, src/engine/cold_stage.rs, src/engine/desugar.rs, src/engine/extract/mod.rs, src/engine/family/mod.rs, src/engine/family/router.rs, src/engine/mod.rs, src/engine/pipeline/apply.rs, src/engine/pipeline/full_sources.rs, src/frontend.rs, src/hook.rs, src/jobq/dispatch.rs, src/jobq/mod.rs, src/ktpath.rs, src/lex.rs, src/lib.rs, src/lower.rs, src/lsp.rs, src/mcp.rs, src/parse.rs, src/refactor.rs, src/rels/analysis.rs, src/rels/catalog.rs, src/rels/embed.rs, src/rels/env.rs, src/rels/extract_family.rs, src/rels/filelines.rs, src/rels/git.rs, src/rels/mod.rs, src/rels/perf.rs, src/rels/propose.rs, src/rels/querylog.rs, src/rels/scip.rs, src/rels/write_ledger.rs, src/rpc.rs, src/scip_import.rs, src/scip_setup.rs, src/setup.rs, src/setup/manifest.rs, src/sg.rs, src/storage.rs, src/storage/call.rs, src/tray.rs, src/update.rs, src/verbs.rs |
-| serde_json | 11 | 11 | src/cli/daemon.rs, src/daemon.rs, src/daemon_http.rs, src/daemon_read.rs, src/daemon_shell/http.rs, src/daemon_shell/uds.rs, src/jobq/mod.rs, src/setup/hooks_idempotency_tests.rs, src/setup/manifest.rs, src/setup/manifest/json_edit.rs, src/why.rs |
-| rusqlite | 9 | 9 | src/agent.rs, src/daemon_read.rs, src/db.rs, src/engine/deltaflow.rs, src/engine/pipeline/full_sources.rs, src/engine/pipeline/source_stage.rs, src/engine/staged_delta/mod.rs, src/engine/staged_delta/sql.rs, src/jobq/mod.rs |
-| tokio | 3 | 7 | src/daemon.rs, src/daemon_shell/mod.rs, src/daemon_shell/uds.rs |
-| axum | 1 | 5 | src/daemon_shell/http.rs |
-| tree_sitter | 3 | 3 | src/ingest/mod.rs, src/lsp.rs, src/propose.rs |
+| anyhow | 66 | 66 | src/anchor.rs, src/channel.rs, src/cli/check_deadline.rs, src/cli/daemon.rs, src/cli/inputs.rs, src/cli/mod.rs, src/cli/query.rs, src/cli/root.rs, src/config.rs, src/corpus.rs, src/daemon.rs, src/daemon/http_discovery.rs, src/daemon/read.rs, src/daemon/shell/http.rs, src/daemon/shell/watch.rs, src/db.rs, src/docs_cmd.rs, src/effect.rs, src/embed/candle_be.rs, src/embed/fastembed_be.rs, src/embed/mod.rs, src/embed/stub.rs, src/engine/cold_stage.rs, src/engine/desugar.rs, src/engine/extract/mod.rs, src/engine/family/mod.rs, src/engine/family/router.rs, src/engine/mod.rs, src/engine/pipeline/apply.rs, src/engine/pipeline/full_sources.rs, src/frontend.rs, src/hook.rs, src/jobq/dispatch.rs, src/jobq/mod.rs, src/ktpath.rs, src/lex.rs, src/lib.rs, src/lower.rs, src/lsp.rs, src/mcp.rs, src/parse/mod.rs, src/refactor.rs, src/rels/analysis.rs, src/rels/catalog.rs, src/rels/embed.rs, src/rels/env.rs, src/rels/extract_family.rs, src/rels/filelines.rs, src/rels/git.rs, src/rels/mod.rs, src/rels/perf.rs, src/rels/propose.rs, src/rels/querylog.rs, src/rels/scip.rs, src/rels/write_ledger.rs, src/rpc.rs, src/scip_import.rs, src/scip_setup.rs, src/setup.rs, src/setup/manifest.rs, src/sg.rs, src/storage.rs, src/storage/call.rs, src/tray.rs, src/update.rs, src/verbs.rs |
+| serde_json | 11 | 11 | src/cli/daemon.rs, src/daemon.rs, src/daemon/http_discovery.rs, src/daemon/read.rs, src/daemon/shell/http.rs, src/daemon/shell/uds.rs, src/jobq/mod.rs, src/setup/hooks_idempotency_tests.rs, src/setup/manifest.rs, src/setup/manifest/json_edit.rs, src/why.rs |
+| rusqlite | 9 | 9 | src/agent.rs, src/daemon/read.rs, src/db.rs, src/engine/deltaflow.rs, src/engine/pipeline/full_sources.rs, src/engine/pipeline/source_stage.rs, src/engine/staged_delta/mod.rs, src/engine/staged_delta/sql.rs, src/jobq/mod.rs |
+| tokio | 3 | 7 | src/daemon.rs, src/daemon/shell/mod.rs, src/daemon/shell/uds.rs |
+| axum | 1 | 5 | src/daemon/shell/http.rs |
+| tree_sitter | 3 | 3 | src/ingest/mod.rs, src/lsp.rs, src/propose/mod.rs |
 | regex | 3 | 3 | src/comment.rs, src/engine/mod.rs, src/graph/modgraph.rs |
 | rayon | 3 | 3 | src/effect.rs, src/engine/extract/mod.rs, src/engine/mod.rs |
 | serde | 2 | 2 | src/config.rs, src/setup/manifest.rs |
 | syn | 1 | 2 | src/graph/typegraph.rs |
 | tracing_subscriber | 1 | 1 | src/trace.rs |
-| tokio_util | 1 | 1 | src/daemon_shell/mod.rs |
+| tokio_util | 1 | 1 | src/daemon/shell/mod.rs |
 | protobuf | 1 | 1 | src/scip_import.rs |
 | oxc_ast_visit | 1 | 1 | src/graph/typegraph.rs |
 | oxc_ast | 1 | 1 | src/graph/typegraph.rs |

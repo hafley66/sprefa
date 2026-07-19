@@ -1037,7 +1037,7 @@ Do not hand-edit between the markers.
 
 | path | contents |
 |---|---|
-| [src/parse.rs](src/parse.rs) / [src/lex.rs](src/lex.rs) / [src/ast.rs](src/ast.rs) | DSL grammar; `ast.rs` is the syntax's single source of truth |
+| [src/parse/mod.rs](src/parse/mod.rs) / [src/lex.rs](src/lex.rs) / [src/ast.rs](src/ast.rs) | DSL grammar; `ast.rs` is the syntax's single source of truth |
 | [src/frontend.rs](src/frontend.rs) | module surface: `use` inclusion + `def` inlining (`load_program`, `expand_with`, `inline_template_calls`) |
 | [src/engine/](src/engine/) | tick loop, fixpoint lowering, built-in relation refresh, gen writes |
 | [src/typecheck.rs](src/typecheck.rs) | brands, anchors, path-literal resolution, stratification diags |

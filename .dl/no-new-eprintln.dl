@@ -57,7 +57,7 @@ eprintln_baseline("src/cli/mod.rs", 2).
 eprintln_baseline("src/cli/query.rs", 10).
 eprintln_baseline("src/config.rs", 1).
 eprintln_baseline("src/corpus.rs", 2).
-eprintln_baseline("src/daemon.rs", 2).
+eprintln_baseline("src/daemon/client.rs", 2).
 eprintln_baseline("src/docs_cmd.rs", 4).
 eprintln_baseline("src/engine/derive.rs", 9).
 eprintln_baseline("src/engine/gen.rs", 1).

@@ -29,7 +29,7 @@ subcommand:
 | `dl daemon await-settle [--ms N]` | block until the cwd root is quiescent |
 
 Source: [src/cli/](../src/cli/) (flag parsing + dispatch),
-[src/daemon.rs](../src/daemon.rs) (singleton + registry + spawn-if-missing
+[src/daemon/](../src/daemon/) (singleton + registry + spawn-if-missing
 client), [src/rpc.rs](../src/rpc.rs) (the wire codec). Design plan:
 [plans/2026-07-10-singleton-daemon-registered-roots.md](../plans/2026-07-10-singleton-daemon-registered-roots.md).
 
@@ -63,7 +63,7 @@ ancestor exists to address the config view. Registering a root nested inside —
 containing — an already-registered root is refused loudly (naming both paths), so
 one process never double-serves overlapping trees.
 
-Home layout (`$XDG_STATE_HOME/sprefa`, `src/daemon.rs`):
+Home layout (`$XDG_STATE_HOME/sprefa`, `src/daemon/home.rs`):
 
 ```
 <home>/
@@ -183,7 +183,7 @@ Quit item. Windows/Linux trays are deferred. Source:
 ## RPC surface
 
 JSON-RPC 2.0 envelopes (see [src/rpc.rs](../src/rpc.rs)) carried over HTTP:
-ONE axum router (`src/daemon_shell/http.rs`) with `POST /rpc` (the body IS the
+ONE axum router (`src/daemon/shell/http.rs`) with `POST /rpc` (the body IS the
 JSON-RPC request), `GET /health`, and `GET /watch` (SSE push stream), served
 identically over the UDS socket and the published localhost TCP port
 (`http.json`). The old bespoke `Content-Length`-framed socket wire is gone
@@ -194,7 +194,7 @@ identically over the UDS socket and the published localhost TCP port
 absolute root path; the daemon routes it to that root's engine (auto-registering
 it on a miss when it owns `.dl/`). `params.root` absent addresses the config view.
 `add_root` / `drop_root` / `shutdown`, and a `ping`/`status` with no
-`root`, are process-level. Methods (`handle_request`, `src/daemon.rs`):
+`root`, are process-level. Methods (`handle_request`, `src/daemon/dispatch.rs`):
 
 | method | params | returns |
 |---|---|---|

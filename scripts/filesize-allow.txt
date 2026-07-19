@@ -1,7 +1,9 @@
 src/anchor.rs
 src/ast.rs
 src/config.rs
-src/daemon.rs
+src/daemon/mod.rs
+src/daemon/root.rs
+src/daemon/dispatch.rs
 src/datapath.rs
 src/db.rs
 src/effect.rs
@@ -26,8 +28,8 @@ src/lower.rs
 src/lsp.rs
 src/mcp.rs
 src/modgraph.rs
-src/parse.rs
-src/propose.rs
+src/parse/mod.rs
+src/propose/mod.rs
 src/scip_import.rs
 src/scip_setup.rs
 src/typecheck.rs

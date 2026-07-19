@@ -339,7 +339,7 @@ diag(path: "src/engine/reconcile.rs", line: 1, severity: "error", code: "arch-go
 diag(path: caller_path, line: call_line, severity: "error", code: "arch-false-edge",
      msg: "Vec::new resolved into src/engine/meta.rs again — a ladder rung lost its uniqueness guard") <-
   edge_receipt(caller_path, call_line, "new", "src/engine/meta.rs", _),
-  caller_path = "src/parse.rs".
+  caller_path = "src/parse/mod.rs".
 
 # guard breach: a corpus-unique-rung edge whose name is not corpus-unique
 # (can only fire if someone edits the guard out of unique_site)

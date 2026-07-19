@@ -253,7 +253,7 @@ stratum by construction), and `@async` introduces nondeterministic arrival order
 confluent only if downstream is monotone in the response). Datafun's monotonicity typing is
 the tool for deciding which `delta`/aggregate rules stay safe.
 
-Lex/grammar collision check — DONE (`src/lex.rs`, `src/parse.rs`):
+Lex/grammar collision check — DONE (`src/lex.rs`, `src/parse/mod.rs`):
 
 - `@` (0x40) is handled nowhere; the lexer's default arm is `_ => bail!("unexpected
   char")` (lex.rs:223), so `@` is free and currently errors loudly. No silent clash.
