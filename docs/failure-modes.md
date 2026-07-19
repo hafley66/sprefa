@@ -640,6 +640,38 @@ sites but not against new code. **missing** = nothing.
   scheduler gate excludes that root from polling, and check whether the
   excluded state can ever self-resolve without the thing the gate skips.
 
+## 23. One-shot positional swallowed by the daemon's program set
+
+- WHAT IT LOOKS LIKE: `dl some-file.dl` inside a root a daemon serves prints
+  query results for rels the file never declares — another program's `?`
+  blocks, with no warning — and the file's own queries never run. The output
+  is well-formed, so nothing looks broken until a rel name gives it away.
+- HOW IT BIT US (2026-07-18 late night): a scratch sym-format probe returned
+  `.dl/call-refresh-map.dl`'s `map_count`/`focus_site` rows instead of its
+  own two probe rels, from an outside-root path AND from an in-repo path;
+  only an explicit isolated `--db` produced the real answer. RCA: `run_file`'s
+  daemon gate (src/lib.rs) attaches whenever a daemon serves the root and
+  there is at most one positional; `run_file_via_daemon` sends only
+  `{"root"}` in the query RPC, and `ensure_daemon`
+  (src/daemon/client.rs:54) discards its `program` argument — the positional
+  file never reaches the daemon, and the response is the watched
+  `.dl/*.dl` set's cached query results. The multi-file comment above the
+  gate ("the daemon serves its own loaded program set, not the positionals")
+  documents the split for >1 positional but the single-positional case falls
+  into the same hole silently.
+- THE LAW: a one-shot given a positional program either evaluates THAT
+  program or refuses loudly. Substituting a different program's results is a
+  wrong-answer bug, not a fallback.
+- THE RAIL: missing — the fix is owned by the erase-no-daemon-split arc (one
+  server code path; the daemon RPC must carry the positional program or the
+  CLI must fall through to in-process when the positional is not the root's
+  watched set). Interim workaround: pass an isolated `--db` (opts out to
+  in-process against that file).
+- SAY THIS TO AN AGENT: "dl printed rels my file does not declare" means the
+  daemon answered with its watched program set — use an isolated `--db`, and
+  do not trust any prior one-shot output produced without one under a live
+  daemon.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
@@ -666,6 +698,7 @@ sites but not against new code. **missing** = nothing.
 | 20 | phantom extract diff / whole-program derived rebuild | enforced | — (f9414e3c + fail-pre-fix steady-state test; c3148d90 counter keying) |
 | 21 | client poll blocking its own UI thread | half | instant conversions committed + pushed (74d6d36, 2026-07-18); still open: a "poll never blocks main" regression test in instant; audit remaining ~40 sync commands there |
 | 22 | effect-free root frozen unsettled | enforced | — (settle-aware poll gate + `effect_free_root_settles_after_boot`, failed pre-fix) |
+| 23 | one-shot positional swallowed by daemon program set | missing | erase-no-daemon-split arc: carry the positional through the daemon RPC, or fall through to in-process (with a loud line) when the positional is not the root's watched set; fail-pre-fix it-test = one-shot a file whose rels are disjoint from `.dl/*.dl` under a live daemon and assert its own query rels come back |
 
 ## How a new rail gets born here
 
