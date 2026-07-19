@@ -500,6 +500,12 @@ sites but not against new code. **missing** = nothing.
   `non_tree_rules_do_not_parse` at 0); `tests/it/budget_cpu.rs` pins the
   governor toggle (uncapped 1.10x vs capped@60% 0.87x). Fix receipt on a
   5-rule program over 159 files: 636 → 159 parses (4x), ~35% cpu, ~30% wall.
+  The sg/ast_yaml residual closed 2026-07-19: those ops parsed their own
+  internal ast-grep root per rule; now a per-file `SgRootCache` (embedded in
+  `AstTreeCache`, sibling map — the two grammar families cannot share one tree
+  object) gives one ast-grep parse per (file, grammar) per tick, pinned by
+  `work_path_parses_once_per_grammar_across_sg_rules` (fail-pre-fix at 3
+  parses for 1) over `SG_PARSE_COUNT`.
 - SAY THIS TO AN AGENT: when a daemon burns CPU, capture stacks first
   (`scripts/dl-trace.sh`) — the 2026-07-18 RCA came from one sample naming
   the exact function, after a day of plausible wrong theories.

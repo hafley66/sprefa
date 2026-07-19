@@ -71,7 +71,7 @@ lock, rusqlite-coupling Layer 5 call_def fix, _source_stage_owner batch.)
 - [ ] **storage-diet 4a**: WITHOUT ROWID junctions; then A=1a dense dictionary ids; step 5 coordinate-composite elimination rides ref-spine.
 - [ ] **erase public no-daemon split** (user directive 2026-07-18): one server code path, `--no-daemon` internal-only; erases the two-db-worlds split. Big it-suite touch — schedule alone. Now also owns failure-modes class 23 (a one-shot positional under a daemon-served root silently returns the watched program set's results — `run_file_via_daemon` sends only `{"root"}`).
 - [ ] **scheduler execution steps 1-2** (scope rows + readiness; shard = schedulable unit for every family, perf-fed costs, demand join as rows — d13dcf56). Write-volume budget lever lands here.
-- [ ] **class 18 residuals**: sg/ast_yaml internal ast-grep tree not shared with AstTreeCache; daemon-side req_id mid-tick cancellation (JobRow.req_id always None).
+- [ ] **class 18 residuals**: ~~sg/ast_yaml internal ast-grep tree not shared with AstTreeCache~~ CLOSED 2026-07-19 (branch ast-tree-share: per-file SgRootCache embedded in AstTreeCache); remaining: daemon-side req_id mid-tick cancellation (JobRow.req_id always None).
 
 ### Parked (wake on demand; plans exist)
 - Auto-architect umbrella (docs/vision-auto-architect.md); decomposition + resource-scheduler children written, unexecuted.

@@ -619,13 +619,16 @@ mod tests {
         assert!(super::READY_FILE_SLOTS <= 2);
     }
 
-    /// Serializes the tests that read `AST_PARSE_COUNT` deltas; no other
-    /// in-process test exercises the `ast` op, so a held lock makes the
-    /// global counter's delta attributable to the guarded section alone.
-    static PARSE_COUNT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    /// The crate-wide lock serializing parse-counter tests (its doc explains
+    /// the attribution contract) — shared with `sg::tests`, which parse too.
+    use crate::sg::PARSE_COUNT_LOCK;
 
     fn ast_parse_count() -> usize {
         AST_PARSE_COUNT.load(Ordering::SeqCst)
+    }
+
+    fn sg_parse_count() -> usize {
+        crate::sg::SG_PARSE_COUNT.load(Ordering::SeqCst)
     }
 
     /// Two ast rules + one comment rule, all over the same Rust files. The
@@ -648,7 +651,11 @@ mod tests {
         "// TODO tidy this fixture\nuse std::fmt;\nfn alpha() {}\nfn beta() {}\n";
 
     fn ast_fixture(tag: &str) -> (Engine, Program) {
-        let program = crate::parse::parse(crate::lex::lex(AST_FIXTURE_PROG).unwrap()).unwrap();
+        parse_fixture(tag, AST_FIXTURE_PROG)
+    }
+
+    fn parse_fixture(tag: &str, prog: &str) -> (Engine, Program) {
+        let program = crate::parse::parse(crate::lex::lex(prog).unwrap()).unwrap();
         let root = std::env::temp_dir().join(format!("sprefa-source-prepare-ast-{tag}"));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
@@ -656,6 +663,94 @@ mod tests {
         engine.ensure_meta().unwrap();
         engine.declare_all(&program, &HashMap::new()).unwrap();
         (engine, program)
+    }
+
+    /// Two sg rules + one ast_yaml rule + one ast rule, all over the same Rust
+    /// files. The class-18 residual: each sg/ast_yaml rule used to build its
+    /// own internal ast-grep root (K rules = K parses); post-fix all three
+    /// share one `SgRootCache` root per grammar, and the `ast` rule keeps its
+    /// own (separate-family) tree-sitter parse.
+    const SG_FIXTURE_PROG: &str = r#"
+        rel fn_item(path: text, line: int).
+        rel sg_fn(path: text, line: int).
+        rel sg_use(path: text, line: int).
+        rel yaml_use(path: text, line: int).
+        fn_item(path, line) <- scan("WORK", "*.rs", path, rev),
+            ast(path, rev, :rust, "(function_item name: (identifier) @fn_name)", line).
+        sg_fn(path, line) <- scan("WORK", "*.rs", path, rev),
+            sg(path, rev, :rust, "fn $NAME() {}", line).
+        sg_use(path, line) <- scan("WORK", "*.rs", path, rev),
+            sg(path, rev, :rust, "use $$$ITEM;", line).
+        yaml_use(path, line) <- scan("WORK", "*.rs", path, rev),
+            ast_yaml(path, rev, :rust, "kind: use_declaration", line).
+    "#;
+
+    /// Fail-pre-fix repro (class-18 residual): one file, two sg rules + one
+    /// ast_yaml rule on the same grammar. Pre-fix each rule parsed the file
+    /// through its own ast-grep root: sg counter delta was 3. Post-fix the
+    /// shared per-file `SgRootCache` (embedded in `AstTreeCache`) makes it 1.
+    /// The ast rule parses once in its own family (tree-sitter table), so the
+    /// ast counter stays 1 — the families are siblings, never merged.
+    #[test]
+    fn work_path_parses_once_per_grammar_across_sg_rules() {
+        let _guard = PARSE_COUNT_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let (mut engine, program) = parse_fixture("sg", SG_FIXTURE_PROG);
+        let rules = source_rules(&program);
+        let (generation, base) =
+            crate::engine::pipeline::source_stage_base(&engine, &rules).unwrap();
+        let job = WorkPathExtractJob {
+            repo: "repo".into(),
+            path: "a.rs".into(),
+            rev: "WORK".into(),
+            rule_indices: vec![0, 1, 2, 3],
+        };
+        let ast_before = ast_parse_count();
+        let sg_before = sg_parse_count();
+        let prepared = prepare_work_path_batch_with_reader(
+            &engine,
+            &rules,
+            &[job],
+            &FileMeta::new(),
+            &HashSet::new(),
+            generation,
+            base,
+            &|_| Ok(AST_FIXTURE_CONTENT.into()),
+        )
+        .unwrap();
+        assert_eq!(
+            sg_parse_count() - sg_before,
+            1,
+            "one file under one grammar must ast-grep-parse exactly once, \
+             no matter how many sg/ast_yaml rules match (pre-fix: 3)"
+        );
+        assert_eq!(
+            ast_parse_count() - ast_before,
+            1,
+            "the ast rule's tree-sitter parse stays in its own family"
+        );
+        assert_eq!(prepared.changed.len(), 1);
+        let PreparedWorkPathBatch { facts, .. } = prepared;
+        engine
+            .with_semantic_generation(|engine| facts.apply(engine, base))
+            .unwrap();
+        // @rusqlite-ok: test asserts staged rows through the raw conn
+        facts.discard(&engine.db).unwrap();
+        for (table, expected) in [
+            ("rel_fn_item", 2i64),
+            ("rel_sg_fn", 2),
+            ("rel_sg_use", 1),
+            ("rel_yaml_use", 1),
+        ] {
+            let count: i64 = engine
+                .db
+                .query_one(table, &format!("SELECT count(*) FROM {table}"), &[], |row| {
+                    Ok(row.get(0)?)
+                })
+                .unwrap();
+            assert_eq!(count, expected, "{table} rows from the shared root");
+        }
     }
 
     /// Fail-pre-fix repro (work path): one file, two ast rules on the same

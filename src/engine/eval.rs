@@ -246,25 +246,41 @@ pub(crate) fn read_source_content(root: &Path, rev: &str, path: &str) -> Result<
 pub static AST_PARSE_COUNT: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
-/// One file's tree-sitter parses, shared across every source rule matching the
-/// file in a tick: at most one parse per grammar. Keyed by the CANONICAL
-/// grammar label so alias spellings (`:rs` / `:rust`) share a tree. Scoped to
-/// a single content snapshot — callers build one per file and drop it with the
-/// file; a cached tree must never outlive the content it was parsed from.
+/// One file's parses, shared across every source rule matching the file in a
+/// tick: at most one parse per grammar. Two sibling maps because two grammar
+/// families parse: `trees` holds bare tree-sitter trees for the `ast` op
+/// (grammar table in `lang_tables.rs`), `sg` holds ast-grep roots for the
+/// `sg`/`ast_yaml` ops (ast-grep-language's `SupportLang` grammars — a root
+/// owns its own source copy and its matchers only run over its own language
+/// type, so the two families cannot share one tree object). Both keyed by the
+/// CANONICAL grammar label so alias spellings (`:rs` / `:rust`) share a parse.
+/// Scoped to a single content snapshot — callers build one per file and drop
+/// it with the file; a cached tree must never outlive the content it was
+/// parsed from.
 #[derive(Default)]
 pub(crate) struct AstTreeCache {
     trees: HashMap<&'static str, tree_sitter::Tree>,
+    pub(crate) sg: crate::sg::SgRootCache,
 }
 
 impl AstTreeCache {
-    /// Number of real parses taken through this cache (== grammars parsed).
+    /// Number of real parses taken through this cache (== grammars parsed,
+    /// both families).
     pub(crate) fn parse_count(&self) -> usize {
-        self.trees.len()
+        self.trees.len() + self.sg.parse_count()
     }
 
-    /// Canonical labels of the grammars parsed, sorted for stable trace output.
-    pub(crate) fn grammar_labels(&self) -> Vec<&'static str> {
-        let mut labels: Vec<&'static str> = self.trees.keys().copied().collect();
+    /// Canonical labels of the grammars parsed, sorted for stable trace
+    /// output; `sg`/`ast_yaml` parses carry an `sg:` prefix since the two
+    /// families' grammar tables are distinct.
+    pub(crate) fn grammar_labels(&self) -> Vec<String> {
+        let mut labels: Vec<String> = self.trees.keys().map(|label| label.to_string()).collect();
+        labels.extend(
+            self.sg
+                .grammar_labels()
+                .iter()
+                .map(|label| format!("sg:{label}")),
+        );
         labels.sort_unstable();
         labels
     }
@@ -495,7 +511,7 @@ pub(crate) fn parse_file(
                     binds = Vec::new();
                     continue;
                 }
-                let hits = crate::sg::run_sg(&content, lang, pattern)?;
+                let hits = crate::sg::run_sg_shared(&mut tree_cache.sg, &content, lang, pattern)?;
                 let mut next: Vec<Bind> = Vec::new();
                 for b in &binds {
                     for (ln, c, eln, ec, mlo, mhi, caps) in &hits {
@@ -547,7 +563,7 @@ pub(crate) fn parse_file(
                 // No literal-prefilter (the YAML body is structural, not a
                 // plain token set like a pattern); the RuleCore matcher is
                 // already cheap on a non-matching file.
-                let hits = crate::sg::run_ast_yaml(&content, lang, yaml)?;
+                let hits = crate::sg::run_ast_yaml(&mut tree_cache.sg, &content, lang, yaml)?;
                 let mut next: Vec<Bind> = Vec::new();
                 for b in &binds {
                     for (ln, c, eln, ec, _mlo, _mhi, caps) in &hits {
