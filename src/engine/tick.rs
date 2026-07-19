@@ -841,6 +841,7 @@ impl Engine {
         let mut affected: HashSet<String> = HashSet::new();
         let mut dirty_edges: HashSet<&str> = HashSet::new();
         self.last_derived_rebuilt = Vec::new();
+        self.last_derived_skipped = Vec::new();
         if changed || need_full || !program_scope.is_empty() {
             crate::activity::set(crate::activity::Phase::Derived, "");
         }
@@ -851,7 +852,8 @@ impl Engine {
             // is not also paying a WAL fsync per statement.
             {
                 let _io = BulkRebuildIo::enter(&self.db)?;
-                self.rebuild_derived(&strata.pre_rules, &strata.pre_rels)?;
+                self.last_derived_skipped =
+                    self.rebuild_derived(&strata.pre_rules, &strata.pre_rels)?;
                 self.rebuild_closures(&edges)?;
             }
             dirty_edges = edges.iter().copied().collect();
@@ -864,7 +866,7 @@ impl Engine {
                 .filter(|r| affected.contains(&r.head.rel)).collect();
             let sub_rels: Vec<String> = strata.pre_rels.iter()
                 .filter(|r| affected.contains(*r)).cloned().collect();
-            self.rebuild_derived(&sub_rules, &sub_rels)?;
+            self.last_derived_skipped = self.rebuild_derived(&sub_rules, &sub_rels)?;
             let aff_edges: Vec<&str> = edges.iter().copied()
                 .filter(|e| affected.contains(*e) || changed_source_rels.contains(*e)).collect();
             self.rebuild_closures(&aff_edges)?;
@@ -882,7 +884,8 @@ impl Engine {
             // relaxation for the same reason.
             {
                 let _io = BulkRebuildIo::enter(&self.db)?;
-                self.rebuild_derived(&strata.pre_rules, &strata.pre_rels)?;
+                self.last_derived_skipped =
+                    self.rebuild_derived(&strata.pre_rules, &strata.pre_rels)?;
                 self.rebuild_closures(&edges)?;
             }
             dirty_edges = edges.iter().copied().collect();
@@ -954,7 +957,8 @@ impl Engine {
         // rebuilt (same seed logic as tick_paths).
         if !strata.post_rels.is_empty() {
             if need_full || extract_changed {
-                self.rebuild_derived(&strata.post_rules, &strata.post_rels)?;
+                let skipped = self.rebuild_derived(&strata.post_rules, &strata.post_rels)?;
+                self.last_derived_skipped.extend(skipped);
             } else if changed || !program_scope.is_empty() {
                 let mut seed = changed_source_rels.clone();
                 seed.extend(program_scope.iter().cloned());
@@ -971,7 +975,8 @@ impl Engine {
                 let sub_post_rels: Vec<String> = strata.post_rels.iter()
                     .filter(|r| aff_post.contains(*r)).cloned().collect();
                 if !sub_post_rels.is_empty() {
-                    self.rebuild_derived(&sub_post_rules, &sub_post_rels)?;
+                    let skipped = self.rebuild_derived(&sub_post_rules, &sub_post_rels)?;
+                    self.last_derived_skipped.extend(skipped);
                 }
             }
         }
@@ -1083,6 +1088,7 @@ impl Engine {
             retracted: recon.retracted,
             derived_strategy,
             derived_rebuilt: &self.last_derived_rebuilt,
+            derived_skipped: &self.last_derived_skipped,
             changed_rels: &changed_rels,
             full_reason: full_reason.as_deref(),
             effects_inflight: inflight_effects,
@@ -1395,6 +1401,7 @@ impl Engine {
             empty_closure_edge.as_ref().map(|edge| format!("closure-missing:{edge}"))
         };
         let mut rebuilt: Vec<String> = Vec::new();
+        self.last_derived_skipped = Vec::new();
         // Edges whose source/derived relation was rebuilt this tick; only these
         // are re-considered by the cond cache (the rest are reused untouched).
         let mut dirty_edges: HashSet<&str> = HashSet::new();
@@ -1403,7 +1410,8 @@ impl Engine {
         // derived set forward so the post-stratum knows which operator inputs moved.
         let mut affected: HashSet<String> = HashSet::new();
         if need_full {
-            self.rebuild_derived(&strata.pre_rules, &strata.pre_rels)?;
+            self.last_derived_skipped =
+                self.rebuild_derived(&strata.pre_rules, &strata.pre_rels)?;
             self.rebuild_closures(&edges)?;
             rebuilt = strata.pre_rels.clone();
             dirty_edges = edges.iter().copied().collect();
@@ -1413,7 +1421,7 @@ impl Engine {
                 .filter(|r| affected.contains(&r.head.rel)).collect();
             let sub_rels: Vec<String> = strata.pre_rels.iter()
                 .filter(|r| affected.contains(*r)).cloned().collect();
-            self.rebuild_derived(&sub_rules, &sub_rels)?;
+            self.last_derived_skipped = self.rebuild_derived(&sub_rules, &sub_rels)?;
             let aff_edges: Vec<&str> = edges.iter().copied()
                 .filter(|e| affected.contains(*e) || changed_source_rels.contains(*e)).collect();
             self.rebuild_closures(&aff_edges)?;
@@ -1455,7 +1463,8 @@ impl Engine {
         // they read, OR an operator head whose input edge was rebuilt this tick.
         if !strata.post_rels.is_empty() {
             if need_full {
-                self.rebuild_derived(&strata.post_rules, &strata.post_rels)?;
+                let skipped = self.rebuild_derived(&strata.post_rules, &strata.post_rels)?;
+                self.last_derived_skipped.extend(skipped);
             } else if changed_facts {
                 let mut seed = changed_source_rels.clone();
                 for r in scc_rules.iter().chain(node2vec_rules.iter()) {
@@ -1471,7 +1480,8 @@ impl Engine {
                 let sub_post_rels: Vec<String> = strata.post_rels.iter()
                     .filter(|r| aff_post.contains(*r)).cloned().collect();
                 if !sub_post_rels.is_empty() {
-                    self.rebuild_derived(&sub_post_rules, &sub_post_rels)?;
+                    let skipped = self.rebuild_derived(&sub_post_rules, &sub_post_rels)?;
+                    self.last_derived_skipped.extend(skipped);
                 }
             }
         }
@@ -1527,6 +1537,7 @@ impl Engine {
             // happened to be non-empty.
             derived_strategy: if need_full { "full" } else if rebuilt.is_empty() { "unchanged" } else { "scoped" },
             derived_rebuilt: &rebuilt,
+            derived_skipped: &self.last_derived_skipped,
             changed_rels: &[],
             full_reason: full_reason.as_deref(),
             effects_inflight: 0,

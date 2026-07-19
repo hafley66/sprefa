@@ -574,6 +574,12 @@ pub struct Engine {
     /// empty. The structural proof the tick's rebuild is affected-scoped, not a
     /// full re-derivation on every edit.
     pub last_derived_rebuilt: Vec<String>,
+    /// Digest-before-write instrumentation (failure-modes class 3 residual /
+    /// class 7 quiet-tick budget): the subset of `last_derived_rebuilt` whose
+    /// re-derivation landed on rows identical to the live table, so the
+    /// unmark/wipe/refill/mark bracket was skipped and ZERO main-db writes
+    /// were issued for them. Reset per tick.
+    pub last_derived_skipped: Vec<String>,
     /// Verify-rollback journal (christmas #14). `None` = not in verify mode (gen
     /// writes go straight to disk, no capture). `Some(...)` = every gen write
     /// first stashes the target's original bytes (`None` entry = the file did not
@@ -685,6 +691,7 @@ impl Engine {
             ),
             fail_rebuild_at_rel: std::cell::RefCell::new(None),
             last_derived_rebuilt: Vec::new(),
+            last_derived_skipped: Vec::new(),
             gen_journal: std::cell::RefCell::new(None),
             exe_identity_changed: std::cell::Cell::new(None),
             call_flip_moved: std::cell::Cell::new(false),

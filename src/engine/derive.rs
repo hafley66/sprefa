@@ -88,6 +88,17 @@ impl Drop for StmtWatch {
     }
 }
 
+/// True when an INSERT statement's target is a digest-before-write TEMP
+/// mirror (`_mirror_<rel>`). Parsed from the uppercased statement head —
+/// lowered INSERTs are always `INSERT [OR IGNORE] INTO <table> ...`.
+fn insert_targets_mirror(upper_sql: &str) -> bool {
+    upper_sql
+        .split_whitespace()
+        .skip_while(|token| *token != "INTO")
+        .nth(1)
+        .is_some_and(|table| table.starts_with("_MIRROR_"))
+}
+
 fn fixpoint_row_max() -> usize {
     std::env::var("DL_FIXPOINT_ROW_MAX")
         .ok()
@@ -318,11 +329,13 @@ impl Engine {
     /// Wipe derived tables and run the semi-naive fixpoint to convergence.
     // ARCH {"url":"engine/50-derive","role":"fixpoint"}
     #[tracing::instrument(skip_all, fields(n_rules = derived_rules.len(), n_rels = derived_rels.len()), level = "debug")]
+    /// Returns the rels whose recomputed rows were identical to the live
+    /// table (digest-before-write skip: zero main-db writes issued for them).
     pub(crate) fn rebuild_derived(
         &self,
         derived_rules: &[&Rule],
         derived_rels: &[String],
-    ) -> Result<()> {
+    ) -> Result<Vec<String>> {
         // P3: instrument the whole pass directly (start/stop), rather than
         // relying on the `activity` phase-transition emitter — a quiet
         // one-shot tick (`--check`) may never make the NEXT phase transition
@@ -345,7 +358,8 @@ impl Engine {
         // work across many small delta statements per iteration, and under a
         // max the hot rel reported only its single largest slice. The count
         // distinguishes "one big join" (n=1) from "many fixpoint passes".
-        let mut stmt_ms: HashMap<String, (i64, i64)> = HashMap::new();
+        let stmt_ms: std::cell::RefCell<HashMap<String, (i64, i64)>> =
+            std::cell::RefCell::new(HashMap::new());
         let stmt_watch = StmtWatch::start();
         let mut timed = |rel: &str, sql: &str| -> Result<usize> {
             // Temporary wedge tracer: DL_STMT_TRACE=1 names each derived
@@ -361,7 +375,12 @@ impl Engine {
             let result = self.db.exec_derived(rel, sql);
             stmt_watch.complete();
             let n = result?;
-            if sql.trim_start().to_ascii_uppercase().starts_with("INSERT") {
+            // Mirror-table statements (digest-before-write staging) are
+            // temp-side work, never a main-db write: a skipped rel must not
+            // appear in the write ledger, so an INSERT targeting `_mirror_*`
+            // bypasses record_write while live-table INSERTs keep riding it.
+            let sql_head = sql.trim_start().to_ascii_uppercase();
+            if sql_head.starts_with("INSERT") && !insert_targets_mirror(&sql_head) {
                 self.record_write(rel, n, "derived");
             }
             // No `flush_pending_syms` here: draining the intern queue after EVERY
@@ -375,11 +394,17 @@ impl Engine {
             // rows, so a string a rule mints (a text `+` concat head) must be in
             // `_strings` before the next pass decodes it — but no more often.
             let ms = t.elapsed().as_millis() as i64;
-            let e = stmt_ms.entry(rel.to_string()).or_insert((0, 0));
+            let mut ms_map = stmt_ms.borrow_mut();
+            let e = ms_map.entry(rel.to_string()).or_insert((0, 0));
             e.0 += ms;
             e.1 += 1;
             Ok(n)
         };
+        // Digest-before-write A/B lever, sibling of DL_NAIVE_FIXPOINT /
+        // DL_NO_HALT_BFS: force every component onto the legacy
+        // wipe-then-refill path (parity checks and field bisection).
+        let no_skip = std::env::var_os("DL_NO_DERIVED_SKIP").is_some();
+        let mut skipped_rels: Vec<String> = Vec::new();
         // Crash-window fix: the wipe is NO LONGER a single upfront DELETE of
         // every derived rel. That shape left every rel wiped (or partial) from
         // the first component's start until `mark_derived_complete` ran once at
@@ -407,6 +432,61 @@ impl Engine {
                              dependency component — rebuild_derived's per-component wipe \
                              assumes one component per rel"
                         );
+                    }
+                }
+                // Digest-before-write (failure-modes class 3 residual, class 7
+                // quiet-tick budget): a NON-recursive single-rel component
+                // evaluates into a TEMP mirror first. Identical rows skip the
+                // whole unmark/wipe/refill/mark bracket — zero main-db writes,
+                // no ledger row, and the completion marker keeps vouching for
+                // the untouched rows (the crash window is never entered). A
+                // moved rowset falls into the same crash-safe bracket as the
+                // legacy arm, refilled FROM the mirror instead of re-running
+                // the joins. Recursive components (fixpoint, native walks) and
+                // zero-column rels stay on the legacy path below.
+                let mirror_eligible = !no_skip
+                    && !recursive
+                    && comp_rels.len() == 1
+                    && self.rels.get(&comp_rels[0]).is_some_and(|meta| !meta.cols.is_empty());
+                if mirror_eligible {
+                    let head_rel = comp_rels[0].clone();
+                    match self.eval_component_mirror(
+                        &head_rel, &comp_rules, derived_rules, &mut timed, &stmt_ms)? {
+                        None => {
+                            // ENSURE the completion marker without ever
+                            // unmarking: on a blank db a rel can reach an
+                            // identical (empty) rowset before it was ever
+                            // marked, and skipping the mark would read as
+                            // "derived-missing" forever — a self-perpetuating
+                            // full rebuild. INSERT OR IGNORE writes zero rows
+                            // (and zero WAL frames) when the marker already
+                            // exists, so a warm skip stays write-free.
+                            self.mark_derived_complete(&comp_rels)?;
+                            tracing::debug!(rel = %head_rel, "[derived] unchanged, skipped rewrite");
+                            skipped_rels.push(head_rel);
+                            continue;
+                        }
+                        Some((mirror_table, cols_csv)) => {
+                            // Same crash-safe order as the legacy arm: unmark,
+                            // wipe, (injection window), refill, mark. The
+                            // refill INSERT rides `timed`, so record_write,
+                            // `_stmt_ms`, and the [stmt-trace] probe stay
+                            // truthful for the write that actually happens.
+                            self.unmark_derived_complete(&comp_rels)?;
+                            tracing::info!(rel = %head_rel, "[derived] full wipe");
+                            timed(&head_rel, &format!("DELETE FROM {}", tbl(&head_rel)))?;
+                            if let Some(fail_rel) = self.fail_rebuild_at_rel.borrow().as_ref() {
+                                if comp_rels.iter().any(|rel| rel == fail_rel) {
+                                    bail!("test-injected crash while rebuilding component `{fail_rel}`");
+                                }
+                            }
+                            timed(&head_rel, &format!(
+                                "INSERT INTO {} ({cols_csv}) SELECT {cols_csv} FROM {mirror_table}",
+                                tbl(&head_rel)))?;
+                            self.db.exec_on(&mirror_table, &format!("DROP TABLE {mirror_table}"))?;
+                            self.mark_derived_complete(&comp_rels)?;
+                            continue;
+                        }
                     }
                 }
                 // Ordering here is critical for crash safety: drop the completion
@@ -460,7 +540,7 @@ impl Engine {
             }
             self.mark_derived_complete(&orphan_rels)?;
         }
-        self.save_stmt_ms(&stmt_ms)?;
+        self.save_stmt_ms(&stmt_ms.borrow())?;
         if !derived_rels.is_empty() {
             let tick = crate::activity::snapshot().tick;
             let detail = format!("{} rel(s): {}", derived_rels.len(), derived_rels.join(", "));
@@ -471,7 +551,121 @@ impl Engine {
                 &detail,
             );
         }
-        Ok(())
+        Ok(skipped_rels)
+    }
+
+    /// Digest-before-write staging: evaluate one non-recursive, single-rel
+    /// component into a connection-local TEMP mirror table and compare it
+    /// against the live table. Returns `None` when the recomputed rowset is
+    /// identical (mirror dropped; the caller skips the whole rebuild
+    /// bracket), or `Some((mirror_table, cols_csv))` when the content moved
+    /// (the caller wipes and refills from the mirror inside the usual
+    /// crash-safe bracket).
+    ///
+    /// The mirror lives in SQLite's TEMP schema (`temp_store=FILE`, its own
+    /// pager) — its pages never touch the main db or its WAL, so an identical
+    /// re-derivation costs the main db zero write churn (the derived twin of
+    /// `refresh_rel`'s source-side rows-identical skip). Non-recursive means
+    /// the body never reads its own head, so redirecting the INSERT target
+    /// via `lower_rule_to` computes exactly the rows the live-table statement
+    /// would; the mirror replicates the live table's declared columns and
+    /// PRIMARY KEY, so INSERT OR IGNORE dedup and merge-upserts behave
+    /// identically. Compare = COUNT on both sides plus a one-direction
+    /// EXCEPT: both sides dedup on the same PK, so equal counts and an empty
+    /// mirror-minus-live prove set equality (SQL set ops treat NULLs as
+    /// equal, matching the NULL-padded-head case). Mirror statements ride
+    /// `timed` — the same [stmt-trace]/watchdog/`_stmt_ms` attribution as any
+    /// derived statement — but `insert_targets_mirror` keeps them out of
+    /// record_write: a skipped rel must not appear in the write ledger.
+    fn eval_component_mirror(
+        &self,
+        head_rel: &str,
+        comp_rules: &[usize],
+        derived_rules: &[&Rule],
+        timed: &mut impl FnMut(&str, &str) -> Result<usize>,
+        stmt_ms: &std::cell::RefCell<HashMap<String, (i64, i64)>>,
+    ) -> Result<Option<(String, String)>> {
+        let meta = self
+            .rels
+            .get(head_rel)
+            .ok_or_else(|| anyhow::anyhow!("unknown derived relation {head_rel}"))?;
+        let col_defs: Vec<String> = meta
+            .cols
+            .iter()
+            .map(|c| format!("\"{}\" {}", c.name, c.sql()))
+            .collect();
+        let pk_cols: Vec<String> = match &meta.key {
+            Some(key) => key.iter().map(|c| format!("\"{c}\"")).collect(),
+            None => meta.cols.iter().map(|c| format!("\"{}\"", c.name)).collect(),
+        };
+        let cols_csv = meta
+            .cols
+            .iter()
+            .map(|c| format!("\"{}\"", c.name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mirror = format!("_mirror_{head_rel}");
+        // Dropped and recreated per call: a TEMP table outlives one rebuild on
+        // a daemon connection, and a program edit can change the column set
+        // between ticks. (This also sweeps a mirror orphaned by a crash
+        // injected inside the rewrite bracket.)
+        self.db.exec_on(&mirror, &format!("DROP TABLE IF EXISTS {mirror}"))?;
+        self.db.exec_on(
+            &mirror,
+            &format!(
+                "CREATE TEMP TABLE {mirror} ({}, PRIMARY KEY ({}))",
+                col_defs.join(", "),
+                pk_cols.join(", ")
+            ),
+        )?;
+        crate::activity::detail(format!("derived: {head_rel}"));
+        for &ri in comp_rules {
+            let sql = crate::lower::lower_rule_to(derived_rules[ri], &self.rels, &mirror, &[])?;
+            timed(head_rel, &sql)?;
+        }
+        // Pass boundary: strings these rules minted must be durable before a
+        // refill copies their sym ids into the live table, and the
+        // "empty intern queue on return" invariant holds for this path too.
+        self.db.flush_pending_syms()?;
+        let t_compare = std::time::Instant::now();
+        let live = tbl(head_rel);
+        let mirror_rows: i64 = self.db.query_one(
+            head_rel,
+            &format!("SELECT COUNT(*) FROM {mirror}"),
+            &[],
+            |row| Ok(row.get(0)?),
+        )?;
+        let live_rows: i64 = self.db.query_one(
+            head_rel,
+            &format!("SELECT COUNT(*) FROM {live}"),
+            &[],
+            |row| Ok(row.get(0)?),
+        )?;
+        let identical = mirror_rows == live_rows && {
+            let novel: i64 = self.db.query_one(
+                head_rel,
+                &format!(
+                    "SELECT COUNT(*) FROM (SELECT {cols_csv} FROM {mirror} \
+                     EXCEPT SELECT {cols_csv} FROM {live})"
+                ),
+                &[],
+                |row| Ok(row.get(0)?),
+            )?;
+            novel == 0
+        };
+        {
+            // The compare is per-rel attributable work — same `_stmt_ms`
+            // bucket as the component's statements.
+            let mut ms_map = stmt_ms.borrow_mut();
+            let entry = ms_map.entry(head_rel.to_string()).or_insert((0, 0));
+            entry.0 += t_compare.elapsed().as_millis() as i64;
+            entry.1 += 1;
+        }
+        if identical {
+            self.db.exec_on(&mirror, &format!("DROP TABLE {mirror}"))?;
+            return Ok(None);
+        }
+        Ok(Some((mirror, cols_csv)))
     }
 
     /// Evaluate ONE already-wiped rel-component to convergence. The rels this

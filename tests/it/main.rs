@@ -84,6 +84,7 @@ mod data_ops;
 mod dataflow;
 mod derived_intern_n1;
 mod derived_scope;
+mod derived_skip;
 mod digest_skip;
 mod discover;
 mod docs_cmd;

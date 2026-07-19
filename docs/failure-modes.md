@@ -72,14 +72,21 @@ sites but not against new code. **missing** = nothing.
 - THE LAW: attribute motion to the heads that moved — "the full-layer wipe
   downgrades to the scoped rebuild seeded with them" (CLAUDE.md:55); a rebuild
   you cannot attribute is a rebuild you pay for in GBs.
-- THE RAIL: half. Program-edit arm enforced by tests/it/derived_scope.rs
+- THE RAIL: mostly enforced. Program-edit arm by tests/it/derived_scope.rs
   (proven fail-pre-fix; the `DL_STMT_TRACE=1` probe at
   tests/it/derived_scope.rs:6-9 makes "was this rel's table touched" directly
   observable) and the `_derived_complete` marker tests in
-  tests/it/tick_digest.rs. MISSING for the residual: UNATTRIBUTABLE full
-  rebuilds (blank slate, carry, edge-list change, crash-recovery) still rewrite
-  byte-identical tables in SQL — the digest-before-write content skip is not
-  landed (CLAUDE.md:55, docs/rca-exe-swap-write-storm.md:149-151).
+  tests/it/tick_digest.rs. The digest-before-write content skip landed
+  2026-07-18 for the residual: every NON-recursive derived component now
+  evaluates into a TEMP mirror (its own pager, zero main-db WAL) and an
+  identical rowset skips the whole unmark/wipe/refill/mark bracket, on
+  attributable AND unattributable rebuilds alike — receipts in
+  tests/it/derived_skip.rs (fail-pre-fix: 11,470,112 WAL bytes per no-op
+  re-derive of a 160k-row rel pre-fix vs the ~2.5MB tick noise floor
+  post-fix; `DL_NO_DERIVED_SKIP=1` is the parity lever; perf.jsonl
+  `derived.skipped` + `Engine::last_derived_skipped` name the skips).
+  Residual: RECURSIVE components (fixpoint/native-walk) still rewrite
+  byte-identical rows inside an unattributable full rebuild.
 - SAY THIS TO AN AGENT: Before wiping a derived table, attribute the change to
   the moved rule heads and rebuild only that subgraph; if you cannot attribute
   it, say so in the tick log.
@@ -172,11 +179,19 @@ sites but not against new code. **missing** = nothing.
   check fails when a quiet tick writes.
 - THE LAW: a quiet tick writes zero rows; anything else is a defect by
   definition (examples/chaos-soak.dl:23-31).
-- THE RAIL: MISSING. The ledger exists (src/rels/write_ledger.rs; flushed at
-  src/engine/tick.rs:582) and chaos-soak.dl names the assertion; nothing runs
-  it. Proposed rail: serve examples/chaos-soak.dl under the daemon in CI
-  (DL_POLL_SECS small) and fail the run if `_write_ledger` shows any row for
-  the root outside the 30s heartbeat tick.
+- THE RAIL: MISSING (the CI soak is still not wired), but the derived-side
+  writer class is closed: an identical re-derivation now skips the wipe+refill
+  and calls no record_write, so it can no longer land `_write_ledger` rows on
+  a quiet tick (digest-before-write, tests/it/derived_skip.rs — a skipped rel
+  writes zero rows AND zero WAL bytes). Proposed rail unchanged: serve
+  examples/chaos-soak.dl under the daemon in CI (DL_POLL_SECS small) and fail
+  the run if `_write_ledger` shows any row for the root outside the 30s
+  heartbeat tick. New finding while measuring (2026-07-18): `declare_all`
+  DROP+CREATEs every rel's `_txt` VIEW unconditionally each tick
+  (src/engine/declare.rs:4, `create_rel_view`), rewriting sqlite_master — a measured
+  ~2.5MB WAL noise floor per tick even when zero rel rows move. The ledger
+  never sees it (schema pages, not rows), so the CI soak should also assert
+  WAL byte growth, not just ledger rows.
 - SAY THIS TO AN AGENT: On a quiet tick write nothing — check `_write_ledger`
   for your root and treat any row there as a defect you introduced.
 
@@ -631,11 +646,11 @@ sites but not against new code. **missing** = nothing.
 |---|-------|-------------|------------------|
 | 1 | per-row writes / N+1 | half | waiver-audit the 40 HEAD static-n1 findings (792cc902), promote `.dl/static-n1.dl` to error severity |
 | 2 | nondeterministic extraction | enforced | replace the lossy df_node id (`file:line:col`) with a repo-scoped id — ref-spine owns (docs/rca-exe-swap-write-storm.md:147) |
-| 3 | full-layer rebuild | half | derived-layer content skip (digest-before-write) for UNATTRIBUTABLE full rebuilds (CLAUDE.md:55, docs/rca-exe-swap-write-storm.md:149-151) |
+| 3 | full-layer rebuild | mostly enforced | digest-before-write landed for non-recursive components (tests/it/derived_skip.rs, DL_NO_DERIVED_SKIP lever); residual: recursive components still rewrite byte-identical rows on unattributable full rebuilds |
 | 4 | unguarded recompute | enforced | — |
 | 5 | crash-window half-written state | enforced | — |
 | 6 | exe-swap / daemon-restart storm | enforced | — |
-| 7 | quiet-tick write budget | missing | serve examples/chaos-soak.dl under the daemon in CI; fail on any `_write_ledger` row for the root on a quiet tick (examples/chaos-soak.dl:23-31) |
+| 7 | quiet-tick write budget | missing | serve examples/chaos-soak.dl under the daemon in CI; fail on any `_write_ledger` row for the root on a quiet tick (examples/chaos-soak.dl:23-31) — and assert WAL byte growth too: `declare_all`'s unconditional per-rel VIEW DROP+CREATE rewrites sqlite_master every tick (~2.5MB/tick noise floor measured in tests/it/derived_skip.rs), invisible to the row ledger |
 | 8 | lock across blocking calls | missing | hold-set instrumentation in the `lock`/`rlock`/`plock` helpers (83/107 sites, docs/effect-inventory.md:262) + static rail on lock-then-block in one fn body |
 | 9 | unbounded channels | missing | static rail banning unbounded ctors without a `// @unbounded:` waiver; drive 3 → 0-or-waivered (docs/effect-inventory.md:308-315) |
 | 10 | magic rel-name reads | enforced | — |
