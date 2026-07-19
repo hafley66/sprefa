@@ -4033,6 +4033,7 @@ dependencies = [
  "clap",
  "crossbeam-channel",
  "fd-lock",
+ "futures",
  "globset",
  "http-body-util",
  "hyper",
@@ -4092,6 +4093,7 @@ dependencies = [
  "tree-sitter-starlark",
  "tree-sitter-toml-ng",
  "tree-sitter-yaml",
+ "ulid",
 ]
 
 [[package]]

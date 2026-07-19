@@ -409,8 +409,7 @@ impl JobQueue {
         let db = plock(&self.db);
         db.begin_immediate()?;
         let body = (|| -> Result<ReconcileReport> {
-            let mut report = ReconcileReport::default();
-            report.dirty_reruns = db.exec_params(
+            let dirty_reruns = db.exec_params(
                 "Jobs",
                 "UPDATE Jobs SET status='Pending', attempts=0, run_at=?1, lock_at=NULL, \
                    lock_by=NULL, done_at=NULL, last_result=NULL, \
@@ -432,6 +431,7 @@ impl JobQueue {
                 &[COLD_QUEUE.into(), now.into()],
                 |r| Ok(r.get::<_, i64>(0)?),
             )?;
+            let mut cold_promoted = 0usize;
             if runnable_unheld.is_none() {
                 let next_root: Option<String> = db.query_opt(
                     "Jobs",
@@ -443,7 +443,7 @@ impl JobQueue {
                     |r| Ok(r.get::<_, String>(0)?),
                 )?;
                 if let Some(root) = next_root {
-                    report.cold_promoted = db.exec_params(
+                    cold_promoted = db.exec_params(
                         "Jobs",
                         "UPDATE Jobs SET run_at=?2, metadata=json_remove(metadata, '$.hold') \
                          WHERE job_type=?1 AND json_extract(metadata, '$.hold')=1 \
@@ -452,9 +452,10 @@ impl JobQueue {
                     )?;
                 }
             }
+            let mut budget_deferred = 0usize;
             if let Some(budget) = &self.budget {
                 if let Some(resume_at) = budget.deferral_until(now) {
-                    report.budget_deferred = db.exec_params(
+                    budget_deferred = db.exec_params(
                         "Jobs",
                         "UPDATE Jobs SET run_at=?2 WHERE job_type=?1 AND status='Pending' \
                            AND run_at<=?3 AND json_extract(metadata, '$.hold') IS NULL",
@@ -462,13 +463,13 @@ impl JobQueue {
                     )?;
                 }
             }
-            report.trimmed = db.exec_params(
+            let trimmed = db.exec_params(
                 "Jobs",
                 "DELETE FROM Jobs WHERE status='Done' AND done_at IS NOT NULL AND done_at<?1 \
                    AND json_extract(metadata, '$.dirty') IS NULL",
                 &[(now - DONE_RETAIN_SECS).into()],
             )?;
-            Ok(report)
+            Ok(ReconcileReport { dirty_reruns, cold_promoted, budget_deferred, trimmed })
         })();
         finish_tx(&db, &body)?;
         body
@@ -501,6 +502,7 @@ impl JobQueue {
     ///   - `Queued`/`Running` rows get a durable `$.cancel` metadata mark and
     ///     an in-process flag the worker consults at the next job boundary
     ///     (`take_cancel` -> `AbortError` -> `Killed`, no retry burn).
+    ///
     /// Returns `(killed_pending, flagged_in_flight)`.
     pub(crate) fn cancel_req(&self, req_id: &str) -> Result<(usize, usize)> {
         let now = now_secs();
@@ -644,7 +646,6 @@ fn active_cold_root(db: &Db) -> Result<Option<String>> {
         &[COLD_QUEUE.into()],
         |r| Ok(r.get::<_, String>(0)?),
     )
-    .map_err(Into::into)
 }
 
 /// Commit on `Ok`, roll back on `Err` — keeps a failed mid-transaction op from
