@@ -438,6 +438,11 @@ pub fn lower_body_projection(body: &[BodyItem], rels: &Rels, vars: &[String]) ->
         let e = term_sql_text(&Term::Var(v.clone()), &canon, &tys)?;
         exprs.push(format!("{e} AS \"{v}\""));
     }
+    // A rule that binds no vars (its request identity lives entirely in the
+    // digest, e.g. a wildcard-bucket `clock(secs, _)` salt) still needs the body
+    // as an emission gate: project a constant so satisfiability yields exactly
+    // one row and an empty body result emits nothing.
+    if exprs.is_empty() { exprs.push("1 AS \"__gate\"".to_string()); }
     let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
     Ok(format!("SELECT DISTINCT {} FROM {}{}", exprs.join(", "), froms.join(", "), where_sql))
 }

@@ -37,6 +37,70 @@ pub(crate) fn async_bound_vars(rule: &Rule) -> Vec<String> {
     seen
 }
 
+/// Count every variable occurrence across the rule: head terms, body atom terms
+/// (positive and negated, positional and still-named), comparison sides, and
+/// effect args/outs. A `clock` bucket variable with exactly one occurrence (its
+/// own binding slot) binds nothing the rule uses, so it is wildcard-equivalent
+/// for the request-digest salt below.
+fn rule_var_uses(rule: &Rule) -> HashMap<String, usize> {
+    fn walk(t: &Term, uses: &mut HashMap<String, usize>) {
+        match t {
+            Term::Var(v) => { *uses.entry(v.clone()).or_insert(0) += 1; }
+            Term::Arith { lhs, rhs, .. } => { walk(lhs, uses); walk(rhs, uses); }
+            Term::Call { args, .. } => for a in args { walk(a, uses); },
+            Term::Interp(parts) => for p in parts {
+                if let InterpPart::Var(v) = p { *uses.entry(v.clone()).or_insert(0) += 1; }
+            },
+            _ => {}
+        }
+    }
+    let mut uses = HashMap::new();
+    for t in &rule.head.terms { walk(t, &mut uses); }
+    for b in &rule.body {
+        match b {
+            BodyItem::Pos(a) | BodyItem::Neg(a) => {
+                for t in &a.terms { walk(t, &mut uses); }
+                for (_, t) in &a.named { walk(t, &mut uses); }
+            }
+            BodyItem::Cmp(c) => { walk(&c.lhs, &mut uses); walk(&c.rhs, &mut uses); }
+            BodyItem::Effect { args, outs, .. } => {
+                for t in args { walk(t, &mut uses); }
+                for t in outs { walk(t, &mut uses); }
+            }
+            _ => {}
+        }
+    }
+    uses
+}
+
+/// The distinct periods of `clock(secs, bucket)` body atoms whose bucket term
+/// binds nothing the rule uses — a wildcard `_`, or a variable appearing nowhere
+/// else in the rule. Each such period contributes `(secs, now/secs)` to the
+/// rule's REQUEST digest in `rebuild_async` WITHOUT the bucket entering any row:
+/// a fresh bucket mints a fresh request id (the cadence re-fire of the rate-cap/
+/// dedup contract), while every head and derived rowset stays byte-identical
+/// across the flip. A bucket variable the rule actually uses keeps the classic
+/// bound-bucket behavior (project it into the effect args to vary the digest).
+/// Sorted so the salt string is deterministic.
+pub(crate) fn clock_salt_periods(rule: &Rule) -> Vec<i64> {
+    let uses = rule_var_uses(rule);
+    let mut periods: Vec<i64> = Vec::new();
+    for b in &rule.body {
+        let BodyItem::Pos(a) = b else { continue };
+        if a.rel != "clock" { continue; }
+        let [Term::Int(secs), bucket] = a.terms.as_slice() else { continue };
+        if *secs <= 0 { continue; }
+        let salted = match bucket {
+            Term::Wild => true,
+            Term::Var(bucket_var) => uses.get(bucket_var).copied().unwrap_or(0) == 1,
+            _ => false,
+        };
+        if salted && !periods.contains(secs) { periods.push(*secs); }
+    }
+    periods.sort_unstable();
+    periods
+}
+
 /// Runs one queued `@async` request. `kind` is the response rel name; `args` is
 /// the bound-var object the rule body projected; the return is one string per
 /// unbound head slot, in head order. Pure: it holds no engine state, lives in the
@@ -360,9 +424,20 @@ impl Engine {
             // The FULL body solution (all positive-atom-bound vars) is the head
             // rebuild env (D-4); the effect args are a subset/expression over it.
             let vars = async_bound_vars(r);
-            if vars.is_empty() {
+            // Wildcard-bucket clock salt: each `clock(secs, _)` (or unused-var
+            // bucket) atom folds (secs, now/secs) into the request digest below,
+            // so the request id advances once per bucket while the bucket itself
+            // never lands in a row. Time lives in the request key, never in the
+            // row space — a flip invalidates zero derived rows.
+            let salt_periods = clock_salt_periods(r);
+            let now = crate::engine::now_secs();
+            let clock_salt: String = salt_periods.iter()
+                .map(|secs| format!("\u{0}clock:{secs}={}", now / secs))
+                .collect();
+            if vars.is_empty() && salt_periods.is_empty() {
                 bail!("@async rule (rel `{kind}`) binds no request args; its body must have \
-                       a positive atom with at least one variable");
+                       a positive atom with at least one variable (or a wildcard-bucket \
+                       `clock(secs, _)` atom to key the request on cadence)");
             }
             let sql = crate::lower::lower_body_projection(&r.body, &self.rels, &vars)?;
             let solutions: Vec<serde_json::Map<String, serde_json::Value>> = {
@@ -439,8 +514,10 @@ impl Engine {
                         hole.insert(ckey.clone(), serde_json::json!(group.join(",")));
                     }
                     let args_json = serde_json::Value::Object(hole).to_string();
+                    // `clock_salt` is empty for rules without a wildcard-bucket
+                    // clock atom, keeping their ids byte-identical to before.
                     let id = blake3::hash(
-                        format!("{head_rel}\u{0}{kind}\u{0}{args_json}").as_bytes()
+                        format!("{head_rel}\u{0}{kind}\u{0}{args_json}{clock_salt}").as_bytes()
                     ).to_hex().to_string();
                     // No single body solution keys the batch — the head rebuilds
                     // purely from the fanned-out response (`full_json` empty), so a
@@ -464,11 +541,15 @@ impl Engine {
                     hole.insert(key.clone(), eval_term_json(a, &sol));
                 }
                 let args_json = serde_json::Value::Object(hole).to_string();
-                // The digest keys on (head rel, effect kind, hole map) — two rules
-                // may call the same `sh` fn with the same args but reconstruct
-                // different heads, so the head rel is part of the identity.
+                // The digest keys on (head rel, effect kind, hole map, clock
+                // salt) — two rules may call the same `sh` fn with the same args
+                // but reconstruct different heads, so the head rel is part of the
+                // identity. `clock_salt` (empty without a wildcard-bucket clock
+                // atom, keeping old ids byte-identical) folds the current bucket
+                // into the id so a cadence rule re-fires once per bucket with no
+                // bucket column anywhere in the row space.
                 let id = blake3::hash(
-                    format!("{head_rel}\u{0}{kind}\u{0}{args_json}").as_bytes()
+                    format!("{head_rel}\u{0}{kind}\u{0}{args_json}{clock_salt}").as_bytes()
                 ).to_hex().to_string();
                 let full_json = serde_json::Value::Object(sol).to_string();
                 rows.push(vec![

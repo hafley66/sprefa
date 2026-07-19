@@ -893,7 +893,7 @@ pub(crate) fn every_rels_used(prog: &Program) -> bool {
 pub(crate) fn clock_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![RelDecl { name: "clock".into(), cols: vec![c("secs", Type::Int), c("bucket", Type::Int)], group: "clock",
-        doc: "the current time bucket now/secs per named period, present EVERY tick (not edge-triggered like every); clock(300,b) binds b to a monotone int advancing once per 300s — join it to vary a digest or gate on cadence, no @next counter", ..Default::default() }]
+        doc: "the current time bucket now/secs per named period, present EVERY tick (not edge-triggered like every); clock(300,b) binds b to a monotone int advancing once per 300s — join it to vary a digest or gate on cadence, no @next counter; in an @async/@stream body, clock(300, _) (wildcard or unused-var bucket) salts the REQUEST digest with the current bucket while binding nothing — the request re-fires once per bucket and no row ever stores the bucket, so a flip invalidates zero derived rows", ..Default::default() }]
 }
 
 /// The distinct `secs` periods the program names in a `clock(secs, bucket)` body
