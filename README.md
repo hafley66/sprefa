@@ -638,7 +638,7 @@ Two usage forms, then the flag reference:
 | invocation | effect |
 |---|---|
 | `dl prog.dl` | run; print `?` queries as TSV |
-| `dl` (no positional) | discovery: merge every `<root>/.dl/*.dl` (filename order, shared `rel` decls dedupe); auto-cache at `.dl/cache.db` (gitignored automatically) |
+| `dl` (no positional) | discovery: merge every `<root>/.dl/*.dl` (filename order, shared `rel` decls dedupe); auto-cache at the shared per-root `$XDG_STATE_HOME/sprefa/roots/<key>/db.sqlite` (the same db a daemon serves) |
 
 The flag table below is generated from the clap `Cli` struct (each flag's
 `///` doc-comment) by [examples/cli-doc.dl](examples/cli-doc.dl), so it can't
@@ -655,7 +655,7 @@ doc-comment in [src/cli/mod.rs](src/cli/mod.rs) and rerun the generator.
 | `--changed <CHANGED>` | Drive one incremental tick for these changed paths (the delta path the watcher uses), instead of a full run. Repeatable |
 | `--check` | Lint/ban mode: render the `diag` relation to stderr. Exit 0 clean, 2 if any `error`-severity row exists (Claude Code's blocking-hook code), 1 on a broken program. For pre-commit / CI / Claude Code hooks. See docs/rails.md |
 | `--cmd-budget <CMD_BUDGET>` | Cap `cmd` invocations per tick (or DL_CMD_BUDGET); over budget is a loud error, never a silent truncation. Default: unlimited |
-| `--db <DB>` | Persist derived tables to a SQLite db at this path (default: in-memory; discovery mode defaults to `<root>/.dl/cache.db`). Derived relations land as plain-TEXT `rel_<name>` tables, queryable by anything that reads SQLite |
+| `--db <DB>` | Persist derived tables to a SQLite db at this path (default: in-memory; discovery mode defaults to the per-root `$XDG_STATE_HOME/sprefa/roots/<key>/db.sqlite` the daemon also serves). Derived relations land as plain-TEXT `rel_<name>` tables, queryable by anything that reads SQLite |
 | `--diag-json` | Like --check but emit the diagnostics as a JSON array on stdout |
 | `--dialect` | _undocumented_ |
 | `--fix` | With --move, write the rewritten files instead of previewing |

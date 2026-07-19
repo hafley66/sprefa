@@ -62,14 +62,14 @@ fn fixture(tag: &str) -> PathBuf {
     fs::create_dir_all(d.join("src")).unwrap();
     fs::write(d.join("src/x.rs"), "fn alpha() {}\nlet beta = 1;\n").unwrap();
     fs::write(d.join(".dl/10-a.dl"), concat!(
-        "rel a_hit(p: file, l: int).\n",
-        "a_hit(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), match(p, rev, /alpha/, l).\n",
-        "diag(path: p, line: l, severity: \"error\", code: \"rail-a\", msg: \"alpha found\") <- a_hit(p, l).\n",
+        "rel a_hit(path: file, line: int).\n",
+        "a_hit(path, line) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /alpha/, line).\n",
+        "diag(path: path, line: line, severity: \"error\", code: \"rail-a\", msg: \"alpha found\") <- a_hit(path, line).\n",
     )).unwrap();
     fs::write(d.join(".dl/20-b.dl"), concat!(
-        "rel b_hit(p: file, l: int).\n",
-        "b_hit(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), match(p, rev, /beta/, l).\n",
-        "diag(path: p, line: l, severity: \"warn\", code: \"rail-b\", msg: \"beta found\") <- b_hit(p, l).\n",
+        "rel b_hit(path: file, line: int).\n",
+        "b_hit(path, line) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /beta/, line).\n",
+        "diag(path: path, line: line, severity: \"warn\", code: \"rail-b\", msg: \"beta found\") <- b_hit(path, line).\n",
     )).unwrap();
     d
 }
@@ -156,9 +156,9 @@ fn explicit_program_bypasses_discovery() {
     fs::create_dir_all(d.join("src")).unwrap();
     fs::write(d.join("src/x.rs"), "fn alpha() {}\n").unwrap();
     fs::write(d.join("p.dl"), concat!(
-        "rel hit(p: file, l: int).\n",
-        "hit(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), match(p, rev, /alpha/, l).\n",
-        "? hit(p, l).\n",
+        "rel hit(path: file, line: int).\n",
+        "hit(path, line) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /alpha/, line).\n",
+        "? hit(path, line).\n",
     )).unwrap();
     let out = Command::new(DL)
         .arg(d.join("p.dl"))

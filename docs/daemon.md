@@ -232,8 +232,8 @@ One-shot / mode flags (there is **no `--root`**; the root is the cwd):
 | flag | effect |
 |---|---|
 | `dl prog.dl` | run once; print `?` queries as TSV |
-| `dl` (no positional) | discovery: merge every `<root>/.dl/*.dl` (filename order); auto-cache at `.dl/cache.db` |
-| `--db <path>` | persist to SQLite (default in-memory; discovery defaults to `.dl/cache.db`). Derived tables are plain-TEXT `rel_<name>` |
+| `dl` (no positional) | discovery: merge every `<root>/.dl/*.dl` (filename order); auto-cache at the shared per-root `roots/<key>/db.sqlite` |
+| `--db <path>` | persist to SQLite (default in-memory; discovery defaults to the per-root `roots/<key>/db.sqlite` the daemon also serves). Derived tables are plain-TEXT `rel_<name>` |
 | `--lsp` | LSP server over stdio; `diag` rows become live squiggles. Accepts `--stdio` as an alias (clients append it) |
 | `--mcp` | MCP (JSON-RPC over stdio) server; binds the program's `rpc`-class `@in`/`@out` ports |
 | `--check` | render `diag` to stderr. Exit 0 clean, 2 on any `error`-severity row (blocking-hook code), 1 broken program |

@@ -246,6 +246,49 @@ fn hook_check_fallback_is_read_only() {
         "the hook fast path must not write the root db");
 }
 
+/// (b4) Steady state (the L2 no-re-extraction gate): a SECOND fallback open
+/// of the shared root db with nothing changed re-extracts nothing — the
+/// `extract:*` digests the first one-shot persisted match, so no
+/// `[extract] ... REBUILD` verdict fires on the re-open.
+#[test]
+fn fallback_reopen_is_steady_state_no_reextraction() {
+    let sb = Sandbox::new("steady");
+    // A real scan+match source rule so the extract families actually run
+    // (a fact-only program would trivially "skip" extraction).
+    fs::create_dir_all(sb.root.join("src")).unwrap();
+    fs::write(sb.root.join("src").join("x.rs"), "fn alpha() {}\n").unwrap();
+    fs::write(sb.root.join(".dl").join("p.dl"),
+        "rel alpha_hit(path: file, line: int).\n\
+         alpha_hit(path, line) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /alpha/, line).\n").unwrap();
+
+    let run_check = || {
+        Command::new(DL)
+            .arg("--check")
+            .current_dir(&sb.root)
+            .env("DL_NO_DAEMON", "1")
+            .env("XDG_STATE_HOME", &sb.home)
+            .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+            .output()
+            .expect("run dl --check")
+    };
+
+    // Cold fallback: builds the shared root db, extraction rebuilds (first-run).
+    let out = run_check();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "clean program should exit 0: {stderr}");
+    assert!(stderr.lines().any(|line| line.contains("[extract]") && line.contains("REBUILD")),
+        "the cold fallback run must extract (REBUILD verdict expected): {stderr}");
+    assert_eq!(sb.root_dbs().len(), 1, "cold run lands in roots/<key>/db.sqlite");
+
+    // Steady-state re-open: same root db, nothing changed — zero re-extraction.
+    let out = run_check();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "warm re-open should exit 0: {stderr}");
+    assert!(!stderr.lines().any(|line| line.contains("[extract]") && line.contains("REBUILD")),
+        "re-opening the shared root db with nothing changed must not re-extract: {stderr}");
+    assert_eq!(sb.root_dbs().len(), 1, "the re-open must reuse the same root db, never mint a second");
+}
+
 /// (c) An explicit program + `--db` keeps the old in-process path exactly:
 /// no daemon attach attempted even when a daemon is running for the root.
 #[test]
