@@ -1,8 +1,9 @@
 //! Repo-local program discovery: `dl` with no positional resolves
 //! `<root>/.dl/*.dl` (lexicographic), merges the files into one program, and
-//! defaults the db to `<root>/.dl/.state/cache.db`. A missing or empty `.dl` dir is a
-//! loud error so a typo'd directory never makes `--check` pass green by
-//! checking nothing.
+//! defaults the db to the shared per-root
+//! `$XDG_STATE_HOME/sprefa/roots/<key>/db.sqlite` (storage-endgame L2: one db
+//! per corpus, daemon or not). A missing or empty `.dl` dir is a loud error so
+//! a typo'd directory never makes `--check` pass green by checking nothing.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,15 +18,32 @@ fn sandbox(tag: &str) -> PathBuf {
     dir
 }
 
+/// The sandboxed XDG state home for a fixture dir (beside the root, hermetic).
+fn state_home(dir: &Path) -> PathBuf {
+    dir.join(".xdg-state")
+}
+
+/// Every `roots/<key>/db.sqlite` under the sandboxed state home.
+fn root_dbs(dir: &Path) -> Vec<PathBuf> {
+    let roots = state_home(dir).join("sprefa").join("roots");
+    fs::read_dir(&roots).into_iter().flatten().flatten()
+        .map(|entry| entry.path().join("db.sqlite"))
+        .filter(|db| db.is_file())
+        .collect()
+}
+
 /// Run `dl` with NO program positional against `dir` as root. Hermetic:
 /// `DL_NO_DAEMON=1` so these program-discovery/db-defaulting checks never
 /// reach toward a real developer daemon (fixed after a live-daemon-pollution
 /// incident: the discovery-mode --check daemon-first fix made this file's
-/// unguarded invocations daemon-eligible for the first time).
+/// unguarded invocations daemon-eligible for the first time), and
+/// `XDG_STATE_HOME` sandboxed so the L2 defaulted per-root db never lands in a
+/// developer's real daemon home.
 fn run(dir: &Path, extra: &[&str]) -> (i32, String, String) {
     let out = Command::new(DL)
         .current_dir(dir)
         .env("DL_NO_DAEMON", "1")
+        .env("XDG_STATE_HOME", state_home(dir))
         .args(extra)
         .output().expect("run dl");
     (out.status.code().unwrap_or(-1),
@@ -44,14 +62,14 @@ fn fixture(tag: &str) -> PathBuf {
     fs::create_dir_all(d.join("src")).unwrap();
     fs::write(d.join("src/x.rs"), "fn alpha() {}\nlet beta = 1;\n").unwrap();
     fs::write(d.join(".dl/10-a.dl"), concat!(
-        "rel a_hit(p: file, l: int).\n",
-        "a_hit(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), match(p, rev, /alpha/, l).\n",
-        "diag(path: p, line: l, severity: \"error\", code: \"rail-a\", msg: \"alpha found\") <- a_hit(p, l).\n",
+        "rel a_hit(path: file, line: int).\n",
+        "a_hit(path, line) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /alpha/, line).\n",
+        "diag(path: path, line: line, severity: \"error\", code: \"rail-a\", msg: \"alpha found\") <- a_hit(path, line).\n",
     )).unwrap();
     fs::write(d.join(".dl/20-b.dl"), concat!(
-        "rel b_hit(p: file, l: int).\n",
-        "b_hit(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), match(p, rev, /beta/, l).\n",
-        "diag(path: p, line: l, severity: \"warn\", code: \"rail-b\", msg: \"beta found\") <- b_hit(p, l).\n",
+        "rel b_hit(path: file, line: int).\n",
+        "b_hit(path, line) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /beta/, line).\n",
+        "diag(path: path, line: line, severity: \"warn\", code: \"rail-b\", msg: \"beta found\") <- b_hit(path, line).\n",
     )).unwrap();
     d
 }
@@ -99,42 +117,36 @@ fn conflicting_decl_across_files_errors() {
     assert!(err.contains("declared twice"), "conflict must be named:\n{err}");
 }
 
-/// (5) Discovery defaults the db to .dl/.state/cache.db (NOT .dl/cache.db) and
-/// drops a .gitignore covering `.state/`, so hook invocations get warm ticks
-/// without committing the cache and `.dl/` shows only authored files.
+/// (5) Discovery defaults the db to the shared per-root
+/// `roots/<key>/db.sqlite` under the (sandboxed) daemon home — the SAME file a
+/// daemon would serve — and creates no second `.dl/.state/cache.db` world
+/// (storage-endgame L2, one db per corpus).
 #[test]
-fn discovery_defaults_db_into_dl_state_dir() {
+fn discovery_defaults_db_to_shared_root_db() {
     let d = fixture("db");
     let (code, _out, _err) = run(&d, &["--check"]);
     assert_ne!(code, 0); // rail-a error severity; db side effects still happen
-    assert!(d.join(".dl/.state/cache.db").exists(), "default cache db missing under .state/");
-    assert!(!d.join(".dl/cache.db").exists(), "cache db must NOT land directly in .dl/");
-    let gi = fs::read_to_string(d.join(".dl/.gitignore")).expect("generated .gitignore");
-    assert!(gi.contains(".state/"), "gitignore must cover the state dir: {gi}");
+    let dbs = root_dbs(&d);
+    assert_eq!(dbs.len(), 1, "exactly one roots/<key>/db.sqlite expected: {dbs:?}");
+    assert!(!d.join(".dl/.state/cache.db").exists(), "no cache.db world may grow beside the root db");
+    assert!(!d.join(".dl/cache.db").exists(), "cache db must NOT land in .dl/ either");
 }
 
-/// (5b) Migration: a pre-existing `.dl/cache.db` (old layout, a real sqlite
-/// file produced by a first run) moves into `.dl/.state/cache.db` on the next
-/// run instead of being ignored or duplicated. (A synthetic `-wal` sibling is
-/// deliberately NOT exercised here: a `-wal` that does not match its `cache.db`
-/// header is stale-journal input SQLite itself discards on open in WAL mode —
-/// that recovery behavior is SQLite's, not this migration's, so asserting on
-/// the sibling's post-open survival would test SQLite, not the rename.)
+/// (5b) A pre-existing `.dl/.state/cache.db` (the pre-L2 one-shot world) is
+/// purely historical: a discovery run neither reads, grows, nor migrates it —
+/// it goes straight to the shared root db. `dl daemon gc` (L1) owns the sweep.
 #[test]
-fn discovery_migrates_old_cache_db_into_state_dir() {
-    let d = fixture("migrate");
-    // First run: produces a valid sqlite db at the CURRENT (state-dir) layout.
-    let (_code, _out, _err) = run(&d, &["--check"]);
-    assert!(d.join(".dl/.state/cache.db").is_file(), "setup: first run must create the db");
-    // Simulate an old-layout install: move the valid db back up to
-    // `.dl/cache.db`, remove the now-stale .state dir.
-    fs::rename(d.join(".dl/.state/cache.db"), d.join(".dl/cache.db")).unwrap();
-    fs::remove_dir_all(d.join(".dl/.state")).unwrap();
+fn old_cache_db_world_is_left_untouched() {
+    let d = fixture("fossil");
+    fs::create_dir_all(d.join(".dl/.state")).unwrap();
+    let fossil = d.join(".dl/.state/cache.db");
+    fs::write(&fossil, b"not-a-real-sqlite-file-and-never-opened").unwrap();
 
     let (code, _out, _err) = run(&d, &["--check"]);
     assert_ne!(code, 0);
-    assert!(d.join(".dl/.state/cache.db").exists(), "migrated cache db missing");
-    assert!(!d.join(".dl/cache.db").exists(), "old-layout cache db must be gone after migration");
+    assert_eq!(fs::read(&fossil).unwrap(), b"not-a-real-sqlite-file-and-never-opened",
+        "the historical cache.db must be byte-identical after the run");
+    assert_eq!(root_dbs(&d).len(), 1, "the run must land in roots/<key>/db.sqlite");
 }
 
 /// (6) An explicit positional still works unchanged and does NOT touch .dl/.
@@ -144,9 +156,9 @@ fn explicit_program_bypasses_discovery() {
     fs::create_dir_all(d.join("src")).unwrap();
     fs::write(d.join("src/x.rs"), "fn alpha() {}\n").unwrap();
     fs::write(d.join("p.dl"), concat!(
-        "rel hit(p: file, l: int).\n",
-        "hit(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), match(p, rev, /alpha/, l).\n",
-        "? hit(p, l).\n",
+        "rel hit(path: file, line: int).\n",
+        "hit(path, line) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /alpha/, line).\n",
+        "? hit(path, line).\n",
     )).unwrap();
     let out = Command::new(DL)
         .arg(d.join("p.dl"))

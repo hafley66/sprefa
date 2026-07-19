@@ -236,6 +236,34 @@ Db struct owns every open path — this is one open-path edit, per the diet's
 interplay (c)).
 - Gates: it-suite fallback tests repointed; lock-contention test (daemon up +
   forced in-process run); byte receipt = `.dl/.state` empty for served roots.
+- EXECUTED (2026-07-18, branch `two-worlds`): candidate (a) as written.
+  `daemon::root_db_path(root)` (src/daemon/home.rs) is the one path fn —
+  canonicalize + `key_of`, mirroring `add_root` — and the cli defaulting block
+  (src/cli/mod.rs) points at it; the `.dl/.state/cache.db` default, its
+  gitignore write, and the old-layout `.dl/cache.db` migration are deleted
+  (cache.db historical; L1 gc owns the sweep). LSP recomputes the defaulted
+  path after the client's rootUri overrides the cwd root (src/lsp.rs) so an
+  editor-spawned server never grows a wrong-key db.
+  Deviations from the letter of the verdict:
+  - (b)-as-fast-path is keyed on `--max-wall` (the flag the deadline-wrapped
+    hook surface passes), not on "invoked from a hook" generally: the git
+    pre-commit `dl --check` (no `--max-wall`) keeps the full in-process
+    engine, because a commit gate answering from stale rows could pass a rail
+    that current bytes trip. Read-only mode = `run_check_readonly` in
+    src/lib.rs (ReadDb over `rel_diag_txt`/`rel_diag_stage_txt`, same NULL
+    defaults as `Engine::diags`); a blank/absent db warns and renders type
+    diags only — never a cold build.
+  - `dl --hook`'s in-process fallback still write-ticks (the event insert +
+    re-derive IS its semantics; a read-only run could not evaluate
+    block/inject for the incoming event). Its existing cold-skip already
+    refuses cold builds under the deadline, and L2 makes its warm case warmer:
+    the defaulted db is now the daemon-warmed root db.
+  Gates landed as tests/it/check_daemon.rs `forced_inprocess_check_shares_the_
+  daemon_db` (lock contention: daemon up + DL_NO_DAEMON one-shot on ONE db),
+  `hook_check_fallback_is_read_only` (byte-identical db after the fast path;
+  no cold build with no db), `discovery_check_cold_fallback_is_loud`
+  (daemonless one-shot builds `roots/<key>/db.sqlite`, `.dl/.state/cache.db`
+  never appears), and tests/it/discover.rs (defaulting + fossil-untouched).
 
 ### L3. Derived storage policy — the 507MB whale
 

@@ -9,8 +9,9 @@ repo's pre-existing debt never fires because every rail joins `changed(p)`.
 1. Put rails in `<repo>/.dl/*.dl` (any file count; they merge in filename
    order, shared `rel` declarations dedupe). Start from `examples/rails.dl`.
 2. No positional argument means discovery: `dl --check` finds
-   `.dl/*.dl`, caches in `.dl/cache.db` (gitignored automatically), and ticks
-   incrementally on repeat runs.
+   `.dl/*.dl`, caches in the shared per-root
+   `$XDG_STATE_HOME/sprefa/roots/<key>/db.sqlite` (the same db a daemon
+   serves), and ticks incrementally on repeat runs.
 
 ## Exit-code contract
 

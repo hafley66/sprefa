@@ -81,8 +81,10 @@ struct Cli {
     /// its own and ignores this.)
     programs: Vec<String>,
     /// Persist derived tables to a SQLite db at this path (default: in-memory;
-    /// discovery mode defaults to `<root>/.dl/cache.db`). Derived relations land
-    /// as plain-TEXT `rel_<name>` tables, queryable by anything that reads SQLite.
+    /// discovery mode defaults to the per-root
+    /// `$XDG_STATE_HOME/sprefa/roots/<key>/db.sqlite` the daemon also serves).
+    /// Derived relations land as plain-TEXT `rel_<name>` tables, queryable by
+    /// anything that reads SQLite.
     #[arg(long, help_heading = "Output & storage")]
     db: Option<String>,
     /// Re-tick on file changes in the source root (in-process watcher, the
@@ -400,52 +402,29 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
         crate::trace::finish_chrome_trace();
         std::process::exit(code);
     }
-    // Discovery mode (no positional) defaults the db to <root>/.dl/cache.db so
-    // a one-shot run without a daemon still gets warm incremental ticks instead
-    // of a cold in-memory rescan. Since the singleton-daemon arc, the daemon
-    // itself never writes here — its engines live at
-    // $XDG_STATE_HOME/sprefa/roots/<hash>/db.sqlite. `cache.db` is purely the
-    // one-shot/hook fallback cache for when no daemon serves this root
-    // (`db_defaulted` below still marks these modes daemon-eligible so a
-    // reachable daemon is preferred over this file). A generated .gitignore
-    // keeps the cache out of git.
+    // Discovery mode (no positional) defaults the db to the PER-ROOT db the
+    // daemon itself serves: $XDG_STATE_HOME/sprefa/roots/<key>/db.sqlite
+    // (storage-endgame L2, one db per corpus). A one-shot run without a daemon
+    // warms/reads the SAME file a daemon would, so no second
+    // `.dl/.state/cache.db` world ever grows beside it (`cache.db` is
+    // historical; L1's `dl daemon gc` sweeps leftovers). `db_defaulted` still
+    // marks these modes daemon-eligible so a reachable daemon is preferred
+    // over opening the file in-process; when both worlds do touch the file
+    // (daemon up, attach failed), WAL + busy_timeout in db.rs is the
+    // shared-access discipline.
     let mut db = cli.db;
     let mut db_defaulted = false;
     if db.is_none() {
         let dir = root.join(".dl");
-        let state = crate::state_dir(&root);
         let daemon_on = crate::daemon::enabled();
         let want_default =
             programs.is_empty() || (daemon_on && (cli.lsp || cli.check || cli.diag_json));
         if want_default && dir.is_dir() {
-            let gi = dir.join(".gitignore");
-            let existing = std::fs::read_to_string(&gi).unwrap_or_default();
-            if !existing.lines().any(|line| line.trim() == ".state/") {
-                let mut out = existing;
-                if !out.is_empty() && !out.ends_with('\n') {
-                    out.push('\n');
-                }
-                out.push_str(".state/\n");
-                let _ = std::fs::write(&gi, out);
+            let root_db = crate::daemon::root_db_path(&root);
+            if let Some(parent) = root_db.parent() {
+                let _ = std::fs::create_dir_all(parent);
             }
-            let _ = std::fs::create_dir_all(&state);
-            // Best-effort migration: an old-layout `.dl/cache.db` (plus its
-            // -shm/-wal siblings) moves into `.dl/.state/` once. Missing
-            // siblings are fine; a failed rename leaves the old file in place
-            // rather than losing data.
-            let old_cache = dir.join("cache.db");
-            let new_cache = state.join("cache.db");
-            if old_cache.is_file() && !new_cache.is_file() {
-                let _ = std::fs::rename(&old_cache, &new_cache);
-                for suffix in ["-shm", "-wal"] {
-                    let old = dir.join(format!("cache.db{suffix}"));
-                    let new = state.join(format!("cache.db{suffix}"));
-                    if old.is_file() {
-                        let _ = std::fs::rename(&old, &new);
-                    }
-                }
-            }
-            db = Some(state.join("cache.db").to_string_lossy().into_owned());
+            db = Some(root_db.to_string_lossy().into_owned());
             db_defaulted = true;
         }
     }
@@ -498,6 +477,9 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
         if !crate::stage::is_stage(&stage) {
             anyhow::bail!("unknown --stage `{stage}` (expected live, commit, agent-turn, or agent-session)");
         }
+        // `--max-wall` marks the hook surface: its no-daemon fallback reads the
+        // shared root db read-only (storage-endgame L2) — a hook never
+        // cold-builds and never contends for the daemon's write lock.
         let errors = if let Some(max_wall) = cli.max_wall {
             let Some(errors) = check_deadline::run(max_wall, {
                 let programs = programs.to_vec();
@@ -505,13 +487,13 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
                 let root = root.clone();
                 let json = cli.diag_json;
                 let stage = stage.clone();
-                move || crate::run_check(&programs, db.as_deref(), db_defaulted, root, json, &stage)
+                move || crate::run_check(&programs, db.as_deref(), db_defaulted, root, json, &stage, true)
             })? else {
                 return Ok(());
             };
             errors
         } else {
-            crate::run_check(programs, db.as_deref(), db_defaulted, root, cli.diag_json, &stage)?
+            crate::run_check(programs, db.as_deref(), db_defaulted, root, cli.diag_json, &stage, false)?
         };
         if errors > 0 {
             eprintln!("{errors} error-severity diagnostic(s) found"); // @eprintln-ok: final user-facing error count before exit 2

@@ -332,9 +332,12 @@ fn rels_via_daemon(ev: &HookEvent, root: &Path) -> Result<EmitRels> {
     })
 }
 
-/// Cold in-process tick (the no-daemon fallback): open a fresh db, prime a tick
-/// so the built-in `hook_event` table exists, append the event, tick again to
-/// re-derive, read the emit rels. `broken` if the program has a type error.
+/// In-process tick (the no-daemon fallback): open the db (the shared per-root
+/// `roots/<key>/db.sqlite` in discovery mode — storage-endgame L2 — warm when
+/// a daemon ever served this root), prime a tick so the built-in `hook_event`
+/// table exists, append the event, tick again to re-derive, read the emit
+/// rels. `broken` if the program has a type error. WAL + busy_timeout covers
+/// the daemon-up-but-attach-failed write pairing.
 fn rels_inproc(ev: &HookEvent, programs: &[String], db_path: Option<&str>, root: &Path) -> Result<EmitRels> {
     let files = crate::resolve_programs(programs, root)?;
     let (mut prog, type_diags, _) = crate::prepare_paths(&files)?;
@@ -500,7 +503,7 @@ fn hook_work(
             inproc_or_skip("no daemon running")?
         }
     } else {
-        tracing::warn!("[hook] no daemon serving this root — one-shot engine on .dl/.state/cache.db (start one: dl daemon start)");
+        tracing::warn!("[hook] no daemon serving this root — one-shot engine on the shared root db (roots/<key>/db.sqlite; start a daemon: dl daemon start)");
         inproc_or_skip("root not daemon-served")?
     };
     let Some(rels) = rels else {

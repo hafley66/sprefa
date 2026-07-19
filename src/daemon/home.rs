@@ -73,6 +73,19 @@ pub(crate) fn root_db_dir(key: &str) -> PathBuf {
     daemon_home().join("roots").join(key)
 }
 
+/// ONE db per corpus (storage-endgame L2): the db for `root`, daemon-served or
+/// not — `<home>/roots/<key>/db.sqlite`, the exact file `add_root` opens when a
+/// daemon serves this root. The daemonless one-shot / hook / LSP fallback opens
+/// this same file instead of a second `.dl/.state/cache.db` world; WAL +
+/// busy_timeout (db.rs) is the shared-access discipline for the
+/// daemon-up-but-attach-failed pairing. Canonicalization mirrors `add_root` so
+/// both sides compute the same key. Pure path math; callers `create_dir_all`
+/// the parent before opening.
+pub fn root_db_path(root: &Path) -> PathBuf {
+    let canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    root_db_dir(&key_of(&canon)).join("db.sqlite")
+}
+
 /// The registry key for a root: blake3-16hex of its canonical path. Symlinked
 /// aliases collapse to one entry.
 pub(crate) fn key_of(canon: &Path) -> String {
