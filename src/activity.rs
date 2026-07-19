@@ -361,10 +361,11 @@ pub fn snapshot() -> Snapshot {
 mod tests {
     use super::*;
 
-    // The slot is process-global, so every test that mutates it must hold
-    // this lock or parallel runs stomp each other mid-assertion (seen live:
-    // lifecycle_round_trips reading "" after root_stamp's end_tick()).
-    static SLOT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // The slot is process-global AND drives perflog's CURRENT_ROOT via
+    // sync_root, so every test that mutates it holds the crate-wide
+    // perflog::TEST_GLOBALS_LOCK — a module-local lock still let these tests
+    // stomp perflog's path tests mid-assertion (and vice versa).
+    use crate::perflog::TEST_GLOBALS_LOCK as SLOT_LOCK;
 
     #[test]
     fn lifecycle_round_trips() {

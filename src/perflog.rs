@@ -53,6 +53,15 @@ static ROOT: OnceLock<PathBuf> = OnceLock::new();
 /// Separate from the `ROOT` fallback so the daemon can serve multiple roots in
 /// one process without the first-created engine pinning the perf-log path.
 static CURRENT_ROOT: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// Serializes every test that touches the process-global perf-log state:
+/// the `DL_PERF_LOG` env var, `CURRENT_ROOT`, and the activity slot that
+/// drives it via `activity::sync_root`. Parallel lib tests stomp these
+/// mid-assertion otherwise (seen live: `path_resolver`'s `DL_PERF_LOG=0`
+/// window making `path_routes_by_current_root` read None). Poison is
+/// ignored — a panicked holder must not cascade into unrelated tests.
+#[cfg(test)]
+pub(crate) static TEST_GLOBALS_LOCK: Mutex<()> = Mutex::new(());
 /// Open append handles, one per resolved log path. Replaced the single `FILE`
 /// OnceLock so per-root records can land in different `<root>/.dl/perf.jsonl`
 /// files within the same daemon process.
@@ -338,10 +347,11 @@ mod tests {
 
     /// Pin the resolver: default → `<root>/.dl/perf.jsonl`; `DL_PERF_LOG=0` →
     /// disabled (None); an explicit path wins. Env mutation is process-wide,
-    /// so this is the only perflog path test touching env/ROOT (keep it
-    /// self-contained).
+    /// so every path-resolver test holds `TEST_GLOBALS_LOCK` — the `"0"`
+    /// window below turns a concurrent `path()` call into None.
     #[test]
     fn path_resolver() {
+        let _globals = TEST_GLOBALS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("DL_PERF_LOG");
         // ROOT is a process-global OnceLock shared with every other lib test
         // running in this process — another test may have set it first, so
@@ -365,9 +375,12 @@ mod tests {
     /// The current activity root routes the default perf.jsonl path, falling
     /// back to the process-global ROOT only when no activity is in progress.
     /// ROOT/CURRENT_ROOT are process-global, so this test derives the fallback
-    /// from whatever value actually stuck (parallel tests may set them first).
+    /// from whatever value actually stuck (parallel tests may set them first)
+    /// — and seeds ROOT itself so a solo run (verify.sh's flake check reruns
+    /// a failed test ALONE) has a fallback to derive from at all.
     #[test]
     fn path_routes_by_current_root() {
+        let _globals = TEST_GLOBALS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("DL_PERF_LOG");
         let active = PathBuf::from("/tmp/dl_perf_active");
         set_current_root(Some(&active));
@@ -377,6 +390,7 @@ mod tests {
             "activity root wins over process ROOT"
         );
         set_current_root(None);
+        let _ = ROOT.set(PathBuf::from("/tmp/dl_perf_test_root"));
         let fallback = ROOT.get().expect("ROOT set by this or another test");
         assert_eq!(
             path(),
