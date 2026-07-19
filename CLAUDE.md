@@ -53,22 +53,23 @@ file keeps only the standing laws + currently-open work.
 
 ## v5 Work — open items only (landed detail: .agent/memories/sprefa-task-ledger.md)
 
-### In flight (2026-07-18 PM, agents running)
-- [ ] **db-seam migration**: kimi k3 authoring plans/2026-07-18-db-seam-migration.md (Db struct = single SQL authority, error-context on every statement, all three .dl/no-new-rusqlite.dl ratchet baselines to 0). On plan review: kimi 2.7 executes, app/tests partition per plan.
-- [ ] **eprintln→tracing conversion**: kimi 2.7 in .worktrees/kimi-eprintln — level mapping, CLI-UX survivors @eprintln-ok, new .dl/no-new-eprintln.dl ratchet, stderr verification for one-shot failures.
-- [ ] **storage-diet step 2**: sonnet agent — index audit w/ EXPLAIN receipts, drop/demand-gate unused (projected 150-220MB), determinism + byte-identical query gates.
-- [ ] **cold-chunk extension + root serialization**: sonnet agent — comment/template/unresolved onto the dataflow chunk seam (109s comment-rels job on games/smash is the receipt); one root cold-builds at a time; equivalence + crash-resume tests.
-- [ ] **eaten-diag classes**: sonnet agent — S6 body-level source+join mix becomes a typecheck error; empty-scan narrowing warns before reconcile shrinks an existing db (>threshold), both fail-pre-fix.
-- [ ] **rails pair**: sonnet agent — stale-binary warn (repo build newer than running exe) + db-ratio boot/completion verdict with DL_DB_RATIO_WARN ceiling.
+### In flight
+(none — the 2026-07-18 wave landed in full: db-seam A+B, eprintln→tracing,
+storage-diet 2, cold-chunk, eaten-diag S6, rails pair, small-rails,
+queue-apalis, two-worlds, auto-refactor, clock bucket gate + derived
+digest-skip + view-DDL skip + wildcard-bucket clock salt, perflog test-globals
+lock, rusqlite-coupling Layer 5 call_def fix, _source_stage_owner batch.)
 
 ### Blocked on user word
-- [ ] **redeploy + incident close**: cargo install, supervised `dl daemon start` while away from keyboard, dl-trace receipt (cpu ≤ ~100%, comment-rels survives the NULL fix, zero respawns), then failure-modes 16/18 rail-status updates and incident close.
-- [ ] **push next → main** once the in-flight wave merges green.
-- [ ] **worktree cleanup**: merged (parse-once, hook-deadline), killed eprintln partial (worktree-agent-a6576a7554138a830), stale kimi-* trio, sched-plan/obs-logging/storage-diet-s13 — all removable on word.
+- [ ] **orphan root-dir rm** (classifier-blocked): `cd ~/.local/state/sprefa/roots && rm -rf 0e463c6218bcb16b 13891e3c75f6e3ea 1d5ecc7d13f302e2 21ca57244c1bc6ee 35441d857ff4f1e6 5b5deabf0077f814 9b393f17c4d62844 d782d1a9759048b2 df98753265add20c` (~910MB, verified absent from roots.json).
+- [ ] **DROP TABLE _job** in ~/.local/state/sprefa/jobs.sqlite (classifier-blocked; 6 terminal rows, dead bespoke-queue schema).
+- [ ] **filesize-rail ruling**: verify.sh exits 2 — 29 src files >500 lines are NOT in scripts/filesize-allow.txt (all already over budget at pushed main a3c09e3f, none crossed this session). Grandfather (allowlist + .dl/file-size.dl rows, shrink-only law) or schedule splits.
+- [ ] **instant dom-match.dl rewrite** (user-side repo): drop pull/matches_latest/matches_body + both bucket columns onto `matches_resp(body) <- @async clock(5, _), matches() -> (body).` — caveat: matches_resp then accumulates distinct bodies unordered; keep a bound bucket if strict latest-wins matters.
+- [ ] **surviving worktrees**: agent-a5b6cd2c7ae228570 + agent-a93779abb10bccb9a (uncommitted src diffs, unvetted), ext-wave3 (chat_log/docs diffs), vscode-flow-panel (unmerged branch), agent-a305bb99e664ff9b8 (locked). target/ dirs cleaned (~18GB freed); rm on word.
 
 ### Next up (dispatchable, not started)
 - [ ] **storage-diet 4a**: WITHOUT ROWID junctions; then A=1a dense dictionary ids; step 5 coordinate-composite elimination rides ref-spine.
-- [ ] **erase public no-daemon split** (user directive 2026-07-18): one server code path, `--no-daemon` internal-only; erases the two-db-worlds split. Big it-suite touch — schedule alone.
+- [ ] **erase public no-daemon split** (user directive 2026-07-18): one server code path, `--no-daemon` internal-only; erases the two-db-worlds split. Big it-suite touch — schedule alone. Now also owns failure-modes class 23 (a one-shot positional under a daemon-served root silently returns the watched program set's results — `run_file_via_daemon` sends only `{"root"}`).
 - [ ] **scheduler execution steps 1-2** (scope rows + readiness; shard = schedulable unit for every family, perf-fed costs, demand join as rows — d13dcf56). Write-volume budget lever lands here.
 - [ ] **class 18 residuals**: sg/ast_yaml internal ast-grep tree not shared with AstTreeCache; daemon-side req_id mid-tick cancellation (JobRow.req_id always None).
 
