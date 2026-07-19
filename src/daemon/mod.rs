@@ -168,7 +168,9 @@ impl Shared {
     /// a shell task without a runtime handle.
     fn enqueue(&self, job: crate::jobq::JobRow) -> Result<()> {
         self.jobs.enqueue(job)?;
-        self.job_notify.notify_one();
+        // `notify_waiters`, not `notify_one`: the apalis pollers (engine +
+        // cold doorbell streams) AND the reconciler all park on this Notify.
+        self.job_notify.notify_waiters();
         Ok(())
     }
 
@@ -460,7 +462,14 @@ pub fn run_daemon(
         broadcast_tx: broadcast_tx.clone(),
     };
 
-    // The durable job queue (J1), in its own `<home>/jobs.sqlite`.
+    // The durable job queue: apalis-sqlite's `Jobs` store in its own
+    // `<home>/jobs.sqlite`. The sqlx pool + migrations (the bought schema)
+    // come up first; `JobQueue::open` is the sync admission/introspection
+    // seam over the same file.
+    let jobs_db_path = home.join("jobs.sqlite");
+    let jobs_pool = runtime
+        .block_on(crate::jobq::workers::open_pool(&jobs_db_path))
+        .context("open apalis job store")?;
     let jobs = crate::jobq::JobQueue::open(&home).context("open job queue db")?;
     // Self-diagnosis trail: boot marker + `dl-why` sampler, before anything
     // heavy runs, so even a first-tick death leaves an answer for
@@ -496,14 +505,17 @@ pub fn run_daemon(
         jobs: jobs.clone(),
     });
 
-    // J1 job dispatcher: crash-recover any jobs a previous process left
-    // `running` (reset to pending), then spawn the worker set that claims and
-    // runs tick + sink-drain jobs. Started BEFORE roots replay so a watcher's
-    // first enqueue has a worker to serve it.
-    match jobs.reset_running_on_boot() {
-        Ok(n) if n > 0 => tracing::info!("[daemon] reset {n} running job(s) to pending on boot"),
+    // Job workers: crash-recover any rows a previous process left in flight
+    // (instant boot reset; apalis's heartbeat `reenqueue_orphaned` covers
+    // mid-life orphans), then spawn the apalis worker pair — the `dl-engine`
+    // queue (tick + sink-drain, concurrency = the old worker budget) and the
+    // single-flight `dl-cold` queue — plus the admission reconciler. Started
+    // BEFORE roots replay so a watcher's first enqueue has a worker to serve
+    // it.
+    match jobs.reset_orphaned_on_boot() {
+        Ok(n) if n > 0 => tracing::info!("[daemon] reset {n} in-flight job(s) to pending on boot"),
         Ok(_) => {}
-        Err(e) => tracing::warn!("[daemon] reset_running_on_boot: {e}"),
+        Err(e) => tracing::warn!("[daemon] reset_orphaned_on_boot: {e}"),
     }
     let n_workers = daemon_thread_count(
         std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2),
@@ -511,25 +523,10 @@ pub fn run_daemon(
     );
     let runner: Arc<dyn crate::jobq::JobRunner> =
         Arc::new(DaemonJobRunner { daemon: Arc::downgrade(&daemon) });
-    daemon_shell::jobs::spawn(
-        &shell,
-        jobs.clone(),
-        runner.clone(),
-        n_workers,
-        vec![crate::jobq::JobKind::Tick, crate::jobq::JobKind::SinkDrain],
+    crate::jobq::workers::spawn_workers(&shell, &jobs_pool, jobs.clone(), runner, n_workers);
+    tracing::info!(
+        "[daemon] apalis workers: dl-engine x{n_workers} + dl-cold x1 (single-flight)"
     );
-    // Cold-start staging: a dedicated SINGLE worker for `ColdExtract`. One node
-    // in flight at a time + the canonical priority (module highest) makes the
-    // staged extraction run in the same dependency order as the inline tick
-    // (module before type/call resolution), so the warmed db matches inline.
-    daemon_shell::jobs::spawn(
-        &shell,
-        jobs.clone(),
-        runner,
-        1,
-        vec![crate::jobq::JobKind::ColdExtract],
-    );
-    tracing::info!("[daemon] job dispatcher: {n_workers} tick worker(s) + 1 cold-extract worker");
 
     // Bind the socket (reap a stale one first) BEFORE registering roots, so a
     // second daemon fails fast rather than cold-ticking every root then losing

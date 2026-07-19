@@ -9,8 +9,9 @@
 //!     `GET /watch` SSE). The bespoke `Content-Length`-framed JSON-RPC wire the
 //!     UDS socket used to speak is gone (plan
 //!     2026-07-18-infra-library-adoption.md section 2.4);
-//!   - the poll + idle timers, the git/source watchers, and the job dispatcher
-//!     (`jobs`), whose per-job RUN bodies are `spawn_blocking` engine calls.
+//!   - the poll + idle timers, the git/source watchers, and the apalis job
+//!     workers (`crate::jobq::workers`), whose per-job RUN bodies are
+//!     `spawn_blocking` engine calls.
 //!
 //! Why the shell no longer needs to block on the engine: reads are already
 //! lock-free (`crate::daemon_read` opens read-only SQLite connections), and ticks
@@ -30,7 +31,6 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 pub(crate) mod http;
-pub(crate) mod jobs;
 pub(crate) mod timers;
 pub(crate) mod watch;
 

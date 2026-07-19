@@ -19,11 +19,13 @@ pub(crate) async fn idle_task(d: Arc<Daemon>, ctx: ShellCtx, idle_secs: u64) {
             _ = ctx.cancel.cancelled() => return,
             _ = ticker.tick() => {}
         }
-        // Job-queue maintenance: reclaim abandoned leases (a dead worker in a
-        // live process) and trim old `done` rows. See `jobq::sweep`. A quick
+        // Job-queue maintenance backstop: the shell reconciler runs this on
+        // its own doorbell cadence; the idle tick repeats it so retention and
+        // cold promotion survive even a wedged reconciler task. Abandoned
+        // leases are apalis's heartbeat `reenqueue_orphaned` now. A quick
         // own-db write, no engine lock — fine inline on the shell worker.
-        if let Err(e) = d.jobs.sweep(crate::jobq::LEASE_SECS, crate::jobq::DONE_RETAIN_SECS) {
-            tracing::warn!("[daemon] job sweep: {e}");
+        if let Err(e) = d.jobs.reconcile() {
+            tracing::warn!("[daemon] job reconcile: {e}");
         }
         let roots = d.all_roots();
         let all_idle = roots.iter().all(|sr| {
