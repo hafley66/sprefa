@@ -3,8 +3,6 @@ use super::*;
 impl Engine {
     pub(crate) fn create_rel_view(&self, rel: &str, meta: &RelMeta) -> Result<()> {
         let view = crate::lower::txt_tbl(rel);
-        self.db
-            .exec_on(rel, &format!("DROP VIEW IF EXISTS {view}"))?;
         let columns: Vec<String> = meta.cols.iter().map(|col| {
             if col.interned() {
                 format!("(SELECT content FROM _strings WHERE _strings.id = rel_{rel}.\"{}\") AS \"{}\"", col.name, col.name)
@@ -17,10 +15,25 @@ impl Engine {
         } else {
             columns.join(", ")
         };
-        self.db.exec_on(
+        let create = format!("CREATE VIEW {view} AS SELECT {select} FROM {}", tbl(rel));
+        // Unchanged view: skip the DROP+CREATE. Schema DDL rewrites
+        // sqlite_master pages into the WAL — measured ~2.5MB per tick across
+        // ~120 rel views on a quiet tick (2026-07-18, the dominant slice of
+        // the clock-program write churn after the derived digest skip).
+        // sqlite_master stores the CREATE statement verbatim, so string
+        // equality is an exact match on the view's definition.
+        let existing = self.db.query_opt(
             rel,
-            &format!("CREATE VIEW {view} AS SELECT {select} FROM {}", tbl(rel)),
+            "SELECT sql FROM sqlite_master WHERE type = 'view' AND name = ?1",
+            &[view.as_str().into()],
+            |row| Ok(row.get::<_, String>(0)?),
         )?;
+        if existing.as_deref() == Some(create.as_str()) {
+            return Ok(());
+        }
+        self.db
+            .exec_on(rel, &format!("DROP VIEW IF EXISTS {view}"))?;
+        self.db.exec_on(rel, &create)?;
         Ok(())
     }
 }

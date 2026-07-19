@@ -91,16 +91,17 @@ fn unchanged_rederive_writes_zero_wal_bytes() {
 
     let churn = wal_bytes(&d);
     eprintln!("[receipt] no-op re-derive WAL churn: {churn} bytes");
-    // Measured receipts (this tree, 2026-07-18): pre-fix 11,470,112 bytes
-    // (word_pair's 160k-row wipe+reinsert on top of the noise floor; identical
-    // under the DL_NO_DERIVED_SKIP=1 lever and with the engine change
-    // stashed); post-fix 2,484,392 bytes, all of it the tick's fixed noise
-    // floor (declare_all's unconditional per-rel view DROP+CREATE schema
-    // churn plus source-side bookkeeping) — the derived phase itself adds
-    // ~16KB. 6MB is the midpoint with a wide margin on both sides.
-    assert!(churn < 6 * 1024 * 1024,
-        "an identical re-derivation must not rewrite derived tables: \
-         WAL grew by {churn} bytes on a no-op re-derive (pre-fix signature is ~11.5MB)");
+    // Measured receipts (this tree, 2026-07-18): no derived skip
+    // 11,470,112 bytes (word_pair's 160k-row wipe+reinsert; identical under
+    // the DL_NO_DERIVED_SKIP=1 lever); derived skip alone 2,484,392 bytes
+    // (declare_all's unconditional per-rel view DROP+CREATE schema churn);
+    // derived skip + unchanged-view skip 222,512 bytes (residual source-side
+    // bookkeeping; the derived phase itself adds ~16KB). The 1MB bound is a
+    // ~4.5x margin over the measured floor and trips hard on either
+    // regression (+2.3MB view churn, +9MB derived rewrite).
+    assert!(churn < 1024 * 1024,
+        "a no-op re-derive tick must stay under the quiet-tick write budget: \
+         WAL grew by {churn} bytes (view-churn regression ~2.5MB, derived-rewrite regression ~11.5MB)");
 }
 
 /// The skip is attributed: a tick that re-derives to identical contents lists
