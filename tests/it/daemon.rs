@@ -719,6 +719,68 @@ fn effect_free_root_settles_after_boot() {
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
 }
 
+/// Cadence gate half 1: a clock-driven root must NOT full-tick on every poll
+/// cycle while its bucket has not flipped. clock(100000) cannot flip inside
+/// the test window, so after settling the tick count stays flat across
+/// several DL_POLL_SECS=1 cycles (pre-fix: +1 per cycle, ~4MB WAL each —
+/// the instant dom-match write storm, 2026-07-18).
+#[test]
+fn clock_root_does_not_tick_inside_a_bucket() {
+    let sb = Sandbox::new("clockgate");
+    fs::write(sb.root.join("p.dl"),
+        "rel beat(bucket: int).\n\
+         beat(bucket) <- clock(100000, bucket).\n\
+         sh greet() -> (line: text) = `echo hi`.\n\
+         rel resp(bucket: int, line: text).\n\
+         resp(bucket, line) <- @async beat(bucket), greet() -> (line).\n\
+         ? resp(bucket, line).\n").unwrap();
+    let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[("DL_POLL_SECS", "1")]);
+    assert!(sb.wait_ready(), "not ready");
+    let out = Command::new(DL)
+        .args(["daemon", "await-settle", "--ms", "20000"])
+        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+        .output().expect("await-settle");
+    assert_eq!(out.status.code(), Some(0), "await-settle: {}", String::from_utf8_lossy(&out.stderr));
+    let t0 = sb.tick(1);
+    std::thread::sleep(std::time::Duration::from_millis(3500));
+    let t1 = sb.tick(2);
+    assert_eq!(t0, t1,
+        "in-bucket poll cycles full-ticked a clock root ({t0} -> {t1})");
+    sb.shutdown();
+    let _ = child.wait_timeout(std::time::Duration::from_secs(5));
+}
+
+/// Cadence gate half 2 (the over-gating guard): a bucket flip must still get
+/// its full tick. clock(2) flips within the window, so the tick count
+/// advances shortly after settling.
+#[test]
+fn clock_root_ticks_on_bucket_flip() {
+    let sb = Sandbox::new("clockflip");
+    fs::write(sb.root.join("p.dl"),
+        "rel beat(bucket: int).\n\
+         beat(bucket) <- clock(2, bucket).\n\
+         sh greet() -> (line: text) = `echo hi`.\n\
+         rel resp(bucket: int, line: text).\n\
+         resp(bucket, line) <- @async beat(bucket), greet() -> (line).\n\
+         ? resp(bucket, line).\n").unwrap();
+    let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[("DL_POLL_SECS", "1")]);
+    assert!(sb.wait_ready(), "not ready");
+    let out = Command::new(DL)
+        .args(["daemon", "await-settle", "--ms", "20000"])
+        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+        .output().expect("await-settle");
+    assert_eq!(out.status.code(), Some(0), "await-settle: {}", String::from_utf8_lossy(&out.stderr));
+    let t0 = sb.tick(1);
+    let mut ticked = false;
+    for _ in 0..50 {
+        if sb.tick(2) > t0 { ticked = true; break; }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(ticked, "a clock(2) bucket flip never produced a full tick (gate over-dropped)");
+    sb.shutdown();
+    let _ = child.wait_timeout(std::time::Duration::from_secs(5));
+}
+
 /// Part 1 of the daemon CPU-hog fix: once a root with `@async` effects has
 /// drained its queue and settled, further poll cycles must perform NO more
 /// full ticks (the cheap idle probe skips them) — `tick_count` stays flat

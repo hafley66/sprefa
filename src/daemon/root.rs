@@ -37,6 +37,12 @@ pub struct ServedRoot {
     /// The paths touched by the most recent tick (absolute). Empty after a full
     /// tick.
     pub last_changed_paths: Mutex<Vec<PathBuf>>,
+    /// Per cadence period the program names (`clock`/`every` secs), the wall
+    /// bucket `now/secs` as of the end of the last full tick. The poll gate
+    /// compares live buckets against these so a cadence-driven root ticks when
+    /// a bucket actually flips, not on every poll cycle. Empty until the first
+    /// full tick restamps (empty compares as "boundary crossed").
+    cadence_stamps: Mutex<Vec<(i64, i64)>>,
     /// Set by `drop_root`; the watcher thread observes it and exits, dropping its
     /// `Arc<ServedRoot>` so the engine closes.
     pub stopped: Arc<AtomicBool>,
@@ -108,6 +114,7 @@ impl ServedRoot {
         let prog = lock(&self.prog);
         let mut eng = lock(&self.eng);
         let report = eng.tick_report(&prog, quiet)?;
+        let cadence = Self::cadence_periods(&prog);
         // A full tick is the only path that can change rel shapes or the `?`
         // query set (program reloads all end here) — refresh the read-path
         // snapshot while still holding eng+prog.
@@ -129,6 +136,7 @@ impl ServedRoot {
             }
         }
         self.settled.store(report.is_settled(), Ordering::Relaxed);
+        self.restamp_cadence(&cadence);
         let n = self.tick_count.fetch_add(1, Ordering::Relaxed) + 1;
         // This WAS a full tick, so it just ran `rebuild_async` over the
         // converged state — resync `last_full_tick_count` (`poll_idle`'s
@@ -301,26 +309,36 @@ impl ServedRoot {
     /// `every`/`clock` fires purely off a wall-clock boundary crossing, with
     /// no associated file change the watcher would ever see — `rebuild_async`
     /// (the only place that evaluates the cadence and queues a fresh request)
-    /// runs ONLY inside a full tick, so such a program genuinely needs the
-    /// periodic full tick unconditionally, same as before this fix (see
-    /// `gc_done_effects`'s doc comment on "a cadence-bucketed poll queues a
-    /// fresh row every `clock` bucket forever" — a real, intentional pattern).
-    /// `every_rels_used`/`clock_rels_used` scan the whole program (not just
-    /// async rule bodies) — a derived rule elsewhere reading `every`/`clock`
-    /// also opts a root out of the idle skip, which is conservative-correct,
-    /// not a regression (such a root already relied on the always-full-tick
-    /// poll before this fix).
+    /// runs ONLY inside a full tick, so such a program needs a full tick at
+    /// each bucket boundary (see `gc_done_effects`'s doc comment on "a
+    /// cadence-bucketed poll queues a fresh row every `clock` bucket forever"
+    /// — a real, intentional pattern). It does NOT need one per poll cycle:
+    /// between boundaries every time atom binds the same values, so the
+    /// `cadence_boundary_crossed` probe above admits the boundary tick and
+    /// lets in-bucket cycles fall through to the idle skip. `clock_periods`/
+    /// `every_intervals` scan the whole program (not just async rule bodies)
+    /// — a derived rule elsewhere reading `every`/`clock` also arms the
+    /// boundary probe, which is conservative-correct.
     pub(crate) fn poll_idle(&self) -> Result<bool> {
         // Cold start in flight: never idle — the queue is draining `ColdExtract`
         // nodes, and `await-settle` must block until the corpus is warm.
         if self.cold_pending.load(Ordering::Relaxed) {
             return Ok(false);
         }
-        let cadence_driven = {
+        // Cadence-driven root: not-idle only when a named `clock`/`every`
+        // bucket has actually flipped since the last full tick. Between
+        // boundaries the program's time atoms bind identical values, so a
+        // tick would integrate nothing — fall through to the normal probes
+        // instead of the old unconditional not-idle (which full-ticked such
+        // roots every DL_POLL_SECS forever: ~4MB WAL churn per no-op tick
+        // measured on instant's clock(5) program, 2026-07-18).
+        let cadence_periods = {
             let prog = lock(&self.prog);
-            crate::engine::every_rels_used(&prog) || crate::engine::clock_rels_used(&prog)
+            Self::cadence_periods(&prog)
         };
-        if cadence_driven { return Ok(false); }
+        if !cadence_periods.is_empty() && self.cadence_boundary_crossed(&cadence_periods) {
+            return Ok(false);
+        }
         // `self.settled` is the LAST full tick's `TickReport::is_settled()` —
         // quiescence can only be CONFIRMED by a tick that sees nothing move
         // (a tick that just landed a response is itself reported unsettled,
@@ -335,6 +353,48 @@ impl ServedRoot {
         let dirty = self.tick_count.load(Ordering::Relaxed)
             != self.last_full_tick_count.load(Ordering::Relaxed);
         Ok(!dirty)
+    }
+
+    /// The distinct `clock`/`every` periods the program names, sorted — the
+    /// daemon-side mirror of the buckets `refresh_clock`/`refresh_every` stamp
+    /// inside a full tick.
+    fn cadence_periods(prog: &crate::ast::Program) -> Vec<i64> {
+        let mut periods = crate::engine::clock_periods(prog);
+        for interval in crate::engine::every_intervals(prog) {
+            if !periods.contains(&interval) {
+                periods.push(interval);
+            }
+        }
+        periods.sort_unstable();
+        periods
+    }
+
+    /// True when any named period's wall bucket moved past the stamp taken at
+    /// the end of the last full tick, or no stamp exists yet (boot, program
+    /// reload changing the period set). Uses the engine's own `now_secs`
+    /// (`DL_NOW_SECS`-overridable) and the same `now/secs` math as
+    /// `refresh_clock`, so the probe agrees with what a tick would see.
+    fn cadence_boundary_crossed(&self, periods: &[i64]) -> bool {
+        let stamps = lock(&self.cadence_stamps);
+        if stamps.len() != periods.len() {
+            return true;
+        }
+        let now = crate::engine::now_secs();
+        periods
+            .iter()
+            .zip(stamps.iter())
+            .any(|(&period, &(stamp_period, stamp_bucket))| {
+                period != stamp_period || now / period != stamp_bucket
+            })
+    }
+
+    /// Stamp the current bucket per cadence period; called at full-tick end.
+    /// The tick's own `refresh_clock` read `now` moments earlier — if a
+    /// boundary lands in that gap the stamp skips one bucket and the next
+    /// boundary catches up (monotone ints compared by `!=`, never `+1`).
+    fn restamp_cadence(&self, periods: &[i64]) {
+        let now = crate::engine::now_secs();
+        *lock(&self.cadence_stamps) = periods.iter().map(|&period| (period, now / period)).collect();
     }
 
     /// One poll cycle (the clock source for `@async`): advance the tick, then
@@ -612,6 +672,7 @@ impl ServedRoot {
             settled: AtomicBool::new(false),
             cold_pending: AtomicBool::new(cold_start_pending),
             last_changed_paths: Mutex::new(Vec::new()),
+            cadence_stamps: Mutex::new(Vec::new()),
             stopped: Arc::new(AtomicBool::new(false)),
             // The cold tick just above (`eng.tick(&prog, false)`) IS a full
             // tick — it already ran `rebuild_async` once — so start in sync

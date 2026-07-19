@@ -116,7 +116,7 @@ fn carry_tbl(rel: &str) -> String {
 /// Current wall-clock time in whole seconds since the epoch, used by the `every`
 /// clock. `DL_NOW_SECS` overrides it so tests can advance time deterministically
 /// across ticks without sleeping.
-fn now_secs() -> i64 {
+pub(crate) fn now_secs() -> i64 {
     if let Ok(v) = std::env::var("DL_NOW_SECS") {
         if let Ok(n) = v.parse::<i64>() {
             return n;
