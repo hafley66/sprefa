@@ -181,8 +181,10 @@ pub fn open(path: Option<&str>) -> Result<Db> {
     // parse once per connection instead of once per call. Default capacity
     // is 16, far below a tick's distinct-statement count.
     conn.set_prepared_statement_cache_capacity(256);
-    // busy_timeout: a hook `--check` and a resident `--lsp` share .dl/cache.db
-    // across processes; a write collision should wait, not fail "locked".
+    // busy_timeout: a hook `--check`, a resident `--lsp`, and a daemon can all
+    // share the per-root `roots/<key>/db.sqlite` across processes
+    // (storage-endgame L2, one db per corpus); a write collision should wait,
+    // not fail "locked".
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
     // Cache and mapped-page ceilings are process-wide. The former duplicated
     // 512 MiB setup made every connection eligible to retain a huge page cache,
@@ -225,7 +227,7 @@ pub fn open(path: Option<&str>) -> Result<Db> {
     // same 5s deadline and 20ms backoff, but a stretch of retries past
     // `SQLITE_BUSY_WARN_MS` also gets a `[sqlite]` verdict line + perf.jsonl
     // row (once per blocked statement) — otherwise a contended shared
-    // cache.db under the daemon retries silently with no observable signal.
+    // root db under the daemon retries silently with no observable signal.
     install_busy_verdict_handler(&conn)?;
     register_regexp(&conn)?;
     register_split(&conn)?;

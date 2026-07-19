@@ -82,6 +82,21 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, r
     }
     let init_params = connection.initialize(caps_value)?;
     let root = client_root_uri(&init_params).unwrap_or(root);
+    // Storage-endgame L2: the defaulted db is the per-root db, keyed off the
+    // root's canonical path — and the client's rootUri (above) can override the
+    // cwd root the CLI keyed it from. Recompute for the RESOLVED root so an
+    // editor-spawned server never opens (and grows) a wrong-key db. An
+    // explicit `--db` is untouched.
+    let db_path_owned: Option<String> = if db_defaulted {
+        let root_db = crate::daemon::root_db_path(&root);
+        if let Some(parent) = root_db.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        Some(root_db.to_string_lossy().into_owned())
+    } else {
+        db_path.map(str::to_string)
+    };
+    let db_path = db_path_owned.as_deref();
 
     let files = crate::resolve_programs(programs, &root)?;
     // prepare_paths resolves typed path literals (`fs:`/`glob:`) to canonical
@@ -144,7 +159,7 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, r
     //
     // Gated the same way `run_file`'s daemon routing is: only when this session
     // is on the SHARED db (no explicit `--db`, or the caller took the auto-
-    // defaulted `.dl/cache.db`). An explicit `--db` is the caller opting into
+    // defaulted per-root `roots/<key>/db.sqlite`). An explicit `--db` is the caller opting into
     // isolation (a test sandbox, a scratch inspection db) — attaching to (or
     // spawning) a background daemon for that root would silently escape the
     // isolation the caller asked for. Without this check every `--lsp` session

@@ -73,11 +73,13 @@ pub use graph::{modgraph, scc, typegraph, walk};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-/// `<root>/.dl/.state` — engine runtime blobs (`cache.db*`, `index.scip*`),
-/// gitignored, kept out of the authored-`.dl` view. Not created here; callers
-/// `create_dir_all` on demand. Does NOT apply to `daemon_home()` — the
-/// rootless `$XDG_STATE_HOME/sprefa` home and its `roots/<hash>/db.sqlite`,
-/// `daemon.sock/pid/log` are a separate model and out of scope.
+/// `<root>/.dl/.state` — engine runtime blobs (`index.scip*`), gitignored,
+/// kept out of the authored-`.dl` view. Not created here; callers
+/// `create_dir_all` on demand. The db no longer lives here: since
+/// storage-endgame L2 every mode (daemon, one-shot, hook, LSP) shares the
+/// per-root `$XDG_STATE_HOME/sprefa/roots/<key>/db.sqlite`
+/// (`daemon::root_db_path`); an old `.state/cache.db` is a historical
+/// leftover `dl daemon gc` sweeps.
 pub fn state_dir(root: &Path) -> PathBuf {
     root.join(".dl").join(".state")
 }
@@ -176,8 +178,8 @@ pub fn run_file(programs: &[String], db_path: Option<&str>, db_defaulted: bool, 
     // serves its own loaded program set, not the positionals.
     if daemon::enabled_for(&root) && (db_path.is_none() || db_defaulted) && programs.len() <= 1 {
         // An explicit `--db` opts out (in-process against that file). The
-        // discovery-mode default db does NOT opt out: it names the same
-        // `.dl/cache.db` the daemon owns, so it must still attach.
+        // discovery-mode default db does NOT opt out: it names the daemon's own
+        // per-root `roots/<key>/db.sqlite`, so it must still attach first.
         match run_file_via_daemon(programs.first().map(|s| s.as_str()), &root, query_format) {
             Ok(()) => return Ok(()),
             Err(e) => {
@@ -374,10 +376,17 @@ pub fn run_verify(programs: &[String], db_path: Option<&str>, root: PathBuf, che
     }
 }
 
-pub fn run_check(programs: &[String], db_path: Option<&str>, db_defaulted: bool, root: PathBuf, json: bool, stage: &str) -> Result<usize> {
+/// `readonly_fallback` (storage-endgame L2, candidate (b) as the hook fast
+/// path): a `--check` invoked from a hook (`--max-wall` set) must never
+/// cold-build or write the shared root db when no daemon answers — it reads
+/// the LAST COMMITTED diag rows off `roots/<key>/db.sqlite` instead
+/// (stale-by-one-tick answers, zero write contention with a live daemon).
+/// Applies only to the defaulted per-root db; an explicit `--db` keeps the
+/// full in-process engine.
+pub fn run_check(programs: &[String], db_path: Option<&str>, db_defaulted: bool, root: PathBuf, json: bool, stage: &str, readonly_fallback: bool) -> Result<usize> {
     // Same daemon gate as run_file: explicit multi-file merges stay in-process.
-    // The discovery-mode default db does NOT opt out (it names the same
-    // `.dl/cache.db` the daemon owns via `db_defaulted`), matching run_file's gate.
+    // The discovery-mode default db does NOT opt out (it names the daemon's own
+    // per-root `roots/<key>/db.sqlite` via `db_defaulted`), matching run_file's gate.
     let daemon_eligible = (db_path.is_none() || db_defaulted) && programs.len() <= 1;
     if daemon_eligible && daemon::enabled_for(&root) {
         match run_check_via_daemon(programs.first().map(|s| s.as_str()), &root, json, stage) {
@@ -389,7 +398,12 @@ pub fn run_check(programs: &[String], db_path: Option<&str>, db_defaulted: bool,
         }
     } else if daemon_eligible {
         // @eprintln-ok: cold --check fallback must be loud to a human at a TTY
-        eprintln!("[check] no daemon serving this root — one-shot engine on .dl/.state/cache.db (start one: dl daemon start)");
+        eprintln!("[check] no daemon serving this root — one-shot engine on the shared root db (roots/<key>/db.sqlite; start a daemon: dl daemon start)");
+    }
+    if readonly_fallback && db_defaulted {
+        if let Some(path) = db_path {
+            return run_check_readonly(programs, path, &root, json, stage);
+        }
     }
     run_check_inproc(programs, db_path, root, json, stage)
 }
@@ -480,6 +494,16 @@ fn run_check_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, j
     let diags = stage::stage_filter(diags, stage, &routes);
     tracing::debug!(stage, kept = diags.len(), dropped = before - diags.len(), "check stage routing (in-process)");
 
+    emit_check_output(&diags, &type_diags, json)?;
+    let n_type = type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
+    if n_type > 0 { anyhow::bail!("{n_type} type error(s) in the program"); }
+    Ok(diags.iter().filter(|d| d.severity == "error").count())
+}
+
+/// The one `--check` renderer: JSON array to stdout (`--diag-json`) or
+/// compiler-style lines to stderr. Shared by the full in-process path and the
+/// L2 read-only fallback so both surfaces print byte-identically.
+fn emit_check_output(diags: &[engine::DiagRow], type_diags: &[ast::TypeDiag], json: bool) -> Result<()> {
     if json {
         let mut arr: Vec<serde_json::Value> = diags.iter().map(|d| serde_json::json!({
             "path": d.path, "line": d.line, "col": d.col,
@@ -489,7 +513,7 @@ fn run_check_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, j
         // Fold the lower-time type diagnostics into the same JSON array (line 1;
         // span-to-line mapping is T3). The `diag`-relation rows and these share one
         // shape so a consumer treats them uniformly.
-        for d in &type_diags {
+        for d in type_diags {
             arr.push(serde_json::json!({
                 "path": d.path, "line": 1, "col": d.span.0,
                 "endLine": 1, "endCol": d.span.1,
@@ -498,16 +522,114 @@ fn run_check_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, j
         }
         println!("{}", serde_json::to_string_pretty(&serde_json::Value::Array(arr))?);
     } else {
-        render_type_diags(&type_diags, false);
-        for d in &diags {
+        render_type_diags(type_diags, false);
+        for d in diags {
             let code = if d.code.is_empty() { String::new() } else { format!("[{}]", d.code) };
             eprintln!("{}:{}: {}{}: {}", d.path, d.line, d.severity, code, d.msg); // @eprintln-ok: diagnostic output contract for --check
             if let Some(h) = &d.hint { eprintln!("    hint: {h}"); } // @eprintln-ok: diagnostic output contract for --check
         }
     }
+    Ok(())
+}
+
+/// L2 hook fast path (`--check --max-wall`, no daemon answered): render the
+/// LAST COMMITTED diag rows from the shared root db, read-only. No tick, no
+/// writes, no cold build — a hook must never start a GB-scale extraction or
+/// contend for the write lock a live-but-unreachable daemon holds. Program
+/// parse/typecheck still runs (static, no db). A blank or absent db renders
+/// the type diags alone with a loud warn.
+fn run_check_readonly(programs: &[String], db_path: &str, root: &Path, json: bool, stage: &str) -> Result<usize> {
+    let files = resolve_programs(programs, root)?;
+    let (_prog, type_diags, _) = prepare_paths(&files)?;
+    let db_is_cold = std::fs::metadata(db_path).map(|m| m.len() == 0).unwrap_or(true);
+    let (diags, stage_rows) = if db_is_cold {
+        tracing::warn!(db = db_path,
+            "[check] root db blank or absent — read-only hook check has no diag rows, cold build skipped; warm it: dl daemon start, or a one-shot dl run");
+        (Vec::new(), Vec::new())
+    } else {
+        let read_db = db::ReadDb::open(db_path)?;
+        (read_diag_rows(&read_db)?, read_rel_string_rows(&read_db, "diag_stage"))
+    };
+    let routes = stage::routes_from_rows(&stage_rows);
+    let before = diags.len();
+    let diags = stage::stage_filter(diags, stage, &routes);
+    tracing::debug!(stage, kept = diags.len(), dropped = before - diags.len(),
+        "check stage routing (read-only fallback)");
+    emit_check_output(&diags, &type_diags, json)?;
     let n_type = type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
     if n_type > 0 { anyhow::bail!("{n_type} type error(s) in the program"); }
     Ok(diags.iter().filter(|d| d.severity == "error").count())
+}
+
+/// True when the relation's query view exists in this db (a db warmed by a
+/// program that never declared the rel has no table to read).
+fn rel_view_exists(read_db: &db::ReadDb, rel: &str) -> bool {
+    let view = lower::txt_tbl(rel);
+    read_db.query_one(
+        rel,
+        "SELECT COUNT(*) FROM sqlite_master WHERE name = ?1",
+        &[db::SqlVal::Text(view)],
+        |row| Ok(row.get::<_, i64>(0)?),
+    ).map(|n| n > 0).unwrap_or(false)
+}
+
+/// Read the persisted `diag` relation off a read-only connection, with the
+/// same NULL defaults `Engine::diags` applies (severity "warn", end_line =
+/// line, ints 0, empty hint = None). Engine-structural shape diags are
+/// tick-time products and have no persisted twin, so a read-only render is
+/// the last tick's `diag` rows alone.
+fn read_diag_rows(read_db: &db::ReadDb) -> Result<Vec<engine::DiagRow>> {
+    if !rel_view_exists(read_db, "diag") { return Ok(Vec::new()); }
+    let sql = format!(
+        "SELECT \"path\", \"line\", \"col\", \"end_line\", \"end_col\", \
+         \"severity\", \"code\", \"msg\", \"hint\" FROM {}",
+        lower::txt_tbl("diag"));
+    let raw_rows = read_db.query_values("diag", &sql, &[])?;
+    let mut out = Vec::new();
+    for row in &raw_rows {
+        let text = |i: usize| -> String {
+            match &row[i] {
+                db::SqlVal::Text(s) => s.clone(),
+                db::SqlVal::Int(n) => n.to_string(),
+                _ => String::new(),
+            }
+        };
+        let int_opt = |i: usize| match row.get(i) {
+            Some(db::SqlVal::Int(n)) => Some(*n),
+            _ => None,
+        };
+        let line = int_opt(1).unwrap_or(0);
+        let sev = text(5);
+        out.push(engine::DiagRow {
+            path: text(0),
+            line,
+            col: int_opt(2).unwrap_or(0),
+            end_line: int_opt(3).unwrap_or(line),
+            end_col: int_opt(4).unwrap_or(0),
+            severity: if sev.is_empty() { "warn".into() } else { sev },
+            code: text(6),
+            msg: text(7),
+            hint: {
+                let hint = text(8);
+                if hint.is_empty() { None } else { Some(hint) }
+            },
+        });
+    }
+    Ok(out)
+}
+
+/// Read a relation's rows as lossy strings off a read-only connection — the
+/// `Engine::rel_rows` twin for the L2 read-only check (drives the
+/// `diag_stage` routing read). Missing rel or any read error = empty.
+fn read_rel_string_rows(read_db: &db::ReadDb, rel: &str) -> Vec<Vec<String>> {
+    if !rel_view_exists(read_db, rel) { return Vec::new(); }
+    let sql = format!("SELECT * FROM {}", lower::txt_tbl(rel));
+    match read_db.query_values(rel, &sql, &[]) {
+        Ok(raw_rows) => raw_rows.iter()
+            .map(|row| row.iter().map(|cell| cell.to_lossy_string()).collect())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// `--parse-only`: parse + typecheck + op resolution + metavar sanity over the
