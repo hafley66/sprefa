@@ -11,10 +11,11 @@
 # (a brand-new eprintln site). When refactoring shrinks a file's count, lower
 # its baseline row here in the same commit; rows at 0 get deleted.
 #
-# Waiver: a comment containing `@eprintln-ok: <reason>` on the hit line or the
-# line above exempts that hit. Use it only for prints that are the command's
-# output contract for a human at a TTY: final CLI-top-level error report before
-# exit, interactive setup/uninstall/doctor prompts and reports, usage/help text.
+# Waiver: a `//` comment containing `@eprintln-ok: <reason>` on the hit line
+# (trailing, after the call) or on the line above (whole-line) exempts that
+# hit. Use it only for prints that are the command's output contract for a
+# human at a TTY: final CLI-top-level error report before exit, interactive
+# setup/uninstall/doctor prompts and reports, usage/help text.
 #
 # Run: dl .dl/no-new-eprintln.dl --check
 
@@ -29,6 +30,16 @@ rel eprintln_waiver_line(source_file: file, waiver_line: int).
 eprintln_waiver_line(source_file, waiver_line) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
     comment(source_file, source_rev, /@eprintln-ok:/, waiver_line, label: _).
+
+# The comment op only captures WHOLE-LINE comments (`comment_lines` in
+# src/comment.rs keys on a line-leading marker), so a trailing
+# `eprintln!(...); // @eprintln-ok: reason` never registered — the axum-arc
+# gap, where two daemon_cmd sites needed whole-line conversion to take
+# effect. This match rule sees the tag anywhere after a `//` on the line,
+# trailing or whole-line; the two rules union into one waiver rel.
+eprintln_waiver_line(source_file, waiver_line) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    match(source_file, source_rev, /\/\/.*@eprintln-ok:/, waiver_line).
 
 # Waivered hits: @eprintln-ok: comment on the hit line or the line above.
 rel eprintln_waived(source_file: file, line_number: int).
@@ -48,29 +59,15 @@ rel eprintln_count(source_file: file, hits: int).
 eprintln_count(source_file, count(line_number)) <-
     eprintln_counted(source_file, line_number).
 
-# Grandfathered baseline, measured post-conversion on the kimi-eprintln branch.
+# Grandfathered baseline, measured post-conversion on the kimi-eprintln branch
+# and re-measured 2026-07-18 after the trailing-waiver fix above (most rows hit
+# 0 once trailing waivers started registering, and rows at 0 get deleted).
 # Lower a row when your commit shrinks the file's count; never raise one.
 rel eprintln_baseline(source_file: file, allowed: int).
-eprintln_baseline("src/cli/check_deadline.rs", 2).
-eprintln_baseline("src/cli/daemon_cmd.rs", 20).
-eprintln_baseline("src/cli/mod.rs", 2).
-eprintln_baseline("src/cli/query.rs", 10).
 eprintln_baseline("src/config.rs", 1).
-eprintln_baseline("src/corpus.rs", 2).
 eprintln_baseline("src/daemon/client.rs", 2).
-eprintln_baseline("src/docs_cmd.rs", 4).
-eprintln_baseline("src/engine/derive.rs", 9).
-eprintln_baseline("src/engine/gen.rs", 1).
-eprintln_baseline("src/engine/repo.rs", 1).
-eprintln_baseline("src/engine/tick.rs", 1).
-eprintln_baseline("src/lib.rs", 10).
-eprintln_baseline("src/scip_setup.rs", 11).
-eprintln_baseline("src/setup.rs", 13).
 eprintln_baseline("src/setup/vscode.rs", 1).
 eprintln_baseline("src/setup/wire.rs", 1).
-eprintln_baseline("src/update.rs", 4).
-eprintln_baseline("src/verdict.rs", 2).
-eprintln_baseline("src/watchdog.rs", 4).
 
 # A grandfathered file grew past its baseline.
 diag(
