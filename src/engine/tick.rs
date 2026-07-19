@@ -449,6 +449,11 @@ impl Engine {
             }))
             .collect();
         crate::activity::set(crate::activity::Phase::Reconcile, "");
+        // Mid-run cancellation checkpoints (class-18 residual): each fires at
+        // a stage boundary where bailing leaves the db in the same recoverable
+        // shape a SIGKILL would (digest saves are deferred below, completion
+        // markers move per component) — see `crate::cancel`.
+        crate::cancel::checkpoint("reconcile")?;
         // Guard: a program with NO scan rules must not treat its empty scan scope
         // as authoritative and wipe an existing db's file-scoped source relations.
         // Scan rules that matched zero files still run reconcile normally (a real
@@ -497,6 +502,18 @@ impl Engine {
         let mut pending_digests: Vec<(String, [u8; 32])> = Vec::new();
         let (seed_moved, seed_pending) = self.seed_rel_digests(&source_rels)?;
         pending_digests.extend(seed_pending);
+        // A source rel whose content moved against its stored baseline WITHOUT
+        // a reconcile delta this tick means a prior tick reconciled rows and
+        // then died before the deferred digest flush (SIGKILL, or a
+        // cancellation checkpoint abort). Feed `changed` so the scoped rebuild
+        // arm re-derives the dependents — otherwise the baselines flush below
+        // with no rebuild having run and the staleness becomes permanent.
+        // Every sibling attribution path (daemon:/effect:/async:/hook:/port:
+        // digests, clock/every, RelKinds) already sets `changed` on motion;
+        // this was the one that only fed the attribution set.
+        if !seed_moved.is_empty() {
+            changed = true;
+        }
         let mut changed_source_rels: HashSet<String> = seed_moved.into_iter().collect();
         // refresh built-in repo/rev/content/file from the updated _file cache,
         // before derived rules that may join them are rebuilt.
@@ -598,6 +615,7 @@ impl Engine {
         }
         for fam in crate::rels::extract_families_pre_node() {
             if !fam.used(prog) { continue; }
+            crate::cancel::checkpoint(fam.name())?;
             crate::activity::detail(fam.name());
             let t = std::time::Instant::now();
             if fam.refresh(self)?.moved() {
@@ -608,6 +626,7 @@ impl Engine {
             phase(fam.name(), t);
         }
         if node_rels_used(prog) {
+            crate::cancel::checkpoint("node-rels")?;
             crate::activity::detail("node");
             let t = std::time::Instant::now();
             if self.refresh_node_rels()? {
@@ -618,6 +637,7 @@ impl Engine {
         }
         for fam in crate::rels::extract_families_post_node() {
             if !fam.used(prog) { continue; }
+            crate::cancel::checkpoint(fam.name())?;
             crate::activity::detail(fam.name());
             let t = std::time::Instant::now();
             // Spine is corpus-gated: its output is a pure function of file
@@ -844,6 +864,7 @@ impl Engine {
         self.last_derived_skipped = Vec::new();
         if changed || need_full || !program_scope.is_empty() {
             crate::activity::set(crate::activity::Phase::Derived, "");
+            crate::cancel::checkpoint("derived")?;
         }
         if need_full {
             // A full derived rebuild is the choke this arc targets. On the cache
@@ -943,6 +964,7 @@ impl Engine {
         let cond_edges = cond_edges_for(&edges, &scc_rules);
         if !scc_rules.is_empty() || !node2vec_rules.is_empty() || !edges.is_empty() {
             crate::activity::set(crate::activity::Phase::Operators, "");
+            crate::cancel::checkpoint("operators")?;
         }
         self.refresh_cond_cache(&cond_edges, &dirty_edges)?;
         for (r, cs) in &seed_rules { self.eval_closure_seed_rule(r, cs)?; }
@@ -1252,6 +1274,9 @@ impl Engine {
         // family's incremental refresh. Its resolver narrowing depends on
         // `module_edge_rev` even when the program never names a module_* rel.
         let wants_module_rels = module_rels_needed(prog);
+        // Same stage-boundary cancellation checkpoints as the full tick (see
+        // `crate::cancel`): reconcile, extract, derived, operators.
+        crate::cancel::checkpoint("reconcile")?;
         let path_reconcile =
             self.reconcile_source_paths(&source_rules, &source_rels, changed, wants_module_rels)?;
         let crate::engine::path_reconcile::PathSourceReconcile {
@@ -1328,6 +1353,7 @@ impl Engine {
             // Prime the same generation-local bundle used by the full tick so
             // daemon/LSP edits also parse a changed Rust file once for every
             // requested analysis family.
+            crate::cancel::checkpoint("extract")?;
             super::extract::prime_analysis_bundles(self, prog)?;
             for fam in crate::rels::extract_families_paths_pre_node() {
                 if fam.used(prog) && fam.refresh_paths(self, &path_refresh_context)?.moved() {
@@ -1409,6 +1435,9 @@ impl Engine {
         // runs after the operator evals below). `affected` carries the changed
         // derived set forward so the post-stratum knows which operator inputs moved.
         let mut affected: HashSet<String> = HashSet::new();
+        if need_full || changed_facts {
+            crate::cancel::checkpoint("derived")?;
+        }
         if need_full {
             self.last_derived_skipped =
                 self.rebuild_derived(&strata.pre_rules, &strata.pre_rels)?;
@@ -1453,6 +1482,7 @@ impl Engine {
             );
         }
         let cond_edges = cond_edges_for(&edges, &scc_rules);
+        crate::cancel::checkpoint("operators")?;
         self.refresh_cond_cache(&cond_edges, &dirty_edges)?;
         for (r, cs) in &seed_rules { self.eval_closure_seed_rule(r, cs)?; }
         for r in &scc_rules { self.eval_scc_rule(r)?; }

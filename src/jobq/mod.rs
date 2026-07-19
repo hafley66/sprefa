@@ -556,6 +556,14 @@ impl JobQueue {
         plock(&self.cancel_flags).remove(key)
     }
 
+    /// Non-consuming peek at `key`'s cancellation flag — the mid-run probe
+    /// (`crate::cancel`) the worker installs around each job so a RUNNING
+    /// tick's checkpoints observe the flag; `take_cancel` still consumes it
+    /// at the job boundary / abort ack.
+    pub(crate) fn is_cancelled(&self, key: &str) -> bool {
+        plock(&self.cancel_flags).contains(key)
+    }
+
     /// Boot crash recovery, run before the workers spawn: any row left
     /// `Queued`/`Running` by a previous (crashed/killed) process is reset to
     /// `Pending` so a worker picks it up again — instantly, without waiting
@@ -725,3 +733,5 @@ pub(crate) fn test_open_with_budget(
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_cancel;

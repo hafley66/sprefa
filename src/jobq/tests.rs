@@ -22,9 +22,10 @@ use super::*;
 use crate::daemon::shell::ShellCtx;
 
 /// A unique temp dir removed on drop (no `tempfile` dev-dep in this crate).
-struct TmpDir(PathBuf);
+/// `pub(crate)` so the sibling `tests_cancel` module reuses it.
+pub(crate) struct TmpDir(pub(crate) PathBuf);
 impl TmpDir {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         static SEQ: AtomicU64 = AtomicU64::new(0);
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("dl_jobq_{}_{n}", std::process::id()));
@@ -458,7 +459,7 @@ async fn rig(dir: &TmpDir, runner: Arc<dyn JobRunner>) -> (Arc<JobQueue>, ShellC
     (q, ctx, cancel)
 }
 
-async fn wait_for_state(q: &JobQueue, key: &str, state: &str, tries: u32) -> bool {
+pub(crate) async fn wait_for_state(q: &JobQueue, key: &str, state: &str, tries: u32) -> bool {
     for _ in 0..tries {
         if q.peek(key).map(|r| r.0 == state).unwrap_or(false) {
             return true;
