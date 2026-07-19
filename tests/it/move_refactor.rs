@@ -1,7 +1,9 @@
 //! Auto-refactor sink (Route A): `dl --move OLD=NEW` rewrites `use`-path
 //! references after a module move, splicing the new path at the byte coordinate
-//! the ref-spine located. Bare uses rewrite; brace leaves are reported skipped
-//! (their located span is the leaf name, not the full path — F1b).
+//! the ref-spine located. Bare uses and brace heads rewrite at their located
+//! spans (F1b); brace-inner leaves rewrite in place (#17a); a leaf whose
+//! rewrite exits the brace head triggers a statement-level regroup; only
+//! `self`/`*` groups stay loud skips.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,7 +12,9 @@ use std::process::Command;
 const DL: &str = env!("CARGO_BIN_EXE_dl");
 
 fn sandbox(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("mv_{tag}"));
+    // process id in the name: concurrent suite runs from other checkouts must
+    // not clobber each other's fixtures mid-test
+    let dir = std::env::temp_dir().join(format!("mv_{tag}_{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("src")).unwrap();
     dir
@@ -127,6 +131,78 @@ fn move_rewrites_brace_inner_leaf() {
     let after = fs::read_to_string(d.join("src/app.rs")).unwrap();
     assert!(after.contains("use crate::{helpers::utils::Foo, misc};"),
         "brace-inner leaf rewritten, sibling untouched: {after}");
+}
+
+/// Brace exit (the last brace residual): `use crate::a::{b::X, c}` with `a::b`
+/// moved OUT of `a` — the leaf's new path `crate::z::b::X` no longer sits
+/// under the head `crate::a`, so the whole statement body regroups onto the
+/// remaining common prefix.
+#[test]
+fn move_regroups_statement_when_leaf_exits_brace_head() {
+    let d = sandbox("braceexit");
+    fs::create_dir_all(d.join("src/a")).unwrap();
+    fs::write(d.join("src/lib.rs"), "mod a;\nmod app;\n").unwrap();
+    fs::write(d.join("src/a.rs"), "pub mod b;\npub mod c;\n").unwrap();
+    fs::write(d.join("src/a/b.rs"), "pub struct X;\n").unwrap();
+    fs::write(d.join("src/a/c.rs"), "pub fn go() {}\n").unwrap();
+    fs::write(d.join("src/app.rs"),
+        "use crate::a::{b::X, c};\nfn use_it(_: X) { c::go() }\n").unwrap();
+
+    // Dry run previews the whole-body regroup and reports no skips.
+    let (code, out, err) = run_move(&d, "src/a/b.rs=src/z/b.rs", false);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.contains("crate::a::{b::X, c} -> crate::{z::b::X, a::c}"),
+        "previews the statement regroup: {out}");
+    assert!(!err.contains("left alone"), "no skip for a regrouped statement: {err}");
+
+    let (code, out, err) = run_move(&d, "src/a/b.rs=src/z/b.rs", true);
+    assert_eq!(code, 0, "{out}\n{err}");
+    let after = fs::read_to_string(d.join("src/app.rs")).unwrap();
+    assert!(after.contains("use crate::{z::b::X, a::c};"),
+        "exiting leaf regrouped, sibling kept: {after}");
+
+    // Reverse move: the regrouped statement's `z::b::X` leaf rewrites back in
+    // place (the new path stays under the `crate` head, no second regroup).
+    let (code, out, err) = run_move(&d, "src/z/b.rs=src/a/b.rs", true);
+    assert_eq!(code, 0, "{out}\n{err}");
+    let back = fs::read_to_string(d.join("src/app.rs")).unwrap();
+    assert!(back.contains("use crate::{a::b::X, a::c};"),
+        "reverse move rewrites the leaf in place: {back}");
+}
+
+/// A sole-leaf brace group whose leaf exits collapses to a bare use.
+#[test]
+fn move_collapses_sole_brace_leaf_that_exits_head() {
+    let d = sandbox("soleleaf");
+    fs::create_dir_all(d.join("src/a")).unwrap();
+    fs::write(d.join("src/lib.rs"), "mod a;\nmod app;\n").unwrap();
+    fs::write(d.join("src/a.rs"), "pub mod b;\n").unwrap();
+    fs::write(d.join("src/a/b.rs"), "pub struct X;\n").unwrap();
+    fs::write(d.join("src/app.rs"), "use crate::a::{b::X};\nfn use_it(_: X) {}\n").unwrap();
+
+    let (code, out, err) = run_move(&d, "src/a/b.rs=src/z/b.rs", true);
+    assert_eq!(code, 0, "{out}\n{err}");
+    let after = fs::read_to_string(d.join("src/app.rs")).unwrap();
+    assert!(after.contains("use crate::z::b::X;"), "sole leaf collapses to bare: {after}");
+}
+
+/// A `self` leaf pins its statement: regrouping would change what `self`
+/// binds, so the statement stays a loud skip.
+#[test]
+fn move_leaves_self_group_alone_loudly() {
+    let d = sandbox("selfgroup");
+    fs::create_dir_all(d.join("src/a")).unwrap();
+    fs::write(d.join("src/lib.rs"), "mod a;\nmod app;\n").unwrap();
+    fs::write(d.join("src/a.rs"), "pub mod b;\npub fn on_a() {}\n").unwrap();
+    fs::write(d.join("src/a/b.rs"), "pub struct X;\n").unwrap();
+    fs::write(d.join("src/app.rs"),
+        "use crate::a::{self, b::X};\nfn use_it(_: X) { a::on_a() }\n").unwrap();
+
+    let (code, _out, err) = run_move(&d, "src/a/b.rs=src/z/b.rs", true);
+    assert_eq!(code, 0);
+    assert!(err.contains("left alone"), "self-group counted loudly: {err}");
+    let after = fs::read_to_string(d.join("src/app.rs")).unwrap();
+    assert!(after.contains("use crate::a::{self, b::X};"), "self group untouched: {after}");
 }
 
 /// Physical move (#17b) + moved file's own content (#17c): `--fix` renames the

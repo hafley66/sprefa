@@ -153,7 +153,7 @@ impl<'a> ProjectCx<'a> {
             // Duplicate names can occur when repos are projected into the
             // repo-less module graph. Preserve first-wins deterministically.
             let mut manifests: Vec<_> = self.manifests.iter().collect();
-            manifests.sort_by(|(ap, _), (bp, _)| ap.cmp(bp));
+            manifests.sort_by_key(|(manifest_path, _)| *manifest_path);
             for (path, content) in manifests {
                 if !path.ends_with("package.json") {
                     continue;
@@ -611,6 +611,21 @@ mod tests {
             &body[*lo as usize..*hi as usize],
             "crate::parser::expr::Foo"
         );
+    }
+
+    #[test]
+    fn use_leaf_body_span_covers_whole_statement_body() {
+        // Two statements: each leaf's `body` span is its own statement's body
+        // (between `use ` and `;`), the statement-regroup splice coordinate.
+        let content = "use crate::a::{b::X, c};\nuse crate::misc;\n";
+        let leaves = rust_use_leaves(content);
+        assert_eq!(leaves.len(), 3);
+        for leaf in &leaves[..2] {
+            let (lo, hi) = leaf.body;
+            assert_eq!(&content[lo as usize..hi as usize], "crate::a::{b::X, c}");
+        }
+        let (lo, hi) = leaves[2].body;
+        assert_eq!(&content[lo as usize..hi as usize], "crate::misc");
     }
 
     #[test]

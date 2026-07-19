@@ -760,8 +760,8 @@ pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> R
 /// tick to populate the import graph + ref-spine, then for every located use
 /// span computes the rewritten path via `rspath::rewrite_import` and splices it
 /// back at the same byte coordinate. Dry-run by default (prints the planned
-/// edits); `--fix` writes the files. Does NOT move the file on disk or fix the
-/// moved file's own relative imports — those are separate steps.
+/// edits); `--fix` writes the files, renames the moved file on disk, re-homes
+/// its `mod` declaration, and re-anchors the moved file's own imports.
 // LANG-JUNCTION(move-rewriter): per-language `--move` path rewriting (rspath = Rust use-paths + mod surgery, ktpath = Kotlin package math); a new language adds its rewriter module and dispatches from this driver
 /// Auto-refactor driver. `repo` selects which repo to rewrite: `None` = the
 /// `--root` repo (self); a config slug = that repo (cloned if needed); `"*"` /
@@ -892,9 +892,14 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
 
     // PASS 2 — brace leaves the shared head span can't reach
     // (`use crate::{old::A, b}`): re-expand each move-relevant .rs file's use
-    // statements at leaf granularity and rewrite the leaf text in place when
-    // the new path still sits under the unchanged brace head. Spans already
-    // edited by pass 1 (bare uses double as leaves) are skipped.
+    // statements at leaf granularity. A leaf whose rewritten path still sits
+    // under its own prefix rewrites in place. A statement where any leaf's
+    // rewrite LEAVES its prefix (`use crate::a::{b::X, c}` with `a::b` moved
+    // out of `a`) is regenerated wholesale at its body span — leaves
+    // flattened, rewritten, common prefix refactored back out — superseding
+    // any pass-1 head edit inside it. A statement carrying a `self`/`*` leaf
+    // has no sound text regroup and stays a loud skip. Spans already edited by
+    // pass 1 (bare uses double as leaves) are skipped.
     let spanned: std::collections::HashSet<(String, u32, u32)> =
         edits.iter().map(|e| (e.path.clone(), e.lo, e.hi)).collect();
     let imports = eng.module_imports()?;
@@ -905,26 +910,101 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
             }))
             .map(|(file, _)| file)
             .collect();
+        let mut regen_edits: Vec<refactor::Edit> = Vec::new();
+        let mut regen_spans: Vec<(String, u32, u32)> = Vec::new();
         for file in leaf_files {
             // moved files re-anchor in pass 1; their brace leaves stay counted
             if rs_mods.iter().any(|(old, _, _, _)| old == file) { continue; }
             let Some(from_mod) = rspath::file_to_mod_path_rooted(file, &roots) else { continue };
             let Ok(content) = std::fs::read_to_string(root.join(file)) else { continue };
+            // group leaves per use statement (shared body span)
+            let mut stmts: std::collections::BTreeMap<(u32, u32), Vec<modgraph::UseLeaf>> =
+                std::collections::BTreeMap::new();
             for leaf in modgraph::rust_use_leaves(&content) {
-                if leaf.collapsed { continue; }
-                let (lo, hi) = leaf.leaf;
-                if spanned.contains(&(file.clone(), lo, hi)) { continue; }
-                let Some(old_text) = content.get(lo as usize..hi as usize) else { continue };
-                let rewritten = rs_mods.iter().find_map(|(_, _, old_mod, new_mod)|
-                    rspath::rewrite_brace_leaf(&leaf.full, &leaf.prefix, old_mod, new_mod, &from_mod));
-                if let Some(new_text) = rewritten {
+                stmts.entry(leaf.body).or_default().push(leaf);
+            }
+            for ((body_lo, body_hi), stmt_leaves) in stmts {
+                // fold every move over a path (pass 1 applies one move per
+                // span; the fold is the multi-move superset of the same math)
+                let fold = |path: &str| {
+                    let mut folded_path = path.to_string();
+                    for (_, _, old_mod, new_mod) in &rs_mods {
+                        if let Some(next) = rspath::rewrite_use_path(&folded_path, old_mod, new_mod, &from_mod) {
+                            folded_path = next;
+                        }
+                    }
+                    folded_path
+                };
+                let folded: Vec<(String, bool)> = stmt_leaves.iter()
+                    .map(|leaf| {
+                        let new_full = fold(&leaf.full);
+                        let changed = new_full != leaf.full;
+                        (new_full, changed)
+                    }).collect();
+                if !folded.iter().any(|(_, changed)| *changed) { continue; }
+                // The statement's leaves share one outermost head span; pass 1
+                // rewrites that head text. A changed leaf stays expressible in
+                // place iff its new path decomposes as (rewritten head) +
+                // (unchanged middle segments) + (new leaf text) — otherwise the
+                // leaf EXITS the brace and the whole statement regroups.
+                let head_text = stmt_leaves[0].head
+                    .and_then(|(lo, hi)| content.get(lo as usize..hi as usize));
+                let new_head = head_text.map(&fold);
+                let head_rewritten_by_pass1 = stmt_leaves[0].head
+                    .is_some_and(|(lo, hi)| spanned.contains(&(file.clone(), lo, hi)));
+                let in_place_leaf = |leaf: &modgraph::UseLeaf, new_full: &str| -> Option<Option<String>> {
+                    // Some(None) = expressible, no leaf edit; Some(Some(t)) =
+                    // expressible via leaf edit t; None = exits the brace.
+                    let (Some(head), Some(new_head)) = (head_text, new_head.as_deref()) else {
+                        return Some(Some(new_full.to_string())); // bare use: whole span is the leaf
+                    };
+                    if new_head != head && !head_rewritten_by_pass1 {
+                        return None; // head change pass 1 didn't express (multi-move chain)
+                    }
+                    let middle = leaf.prefix.strip_prefix(head).unwrap_or("");
+                    let new_leaf = new_full.strip_prefix(&format!("{new_head}{middle}::"))?;
+                    let (lo, hi) = leaf.leaf;
+                    let old_leaf = content.get(lo as usize..hi as usize)?;
+                    Some((new_leaf != old_leaf).then(|| new_leaf.to_string()))
+                };
+                let exits = stmt_leaves.iter().zip(&folded).any(|(leaf, (new_full, changed))| {
+                    *changed && !leaf.collapsed && in_place_leaf(leaf, new_full).is_none()
+                });
+                if !exits {
+                    for (leaf, (new_full, changed)) in stmt_leaves.iter().zip(&folded) {
+                        if !changed || leaf.collapsed { continue; }
+                        let (lo, hi) = leaf.leaf;
+                        if spanned.contains(&(file.clone(), lo, hi)) { continue; }
+                        let Some(old_text) = content.get(lo as usize..hi as usize) else { continue };
+                        let Some(Some(new_text)) = in_place_leaf(leaf, new_full) else { continue };
+                        if new_text != old_text {
+                            edits.push(refactor::Edit { path: file.clone(), lo, hi,
+                                old_text: old_text.to_string(), new_text });
+                        }
+                    }
+                } else if stmt_leaves.iter().any(|leaf| leaf.collapsed) {
+                    // `use a::{self, ..}` / `use a::*`: regrouping would change
+                    // what the self/glob binds — stays a loud skip
+                    continue;
+                } else {
+                    let items: Vec<(String, Option<String>)> = stmt_leaves.iter().zip(&folded)
+                        .map(|(leaf, (new_full, _))| (new_full.clone(), leaf.alias.clone()))
+                        .collect();
+                    let new_text = rspath::regroup_use_items(&items);
+                    let Some(old_text) = content.get(body_lo as usize..body_hi as usize) else { continue };
                     if new_text != old_text {
-                        edits.push(refactor::Edit { path: file.clone(), lo, hi,
+                        regen_spans.push((file.clone(), body_lo, body_hi));
+                        regen_edits.push(refactor::Edit { path: file.clone(), lo: body_lo, hi: body_hi,
                             old_text: old_text.to_string(), new_text });
                     }
                 }
             }
         }
+        // a regenerated statement carries its whole body: drop the pass-1 head
+        // (or leaf) edits inside it in favor of the one body-span edit
+        edits.retain(|edit| !regen_spans.iter().any(|(path, lo, hi)|
+            edit.path == *path && edit.lo >= *lo && edit.hi <= *hi));
+        edits.append(&mut regen_edits);
     }
 
     // The moved Kotlin file's own `package` declaration follows the move.
@@ -941,8 +1021,8 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
 
     // Honest skip accounting (file-level so brace heads don't false-positive: one
     // head edit covers all `{a, b}` leaves). A move-relevant import in a file that
-    // produced NO edit is a genuine miss — e.g. a brace leaf whose rewritten path
-    // left the brace head, which pass 2 can't express in place.
+    // produced NO edit is a genuine miss — a `self`/`*` group pass 2 refuses to
+    // regroup, or a moved file's own brace-inner leaves.
     let edited: std::collections::HashSet<&String> = by_file.keys().collect();
     let skipped = imports.iter().filter(|(file, spec)| {
         !edited.contains(file) && (
@@ -953,7 +1033,7 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
     }).count();
     if skipped > 0 {
         let skipped_count = skipped;
-        tracing::warn!(skipped_count, "[move] {skipped_count} move-relevant import(s) left alone (a brace leaf whose rewrite leaves the brace head cannot be spliced in place)");
+        tracing::warn!(skipped_count, "[move] {skipped_count} move-relevant import(s) left alone (a `self`/`*` brace group, or a moved file's own brace leaves, has no sound text rewrite)");
     }
     // Kotlin-specific honesty: a wildcard import of the old package may or may
     // not still cover the moved decls, and a same-package bare use breaks when
