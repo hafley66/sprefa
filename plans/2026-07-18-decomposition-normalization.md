@@ -583,3 +583,67 @@ scheduler plan; 7/8 independent. Suggested landing order: 0, 9, 5, 1, 2, 3, 4,
    style markers inside the new typegraph modules? Recommendation: fn-name
    anchors only; the @callable markers already cover the emitter arms, and a
    second marker system is upkeep without a reader.
+
+## Execution record (2026-07-18 late PM, branch decomp-norm off next @ c9b04d21)
+
+Precondition check at execution time: callable-lambda-ctor was already merged
+to next (253b4c9d..5c68db73), and next had independently landed steps 0-5 —
+this arc executed only the residue.
+
+| # | step | status | receipt |
+|---|---|---|---|
+| 0 | coupling-metrics fix + glob widen + var rename | ALREADY ON NEXT | rides the `file_lines` builtin, glob `src/**/*.rs`, no single-letter vars left |
+| 1 | typegraph per-language split | ALREADY ON NEXT (11a6d1ee) | tree matches section 3 incl. rust/ sub-dir |
+| 2 | ts sub-split | ALREADY ON NEXT | ts/{mod,flow,text}.rs (decision 1 resolved as recommended) |
+| 3 | doc citation rewrite | ALREADY ON NEXT (5c68db73) | |
+| 4 | modgraph split | ALREADY ON NEXT | modgraph/{mod,rust,ts,kotlin,go,python} |
+| 5 | cli daemon rename | ALREADY ON NEXT | src/cli/daemon_cmd.rs (decision 3 resolved as recommended) |
+| 9 | banned-word rename | EXECUTED (1087945a) | full_sources tests; src/** grep clean |
+| 7 | engine/mod.rs residue | EXECUTED (55a2ae93) | 1,913 -> 1,392: results.rs + rel consts -> family/mod.rs + timeutil.rs |
+| 8 | extract/mod.rs residue | EXECUTED (12e2dc1d) | 1,744 -> 1,328: scip_narrow.rs + verdict_tests.rs |
+| 6 | daemon split | EXECUTED (ac65a5ef) | src/daemon/{mod 915, root 658, home 109, budget 258, dispatch 614, client 465} |
+| 10 | daemon namespace absorption | EXECUTED (364f4cb1) | read/http_discovery/shell absorbed; lib.rs aliases keep old paths |
+| 11 | parse + propose splits | EXECUTED (fdf2d181) | parse/{mod,ops,desugar}, propose/{mod,sequence,shapes}, old-branch shapes |
+| 12 | receipts + record | EXECUTED (this section + 9e865b91) | |
+
+Gates: cargo test --lib 599 passed / 0 failed; full `cargo test --test it`
+919 passed / 0 failed / 20 ignored (hook_deadline flake did not fire);
+clippy --all-targets touched-file warning set diffed IDENTICAL to the next
+tip baseline (same lints, same sites, line numbers shifted only);
+.dl/no-new-eprintln.dl --check exit 0.
+
+Budget receipt (widened rail, examples/coupling-metrics.dl): file_over_budget
+is now exactly {engine/derive.rs 2484, engine/meta.rs 1570, engine/tick.rs
+1553, storage/call.rs 1938, db.rs 1875} — every file this plan targeted is
+under 1,500; the five leftovers are the engine-trait epic's (derive/meta/tick),
+the deliberate storage/call.rs waiver (2.3), and the db-seam arc's db.rs.
+Decision 5 resolved as recommended: budget stays 1,500.
+
+Deviations, with reasons:
+- Step 7 time helpers: the plan said "an existing util home"; src has none, so
+  they landed in a new 54-line `engine/timeutil.rs` (smallest honest home).
+- Step 6 region map: re-derived from the post-axum daemon.rs (2,967 lines, not
+  the plan's 2,714) — the client/transport half had partially moved to the new
+  `daemon_client.rs` in the axum arc. Cut lines follow the plan's concerns.
+- Step 6 tests: daemon.rs's `mod tests` stays whole in daemon/mod.rs (the plan
+  is silent on it; the tests span budget/home/mod subjects).
+- Step 10: `daemon_client.rs` (postdates the plan) was NOT absorbed —
+  daemon/client.rs already owns the client-half name; its placement/rename is
+  an open user call.
+- Step 6/10 scheduler gate: the scheduler plan landed as a doc; its daemon
+  execution steps are listed "not started" in CLAUDE.md, so the hold cleared.
+- Determinism oracle: scripts/rails-oracle.sh proves the exe-swap-storm rails
+  catch their historical defects (its own doc), not prev-rev byte-identical
+  extraction; the substitute zero-behavior-change gate was the full it suite
+  incl. the extraction-determinism tests, which passed at every step.
+- Filesize 500-line law: the enforcement rail had 28 unallowlisted >500
+  offenders on the next tip BEFORE this arc (tonight's typegraph/modgraph/eval
+  merges never updated the allowlist). This arc repointed only the rows for
+  files it renamed (dead daemon.rs/parse.rs/propose.rs rows -> their over-500
+  successors, both prongs in sync); the pre-existing red is those arcs' debt,
+  recorded here rather than silently absorbed.
+- Step 12 arch-doc note: no single architecture-conventions doc exists; the
+  per-family stem convention (extractor file / rels registration / storage
+  module share the family stem, one-family-one-file in extract/, per-domain in
+  rels/) is recorded HERE as the plan's own closing note (decision 6's fn-name
+  anchor style was already applied by the step-3 landing on next).
