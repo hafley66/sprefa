@@ -208,7 +208,14 @@ impl Engine {
                         anyhow::anyhow!("gen splice l1 must be an int, got `{}`", m[&vars[2]])
                     })?;
                     if l1 <= l0 {
-                        bail!("gen splice needs l1 > l0 (paired marker lines), got {l0}..{l1} in {path}");
+                        bail!(
+                            "gen splice needs l1 > l0 (paired marker LINES with the replaced \
+                             region between them), got {l0}..{l1} in {path} — one line cannot be \
+                             both markers. Either give the region its own lines (marker / content \
+                             / marker), or switch to the named-marker form `gen(:zone, path, ...)` \
+                             (BEGIN:name/END:name pair, survives surrounding edits, no line \
+                             numbers in the rule)"
+                        );
                     }
                     let key = (path, l0, l1);
                     if !splices.groups.contains_key(&key) {
