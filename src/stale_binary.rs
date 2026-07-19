@@ -67,7 +67,7 @@ pub fn warn_if_stale_with_reference(start: &Path, reference_label: &str, referen
     for profile in ["debug", "release"] {
         let candidate = build_root.join("target").join(profile).join(BIN_NAME);
         let Some(built_mtime) = mtime(&candidate) else { continue };
-        if built_mtime <= reference_mtime {
+        if !built_is_strictly_newer(built_mtime, reference_mtime) {
             continue;
         }
         // Compare-and-set so a race between two call sites in the same
@@ -113,6 +113,17 @@ fn crate_build_root(start: &Path) -> Option<PathBuf> {
         let name = value.get("package").and_then(|p| p.get("name")).and_then(|n| n.as_str());
         (name == Some(env!("CARGO_PKG_NAME"))).then(|| dir.to_path_buf())
     })
+}
+
+/// Strictly-newer at whole-second granularity. The supervised-status path
+/// feeds a reference decoded from `build_id` ("version:exe_mtime_secs"),
+/// which truncates to whole seconds; the fs mtime of the `target/` candidate
+/// keeps nanoseconds. Comparing raw `SystemTime`s made the SAME binary read
+/// as "newer" by its sub-second remainder (the equal-age "7m45s vs 7m45s"
+/// false warn). Truncate both sides to epoch seconds so equal means silent
+/// and only a genuinely later build (>= 1s apart) triggers.
+fn built_is_strictly_newer(built_mtime: SystemTime, reference_mtime: SystemTime) -> bool {
+    epoch_secs(built_mtime) > epoch_secs(reference_mtime)
 }
 
 fn mtime(path: &Path) -> Option<SystemTime> {
@@ -166,6 +177,24 @@ mod tests {
             humanize_age(SystemTime::now() + std::time::Duration::from_secs(60)),
             "0s"
         );
+    }
+
+    #[test]
+    fn equal_mtime_is_not_stale() {
+        let reference = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_000);
+        // Exactly equal: silent.
+        assert!(!built_is_strictly_newer(reference, reference));
+        // Same whole second, built carries a sub-second remainder the
+        // seconds-truncated build_id reference lost: still silent (this was
+        // the "7m45s vs 7m45s" false warn).
+        let built_same_second = reference + std::time::Duration::from_millis(400);
+        assert!(!built_is_strictly_newer(built_same_second, reference));
+        // Built older: silent.
+        let built_older = reference - std::time::Duration::from_secs(5);
+        assert!(!built_is_strictly_newer(built_older, reference));
+        // Built a full second later: warns.
+        let built_newer = reference + std::time::Duration::from_secs(1);
+        assert!(built_is_strictly_newer(built_newer, reference));
     }
 
     #[test]

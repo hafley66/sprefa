@@ -94,6 +94,7 @@ mod embed_similar;
 mod empty_scan_scope_guard;
 mod entity_parent_xfile;
 mod env_rel;
+mod eprintln_waiver;
 mod extraction_determinism;
 mod facts;
 mod flow_breaking;

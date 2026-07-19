@@ -44,9 +44,11 @@ mod repo;
 mod results;
 mod rpc;
 mod source_prepare;
+mod source_rows;
 #[cfg(test)]
 mod staged_delta;
 mod symbols;
+mod term_extract;
 mod timeutil;
 pub(crate) use query::{emit_query_json, emit_query_json_rows, QueryOutputFormat};
 pub(crate) use repo::git_batch_read;
