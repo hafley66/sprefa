@@ -1198,13 +1198,39 @@ Five more complaints (SCIP + dl-surface). NOT yet triaged against code; capture 
 - [ ] **S5 ast-grep patterns are exact-shape.** `{ element: <$C/> }` matched nothing
       (shape strictness / metavar-in-JSX). Repro + narrow: grammar, intended match,
       sg pattern-compilation limit vs grammar gap. S1/S2 pair is the SCIP crux.
-- [ ] **S6 source-extract rule body silently drops an extra rel atom** (found
-      2026-07-10 building gen-lang-skill.dl): a `scan`+`match` rule whose body
-      also joins a rel (`comment_node(...)`) runs the extraction and IGNORES the
-      rel atom — no bail, no warning, rows that should have been filtered land.
-      The rel-level mixed source/derived guard doesn't cover the body-level mix.
-      Fix shape: bail like the rel-level guard ("move the join to a derived
-      rel"), or actually support the join.
+- [x] **S6 source-extract rule body silently drops an extra rel atom** — LANDED
+      2026-07-18 (3b2319a6, eaten-diag arc): now a typecheck ERROR
+      `source-rule-extra-atom` ("put the source-extract rule and the join in
+      two separate relations"), verified firing live 2026-07-19.
+- [ ] **S7 two source rules silently merge across `use`** (Chris, 2026-07-10,
+      salvaged from ext-wave3 worktree 2026-07-19): same-named rels from a
+      `use`d module and the local program (or two modules) silently UNION — no
+      shadowing, no warning, no way to say which one you meant. Need module
+      rename/alias/specific-import syntax (`use std/flow as f`,
+      `use std/flow (call_node)` shapes TBD); silent cross-module union must
+      at minimum warn.
+- [ ] **S8 error-message gap: gen splice with l0==l1 errors** (Chris,
+      2026-07-10, salvaged 2026-07-19): a zero-height gen splice span errors,
+      forcing every json marker in template.html to become a 3-line block;
+      discoverable only by hitting it. `r#""` fixes it. Fix: either support
+      l0==l1 single-line markers or make the error NAME the r#"" fix
+      (paste-ready-errors standard, small-model-surfaces item 4).
+- [ ] **S9 doc gaps** (Chris, 2026-07-10, salvaged 2026-07-19): (a) bool is
+      not a usable column brand — flags travel as "true"/"false" text and must
+      re-embed with `json(flag)`; (b) arithmetic like `line+1` must live in a
+      rule HEAD, never a body binding (S3's computed-value-bind wart, restated
+      for docs). Both belong in the reference/book + the authoring skill until
+      the surface itself changes.
+- NOTE (2026-07-19 salvage): ext-wave3 also carried a P1/P2/P3 --check perf
+  RCA (full accounting now at docs/perf/2026-07-10-check-time-accounting.md).
+  Largely superseded by the 2026-07-18 wave: P1 empty-derived full-rebuild →
+  digest-before-write + `_derived_complete` marker-ensure (e6975f7a); P2
+  single-writer cache.db flood → two-worlds L2 one-db-per-root (6f63eaf5);
+  P3 missing phase records → perf.jsonl now carries pid + derived phase rows.
+  P1 residual checked 2026-07-19: `any_derived_empty` and its per-rel
+  COUNT(*) probes no longer exist (survives only in comments — replaced by
+  the `_derived_complete` marker system, src/engine/meta.rs:1157). P1-P3 all
+  closed.
 
 ### Style notes for this repo
 - dl variable names are descriptive, never single-letter: `path`/`line`/`callee_name`, not `p`/`l`/`q`. Applies to every snippet in skills, examples, book, tests, and agent prompts; rename opportunistically when touching old files.
