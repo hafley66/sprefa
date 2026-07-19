@@ -16,10 +16,16 @@ fn sandbox(tag: &str) -> PathBuf {
 }
 
 /// Discovery run (no positional program) rooted at `dir`; returns stdout.
+/// `XDG_STATE_HOME` is sandboxed beside the fixture: discovery defaults the db
+/// to the per-root `roots/<key>/db.sqlite` under the daemon home
+/// (storage-endgame L2) — the resolved root here is the fixture's `.dl`-bearing
+/// ANCESTOR, so without the override these runs would write into a
+/// developer's real `~/.local/state/sprefa`.
 fn run(dir: &PathBuf) -> String {
     let out = Command::new(DL)
         .current_dir(dir)
         .args(["--no-daemon"])
+        .env("XDG_STATE_HOME", dir.join(".xdg-state"))
         .output().expect("run dl discovery");
     format!("{}{}",
         String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))

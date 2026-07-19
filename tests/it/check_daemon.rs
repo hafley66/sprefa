@@ -253,13 +253,17 @@ fn hook_check_fallback_is_read_only() {
 #[test]
 fn fallback_reopen_is_steady_state_no_reextraction() {
     let sb = Sandbox::new("steady");
-    // A real scan+match source rule so the extract families actually run
-    // (a fact-only program would trivially "skip" extraction).
+    // Demand a builtin extraction family (`type_entity` -> the type extractor)
+    // so family extraction really runs — the `[extract] ... REBUILD` /
+    // digest-skip verdicts only exist for extract families, not scan+match
+    // source rules (same fixture shape as tests/it/verdict.rs).
     fs::create_dir_all(sb.root.join("src")).unwrap();
-    fs::write(sb.root.join("src").join("x.rs"), "fn alpha() {}\n").unwrap();
+    fs::write(sb.root.join("src").join("x.rs"), "pub struct Alpha { pub n: u32 }\n").unwrap();
     fs::write(sb.root.join(".dl").join("p.dl"),
-        "rel alpha_hit(path: file, line: int).\n\
-         alpha_hit(path, line) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /alpha/, line).\n").unwrap();
+        "rel seen(path: file).\n\
+         seen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev).\n\
+         rel entity_seen(entity_name: text).\n\
+         entity_seen(entity_name) <- type_entity(repo, sym, entity_name, kind, parent, file, line).\n").unwrap();
 
     let run_check = || {
         Command::new(DL)
