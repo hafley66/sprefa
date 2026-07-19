@@ -1,5 +1,22 @@
 # Auto-refactor: `use`-path rewrite via byte-span edits
 
+> **Audit 2026-07-18 (branch auto-refactor)**: every numbered step below LANDED
+> pre-v5-lift; per-step receipts inline. File paths in the body are the old
+> `v5/src` layout; current locations in the receipts. One follow-on landed with
+> this audit: statement-level regroup when a brace leaf's rewrite exits its
+> head (was a loud skip). Still loud skips, by design: `self`/`*` groups, a
+> moved file's own brace-inner leaves.
+>
+> | Step | Status | Receipt |
+> |---|---|---|
+> | P0 `of_located` | LANDED 2026-05-31 | 1fdf2bd3; extended to fold `repo` too (2a471356); `src/spine.rs:192`, chokepoint `src/engine/meta.rs:1534` |
+> | P1 hoist | LANDED 2026-05-31 | 1fdf2bd3; batched via `insert_module_spans` -> one `insert_spine_where_bytes` (`src/engine/extract/mod.rs:547`, full-scan `src/engine/pipeline/full_sources.rs:274`) |
+> | F1 leaf spans | LANDED 2026-05-31, design revised | 1fdf2bd3; brace leaves share the outermost HEAD span in the spine (`src/graph/modgraph/rust.rs` `expand_use_leaves`), leaf granularity handled by the move sink's second pass (#17, f859585e) |
+> | `ref.id` | LANDED 2026-05-31 | 1fdf2bd3; `ref(id, string, file, lo, hi)` is the reserved spine rel |
+> | A driver + sink | LANDED 2026-05-31/06-01 | 09465572 + 79db9d9b + 35834e4b; `run_move`/`move_one_repo` `src/lib.rs`, sink `src/refactor.rs`, path math `src/rspath.rs`. Deviation: no `edit` db table — in-memory `refactor::Edit` batch, dry-run preview + `--fix` splice. LSP rename NOT wired (rides the parked LSP-thin-client plan) |
+> | "residuals" (brace-inner leaves, physical rename + mod surgery, moved file's own imports) | LANDED 2026-06-12 | f859585e (#17); Kotlin `--move` landed later (`src/ktpath.rs`). The CLAUDE.md parked line "brace-head use rewrite, physical file move" predated #17 and was stale |
+> | B DSL operator | STILL DEFERRED | correct per plan — no `rewrite_use` operator exists |
+
 The OG v0 use case, riding ref-spine C. Rewrite Rust `use` paths by editing the byte
 spans the spine already records. `ref` = import graph AND rewrite coordinate; the
 "reverse refs" demo IS the refactor query.
