@@ -34,6 +34,10 @@ pub struct TickRec<'a> {
     pub retracted: usize,
     pub derived_strategy: &'a str, // "full" | "scoped" | "unchanged"
     pub derived_rebuilt: &'a [String],
+    /// Subset of `derived_rebuilt` whose re-derivation produced rows identical
+    /// to the live table, so the wipe+refill was skipped (zero main-db writes)
+    /// — the digest-before-write storm signature stays observable here.
+    pub derived_skipped: &'a [String],
     pub changed_rels: &'a [String],
     /// WHY `derived_strategy` was "full", e.g. `"blank-slate"` /
     /// `"program-edit"` / `"carry-changed"` / `"derived-missing:<rel,...>"` /
@@ -249,6 +253,7 @@ fn tick_record_json(rec: &TickRec<'_>) -> serde_json::Value {
         "derived": {
             "strategy": rec.derived_strategy,
             "rebuilt": rec.derived_rebuilt,
+            "skipped": rec.derived_skipped,
             "full_reason": rec.full_reason,
         },
         "changed_rels": rec.changed_rels,
@@ -309,6 +314,7 @@ mod tests {
             retracted: 0,
             derived_strategy: "full",
             derived_rebuilt: &rebuilt,
+            derived_skipped: &[],
             changed_rels: &changed_rels,
             full_reason: Some("blank-slate"),
             effects_inflight: 0,
@@ -324,7 +330,7 @@ mod tests {
         let unchanged = tick_record_json(&TickRec {
             tick: 4, kind: "full", files_parsed: 1, files_total: 1,
             extracted: 0, retracted: 0, derived_strategy: "unchanged",
-            derived_rebuilt: &[], changed_rels: &[], full_reason: None,
+            derived_rebuilt: &[], derived_skipped: &[], changed_rels: &[], full_reason: None,
             effects_inflight: 0, total_ms: 1,
         });
         assert!(unchanged["derived"]["full_reason"].is_null());
