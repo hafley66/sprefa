@@ -65,7 +65,7 @@ lock, rusqlite-coupling Layer 5 call_def fix, _source_stage_owner batch.)
 - [ ] **DROP TABLE _job** in ~/.local/state/sprefa/jobs.sqlite (classifier-blocked; 6 terminal rows, dead bespoke-queue schema).
 - [ ] **filesize-rail ruling**: verify.sh exits 2 — 29 src files >500 lines are NOT in scripts/filesize-allow.txt (all already over budget at pushed main a3c09e3f, none crossed this session). Grandfather (allowlist + .dl/file-size.dl rows, shrink-only law) or schedule splits.
 - [ ] **instant dom-match.dl rewrite** (user-side repo): drop pull/matches_latest/matches_body + both bucket columns onto `matches_resp(body) <- @async clock(5, _), matches() -> (body).` — caveat: matches_resp then accumulates distinct bodies unordered; keep a bound bucket if strict latest-wins matters.
-- [ ] **surviving worktrees**: agent-a5b6cd2c7ae228570 + agent-a93779abb10bccb9a (uncommitted src diffs, unvetted), ext-wave3 (chat_log/docs diffs), vscode-flow-panel (unmerged branch), agent-a305bb99e664ff9b8 (locked). target/ dirs cleaned (~18GB freed); rm on word.
+- [ ] **surviving worktrees** (refreshed 2026-07-19 early AM): only vscode-flow-panel remains non-agent (unmerged parked branch). a5b6cd2c + a93779ab vetted as earlier drafts of landed work and removed (patch backups in the job dir), ext-wave3 salvaged (S7/S8/S9 + perf RCA landed on next) and removed, a305bb unlocked+removed. Active agent trees: index-audit, reqid-midtick (ast-tree-share merged b5bb8ef2, tree removable).
 
 ### Next up (dispatchable, not started)
 - [ ] **storage-diet 4a**: WITHOUT ROWID junctions; then A=1a dense dictionary ids; step 5 coordinate-composite elimination rides ref-spine.
