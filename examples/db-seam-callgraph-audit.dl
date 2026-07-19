@@ -1,0 +1,132 @@
+# Db-seam call-graph audit — three spot-check receipts, all resolved-graph
+# reachability (call_edge/call_site/nest/module_binding), no regex adjacency:
+#
+#   Q1: which Db-seam methods do rebuild_derived / reconcile_sources actually
+#       reach (direct or transitive)? — sanity check that the two engine core
+#       fns route through src/db.rs at all.
+#   Q2: is any Db-seam WRITE method (execute/execute_batch/insert_rows/
+#       insert_rows_keyed/upsert_rows) reachable from a call site nested
+#       inside a loop, ANYWHERE in the tree? Generalizes .dl/rails.dl's
+#       `conn-loop-reachable` rail (scoped to .conn() + changed_line, i.e.
+#       only a git diff) to every seam write method, repo-wide, using the
+#       same nest-based loop_entry_fn/loop_reachable_fn shape that rail
+#       already validates (real loop-nest depth, not line-proximity regex).
+#       Cross-checked against .dl/static-n1.dl (five-line textual proximity):
+#       both currently report zero findings on this tree.
+#   Q3: does any file bind rusqlite directly outside src/db.rs / src/storage.rs
+#       / src/storage/** — i.e. does a call path exist that never touches the
+#       seam at all? Structural (module_binding), not the no-new-rusqlite.dl
+#       regex — catches an aliased/renamed `use rusqlite::{..}` the same way,
+#       but misses a fully-qualified `rusqlite::Foo` reference with no `use`
+#       (see the gap list in the audit report).
+#
+# Run: dl examples/db-seam-callgraph-audit.dl --no-daemon
+
+rel src_file(path: file).
+src_file(path) <- scan("src/**/*.rs", path, rev).
+
+# ---- entry points: rebuild_derived / reconcile_sources, top-level (not their
+# own closures — a closure sym would never be a call_edge caller anyway).
+rel entry_fn(entry_sym: text, entry_name: text).
+entry_fn(entry_sym, "rebuild_derived") <-
+    call_def(_, entry_sym, _, _, _, _), entry_sym =~ /\.rebuild_derived$/.
+entry_fn(entry_sym, "reconcile_sources") <-
+    call_def(_, entry_sym, _, _, _, _), entry_sym =~ /\.reconcile_sources$/.
+
+# ---- seam methods: every fn defined in src/db.rs (Db:: / ReadDb::), not its
+# own closures (a closure sym is never itself a call target from outside).
+rel seam_method(seam_sym: text).
+seam_method(seam_sym) <-
+    call_def(_, seam_sym, _, seam_file, _, _),
+    seam_file = "src/db.rs",
+    seam_sym =~ /method::(Db|ReadDb)\.[A-Za-z_]+$/.
+
+# sym-level transitive call reachability, hand-recursed (not the `closure`
+# builtin, which refuses an unpinned body read — Q2 below needs to join it
+# against a whole SET of loop-enclosing fns, not one pinned literal). Sym-level,
+# not the name-collapsed std/callgraph.dl version — collapsing by bare name
+# would let an unrelated `execute` fn elsewhere in the tree collide.
+rel calls_sym(caller_sym: text, callee_sym: text).
+calls_sym(caller_sym, callee_sym) <- call_edge(caller_sym, callee_sym, _).
+rel reaches_sym(caller_sym: text, callee_sym: text).
+reaches_sym(caller_sym, callee_sym) <- calls_sym(caller_sym, callee_sym).
+reaches_sym(caller_sym, callee_sym) <- calls_sym(caller_sym, mid_sym), reaches_sym(mid_sym, callee_sym).
+
+# Q1: which seam methods does each entry point reach (direct or transitive)?
+rel entry_reaches_seam(entry_name: text, seam_sym: text).
+entry_reaches_seam(entry_name, seam_sym) <-
+    entry_fn(entry_sym, entry_name),
+    reaches_sym(entry_sym, seam_sym),
+    seam_method(seam_sym).
+
+? entry_reaches_seam(entry_name, seam_sym).
+
+rel entry_seam_count(entry_name: text, n: int).
+entry_seam_count(entry_name, count(seam_sym)) <- entry_reaches_seam(entry_name, seam_sym).
+? entry_seam_count(entry_name, n).
+
+# ---- Q2: N+1 shape via the call graph — generalizes .dl/rails.dl's
+# `conn-loop-reachable` rail (which is scoped to .conn() AND to changed_line,
+# i.e. only fires on a git diff) to EVERY seam write method, repo-wide, with
+# no diff scope. Reuses the same nest-based loop_entry_fn/loop_reachable_fn
+# shape rails.dl already proved correct (real loop-nest depth from the `nest`
+# dataflow rel, not a line-proximity regex) rather than re-deriving a cruder
+# "nearest preceding df_node" heuristic.
+rel seam_write_method(seam_sym: text).
+seam_write_method(seam_sym) <-
+    seam_method(seam_sym),
+    seam_sym =~ /\.(execute|execute_batch|insert_rows|insert_rows_keyed|upsert_rows)$/.
+
+rel call_name_by_text(callee_text: text, fn: text).
+call_name_by_text(callee_text, fn) <- call_name(fn, callee_text).
+
+rel named_call_site(caller_fn: text, call_file: file, call_line: int, callee_fn: text).
+named_call_site(caller_fn, call_file, call_line, callee_fn) <-
+    call_site(_, caller_fn, callee_text, call_file, call_line),
+    call_name_by_text(callee_text, callee_fn).
+
+# fn directly invoked from a call site nested inside a loop (depth >= 1).
+rel loop_entry_fn(entry_fn: text).
+loop_entry_fn(entry_fn) <-
+    nest(call_id, _, _, _),
+    df_node(call_id, "call_res", _, caller_fn, call_file, call_line),
+    named_call_site(caller_fn, call_file, call_line, entry_fn).
+
+# transitive closure over the resolved call graph, starting from loop_entry_fn.
+rel loop_reachable_fn(reachable_fn: text).
+loop_reachable_fn(reachable_fn) <- loop_entry_fn(reachable_fn).
+loop_reachable_fn(reachable_fn) <-
+    loop_reachable_fn(prev_fn),
+    calls_sym(prev_fn, reachable_fn).
+
+# The finding: a seam write method that IS loop-reachable — a real per-row
+# write risk anywhere in the tree, not just on today's diff.
+rel loop_reaches_seam_write(seam_sym: text).
+loop_reaches_seam_write(seam_sym) <-
+    loop_reachable_fn(seam_sym),
+    seam_write_method(seam_sym).
+
+? loop_reaches_seam_write(seam_sym).
+
+# ---- Q3: does any call path bypass src/db.rs entirely? — a fn OUTSIDE
+# db.rs/storage.rs/storage/** that itself binds rusqlite directly (import
+# graph, structural — same shape as rusqlite-coupling.dl's rusqlite_file) and
+# is ALSO reachable in the call graph from a non-seam entry point. This is the
+# "who calls the escape hatch" half rusqlite-coupling.dl's Layer 5 already
+# does per-line; here it's per fn-reachability instead of per raw_sql_site.
+rel storage_dir_file(storage_file: file).
+storage_dir_file(storage_file) <- scan("src/storage/**/*.rs", storage_file, _).
+
+rel rusqlite_binding_file(bypass_file: file).
+rusqlite_binding_file(bypass_file) <-
+    module_binding(bypass_file, _, bypass_source, _, _),
+    bypass_source =~ /^rusqlite(::|$)/.
+
+rel non_seam_rusqlite_file(bypass_file: file).
+non_seam_rusqlite_file(bypass_file) <-
+    rusqlite_binding_file(bypass_file),
+    bypass_file != "src/db.rs",
+    bypass_file != "src/storage.rs",
+    !storage_dir_file(bypass_file).
+
+? non_seam_rusqlite_file(bypass_file).
