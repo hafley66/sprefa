@@ -190,6 +190,7 @@ mod ghcacher_parity;
 mod poll_head_demo;
 mod temporal_async;
 mod temporal_carry;
+mod temporal_clock_salt;
 mod temporal_every;
 mod true_singleton;
 mod halt_bfs;

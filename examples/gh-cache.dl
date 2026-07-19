@@ -54,6 +54,13 @@ rel etag_next(ep: text, tag: text).
 # same id, so nothing re-hits GitHub. This single N IS the rate knob — the worst
 # case is one conditional (304-cheap) request per N seconds per endpoint. (Time
 # as a fact you join against; no @next counter, that is the whole sugar.)
+#
+# WILDCARD FORM: when nothing downstream needs the bucket VALUE, write
+# `clock(300, _)` in the @async body instead of binding `b` and threading it
+# through heads. The wildcard bucket still salts the request digest (same
+# once-per-bucket re-fire, same rate cap), but the bucket never lands in any
+# row — so a bucket flip rewrites zero rels. Here `resp` keeps `b` on purpose
+# (it orders the response history); a program that only wants "latest" drops it.
 rel poll(ep: text, prev: text, bucket: int).
 poll(ep, prev, b) <- watch(ep), etag(ep, prev), clock(300, b).
 poll(ep, "",   b) <- watch(ep), !etag(ep, _),   clock(300, b).
