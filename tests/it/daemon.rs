@@ -574,7 +574,13 @@ seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
 
     let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[]);
     assert!(sb.wait_ready(), "not ready");
-    std::thread::sleep(std::time::Duration::from_millis(1500));
+    // Effect-free root: wait out the one settle-confirmation tick (class 22)
+    // before sampling the baseline, or it reads as a phantom tick here.
+    let out = Command::new(DL)
+        .args(["daemon", "await-settle", "--ms", "20000"])
+        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+        .output().expect("await-settle");
+    assert_eq!(out.status.code(), Some(0), "await-settle: {}", String::from_utf8_lossy(&out.stderr));
     let t0 = sb.tick(1);
     for i in 0..50 {
         fs::write(sb.root.join(format!("junk/f{i}.o")), "build output").unwrap();
@@ -677,6 +683,38 @@ fn await_settle_blocks_until_effect_drains() {
 
     let q = rpc_root(&sb.sock(), 2, "query", &sb.root, serde_json::json!({})).expect("query").to_string();
     assert!(q.contains("hi-bob"), "the sh response drained into done: {q}");
+    sb.shutdown();
+    let _ = child.wait_timeout(std::time::Duration::from_secs(5));
+}
+
+/// An effect-free root (no `@async`/`@stream` rules) must still settle: the
+/// boot tick reports unsettled by design (everything changed), and quiescence
+/// is only confirmed by one more full tick that sees nothing move. The poll
+/// scan's `has_effects` gate skipped such roots entirely, freezing them at
+/// settled=false forever — `dl daemon await-settle` hung on any pure-derived
+/// program (incident: smashy root, 2026-07-18, first supervised-redeploy
+/// receipt run).
+#[test]
+fn effect_free_root_settles_after_boot() {
+    let sb = Sandbox::new("nofx");
+    fs::write(sb.root.join("p.dl"),
+        "rel mark(name: text).\n\
+         mark(\"a\").\n\
+         rel out(name: text).\n\
+         out(name) <- mark(name).\n\
+         ? out(name).\n").unwrap();
+    let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[("DL_POLL_SECS", "1")]);
+    assert!(sb.wait_ready(), "not ready");
+
+    let out = Command::new(DL)
+        .args(["daemon", "await-settle", "--ms", "15000"])
+        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+        .output().expect("await-settle");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0),
+        "await-settle should exit 0 for an effect-free root: {stdout} {}",
+        String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("settled=true"), "reports settled: {stdout}");
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
 }
@@ -846,7 +884,13 @@ seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
 
     let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[]);
     assert!(sb.wait_ready(), "not ready");
-    std::thread::sleep(std::time::Duration::from_millis(1500));
+    // Effect-free root: wait out the one settle-confirmation tick (class 22)
+    // before sampling the baseline, or it reads as a phantom tick here.
+    let out = Command::new(DL)
+        .args(["daemon", "await-settle", "--ms", "20000"])
+        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+        .output().expect("await-settle");
+    assert_eq!(out.status.code(), Some(0), "await-settle: {}", String::from_utf8_lossy(&out.stderr));
     let t0 = sb.tick(1);
 
     let start = std::time::Instant::now();

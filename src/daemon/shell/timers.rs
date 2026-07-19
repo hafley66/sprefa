@@ -76,7 +76,14 @@ fn poll_scan(d: &Arc<Daemon>) {
             let _ = d.drop_root(&sr.root, false);
             continue;
         }
-        if !sr.has_effects() { continue; }
+        // An effect-free root still owes ONE confirming full tick before
+        // `settled` can flip true (`poll_idle`: quiescence is only confirmed
+        // by a tick that sees nothing move). Skipping on `has_effects` alone
+        // froze such roots at settled=false forever and `await-settle` hung
+        // (incident: smashy root, 2026-07-18 redeploy receipt run).
+        if !sr.has_effects() && sr.settled.load(std::sync::atomic::Ordering::Relaxed) {
+            continue;
+        }
         // Idle-gate (the CPU-hog fix, preserved): nothing queued, settled, no
         // source motion since the last full tick, no `every`/`clock` cadence ->
         // nothing to drain, so do not enqueue.

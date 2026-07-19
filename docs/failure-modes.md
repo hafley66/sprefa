@@ -588,12 +588,42 @@ sites but not against new code. **missing** = nothing.
   plus the 3 poll probes converted to async + `spawn_blocking`; ping
   timeout 10s→1s (dl's ping handler is lock-free — daemon.rs:1878 reads an
   atomic — so slow ping means wedged, and the status row should say so).
-  Gaps: changes uncommitted in instant; no regression test pins
-  "poll never blocks main"; ~40 remaining sync commands are on-demand, not
-  polled, unconverted.
+  Committed + pushed to instant main as 74d6d36 (2026-07-18). Gaps: no
+  regression test pins "poll never blocks main"; ~40 remaining sync
+  commands are on-demand, not polled, unconverted.
 - SAY THIS TO AN AGENT: "app freezes when X starts" means find the client
   code that blocks on X, and check what thread it runs on, before touching
   X at all.
+
+## 22. Effect-free root frozen unsettled (await-settle hang)
+
+- WHAT IT LOOKS LIKE: `dl daemon status` shows a root "active" forever with
+  the daemon idle and no job rows for it; `dl daemon await-settle` times out
+  (exit 3) on that root while every other root settles in seconds. No load,
+  no errors, no log lines after "watcher ready".
+- HOW IT BIT US (2026-07-18, first supervised-redeploy receipt run): the
+  smashy root — a pure-derived program with no `@async`/`@stream` rules —
+  booted clean (cold tick 0 in 2.7s) and then never settled. The boot tick
+  reports unsettled BY DESIGN (`TickReport::is_settled()` requires
+  changed_rels timer-only; a boot tick changes everything), and quiescence
+  is only confirmed by one more full tick that sees nothing move. But
+  `poll_scan` (src/daemon/shell/timers.rs) gated enqueue on
+  `sr.has_effects()` first, so an effect-free root never received that
+  confirming tick: settled froze at false. Pre-dated the apalis migration
+  (same gate in the bespoke queue); latent until a served root had zero
+  effect rules.
+- THE LAW: every gate that skips a root's tick must preserve the
+  settle-confirmation obligation — a not-yet-settled root owes one full
+  tick no matter what other conditions say there is nothing to do.
+  `settled` may only stay false while some path still schedules the tick
+  that can flip it.
+- THE RAIL: enforced. `poll_scan` skips an effect-free root only once it is
+  also settled; it-test `effect_free_root_settles_after_boot`
+  (tests/it/daemon.rs) pins await-settle exit 0 + settled=true for a
+  pure-derived program, failed pre-fix.
+- SAY THIS TO AN AGENT: "await-settle hangs on one root" means find which
+  scheduler gate excludes that root from polling, and check whether the
+  excluded state can ever self-resolve without the thing the gate skips.
 
 ## Rail gap table
 
@@ -619,7 +649,8 @@ sites but not against new code. **missing** = nothing.
 | 18 | per-rule parse amplification / tiers-not-ceiling | enforced | — (parse-counter tests + governor toggle test; `dl --hook` self-deadline `DL_HOOK_DEADLINE_MS` landed same day) |
 | 19 | subscriber render storm / daemon exhaust feedback | half | fail-pre-fix it-tests for watch filter + broadcast gate (unit/witness only today); cold-extract write-rate budget (scheduler arc); per-family extractor versioning vs exe_stamp; perf.jsonl rotation (tracing-appender, obs arc) |
 | 20 | phantom extract diff / whole-program derived rebuild | enforced | — (f9414e3c + fail-pre-fix steady-state test; c3148d90 counter keying) |
-| 21 | client poll blocking its own UI thread | half | commit the instant conversions; a "poll never blocks main" regression test in instant; audit remaining ~40 sync commands there |
+| 21 | client poll blocking its own UI thread | half | instant conversions committed + pushed (74d6d36, 2026-07-18); still open: a "poll never blocks main" regression test in instant; audit remaining ~40 sync commands there |
+| 22 | effect-free root frozen unsettled | enforced | — (settle-aware poll gate + `effect_free_root_settles_after_boot`, failed pre-fix) |
 
 ## How a new rail gets born here
 
