@@ -79,10 +79,16 @@ diag(path, line: 1, severity: "warning", code: "bespoke-sql",
     bespoke_hotspot(path, raw).
 
 # ── Layer 5: blast radius — functions holding a raw SQL site, followed through
-# the call graph. df_node(id, kind, var, fn, file, line) gives the enclosing fn
-# of a source line; call_edge(caller, callee, kind) is the resolved call graph.
+# the call graph. call_def(repo, sym, kind, file, line, end) spans every
+# callable with the SAME repo-qualified sym space call_edge uses, so span
+# containment finds the enclosing fn directly. (The old df_node join matched
+# nothing: df_node fn names are unprefixed `src/...::method::X.y`, call_edge
+# syms carry the `sprefa::` repo qualifier — the join was silently empty and
+# callers_reaching_sql reported 0.)
 rel raw_sql_fn(fn: text).
-raw_sql_fn(fn) <- raw_sql_site(file, line, _, _, _, _), df_node(_, _, _, fn, file, line).
+raw_sql_fn(fn) <- raw_sql_site(file, line, _, _, _, _),
+    call_def(_, fn, _, file, def_line, def_end),
+    line >= def_line, line <= def_end.
 
 # Transitive callers of a raw-SQL fn: who is (indirectly) exposed to bespoke SQL.
 rel raw_sql_reaches(caller: text, sql_fn: text).
