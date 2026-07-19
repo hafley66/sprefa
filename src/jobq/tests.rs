@@ -1,5 +1,26 @@
+//! jobq behavior pins, ported from the bespoke-queue suite onto the
+//! apalis-sqlite store + admission layer. Two tiers:
+//!   - sync tests drive `enqueue`/`reconcile`/`cancel_req` and inspect the
+//!     apalis `Jobs` rows directly (the state transitions apalis itself
+//!     performs — fetch/lock/ack — are simulated with targeted pokes, the
+//!     same test-scenario shape the old suite used);
+//!   - `#[tokio::test]` tests spawn the REAL apalis workers
+//!     (`workers::spawn_workers`) against a sandbox home and prove the
+//!     end-to-end behaviors: coalesce-to-one-run, panic survival,
+//!     backoff-then-park.
+
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use anyhow::Result;
+use serde_json::Value;
+use tokio_util::sync::CancellationToken;
+
+use super::workers::JobRunner;
 use super::*;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use crate::daemon::shell::ShellCtx;
 
 /// A unique temp dir removed on drop (no `tempfile` dev-dep in this crate).
 struct TmpDir(PathBuf);
@@ -21,30 +42,42 @@ impl Drop for TmpDir {
 
 fn queue() -> (Arc<JobQueue>, TmpDir) {
     let dir = TmpDir::new();
-    let q = JobQueue::open(&dir.0).unwrap();
+    let q = test_open(&dir.0);
     (q, dir)
 }
 
-/// A runner that records every job it ran (for the coalesce proof).
-struct RecordingRunner {
-    seen: Arc<Mutex<Vec<JobRow>>>,
-}
-impl JobRunner for RecordingRunner {
-    fn run(&self, job: &JobRow) -> Result<()> {
-        plock(&self.seen).push(job.clone());
-        Ok(())
-    }
-}
-
-/// A runner that always errors (for the backoff-through-the-dispatcher path).
-struct FailingRunner;
-impl JobRunner for FailingRunner {
-    fn run(&self, _job: &JobRow) -> Result<()> {
-        anyhow::bail!("boom")
-    }
+/// Register a fake worker row so pokes can set `lock_by` (the `Jobs` table
+/// has a foreign key onto `Workers(id)`).
+fn register_test_worker(q: &JobQueue, id: &str) {
+    q.poke(
+        "INSERT OR IGNORE INTO Workers(id, worker_type, storage_name, last_seen) \
+         VALUES(?1, 'test', 'SqliteStorage', strftime('%s','now'))",
+        &[id.into()],
+    )
+    .unwrap();
 }
 
-// ---- item 7: enqueue-coalesce SQL semantics ----
+/// Simulate an apalis fetch on the cold queue: the claimable row in exactly
+/// `fetch_next.sql`'s order (`priority DESC, run_at ASC, id ASC` over ready
+/// Pending / retryable Failed rows). Returns `(key, root)`.
+fn claimable_cold(q: &JobQueue) -> Option<(String, String)> {
+    let db = plock(&q.db);
+    db.query_opt(
+        "Jobs",
+        "SELECT idempotency_key, json_extract(metadata, '$.root') FROM Jobs \
+         WHERE job_type='dl-cold' \
+           AND ((status='Pending' AND lock_by IS NULL) \
+                OR (status='Failed' AND attempts < max_attempts)) \
+           AND run_at <= strftime('%s', 'now') \
+         ORDER BY priority DESC, run_at ASC, id ASC LIMIT 1",
+        &[],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .ok()
+    .flatten()
+}
+
+// ---- coalescing enqueue over the apalis Jobs table ----
 
 #[test]
 fn enqueue_coalesces_pending_union_arg_and_max_priority() {
@@ -56,14 +89,14 @@ fn enqueue_coalesces_pending_union_arg_and_max_priority() {
     b.priority = 5;
     q.enqueue(b).unwrap();
 
-    let (state, dirty, arg, priority, attempts, _run_at) = q.peek("tick:r1").unwrap();
-    assert_eq!(state, "pending");
+    let (state, dirty, payload, priority, attempts, _run_at) = q.peek("tick:r1").unwrap();
+    assert_eq!(state, "Pending");
     assert_eq!(dirty, 0, "coalescing a pending row never sets dirty");
     assert_eq!(priority, 5, "priority is the max across coalesced requests");
     assert_eq!(attempts, 0);
-    let paths = paths_of(&serde_json::from_str::<Value>(&arg).unwrap());
-    assert_eq!(paths, vec!["/a".to_string(), "/b".to_string()],
-        "the pending arg unions both changed paths");
+    let row: JobRow = serde_json::from_str(&payload).unwrap();
+    assert_eq!(row.paths(), vec![PathBuf::from("/a"), PathBuf::from("/b")],
+        "the pending payload unions both changed paths");
 
     // Exactly one row exists for the key.
     let all = q.list().unwrap();
@@ -71,102 +104,67 @@ fn enqueue_coalesces_pending_union_arg_and_max_priority() {
 }
 
 #[test]
-fn enqueue_while_running_sets_dirty_and_unions_for_the_rerun() {
+fn enqueue_while_running_sets_dirty_and_reconcile_reruns_with_the_union() {
     let (q, _d) = queue();
     q.enqueue(JobRow::tick("r1", &[PathBuf::from("/a")])).unwrap();
-    let claimed = q.claim(&[JobKind::Tick]).unwrap().expect("claim");
-    assert_eq!(claimed.paths(), vec![PathBuf::from("/a")]);
+    // Simulate the apalis fetch+lock (Pending -> Running under a worker).
+    register_test_worker(&q, "w1");
+    q.poke(
+        "UPDATE Jobs SET status='Running', lock_by='w1', \
+         lock_at=strftime('%s','now') WHERE idempotency_key='tick:r1'",
+        &[],
+    )
+    .unwrap();
 
-    // A re-request while running must NOT create a second claimable row; it
-    // sets dirty and unions the new path for the post-finish rerun.
+    // A re-request while running must NOT reopen the row; it sets dirty and
+    // unions the new path for the post-ack rerun.
     q.enqueue(JobRow::tick("r1", &[PathBuf::from("/b")])).unwrap();
-    assert!(q.claim(&[JobKind::Tick]).unwrap().is_none(),
-        "no second row is claimable while the tick runs");
-    let (state, dirty, arg, ..) = q.peek("tick:r1").unwrap();
-    assert_eq!(state, "running");
+    let (state, dirty, payload, ..) = q.peek("tick:r1").unwrap();
+    assert_eq!(state, "Running", "a mid-run re-request leaves the row running");
     assert_eq!(dirty, 1, "a re-request while running arms the rerun");
-    assert_eq!(paths_of(&serde_json::from_str::<Value>(&arg).unwrap()),
-        vec!["/a".to_string(), "/b".to_string()]);
+    let row: JobRow = serde_json::from_str(&payload).unwrap();
+    assert_eq!(row.paths(), vec![PathBuf::from("/a"), PathBuf::from("/b")]);
 
-    // Finishing a dirty running job re-opens it pending (the promised rerun),
-    // and the rerun carries the unioned paths.
-    assert_eq!(q.finish("tick:r1", Ok(())).unwrap(), Requeue::Repending);
-    let rerun = q.claim(&[JobKind::Tick]).unwrap().expect("rerun claim");
-    assert_eq!(rerun.paths(), vec![PathBuf::from("/a"), PathBuf::from("/b")]);
-    assert_eq!(q.finish("tick:r1", Ok(())).unwrap(), Requeue::Done);
+    // A reconcile pass while still running does nothing.
+    let rep = q.reconcile().unwrap();
+    assert_eq!(rep.dirty_reruns, 0, "no rerun while the row is still running");
+
+    // The worker acks Done; the next reconcile reopens the dirty row with the
+    // unioned payload (the coalesce promise).
+    q.poke(
+        "UPDATE Jobs SET status='Done', done_at=strftime('%s','now') \
+         WHERE idempotency_key='tick:r1'",
+        &[],
+    )
+    .unwrap();
+    let rep = q.reconcile().unwrap();
+    assert_eq!(rep.dirty_reruns, 1, "the ack'd dirty row reopens");
+    let (state, dirty, payload, _prio, attempts, _run_at) = q.peek("tick:r1").unwrap();
+    assert_eq!(state, "Pending");
+    assert_eq!(dirty, 0);
+    assert_eq!(attempts, 0);
+    let row: JobRow = serde_json::from_str(&payload).unwrap();
+    assert_eq!(row.paths(), vec![PathBuf::from("/a"), PathBuf::from("/b")],
+        "the rerun carries the unioned paths");
 }
 
 #[test]
-fn claim_orders_by_priority_then_skips_cancelled() {
+fn enqueue_reopens_a_terminal_row() {
     let (q, _d) = queue();
-    q.enqueue(JobRow::sink_drain("low")).unwrap();
-    let mut hi = JobRow::sink_drain("hi");
-    hi.priority = 10;
-    q.enqueue(hi).unwrap();
-    q.cancel("sink:low").unwrap();
-
-    // `low` is cancelled, so the high-priority `hi` is the only claim.
-    let first = q.claim(&[JobKind::SinkDrain]).unwrap().expect("claim hi");
-    assert_eq!(first.key, "sink:hi");
-    assert!(q.claim(&[JobKind::SinkDrain]).unwrap().is_none(),
-        "the cancelled low-priority job is never claimed");
+    q.enqueue(JobRow::sink_drain("r1")).unwrap();
+    q.poke(
+        "UPDATE Jobs SET status='Killed', attempts=5, done_at=strftime('%s','now'), \
+         last_result='{\"Err\":\"boom\"}' WHERE idempotency_key='sink:r1'",
+        &[],
+    )
+    .unwrap();
+    q.enqueue(JobRow::sink_drain("r1")).unwrap();
+    let (state, _dirty, _payload, _prio, attempts, _run_at) = q.peek("sink:r1").unwrap();
+    assert_eq!(state, "Pending", "a re-request reopens a parked row");
+    assert_eq!(attempts, 0, "reopen resets the attempt count");
 }
 
-// ---- item 6(b): durability across a simulated crash ----
-
-#[test]
-fn reset_running_on_boot_re_pends_a_crashed_job() {
-    let (q, _d) = queue();
-    q.enqueue(JobRow::tick("r1", &[PathBuf::from("/a")])).unwrap();
-    // Claim marks it running (a worker grabbed it) — then the process
-    // "crashes" without finishing.
-    let _ = q.claim(&[JobKind::Tick]).unwrap().expect("claim");
-    assert_eq!(q.peek("tick:r1").unwrap().0, "running");
-
-    let n = q.reset_running_on_boot().unwrap();
-    assert_eq!(n, 1, "one running job reset on boot");
-    assert_eq!(q.peek("tick:r1").unwrap().0, "pending",
-        "a crashed running job is pending again after reset_running_on_boot");
-    // And it is claimable again.
-    assert!(q.claim(&[JobKind::Tick]).unwrap().is_some());
-}
-
-// ---- item 6(d): bounded failure backoff ----
-
-#[test]
-fn failure_backs_off_then_parks_after_the_attempt_bound() {
-    let (q, _d) = queue();
-    q.enqueue(JobRow::tick("r1", &[PathBuf::from("/a")])).unwrap();
-    q.claim(&[JobKind::Tick]).unwrap().expect("claim");
-
-    // First failure: pending, attempts=1, run_at in the future.
-    let now = now_secs();
-    assert_eq!(q.finish("tick:r1", Err(anyhow::anyhow!("x"))).unwrap(), Requeue::Repending);
-    let (state, _dirty, _arg, _prio, attempts, run_at) = q.peek("tick:r1").unwrap();
-    assert_eq!(state, "pending");
-    assert_eq!(attempts, 1);
-    assert!(run_at > now, "a failed job backs off to a future run_at ({run_at} <= {now})");
-
-    // Keep failing until the bound; the row parks in `failed` and stops.
-    // One finish already landed (attempts=1), so MAX_ATTEMPTS-1 more reach it.
-    // A worker re-claims (-> running) before each retry, as it does live — the
-    // `finish` ownership guard requires the row be `running`, so force it ready
-    // and re-claim between attempts rather than finishing a `pending` row.
-    let mut last = Requeue::Repending;
-    for _ in 1..MAX_ATTEMPTS {
-        {
-            let db = plock(&q.db);
-            db.exec_on("_job", "UPDATE _job SET run_at=0 WHERE key='tick:r1' AND state='pending'")
-                .unwrap();
-        }
-        q.claim(&[JobKind::Tick]).unwrap().expect("re-claim before the next attempt");
-        last = q.finish("tick:r1", Err(anyhow::anyhow!("x"))).unwrap();
-    }
-    assert_eq!(last, Requeue::Parked);
-    let (state, .., attempts, _run_at) = q.peek("tick:r1").unwrap();
-    assert_eq!(state, "failed");
-    assert_eq!(attempts, MAX_ATTEMPTS);
-}
+// ---- backoff (pure fns + the failure stamp) ----
 
 #[test]
 fn backoff_secs_doubles_then_caps() {
@@ -175,264 +173,6 @@ fn backoff_secs_doubles_then_caps() {
     assert_eq!(backoff_secs(3), 8);
     assert_eq!(backoff_secs(20), 300, "caps at 300s, never grows unbounded");
     assert_eq!(backoff_secs(100), 300, "a huge attempt count must not overflow/panic");
-}
-
-// ---- item 6(a): coalesce PROOF through the dispatcher ----
-
-/// Two enqueues land before any worker claims; the dispatcher then runs the
-/// tick EXACTLY once, with an arg carrying BOTH paths.
-#[test]
-fn dispatcher_runs_coalesced_tick_once_with_both_paths() {
-    let (q, _d) = queue();
-    // Enqueue two rapid "saves" for the same root BEFORE the worker exists.
-    q.enqueue(JobRow::tick("r1", &[PathBuf::from("/one.rs")])).unwrap();
-    q.enqueue(JobRow::tick("r1", &[PathBuf::from("/two.rs")])).unwrap();
-
-    let seen = Arc::new(Mutex::new(Vec::<JobRow>::new()));
-    let runner: Arc<dyn JobRunner> = Arc::new(RecordingRunner { seen: seen.clone() });
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let dispatcher =
-        Dispatcher::spawn(q.clone(), runner, shutdown.clone(), 1, vec![JobKind::Tick]);
-
-    // Wait for the single job to reach `done`.
-    let mut done = false;
-    for _ in 0..200 {
-        if q.peek("tick:r1").map(|r| r.0 == "done").unwrap_or(false) {
-            done = true;
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    shutdown.store(true, Ordering::Relaxed);
-    dispatcher.join(&q);
-
-    assert!(done, "the coalesced tick job never completed");
-    let runs = plock(&seen);
-    assert_eq!(runs.len(), 1, "two rapid saves must produce ONE tick execution, got {}", runs.len());
-    let paths = runs[0].paths();
-    assert_eq!(
-        paths,
-        vec![PathBuf::from("/one.rs"), PathBuf::from("/two.rs")],
-        "the single execution's arg carries both coalesced paths"
-    );
-    let path_strs: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
-    tracing::debug!(
-        path_strs = ?path_strs,
-        "[coalesce-proof] 2 enqueues -> 1 execution; arg paths = {:?}",
-        path_strs
-    );
-}
-
-/// A job whose runner keeps erroring backs off through the dispatcher and
-/// eventually parks in `failed` (does not spin forever).
-#[test]
-fn dispatcher_parks_a_persistently_failing_job() {
-    let (q, _d) = queue();
-    q.enqueue(JobRow::sink_drain("r1")).unwrap();
-    let runner: Arc<dyn JobRunner> = Arc::new(FailingRunner);
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let dispatcher =
-        Dispatcher::spawn(q.clone(), runner, shutdown.clone(), 1, vec![JobKind::SinkDrain]);
-
-    // Each failure backs off; force the row ready-now between attempts rather
-    // than waiting out the natural 2/4/8s schedule, and let the worker fail
-    // it once more, until it parks.
-    let mut parked = false;
-    for _ in 0..MAX_ATTEMPTS {
-        {
-            let db = plock(&q.db);
-            let _ = db.exec_on("_job", "UPDATE _job SET run_at=0 WHERE key='sink:r1' AND state='pending'");
-        }
-        q.wake();
-        for _ in 0..100 {
-            if q.peek("sink:r1").map(|r| r.0 == "failed").unwrap_or(false) {
-                parked = true;
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        if parked {
-            break;
-        }
-    }
-    shutdown.store(true, Ordering::Relaxed);
-    dispatcher.join(&q);
-    assert!(parked, "a persistently failing job must park in `failed`, not spin");
-    assert_eq!(q.peek("sink:r1").unwrap().4, MAX_ATTEMPTS);
-}
-
-// ---- library-mined hardening (effectum/apalis embodied knowledge) ----
-
-/// A runner that PANICS on one root and records the rest — the proof that a
-/// worker survives an unwinding job (effectum wraps its runner in
-/// `AssertUnwindSafe(..).catch_unwind()`; apalis's bare handler panic kills the
-/// poll task, #639). Our `worker_loop` catches the unwind and fails the job.
-struct PanicOnRootRunner {
-    boom_root: String,
-    seen: Arc<Mutex<Vec<String>>>,
-}
-impl JobRunner for PanicOnRootRunner {
-    fn run(&self, job: &JobRow) -> Result<()> {
-        if job.root == self.boom_root {
-            panic!("runner unwind on {}", job.root);
-        }
-        plock(&self.seen).push(job.root.clone());
-        Ok(())
-    }
-}
-
-/// A single worker panics on the `boom` tick, then still runs the `ok` tick —
-/// proof the panic did not kill the worker thread. The panicked job backs off
-/// (its unwind is treated as a job failure), it does not vanish or wedge.
-#[test]
-fn worker_survives_a_panicking_runner_and_keeps_serving() {
-    let (q, _d) = queue();
-    q.enqueue(JobRow::tick("boom", &[PathBuf::from("/a")])).unwrap();
-    q.enqueue(JobRow::tick("ok", &[PathBuf::from("/b")])).unwrap();
-
-    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
-    let runner: Arc<dyn JobRunner> =
-        Arc::new(PanicOnRootRunner { boom_root: "boom".into(), seen: seen.clone() });
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let dispatcher =
-        Dispatcher::spawn(q.clone(), runner, shutdown.clone(), 1, vec![JobKind::Tick]);
-
-    // Wait for the good job to complete — it can only do so on a live worker.
-    let mut ok_done = false;
-    for _ in 0..200 {
-        if q.peek("tick:ok").map(|r| r.0 == "done").unwrap_or(false) {
-            ok_done = true;
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    shutdown.store(true, Ordering::Relaxed);
-    dispatcher.join(&q);
-
-    assert!(ok_done, "the worker died on the panic; the good job never ran");
-    assert_eq!(*plock(&seen), vec!["ok".to_string()]);
-    // The panicked job was treated as a failure (backed off, attempts bumped),
-    // not silently dropped or left running.
-    let (state, _dirty, _arg, _prio, attempts, _run_at) = q.peek("tick:boom").unwrap();
-    assert!(attempts >= 1, "a panicking job must count as an attempt, got {attempts}");
-    assert_ne!(state, "running", "a panicked job must not be left `running`");
-}
-
-/// Many workers, many distinct-key jobs: each job runs EXACTLY once. Proves the
-/// `BEGIN IMMEDIATE` claim + queue mutex admit no double-claim under concurrency
-/// (effectum funnels claims through one writer thread; apalis relies on an
-/// atomic conditional `UPDATE ... WHERE status='Pending'`). Distinct keys so
-/// coalescing is not what enforces once-ness here.
-#[test]
-fn concurrent_workers_claim_each_job_exactly_once() {
-    let (q, _d) = queue();
-    const N: usize = 24;
-    for i in 0..N {
-        q.enqueue(JobRow::tick(&format!("r{i}"), &[PathBuf::from("/x")])).unwrap();
-    }
-    let seen = Arc::new(Mutex::new(Vec::<JobRow>::new()));
-    let runner: Arc<dyn JobRunner> = Arc::new(RecordingRunner { seen: seen.clone() });
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let dispatcher =
-        Dispatcher::spawn(q.clone(), runner, shutdown.clone(), 8, vec![JobKind::Tick]);
-
-    let mut all_done = false;
-    for _ in 0..400 {
-        let done = (0..N).all(|i| {
-            q.peek(&format!("tick:r{i}")).map(|r| r.0 == "done").unwrap_or(false)
-        });
-        if done {
-            all_done = true;
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    shutdown.store(true, Ordering::Relaxed);
-    dispatcher.join(&q);
-
-    assert!(all_done, "not every job reached done");
-    let runs = plock(&seen);
-    assert_eq!(runs.len(), N, "each job must run exactly once across the worker set");
-    let mut keys: Vec<String> = runs.iter().map(|j| j.key.clone()).collect();
-    keys.sort();
-    keys.dedup();
-    assert_eq!(keys.len(), N, "a job was claimed and run by more than one worker");
-}
-
-/// `sweep` reclaims a `running` row whose lease expired — a worker that died
-/// WITHOUT the process dying (silent thread exit / wedged tick), which
-/// `reset_running_on_boot` (a boot-only op) would never reach. This is apalis's
-/// live `reenqueue_orphaned`; effectum only recovers such rows at restart.
-#[test]
-fn sweep_reclaims_an_expired_running_lease() {
-    let (q, _d) = queue();
-    q.enqueue(JobRow::tick("r1", &[PathBuf::from("/a")])).unwrap();
-    q.claim(&[JobKind::Tick]).unwrap().expect("claim");
-    assert_eq!(q.peek("tick:r1").unwrap().0, "running");
-    // Backdate the lease so it predates now - LEASE_SECS regardless of the
-    // wall-second the claim stamped.
-    {
-        let db = plock(&q.db);
-        db.exec_on("_job", "UPDATE _job SET started_at=1 WHERE key='tick:r1'")
-            .unwrap();
-    }
-
-    let (reclaimed, _deleted) = q.sweep(LEASE_SECS, DONE_RETAIN_SECS).unwrap();
-    assert_eq!(reclaimed, 1, "the expired lease was not reclaimed");
-    assert_eq!(q.peek("tick:r1").unwrap().0, "pending",
-        "an expired running lease must return to pending");
-    assert!(q.claim(&[JobKind::Tick]).unwrap().is_some(),
-        "the reclaimed job must be claimable again");
-
-    // A freshly-claimed (started_at = now) lease is NOT reclaimed.
-    let (reclaimed2, _) = q.sweep(LEASE_SECS, DONE_RETAIN_SECS).unwrap();
-    assert_eq!(reclaimed2, 0, "a live lease must not be reclaimed");
-}
-
-/// A worker whose slow job was reclaimed by `sweep` mid-run must NOT stomp the
-/// superseding row when it finally finishes: the reclaimed `pending` attempt is
-/// authoritative. Guards the lease-reclaim race (effectum's worker-scoped
-/// `expires_at`/heartbeat ownership check is the analog).
-#[test]
-fn finish_declines_to_stomp_a_reclaimed_row() {
-    let (q, _d) = queue();
-    q.enqueue(JobRow::tick("r1", &[PathBuf::from("/a")])).unwrap();
-    q.claim(&[JobKind::Tick]).unwrap().expect("claim");
-    // Simulate the sweep reclaiming it (state back to pending) while the slow
-    // worker is still running the job.
-    {
-        let db = plock(&q.db);
-        db.exec_on("_job", "UPDATE _job SET state='pending', started_at=NULL WHERE key='tick:r1'")
-            .unwrap();
-    }
-    // The slow worker's late success must be a no-op, not a stomp to `done`.
-    assert_eq!(q.finish("tick:r1", Ok(())).unwrap(), Requeue::Done);
-    assert_eq!(q.peek("tick:r1").unwrap().0, "pending",
-        "a late finish stomped the reclaimed pending row");
-}
-
-/// `sweep` deletes `done` rows older than the retention window and leaves fresh
-/// ones. Both effectum and apalis leave this entirely to the operator.
-#[test]
-fn sweep_trims_old_done_rows_but_keeps_fresh_ones() {
-    let (q, _d) = queue();
-    q.enqueue(JobRow::tick("old", &[PathBuf::from("/a")])).unwrap();
-    q.claim(&[JobKind::Tick]).unwrap().expect("claim");
-    q.finish("tick:old", Ok(())).unwrap();
-    q.enqueue(JobRow::tick("fresh", &[PathBuf::from("/b")])).unwrap();
-    q.claim(&[JobKind::Tick]).unwrap().expect("claim");
-    q.finish("tick:fresh", Ok(())).unwrap();
-    // Backdate only the `old` row's finish time past the retention window.
-    {
-        let db = plock(&q.db);
-        db.exec_on("_job", "UPDATE _job SET finished_at=1 WHERE key='tick:old'")
-            .unwrap();
-    }
-
-    let (_reclaimed, deleted) = q.sweep(LEASE_SECS, DONE_RETAIN_SECS).unwrap();
-    assert_eq!(deleted, 1, "the aged done row was not trimmed");
-    assert!(q.peek("tick:old").is_none(), "the aged done row still exists");
-    assert!(q.peek("tick:fresh").is_some(), "a fresh done row was wrongly trimmed");
 }
 
 #[test]
@@ -452,37 +192,113 @@ fn jittered_backoff_stays_in_band_and_never_panics() {
     assert!(spread_vals.len() > 1, "jitter never varies — thundering herd not broken");
 }
 
-// ---- root serialization for ColdExtract (2026-07-18 incident: 4 registered
-// roots cold-rebuilt concurrently on a blank-slate boot) ----
-
-/// Fail-pre-fix: seed cold nodes for two sandbox roots exactly as
-/// `Engine::seed_cold_nodes` would (a `scip-index` node above every OTHER
-/// family, priority scale restarting at each root's own family count), drain
-/// every `ColdExtract` job to completion, and assert root-a's cold work
-/// finishes BEFORE root-b's first claim. Before the `active_cold_root` fix,
-/// global `ORDER BY priority DESC` let root-b's `scip-index` (priority 4)
-/// jump ahead of root-a's still-pending `module-rels`/`type-rels`/`call-rels`
-/// (priorities 3/2/1) the moment root-a's own scip node finished — this test
-/// fails on that code (root-b's scip claims 2nd, not 5th).
 #[test]
-fn cold_extract_claim_finishes_one_root_before_starting_another() {
+fn note_failure_backoff_stamps_a_future_run_at() {
     let (q, _d) = queue();
-    // root-a seeded first: scip-index highest, then module/type/call descending
-    // (the canonical extraction order `cold_family_priority` produces).
+    q.enqueue(JobRow::tick("r1", &[PathBuf::from("/a")])).unwrap();
+    let task_id: String = {
+        let db = plock(&q.db);
+        db.query_one("Jobs", "SELECT id FROM Jobs WHERE idempotency_key='tick:r1'", &[], |r| {
+            Ok(r.get(0)?)
+        })
+        .unwrap()
+    };
+    let now = now_secs();
+    let delay = q.note_failure_backoff(&task_id, "tick:r1", 1).unwrap();
+    assert!(delay >= 2, "first failure backs off at least backoff_secs(1)");
+    let (.., run_at) = q.peek("tick:r1").unwrap();
+    assert!(run_at > now, "a failed job backs off to a future run_at ({run_at} <= {now})");
+}
+
+// ---- boot crash recovery ----
+
+#[test]
+fn reset_orphaned_on_boot_re_pends_in_flight_rows() {
+    let (q, _d) = queue();
+    q.enqueue(JobRow::tick("r1", &[PathBuf::from("/a")])).unwrap();
+    q.enqueue(JobRow::tick("r2", &[PathBuf::from("/b")])).unwrap();
+    register_test_worker(&q, "w");
+    q.poke("UPDATE Jobs SET status='Running', lock_by='w' WHERE idempotency_key='tick:r1'", &[])
+        .unwrap();
+    q.poke("UPDATE Jobs SET status='Queued', lock_by='w' WHERE idempotency_key='tick:r2'", &[])
+        .unwrap();
+
+    let n = q.reset_orphaned_on_boot().unwrap();
+    assert_eq!(n, 2, "both in-flight rows reset on boot");
+    assert_eq!(q.peek("tick:r1").unwrap().0, "Pending");
+    assert_eq!(q.peek("tick:r2").unwrap().0, "Pending");
+}
+
+// ---- req_id cancellation (class-18 residual) ----
+
+#[test]
+fn cancel_req_kills_pending_and_flags_running() {
+    let (q, _d) = queue();
+    {
+        let _scope = crate::reqid::scope("req-77");
+        q.enqueue(JobRow::tick("pending-root", &[PathBuf::from("/a")])).unwrap();
+        q.enqueue(JobRow::tick("running-root", &[PathBuf::from("/b")])).unwrap();
+    }
+    q.enqueue(JobRow::tick("other-root", &[PathBuf::from("/c")])).unwrap();
+    register_test_worker(&q, "w");
+    q.poke(
+        "UPDATE Jobs SET status='Running', lock_by='w' \
+         WHERE idempotency_key='tick:running-root'",
+        &[],
+    )
+    .unwrap();
+
+    let (killed, flagged) = q.cancel_req("req-77").unwrap();
+    assert_eq!(killed, 1, "the request's pending job is killed");
+    assert_eq!(flagged, 1, "the request's running job is flagged");
+    assert_eq!(q.peek("tick:pending-root").unwrap().0, "Killed");
+    assert_eq!(q.peek("tick:running-root").unwrap().0, "Running",
+        "a running job is not stomped, only flagged");
+    assert_eq!(q.peek("tick:other-root").unwrap().0, "Pending",
+        "another request's job is untouched");
+
+    // The worker consumes the flag exactly once at its next job boundary.
+    assert!(q.take_cancel("tick:running-root"));
+    assert!(!q.take_cancel("tick:running-root"), "the flag is consumed");
+
+    // A fresh enqueue for the same key clears any stale flag.
+    let (_, flagged2) = q.cancel_req("req-77").unwrap();
+    assert_eq!(flagged2, 1);
+    q.enqueue(JobRow::tick("running-root", &[PathBuf::from("/d")])).unwrap();
+    assert!(!q.take_cancel("tick:running-root"), "re-enqueue clears the cancel flag");
+}
+
+// ---- root-serialized ColdExtract (2026-07-18 incident pin) ----
+
+/// Seed cold nodes for two roots exactly as `Engine::seed_cold_nodes` would
+/// (a `scip-index` node above every OTHER family, priority scale restarting
+/// at each root's own family count), drain every job through the simulated
+/// fetch order, and assert root-a fully finishes before root-b's first claim.
+/// Under a GLOBAL `priority DESC` order root-b's `scip-index` (priority 4)
+/// would jump root-a's remaining 3/2/1 nodes — the hold/promote admission is
+/// what prevents it.
+#[test]
+fn cold_extract_finishes_one_root_before_starting_another() {
+    let (q, _d) = queue();
     q.enqueue(JobRow::cold_extract("root-a", "scip-index", 0, 4)).unwrap();
     q.enqueue(JobRow::cold_extract("root-a", "module-rels", 0, 3)).unwrap();
     q.enqueue(JobRow::cold_extract("root-a", "type-rels", 0, 2)).unwrap();
     q.enqueue(JobRow::cold_extract("root-a", "call-rels", 0, 1)).unwrap();
-    // root-b seeded second, same priority SCALE (its own scip-index is also
-    // priority 4 — the exact incident shape: a second root's scip node ties or
-    // beats the first root's remaining non-scip nodes on a GLOBAL ordering).
     q.enqueue(JobRow::cold_extract("root-b", "scip-index", 0, 4)).unwrap();
     q.enqueue(JobRow::cold_extract("root-b", "module-rels", 0, 3)).unwrap();
 
     let mut order: Vec<String> = Vec::new();
-    while let Some(job) = q.claim(&[JobKind::ColdExtract]).unwrap() {
-        order.push(job.key.clone());
-        q.finish(&job.key, Ok(())).unwrap();
+    while let Some((key, _root)) = claimable_cold(&q) {
+        order.push(key.clone());
+        q.poke(
+            "UPDATE Jobs SET status='Done', done_at=strftime('%s','now') \
+             WHERE idempotency_key=?1",
+            &[key.as_str().into()],
+        )
+        .unwrap();
+        // The reconciler runs continuously in the live daemon; a pass after
+        // each completion promotes the next root once the active one drains.
+        q.reconcile().unwrap();
     }
     assert_eq!(order.len(), 6, "every seeded node claimed exactly once: {order:?}");
 
@@ -492,8 +308,6 @@ fn cold_extract_claim_finishes_one_root_before_starting_another() {
         last_a < first_b,
         "root-a's cold work must fully finish before root-b's first claim; order={order:?}"
     );
-    // scip-index still claims first WITHIN each root (priority ordering intact
-    // once the active root is chosen).
     assert_eq!(order[0], "cold:root-a:scip-index:0", "root-a's scip claims first overall");
     let b_order: Vec<&str> = order.iter().filter(|k| k.starts_with("cold:root-b:"))
         .map(|s| s.as_str()).collect();
@@ -503,71 +317,261 @@ fn cold_extract_claim_finishes_one_root_before_starting_another() {
     );
 }
 
-/// `active_cold_root` unit-level: no root has any progress yet (a fresh
-/// multi-root blank boot) picks the EARLIEST-SEEDED root, not an arbitrary
-/// one. `root-z` is enqueued first but backdated `enqueued_at` makes the
-/// ordering unambiguous regardless of same-wall-clock-second ties (`root-a`
-/// sorts first alphabetically, the tie-break — this pins the PRIMARY key,
-/// `enqueued_at`, wins over it).
+/// A mid-batch root whose only remaining work is backed off (future `run_at`)
+/// does not stall another root: `reconcile` promotes the held root.
 #[test]
-fn active_cold_root_picks_earliest_seeded_when_no_root_has_progress() {
-    let (q, _d) = queue();
-    q.enqueue(JobRow::cold_extract("root-z", "module-rels", 0, 3)).unwrap();
-    q.enqueue(JobRow::cold_extract("root-a", "module-rels", 0, 3)).unwrap();
-    let now = now_secs();
-    let db = plock(&q.db);
-    // Backdates `enqueued_at` so the earliest-seeded assertion below is
-    // unambiguous regardless of same-wall-clock-second ties (same
-    // test-scenario poke shape as `finish_declines_to_stomp_a_reclaimed_row`).
-    db.exec_params(
-        "_job",
-        "UPDATE _job SET enqueued_at=?1 WHERE key='cold:root-z:module-rels:0'",
-        &[(now - 100).into()],
-    )
-    .unwrap();
-    db.exec_params(
-        "_job",
-        "UPDATE _job SET enqueued_at=?1 WHERE key='cold:root-a:module-rels:0'",
-        &[now.into()],
-    )
-    .unwrap();
-    let root = active_cold_root(&db, now + 1).unwrap();
-    assert_eq!(root, Some("root-z".to_string()), "root-z was seeded first, so it stays active");
-}
-
-/// A mid-batch root with only a backed-off (future `run_at`) row remaining
-/// does not stall another root's ready work: `active_cold_root` falls through
-/// once its remaining row is not yet ready.
-#[test]
-fn active_cold_root_falls_through_a_backed_off_root() {
+fn reconcile_promotes_past_a_backed_off_root() {
     let (q, _d) = queue();
     q.enqueue(JobRow::cold_extract("root-a", "module-rels", 0, 3)).unwrap();
     q.enqueue(JobRow::cold_extract("root-b", "module-rels", 0, 3)).unwrap();
-    let now = now_secs();
-    {
-        let db = plock(&q.db);
-        // root-a: one row already done, its only remaining row not seeded here
-        // — simulate "mid-batch but backed off" by marking root-a done directly
-        // (same test-scenario poke shape as the sibling
-        // `active_cold_root_picks_earliest_seeded...` test).
-        db.exec_on("_job", "UPDATE _job SET state='done' WHERE key='cold:root-a:module-rels:0'")
-            .unwrap();
-    }
-    q.enqueue(JobRow::cold_extract("root-a", "type-rels", 0, 2)).unwrap();
-    let db = plock(&q.db);
-    // Same test-scenario poke as above, plus reuses this locked `Db` guard to
-    // call `active_cold_root` directly (the seam-typed `&Db` shape `claim`
-    // passes it).
-    db.exec_params(
-        "_job",
-        "UPDATE _job SET run_at=?1 WHERE key='cold:root-a:type-rels:0'",
-        &[(now + 10_000).into()],
+    // root-b was pushed held (root-a is active).
+    let (_, _, _, _, _, run_at_b) = q.peek("cold:root-b:module-rels:0").unwrap();
+    assert!(run_at_b > now_secs() + 3600, "second root's cold job is pushed held");
+
+    // root-a's only remaining row backs off into the future (a retry window).
+    q.poke(
+        "UPDATE Jobs SET run_at=strftime('%s','now') + 10000 \
+         WHERE idempotency_key='cold:root-a:module-rels:0'",
+        &[],
     )
     .unwrap();
-    let root = active_cold_root(&db, now).unwrap();
+    let rep = q.reconcile().unwrap();
+    assert!(rep.cold_promoted >= 1, "the held root is promoted past the backed-off one");
+    let (state_b, _, _, _, _, run_at_b) = q.peek("cold:root-b:module-rels:0").unwrap();
+    assert_eq!(state_b, "Pending");
+    assert!(run_at_b <= now_secs(), "promoted row is ready now");
+    let claimed = claimable_cold(&q).expect("root-b's work claims");
+    assert_eq!(claimed.1, "root-b");
+}
+
+/// While the active root has ready work, `reconcile` promotes nothing.
+#[test]
+fn reconcile_holds_the_second_root_while_the_first_has_ready_work() {
+    let (q, _d) = queue();
+    q.enqueue(JobRow::cold_extract("root-a", "module-rels", 0, 3)).unwrap();
+    q.enqueue(JobRow::cold_extract("root-b", "module-rels", 0, 3)).unwrap();
+    let rep = q.reconcile().unwrap();
+    assert_eq!(rep.cold_promoted, 0, "no promotion while root-a is runnable");
+    let (_, _, _, _, _, run_at_b) = q.peek("cold:root-b:module-rels:0").unwrap();
+    assert!(run_at_b > now_secs() + 3600, "root-b stays held");
+}
+
+// ---- write-volume budget lever (scheduler plan steps 1-2 seam) ----
+
+#[test]
+fn reconcile_defers_ready_cold_jobs_when_the_write_budget_is_spent() {
+    let dir = TmpDir::new();
+    // Budget: 2 jobs per window at 100 estimated bytes each.
+    let budget = Arc::new(WriteBudget::new(200, 100));
+    let q = test_open_with_budget(&dir.0, Some(budget.clone()));
+    q.enqueue(JobRow::cold_extract("r1", "module-rels", 0, 3)).unwrap();
+    q.enqueue(JobRow::cold_extract("r1", "type-rels", 0, 2)).unwrap();
+
+    // Budget untouched: nothing deferred.
+    let rep = q.reconcile().unwrap();
+    assert_eq!(rep.budget_deferred, 0);
+    assert!(claimable_cold(&q).is_some());
+
+    // Two jobs' spend recorded: the window is exhausted, ready rows defer.
+    budget.record_job();
+    budget.record_job();
+    let rep = q.reconcile().unwrap();
+    assert_eq!(rep.budget_deferred, 2, "both ready cold jobs deferred to the next window");
+    assert!(claimable_cold(&q).is_none(), "no cold job is claimable in an exhausted window");
+    let (_, _, _, _, _, run_at) = q.peek("cold:r1:module-rels:0").unwrap();
+    let now = now_secs();
+    assert!(run_at > now && run_at <= now + 61, "deferred to the next window boundary");
+}
+
+// ---- retention ----
+
+#[test]
+fn reconcile_trims_old_done_rows_but_keeps_fresh_ones() {
+    let (q, _d) = queue();
+    q.enqueue(JobRow::tick("old", &[PathBuf::from("/a")])).unwrap();
+    q.enqueue(JobRow::tick("fresh", &[PathBuf::from("/b")])).unwrap();
+    q.poke("UPDATE Jobs SET status='Done', done_at=1 WHERE idempotency_key='tick:old'", &[])
+        .unwrap();
+    q.poke(
+        "UPDATE Jobs SET status='Done', done_at=strftime('%s','now') \
+         WHERE idempotency_key='tick:fresh'",
+        &[],
+    )
+    .unwrap();
+
+    let rep = q.reconcile().unwrap();
+    assert_eq!(rep.trimmed, 1, "the aged done row was not trimmed");
+    assert!(q.peek("tick:old").is_none(), "the aged done row still exists");
+    assert!(q.peek("tick:fresh").is_some(), "a fresh done row was wrongly trimmed");
+}
+
+// ---- end-to-end through the REAL apalis workers ----
+
+/// A runner that records every job it ran (for the coalesce proof).
+struct RecordingRunner {
+    seen: Arc<Mutex<Vec<JobRow>>>,
+}
+impl JobRunner for RecordingRunner {
+    fn run(&self, job: &JobRow) -> Result<()> {
+        plock(&self.seen).push(job.clone());
+        Ok(())
+    }
+}
+
+/// A runner that always errors (for the backoff/park path).
+struct FailingRunner;
+impl JobRunner for FailingRunner {
+    fn run(&self, _job: &JobRow) -> Result<()> {
+        anyhow::bail!("boom")
+    }
+}
+
+/// A runner that PANICS on one root and records the rest — the proof a worker
+/// survives an unwinding job (`spawn_blocking` contains the panic; the
+/// handler converts it to a job failure).
+struct PanicOnRootRunner {
+    boom_root: String,
+    seen: Arc<Mutex<Vec<String>>>,
+}
+impl JobRunner for PanicOnRootRunner {
+    fn run(&self, job: &JobRow) -> Result<()> {
+        if job.root == self.boom_root {
+            panic!("runner unwind on {}", job.root);
+        }
+        plock(&self.seen).push(job.root.clone());
+        Ok(())
+    }
+}
+
+/// Sandbox worker rig: pool + queue + shell ctx + spawned workers.
+async fn rig(dir: &TmpDir, runner: Arc<dyn JobRunner>) -> (Arc<JobQueue>, ShellCtx, CancellationToken) {
+    let pool = workers::open_pool(&dir.0.join("jobs.sqlite")).await.expect("pool");
+    let q = JobQueue::open_with_budget(&dir.0, None).expect("open");
+    let cancel = CancellationToken::new();
+    let (broadcast_tx, _) = tokio::sync::broadcast::channel::<String>(8);
+    let ctx = ShellCtx {
+        rt: tokio::runtime::Handle::current(),
+        cancel: cancel.clone(),
+        job_notify: Arc::new(tokio::sync::Notify::new()),
+        broadcast_tx,
+    };
+    workers::spawn_workers(&ctx, &pool, q.clone(), runner, 1);
+    (q, ctx, cancel)
+}
+
+async fn wait_for_state(q: &JobQueue, key: &str, state: &str, tries: u32) -> bool {
+    for _ in 0..tries {
+        if q.peek(key).map(|r| r.0 == state).unwrap_or(false) {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    false
+}
+
+/// Two enqueues land before the worker fetches; the worker then runs the tick
+/// EXACTLY once, with a payload carrying BOTH paths.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn workers_run_a_coalesced_tick_once_with_both_paths() {
+    let dir = TmpDir::new();
+    let seen = Arc::new(Mutex::new(Vec::<JobRow>::new()));
+    // Enqueue BEFORE the workers spawn so both saves coalesce onto one row.
+    {
+        let pool = workers::open_pool(&dir.0.join("jobs.sqlite")).await.expect("pool");
+        pool.close().await;
+    }
+    let q0 = JobQueue::open_with_budget(&dir.0, None).expect("open");
+    q0.enqueue(JobRow::tick("r1", &[PathBuf::from("/one.rs")])).unwrap();
+    q0.enqueue(JobRow::tick("r1", &[PathBuf::from("/two.rs")])).unwrap();
+    drop(q0);
+
+    let (q, ctx, cancel) = rig(&dir, Arc::new(RecordingRunner { seen: seen.clone() })).await;
+    ctx.job_notify.notify_waiters();
+    assert!(wait_for_state(&q, "tick:r1", "Done", 200).await,
+        "the coalesced tick job never completed");
+    cancel.cancel();
+
+    let runs = plock(&seen);
+    assert_eq!(runs.len(), 1, "two rapid saves must produce ONE tick execution, got {}", runs.len());
     assert_eq!(
-        root,
-        Some("root-b".to_string()),
-        "root-a's only remaining row is backed off, so root-b's ready work claims instead"
+        runs[0].paths(),
+        vec![PathBuf::from("/one.rs"), PathBuf::from("/two.rs")],
+        "the single execution's payload carries both coalesced paths"
     );
+}
+
+/// A single worker panics on the `boom` tick, then still runs the `ok` tick —
+/// the panic did not kill the worker. The panicked job counts as a failure
+/// (attempts bumped, not left in flight).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn worker_survives_a_panicking_runner_and_keeps_serving() {
+    let dir = TmpDir::new();
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let (q, ctx, cancel) = rig(
+        &dir,
+        Arc::new(PanicOnRootRunner { boom_root: "boom".into(), seen: seen.clone() }),
+    )
+    .await;
+    q.enqueue(JobRow::tick("boom", &[PathBuf::from("/a")])).unwrap();
+    q.enqueue(JobRow::tick("ok", &[PathBuf::from("/b")])).unwrap();
+    ctx.job_notify.notify_waiters();
+
+    assert!(wait_for_state(&q, "tick:ok", "Done", 200).await,
+        "the worker died on the panic; the good job never ran");
+    // The panicked job was treated as a failure (attempts bumped, backed off),
+    // not silently dropped or left running.
+    let mut failed_seen = false;
+    for _ in 0..100 {
+        if let Some((state, _, _, _, attempts, _)) = q.peek("tick:boom") {
+            if state != "Running" && state != "Queued" && attempts >= 1 {
+                failed_seen = true;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    cancel.cancel();
+    assert!(failed_seen, "a panicking job must count as a failed attempt");
+    assert_eq!(*plock(&seen), vec!["ok".to_string()]);
+}
+
+/// A job whose runner keeps erroring backs off (future `run_at` stamped by the
+/// failure path) and eventually parks as `Killed` at the attempt cap.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn workers_park_a_persistently_failing_job() {
+    let dir = TmpDir::new();
+    let (q, ctx, cancel) = rig(&dir, Arc::new(FailingRunner)).await;
+    q.enqueue(JobRow::sink_drain("r1")).unwrap();
+    ctx.job_notify.notify_waiters();
+
+    // Each failure backs off; force the row ready-now between attempts rather
+    // than waiting out the natural 2/4/8s schedule, until it parks.
+    let mut parked = false;
+    'outer: for _ in 0..(MAX_ATTEMPTS as usize + 2) {
+        for _ in 0..100 {
+            match q.peek("sink:r1") {
+                Some((state, ..)) if state == "Killed" => {
+                    parked = true;
+                    break 'outer;
+                }
+                Some((state, _, _, _, _, run_at)) if state == "Failed" && run_at > now_secs() => {
+                    // Backed off: the stamp landed. Pull it ready-now.
+                    q.poke(
+                        "UPDATE Jobs SET run_at=0 WHERE idempotency_key='sink:r1'",
+                        &[],
+                    )
+                    .unwrap();
+                    ctx.job_notify.notify_waiters();
+                    break;
+                }
+                _ => {}
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+    cancel.cancel();
+    assert!(parked, "a persistently failing job must park as Killed, not spin: {:?}",
+        q.peek("sink:r1"));
+    let (_, _, _, _, attempts, _) = q.peek("sink:r1").unwrap();
+    assert_eq!(attempts, MAX_ATTEMPTS, "parks exactly at the attempt cap");
 }

@@ -1,90 +1,78 @@
-//! Durable SQLite job queue + dispatcher (arc J1 of the job-queue plan).
+//! Job queue on **apalis-sqlite** (plan `2026-07-18-infra-library-adoption.md`
+//! section 1.5 verdict / 5.3 step 3; "infra is bought, never built").
 //!
-//! Per-root tick work used to run INLINE on the watcher thread that observed a
-//! file change (and the poll thread for `@async` drains). Under load, a tick
-//! held its engine mutex for its whole synchronous body while the watcher thread
-//! sat blocked inside it — the "ticks are lock camping" shape. This module lifts
-//! that work onto a durable queue: watchers/pollers `enqueue` a job and return;
-//! a small worker set claims and runs it. The behavior is preserved (a worker
-//! calls the SAME `tick_paths` / drain the inline path called, under the SAME
-//! engine mutex) — but ticks are now visible (`dl daemon jobs`), listable,
-//! coalesced (rapid saves collapse to one tick job carrying every changed
-//! path), and durable (a `running` job is reset to pending on the next boot).
+//! The bespoke `_job` table + claim/finish SQL from the 2026-07-16 job-queue
+//! plan is gone. The durable store is apalis-sqlite's `Jobs` table (its own
+//! migrations) in the same `<home>/jobs.sqlite`; fetch/lock/ack, priority
+//! ordering, `run_at` scheduling, retry bookkeeping, worker registration and
+//! live orphan re-enqueue (the old lease sweep) are apalis's. The workers are
+//! apalis `Worker`s on the daemon shell runtime (`jobq::workers`).
 //!
-//! The table lives in a small dedicated `<home>/jobs.sqlite` opened via
-//! `db::open` — the daemon's other on-disk dbs are per-root corpus engines
-//! (`roots/<key>/db.sqlite`) and the config-view engine (`<home>/db.sqlite`),
-//! all owned by an `Engine`; a control table has no business sharing an engine's
-//! db, so it gets its own file. The lock-free `dl daemon jobs` read opens a
-//! read-only connection on it (`db::open_read_only`), the same pattern
-//! `daemon_read` uses for row/query RPCs.
+//! What stays HERE is the admission layer the adoption plan says no crate
+//! ships (section 1.6 q7, scheduler plan section 2 cross-cutting finding):
 //!
-//! Scope note: this is J1 only. J2 (live priorities beyond the column) and J3
-//! (per-stratum `DeriveStratum` jobs + mid-tick cancellation) are follow-ups;
-//! the `cancelled` column and `priority` ordering are wired now so those arcs
-//! add rows, not schema.
+//!   - **coalescing enqueue** — one row per job key. apalis's idempotency key
+//!     is `ON CONFLICT DO NOTHING` dedup; the arg-union / dirty-rerun /
+//!     reopen-terminal semantics the daemon tests pin are an UPSERT this
+//!     module runs over the apalis `Jobs` table (the plan's "SQL-
+//!     introspectable" integration posture: `dl daemon why` reads the same
+//!     table).
+//!   - **root-serialized ColdExtract admission** — a second root's cold jobs
+//!     are pushed HELD (`run_at` far future + a metadata flag) until the
+//!     active root has no runnable cold work; `reconcile` promotes the next
+//!     root. Replaces the old `active_cold_root` claim scoping (2026-07-18
+//!     incident: 4 roots cold-rebuilt concurrently).
+//!   - **failure backoff stamping** — apalis re-fetches a `Failed` row with
+//!     attempts left immediately; `note_failure_backoff` stamps the jittered
+//!     2/4/8..300s `run_at` the old queue applied (`calculate_status` parks
+//!     the row as `Killed` at the attempt cap — the old `failed` park).
+//!   - **req_id cancellation** (class-18 residual) — kill a request's pending
+//!     jobs, flag its queued/running ones; the worker aborts a flagged job at
+//!     the next job boundary (`AbortError` -> `Killed`, no retry burn).
+//!   - **the write-volume budget lever** (`write_budget`) — scheduler plan
+//!     steps 1-2 seam: a per-window byte budget `reconcile` enforces by
+//!     deferring ready cold jobs to the next window.
+//!
+//! All of the above is plain SQL through the repo's `Db` seam on the SAME
+//! SQLite file apalis's sqlx pool writes (WAL + busy handlers on both sides);
+//! the sync daemon threads never touch the async pool.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::db::Db;
 
-/// Bounded retry count: a job whose runner keeps erroring parks in `failed`
-/// after this many attempts instead of retrying forever.
+pub(crate) mod workers;
+pub(crate) mod write_budget;
+pub(crate) use workers::JobRunner;
+pub(crate) use write_budget::WriteBudget;
+
+/// Bounded retry count, mapped onto apalis's `max_attempts` column: the
+/// 5th failed attempt makes `calculate_status` park the row as `Killed`.
 pub(crate) const MAX_ATTEMPTS: i64 = 5;
 
-/// A `running` row whose `started_at` predates `now - LEASE_SECS` is treated by
-/// `sweep` as an abandoned lease and reset to `pending`. `reset_running_on_boot`
-/// recovers a dead PROCESS; this recovers a dead WORKER in a live process (a
-/// silently-exited worker thread, a wedged tick) whose `tick:{root}` row would
-/// otherwise block that root forever — one row exists per key, so every new
-/// enqueue only sets `dirty` and waits for a `finish` that never comes. This is
-/// the live-sweeper both effectum and apalis converge on (effectum's
-/// `expires_at` startup recovery leaves peer-worker jobs stuck until restart;
-/// apalis's `reenqueue_orphaned` runs it on a live interval).
-///
-/// Coarse on purpose: with no per-job heartbeat this must exceed the longest
-/// legitimate tick (a cold full-corpus rebuild) so a merely-slow tick is never
-/// reclaimed and double-run. effectum's `expires_at` heartbeat extension is the
-/// finer-grained refinement (J3). The `finish` state-check makes the reclaim
-/// race safe even if a slow tick IS reclaimed: the original worker's late
-/// `finish` sees the row no longer `running` and declines to stomp it.
-pub(crate) const LEASE_SECS: i64 = 900;
-
-/// `done` rows finished before `now - DONE_RETAIN_SECS` are deleted by `sweep`.
-/// Row count is bounded by distinct `key` already (the UPSERT reuses one row per
-/// `tick:{root}`/`sink:{root}`), so this only reaps terminal rows for roots that
-/// were dropped — it is not a defense against per-execution row growth (there is
-/// none). Both effectum (a `// TODO delete old jobs`) and apalis (a manual
-/// `vacuum()` never scheduled) leave retention unaddressed.
+/// `Done` rows finished before `now - DONE_RETAIN_SECS` are deleted by
+/// `reconcile` (apalis ships a manual `vacuum()` nothing schedules — retention
+/// stays ours, same 1h window the old queue had).
 pub(crate) const DONE_RETAIN_SECS: i64 = 3600;
 
-const SCHEMA: &str = "\
-CREATE TABLE IF NOT EXISTS _job(
-  key TEXT PRIMARY KEY, kind TEXT NOT NULL, root TEXT NOT NULL,
-  arg TEXT NOT NULL DEFAULT '{}', priority INTEGER NOT NULL DEFAULT 0,
-  state TEXT NOT NULL DEFAULT 'pending',
-  dirty INTEGER NOT NULL DEFAULT 0, cancelled INTEGER NOT NULL DEFAULT 0,
-  attempts INTEGER NOT NULL DEFAULT 0, run_at INTEGER NOT NULL DEFAULT 0,
-  enqueued_at INTEGER, started_at INTEGER, finished_at INTEGER, last_error TEXT
-) WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS _job_ready ON _job(state, run_at, priority);";
+/// The `run_at` a HELD cold job parks at (2100-01-01): apalis's fetch skips
+/// `run_at > now`, which is the only pull-side knob an admission layer above
+/// the store has. `reconcile` promotes held rows back to `run_at = now`.
+const HOLD_RUN_AT: i64 = 4_102_444_800;
 
-/// The client-request id (`crate::reqid`) whose thread-local scope was active
-/// when this job was last enqueued, or `None` for organically-triggered work
-/// (a file-watcher tick, a poll-timer sink drain) that no client request
-/// caused. Added as an idempotent migration (`ALTER TABLE`) rather than the
-/// base `SCHEMA` so an existing `jobs.sqlite` from before this arc upgrades
-/// in place instead of needing a fresh db.
-const MIGRATE_REQ_ID: &str = "ALTER TABLE _job ADD COLUMN req_id TEXT";
+/// apalis queue (`Jobs.job_type`) served by the tick/sink worker set.
+pub(crate) const ENGINE_QUEUE: &str = "dl-engine";
+/// apalis queue served by the single-flight cold-extract worker.
+pub(crate) const COLD_QUEUE: &str = "dl-cold";
 
-/// Poison-tolerant mutex lock (same policy as `daemon::lock`). A worker
-/// panicking mid-claim should not brick the queue for every other worker; the
-/// guarded state is a `Db` behind SQLite transactions that roll back on unwind.
+/// Poison-tolerant mutex lock (same policy as `daemon::lock`).
 #[inline]
 fn plock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -105,13 +93,12 @@ pub(crate) fn backoff_secs(attempts: i64) -> i64 {
 }
 
 /// `backoff_secs` plus additive jitter spread over `[base, base + base/2]`,
-/// deterministic in `seed` (unit-testable). Per-root keys mean a single bad
-/// global config fails EVERY root's tick on the same wall-second; without jitter
-/// they all back off to an identical `run_at` and wake together — a thundering
-/// herd on the engine mutex. effectum multiplies its backoff by
-/// `1 + rand()*randomization`; apalis adds none and its fixed-interval poll
-/// wakes every worker in lockstep. Jitter is applied at the `finish` call site
-/// (seeded from key+now), leaving `backoff_secs` a pure, testable base.
+/// deterministic in `seed`. Per-root keys mean a single bad global config
+/// fails EVERY root's tick on the same wall-second; without jitter they all
+/// wake in lockstep on the engine mutex. apalis adds no backoff at all on the
+/// storage side (a `Failed` row with attempts left is re-fetched immediately),
+/// so this stamp is applied by the worker's failure path
+/// (`note_failure_backoff`).
 pub(crate) fn jittered_backoff(attempts: i64, seed: u64) -> i64 {
     let base = backoff_secs(attempts);
     let spread = (base / 2).max(1);
@@ -128,61 +115,53 @@ fn jitter_seed(key: &str, now: i64) -> u64 {
     hasher.finish()
 }
 
-/// The job kinds J1 routes. `DeriveStratum` (per-stratum derive jobs) is J3.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The job kinds. Tick/SinkDrain ride the `dl-engine` queue; ColdExtract rides
+/// `dl-cold` (its own worker, concurrency 1 = the single-flight cold worker).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum JobKind {
     /// Re-tick a root over a set of changed paths (`tick_paths`).
+    #[serde(rename = "tick")]
     Tick,
     /// Drain a root's `@async`/external-sink effects (`poll_tick`).
+    #[serde(rename = "sink_drain")]
     SinkDrain,
-    /// Run ONE cold-start `(family, shard)` extraction node (cold-start staging,
-    /// plan `2026-07-17-cold-start-staging.md`). Distinct from the reserved J3
-    /// `DeriveStratum` (D6): this stages FACT extraction, that stages DERIVE.
+    /// Run ONE cold-start `(family, shard)` extraction node.
+    #[serde(rename = "cold_extract")]
     ColdExtract,
 }
 
 impl JobKind {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             JobKind::Tick => "tick",
             JobKind::SinkDrain => "sink_drain",
             JobKind::ColdExtract => "cold_extract",
         }
     }
-    fn parse(s: &str) -> Option<JobKind> {
-        match s {
-            "tick" => Some(JobKind::Tick),
-            "sink_drain" => Some(JobKind::SinkDrain),
-            "cold_extract" => Some(JobKind::ColdExtract),
-            _ => None,
+
+    /// The apalis queue (`Jobs.job_type`) this kind rides.
+    pub(crate) fn queue(self) -> &'static str {
+        match self {
+            JobKind::Tick | JobKind::SinkDrain => ENGINE_QUEUE,
+            JobKind::ColdExtract => COLD_QUEUE,
         }
     }
 }
 
-/// One enqueued unit of work. `arg` coalesces across re-requests (Tick unions
-/// its changed-path array). `key` is the dedup identity: one `tick:{root}` /
-/// `sink:{root}` row can exist per root, so per-root work serializes by
-/// construction.
-#[derive(Clone, Debug)]
+/// One unit of work: the task payload apalis stores in `Jobs.job` (JSON via
+/// its codec) and hands the worker back. `key` is the dedup identity, carried
+/// as the row's `idempotency_key`; `arg` coalesces across re-requests (Tick
+/// unions its changed-path array).
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct JobRow {
     pub key: String,
     pub kind: JobKind,
     pub root: String,
     pub arg: Value,
     pub priority: i64,
-    /// Retry count carried out of `claim` for a runner / J3 to inspect; the J1
-    /// runner ignores it (backoff is the queue's job), so it reads as unused.
-    #[allow(dead_code)]
-    pub attempts: i64,
-    pub run_at: i64,
-    /// See `crate::reqid` and `MIGRATE_REQ_ID`'s doc comment: the request
-    /// that was in scope on the constructing thread when this row was built,
-    /// captured automatically (every constructor below reads
-    /// `crate::reqid::current()`) so a call site never has to remember to
-    /// thread it through by hand. `None` on every organically-triggered
-    /// enqueue today (the file watcher and poll timer never enter a request
-    /// scope) — this is honest, not a gap: nothing has been LOST, those jobs
-    /// truly are not caused by a request.
+    /// See `crate::reqid`: the request in scope on the constructing thread,
+    /// captured automatically. `None` on organically-triggered enqueues (file
+    /// watcher, poll timer) — honest, those jobs have no causing request.
     pub req_id: Option<String>,
 }
 
@@ -196,8 +175,6 @@ impl JobRow {
             root: root_id.to_string(),
             arg: json!({ "paths": arr }),
             priority: 0,
-            attempts: 0,
-            run_at: 0,
             req_id: crate::reqid::current(),
         }
     }
@@ -210,17 +187,15 @@ impl JobRow {
             root: root_id.to_string(),
             arg: json!({}),
             priority: 0,
-            attempts: 0,
-            run_at: 0,
             req_id: crate::reqid::current(),
         }
     }
 
     /// A `cold:{root_id}:{family}:{shard}` staged-extraction job. One row per
-    /// `_cold_node`, so a re-seed UPSERT is idempotent and per-node work
-    /// serializes. `priority` orders the canonical extraction sequence (module
-    /// before type/call, so import resolution matches the inline path) — a
-    /// single-flight ColdExtract worker claims highest-priority-first.
+    /// `_cold_node`, so a re-seed UPSERT is idempotent. `priority` orders the
+    /// canonical extraction sequence WITHIN a root (apalis fetch is
+    /// `priority DESC, run_at ASC, id ASC`); ACROSS roots the hold/promote
+    /// admission in `enqueue`/`reconcile` serializes whole roots.
     pub fn cold_extract(root_id: &str, family: &str, shard: u32, priority: i64) -> JobRow {
         JobRow {
             key: format!("cold:{root_id}:{family}:{shard}"),
@@ -228,8 +203,6 @@ impl JobRow {
             root: root_id.to_string(),
             arg: json!({ "family": family, "shard": shard }),
             priority,
-            attempts: 0,
-            run_at: 0,
             req_id: crate::reqid::current(),
         }
     }
@@ -247,347 +220,370 @@ impl JobRow {
     }
 }
 
-/// The outcome of `finish`: what state the row landed in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Requeue {
-    /// Completed; row is `done`.
-    Done,
-    /// Re-opened `pending` — either the coalesce promise (a re-request arrived
-    /// while running set `dirty`), or a bounded failure retry (backoff).
-    Repending,
-    /// Retries exhausted; row is `failed`.
-    Parked,
+/// What one `reconcile` pass did (all counts; zero = quiet pass).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ReconcileReport {
+    /// `Done` rows with a coalesced re-request (`dirty`) reopened `Pending`.
+    pub dirty_reruns: usize,
+    /// Held cold rows promoted (a new active cold root started).
+    pub cold_promoted: usize,
+    /// Ready cold rows deferred by the write-volume budget lever.
+    pub budget_deferred: usize,
+    /// Aged `Done` rows deleted (retention).
+    pub trimmed: usize,
 }
-/// The durable queue: one per daemon process, its own `jobs.sqlite`. All
-/// mutating ops serialize on the `Db` mutex (SQLite is single-writer anyway);
-/// the read-only `list` opens its own connection and never takes it.
+
+impl ReconcileReport {
+    /// Did this pass make new work claimable (worth ringing the doorbell)?
+    pub(crate) fn made_work(&self) -> bool {
+        self.dirty_reruns > 0 || self.cold_promoted > 0
+    }
+}
+
+/// The admission/introspection seam over the apalis `Jobs` table. One per
+/// daemon process. All mutating ops serialize on the `Db` mutex; the
+/// read-only `list` opens its own connection and never takes it. The apalis
+/// workers reach the same file through their own sqlx pool.
 pub(crate) struct JobQueue {
     db_path: PathBuf,
     db: Mutex<Db>,
-    /// Doorbell: `wake_gen` bumps on every enqueue / requeue, waking a worker
-    /// blocked in `wait_for_work` instead of forcing it to poll on a timer.
-    wake_gen: Mutex<u64>,
-    wake_cv: Condvar,
+    /// Keys whose in-flight (queued/running) job a `cancel_req` flagged; the
+    /// worker checks `take_cancel` at the next job boundary and aborts.
+    cancel_flags: Mutex<HashSet<String>>,
+    /// The cold-extract write-volume budget lever; `None` = lever off.
+    budget: Option<Arc<WriteBudget>>,
 }
 
 impl JobQueue {
-    /// Open (creating) `<home>/jobs.sqlite` and ensure the `_job` schema.
+    /// Open the admission connection on `<home>/jobs.sqlite`. The apalis
+    /// migrations must already have run (`workers::open_pool` at daemon boot;
+    /// tests run them through the same path) — this fails loudly if the
+    /// `Jobs` table is missing rather than shipping a parallel schema.
     pub(crate) fn open(home: &Path) -> Result<Arc<JobQueue>> {
+        Self::open_with_budget(home, WriteBudget::from_env())
+    }
+
+    /// `open` with an explicit budget lever (tests inject one; the daemon
+    /// path reads `WriteBudget::from_env`).
+    pub(crate) fn open_with_budget(
+        home: &Path,
+        budget: Option<Arc<WriteBudget>>,
+    ) -> Result<Arc<JobQueue>> {
         let db_path = home.join("jobs.sqlite");
         let db = crate::db::open(Some(&db_path.to_string_lossy()))?;
-        db.execute_batch_on("_job", SCHEMA)?;
-        // Duplicate-column errors are the expected steady state (every boot
-        // after the first); anything else would surface loudly the next time
-        // this connection is used, so swallowing here is safe.
-        let _ = db.exec_on("_job", MIGRATE_REQ_ID);
+        let has_jobs: Option<String> = db.query_opt(
+            "Jobs",
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='Jobs'",
+            &[],
+            |r| Ok(r.get::<_, String>(0)?),
+        )?;
+        if has_jobs.is_none() {
+            anyhow::bail!(
+                "jobs.sqlite at {} has no `Jobs` table — apalis migrations \
+                 (jobq::workers::open_pool) must run before JobQueue::open",
+                db_path.display()
+            );
+        }
         Ok(Arc::new(JobQueue {
             db_path,
             db: Mutex::new(db),
-            wake_gen: Mutex::new(0),
-            wake_cv: Condvar::new(),
+            cancel_flags: Mutex::new(HashSet::new()),
+            budget,
         }))
     }
 
-    /// UPSERT a job. Coalescing IS the upsert:
-    ///   - a re-request while `pending` collapses onto the row (arg union,
+    /// UPSERT a job into the apalis `Jobs` table. Coalescing IS the upsert:
+    ///   - a re-request while `Pending` collapses onto the row (arg union,
     ///     priority max, attempts reset, ready now);
-    ///   - a re-request while `running` sets `dirty=1` so the row re-runs once
-    ///     after the current execution finishes (arg union carries the new
-    ///     paths into that rerun);
-    ///   - a re-request onto a `done`/`failed` row re-opens it `pending`.
+    ///   - a re-request while `Queued`/`Running` sets the `dirty` metadata
+    ///     flag so `reconcile` reopens the row once the current execution
+    ///     acks (arg union carries the new paths into that rerun);
+    ///   - a re-request onto a `Done`/`Failed`/`Killed` row reopens it.
+    ///
+    /// ColdExtract admission: if another root already has live unheld cold
+    /// work, this root's job is pushed HELD (`run_at` far future +
+    /// `$.hold` metadata); `reconcile` promotes it when the active root has
+    /// nothing runnable left. Enqueuing for the ACTIVE root also unholds any
+    /// of its own held stragglers, keeping "one unheld live root" invariant.
     pub(crate) fn enqueue(&self, job: JobRow) -> Result<()> {
         let now = now_secs();
-        let inner = {
-            let db = plock(&self.db);
-            db.begin_immediate()?;
-            let body = (|| -> Result<()> {
-                let existing: Option<String> = db.query_opt(
-                    "_job",
-                    "SELECT arg FROM _job WHERE key=?1",
-                    &[job.key.clone().into()],
-                    |r| Ok(r.get::<_, String>(0)?),
-                )?;
-                let merged = match &existing {
-                    Some(prev) => merge_args(prev, &job.arg),
-                    None => job.arg.to_string(),
-                };
-                let run_at = job.run_at.max(0);
-                db.exec_params(
-                    "_job",
-                    "INSERT INTO _job(key, kind, root, arg, priority, state, dirty, cancelled, \
-                       attempts, run_at, enqueued_at, req_id) \
-                     VALUES(?1,?2,?3,?4,?5,'pending',0,0,0,?6,?7,?8) \
-                     ON CONFLICT(key) DO UPDATE SET \
-                       arg = ?4, \
-                       priority = max(priority, ?5), \
-                       dirty = CASE WHEN state='running' THEN 1 ELSE 0 END, \
-                       state = CASE WHEN state='running' THEN 'running' ELSE 'pending' END, \
-                       attempts = CASE WHEN state='running' THEN attempts ELSE 0 END, \
-                       run_at = CASE WHEN state='running' THEN run_at ELSE ?6 END, \
-                       cancelled = 0, \
-                       enqueued_at = ?7, \
-                       started_at = CASE WHEN state='running' THEN started_at ELSE NULL END, \
-                       finished_at = CASE WHEN state='running' THEN finished_at ELSE NULL END, \
-                       last_error = CASE WHEN state='running' THEN last_error ELSE NULL END, \
-                       req_id = ?8",
-                    &[
-                        job.key.into(),
-                        job.kind.as_str().into(),
-                        job.root.into(),
-                        merged.into(),
-                        job.priority.into(),
-                        run_at.into(),
-                        now.into(),
-                        job.req_id.into(),
-                    ],
-                )?;
-                Ok(())
-            })();
-            finish_tx(&db, &body)?;
-            body
-        };
-        if inner.is_ok() {
-            self.wake();
-        }
-        inner
-    }
-
-    /// Claim the highest-priority ready job of an open kind, marking it
-    /// `running` in one `BEGIN IMMEDIATE` transaction (SQLite single-writer is
-    /// the coordinator). `None` = nothing ready.
-    ///
-    /// Root serialization for `ColdExtract` (2026-07-18 incident: 4 registered
-    /// roots cold-rebuilt concurrently on a blank-slate boot): when `kinds` is
-    /// scoped to `ColdExtract` alone — the single-flight cold worker's call
-    /// shape — the candidate set is further restricted to ONE `active_cold_root`
-    /// (see its doc). Without this, a second root's `scip-index` node (priority
-    /// `count+1`, ABOVE every OTHER root's non-scip nodes — each root's priority
-    /// scale restarts at its own family count) would jump the queue ahead of the
-    /// first root's still-pending nodes; `scip-index` keeps its highest-priority
-    /// rank only WITHIN the active root. `Tick`/`SinkDrain` need no such scoping:
-    /// their `key` dedup (`tick:{root}` / `sink:{root}`) already serializes
-    /// per-root work by construction.
-    pub(crate) fn claim(&self, kinds: &[JobKind]) -> Result<Option<JobRow>> {
-        if kinds.is_empty() {
-            return Ok(None);
-        }
-        // Governor gate between jobs: a worker never starts new work while the
-        // process is over its CPU ceiling.
-        crate::budget::throttle_point();
-        let now = now_secs();
-        let kind_list = kinds
-            .iter()
-            .map(|k| format!("'{}'", k.as_str()))
-            .collect::<Vec<_>>()
-            .join(",");
-        let root_scoped = kinds == [JobKind::ColdExtract];
+        let queue = job.kind.queue();
         let db = plock(&self.db);
         db.begin_immediate()?;
-        let body = (|| -> Result<Option<JobRow>> {
-            let active_root = if root_scoped { active_cold_root(&db, now)? } else { None };
-            if let Some(root) = &active_root {
-                tracing::debug!(root = %root, "[jobq] claim scoped to active cold root");
-            }
-            #[allow(clippy::type_complexity)]
-            let picked: Option<(String, String, String, String, i64, i64, i64, Option<String>)> =
-                match &active_root {
-                    Some(root) => db
-                        .query_opt(
-                            "_job",
-                            &format!(
-                                "SELECT key, kind, root, arg, priority, attempts, run_at, req_id FROM _job \
-                                 WHERE state='pending' AND cancelled=0 AND run_at<=?1 \
-                                 AND kind IN ({kind_list}) AND root=?2 \
-                                 ORDER BY priority DESC, run_at ASC, enqueued_at ASC LIMIT 1"
-                            ),
-                            &[now.into(), root.clone().into()],
-                            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
-                        )?,
-                    None => db
-                        .query_opt(
-                            "_job",
-                            &format!(
-                                "SELECT key, kind, root, arg, priority, attempts, run_at, req_id FROM _job \
-                                 WHERE state='pending' AND cancelled=0 AND run_at<=?1 AND kind IN ({kind_list}) \
-                                 ORDER BY priority DESC, run_at ASC, enqueued_at ASC LIMIT 1"
-                            ),
-                            &[now.into()],
-                            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
-                        )?,
-                };
-            let Some((key, kind_s, root, arg_s, priority, attempts, run_at, req_id)) = picked else {
-                return Ok(None);
-            };
-            db.exec_params(
-                "_job",
-                "UPDATE _job SET state='running', started_at=?2 WHERE key=?1",
-                &[key.clone().into(), now.into()],
+        let body = (|| -> Result<()> {
+            let existing: Option<String> = db.query_opt(
+                "Jobs",
+                "SELECT CAST(job AS TEXT) FROM Jobs WHERE job_type=?1 AND idempotency_key=?2",
+                &[queue.into(), job.key.clone().into()],
+                |r| Ok(r.get::<_, String>(0)?),
             )?;
-            let kind = JobKind::parse(&kind_s).unwrap_or(JobKind::Tick);
-            let arg = serde_json::from_str(&arg_s).unwrap_or_else(|_| json!({}));
-            Ok(Some(JobRow { key, kind, root, arg, priority, attempts, run_at, req_id }))
+            let mut merged = job.clone();
+            if let Some(prev) = &existing {
+                if let Ok(prev_row) = serde_json::from_str::<JobRow>(prev) {
+                    merged.arg = merge_args(&prev_row.arg, &job.arg);
+                    merged.priority = prev_row.priority.max(job.priority);
+                }
+            }
+            let held = job.kind == JobKind::ColdExtract && {
+                let active = active_cold_root(&db)?;
+                active.is_some_and(|r| r != job.root)
+            };
+            let run_at = if held { HOLD_RUN_AT } else { now };
+            let mut meta = json!({
+                "key": merged.key,
+                "kind": merged.kind.as_str(),
+                "root": merged.root,
+                "req_id": merged.req_id,
+                "enqueued_at": now,
+            });
+            if held {
+                meta["hold"] = json!(1);
+            }
+            let payload = serde_json::to_string(&merged)?;
+            let id = ulid::Ulid::new().to_string();
+            db.exec_params(
+                "Jobs",
+                "INSERT INTO Jobs(job, id, job_type, status, attempts, max_attempts, run_at, \
+                   last_result, lock_at, lock_by, done_at, priority, metadata, idempotency_key) \
+                 VALUES(CAST(?1 AS BLOB), ?2, ?3, 'Pending', 0, ?4, ?5, \
+                   NULL, NULL, NULL, NULL, ?6, ?7, ?8) \
+                 ON CONFLICT(job_type, idempotency_key) DO UPDATE SET \
+                   job = CAST(?1 AS BLOB), \
+                   priority = max(priority, ?6), \
+                   metadata = CASE WHEN status IN ('Queued','Running') \
+                     THEN json_set(metadata, '$.dirty', 1) ELSE ?7 END, \
+                   attempts = CASE WHEN status IN ('Queued','Running') THEN attempts ELSE 0 END, \
+                   run_at = CASE WHEN status IN ('Queued','Running') THEN run_at ELSE ?5 END, \
+                   lock_at = CASE WHEN status IN ('Queued','Running') THEN lock_at ELSE NULL END, \
+                   lock_by = CASE WHEN status IN ('Queued','Running') THEN lock_by ELSE NULL END, \
+                   done_at = CASE WHEN status IN ('Queued','Running') THEN done_at ELSE NULL END, \
+                   last_result = CASE WHEN status IN ('Queued','Running') \
+                     THEN last_result ELSE NULL END, \
+                   status = CASE WHEN status IN ('Queued','Running') THEN status ELSE 'Pending' END",
+                &[
+                    payload.into(),
+                    id.into(),
+                    queue.into(),
+                    MAX_ATTEMPTS.into(),
+                    run_at.into(),
+                    merged.priority.into(),
+                    meta.to_string().into(),
+                    merged.key.clone().into(),
+                ],
+            )?;
+            // A fresh enqueue for the ACTIVE cold root unholds its own held
+            // stragglers (keeps the one-unheld-live-root invariant simple).
+            if job.kind == JobKind::ColdExtract && !held {
+                db.exec_params(
+                    "Jobs",
+                    "UPDATE Jobs SET run_at=?2, metadata=json_remove(metadata, '$.hold') \
+                     WHERE job_type=?1 AND json_extract(metadata, '$.hold')=1 \
+                       AND json_extract(metadata, '$.root')=?3",
+                    &[COLD_QUEUE.into(), now.into(), job.root.clone().into()],
+                )?;
+            }
+            Ok(())
+        })();
+        finish_tx(&db, &body)?;
+        drop(db);
+        if body.is_ok() {
+            // A re-enqueue clears any stale cancellation flag (the old queue's
+            // `cancelled = 0` on upsert).
+            plock(&self.cancel_flags).remove(&job.key);
+        }
+        body
+    }
+
+    /// The maintenance pass, run by the shell reconciler task (doorbell +
+    /// 500ms backstop) and the idle loop. One write transaction, all set-ops:
+    ///   1. dirty reruns — `Done` rows a re-request hit mid-run reopen
+    ///      `Pending` (the coalesce promise the old `finish` kept inline);
+    ///   2. cold promotion — when no unheld cold row is runnable, the
+    ///      earliest-seeded held root is promoted (also the old
+    ///      `active_cold_root` fall-through past a fully backed-off root);
+    ///   3. budget deferral — the write-volume lever defers ready cold rows
+    ///      to the next window when the current window's budget is spent;
+    ///   4. retention — aged `Done` rows deleted.
+    pub(crate) fn reconcile(&self) -> Result<ReconcileReport> {
+        let now = now_secs();
+        let db = plock(&self.db);
+        db.begin_immediate()?;
+        let body = (|| -> Result<ReconcileReport> {
+            let mut report = ReconcileReport::default();
+            report.dirty_reruns = db.exec_params(
+                "Jobs",
+                "UPDATE Jobs SET status='Pending', attempts=0, run_at=?1, lock_at=NULL, \
+                   lock_by=NULL, done_at=NULL, last_result=NULL, \
+                   metadata=json_remove(metadata, '$.dirty') \
+                 WHERE status='Done' AND json_extract(metadata, '$.dirty')=1",
+                &[now.into()],
+            )?;
+            // Cold promotion: nothing unheld is runnable (claimable now or
+            // already in flight) -> promote the earliest-seeded held root
+            // (ULID ids are time-ordered, so min(id) is seed order).
+            let runnable_unheld: Option<i64> = db.query_opt(
+                "Jobs",
+                "SELECT 1 FROM Jobs WHERE job_type=?1 \
+                   AND json_extract(metadata, '$.hold') IS NULL \
+                   AND (status IN ('Queued','Running') \
+                        OR (status='Pending' AND run_at<=?2) \
+                        OR (status='Failed' AND attempts<max_attempts AND run_at<=?2)) \
+                 LIMIT 1",
+                &[COLD_QUEUE.into(), now.into()],
+                |r| Ok(r.get::<_, i64>(0)?),
+            )?;
+            if runnable_unheld.is_none() {
+                let next_root: Option<String> = db.query_opt(
+                    "Jobs",
+                    "SELECT json_extract(metadata, '$.root') AS held_root FROM Jobs \
+                     WHERE job_type=?1 AND json_extract(metadata, '$.hold')=1 \
+                       AND status='Pending' \
+                     GROUP BY held_root ORDER BY min(id) LIMIT 1",
+                    &[COLD_QUEUE.into()],
+                    |r| Ok(r.get::<_, String>(0)?),
+                )?;
+                if let Some(root) = next_root {
+                    report.cold_promoted = db.exec_params(
+                        "Jobs",
+                        "UPDATE Jobs SET run_at=?2, metadata=json_remove(metadata, '$.hold') \
+                         WHERE job_type=?1 AND json_extract(metadata, '$.hold')=1 \
+                           AND json_extract(metadata, '$.root')=?3",
+                        &[COLD_QUEUE.into(), now.into(), root.into()],
+                    )?;
+                }
+            }
+            if let Some(budget) = &self.budget {
+                if let Some(resume_at) = budget.deferral_until(now) {
+                    report.budget_deferred = db.exec_params(
+                        "Jobs",
+                        "UPDATE Jobs SET run_at=?2 WHERE job_type=?1 AND status='Pending' \
+                           AND run_at<=?3 AND json_extract(metadata, '$.hold') IS NULL",
+                        &[COLD_QUEUE.into(), resume_at.into(), now.into()],
+                    )?;
+                }
+            }
+            report.trimmed = db.exec_params(
+                "Jobs",
+                "DELETE FROM Jobs WHERE status='Done' AND done_at IS NOT NULL AND done_at<?1 \
+                   AND json_extract(metadata, '$.dirty') IS NULL",
+                &[(now - DONE_RETAIN_SECS).into()],
+            )?;
+            Ok(report)
         })();
         finish_tx(&db, &body)?;
         body
     }
 
-    /// Close out a claimed job. Success -> `done`, unless a re-request set
-    /// `dirty` while it ran (then re-open `pending` — the coalesce rerun).
-    /// Failure -> bounded backoff: `pending` with a future `run_at` until
-    /// `MAX_ATTEMPTS`, then park in `failed`.
-    pub(crate) fn finish(&self, key: &str, outcome: Result<()>) -> Result<Requeue> {
+    /// Stamp the jittered backoff `run_at` for a just-failed attempt. Called
+    /// by the worker's failure path BEFORE apalis acks the row `Failed` (the
+    /// ack writes status/attempts/last_result, never `run_at`, so the stamp
+    /// survives). Returns the delay in seconds.
+    pub(crate) fn note_failure_backoff(&self, task_id: &str, key: &str, attempts: i64) -> Result<i64> {
         let now = now_secs();
-        let inner = {
-            let db = plock(&self.db);
-            db.begin_immediate()?;
-            let body = (|| -> Result<Requeue> {
-                let row: Option<(String, i64, i64)> = db
-                    .query_opt(
-                        "_job",
-                        "SELECT state, dirty, attempts FROM _job WHERE key=?1",
-                        &[key.into()],
-                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-                    )?;
-                let Some((state, dirty, attempts)) = row else {
-                    // Row vanished (dropped/cancelled out from under us).
-                    return Ok(Requeue::Done);
-                };
-                if state != "running" {
-                    // The lease `sweep` reclaimed this row (reset it to `pending`)
-                    // while our slow tick ran, and another worker may already own
-                    // the rerun. Do not stomp the superseding row back to done/
-                    // failed — the reclaimed attempt is authoritative now. Safe
-                    // because this read and any write share one BEGIN IMMEDIATE tx.
-                    return Ok(Requeue::Done);
-                }
-                match outcome {
-                    Ok(()) => {
-                        if dirty != 0 {
-                            db.exec_params(
-                                "_job",
-                                "UPDATE _job SET state='pending', dirty=0, run_at=?2, \
-                                 started_at=NULL, finished_at=?2, last_error=NULL WHERE key=?1",
-                                &[key.into(), now.into()],
-                            )?;
-                            Ok(Requeue::Repending)
-                        } else {
-                            db.exec_params(
-                                "_job",
-                                "UPDATE _job SET state='done', finished_at=?2, last_error=NULL \
-                                 WHERE key=?1",
-                                &[key.into(), now.into()],
-                            )?;
-                            Ok(Requeue::Done)
-                        }
-                    }
-                    Err(e) => {
-                        let msg = e.to_string();
-                        let attempts_new = attempts + 1;
-                        if attempts_new >= MAX_ATTEMPTS {
-                            tracing::warn!(key, attempts = attempts_new, max = MAX_ATTEMPTS,
-                                error = %msg,
-                                "[jobq] job PARKED failed — attempt cap hit, no more retries");
-                            db.exec_params(
-                                "_job",
-                                "UPDATE _job SET state='failed', attempts=?2, started_at=NULL, \
-                                 finished_at=?3, last_error=?4 WHERE key=?1",
-                                &[key.into(), attempts_new.into(), now.into(), msg.into()],
-                            )?;
-                            Ok(Requeue::Parked)
-                        } else {
-                            let run_at = now + jittered_backoff(attempts_new, jitter_seed(key, now));
-                            tracing::warn!(key, attempts = attempts_new, max = MAX_ATTEMPTS,
-                                retry_in_secs = run_at - now, error = %msg,
-                                "[jobq] job failed — backoff repend");
-                            db.exec_params(
-                                "_job",
-                                "UPDATE _job SET state='pending', attempts=?2, run_at=?3, \
-                                 started_at=NULL, finished_at=NULL, last_error=?4 WHERE key=?1",
-                                &[key.into(), attempts_new.into(), run_at.into(), msg.into()],
-                            )?;
-                            Ok(Requeue::Repending)
-                        }
-                    }
-                }
-            })();
-            finish_tx(&db, &body)?;
-            body
-        };
-        if matches!(inner, Ok(Requeue::Repending)) {
-            self.wake();
-        }
-        inner
-    }
-
-    /// Flag a job cancelled; `claim` skips cancelled rows. (J3 checks the flag
-    /// mid-run between strata; J1 just declines to start it — so no J1 caller
-    /// yet outside tests.)
-    #[allow(dead_code)]
-    pub(crate) fn cancel(&self, key: &str) -> Result<()> {
+        let delay = jittered_backoff(attempts, jitter_seed(key, now));
         let db = plock(&self.db);
-        db.exec_params("_job", "UPDATE _job SET cancelled=1 WHERE key=?1", &[key.into()])?;
-        Ok(())
+        db.exec_params(
+            "Jobs",
+            "UPDATE Jobs SET run_at=?2 WHERE id=?1",
+            &[task_id.into(), (now + delay).into()],
+        )?;
+        Ok(delay)
     }
 
-    /// Crash recovery, run once at boot before serving: any job left `running`
-    /// by a previous (crashed/killed) process is reset to `pending` so a worker
-    /// picks it up again. Returns the count reset.
-    pub(crate) fn reset_running_on_boot(&self) -> Result<usize> {
+    /// The cold-extract write-volume lever, if armed.
+    pub(crate) fn write_budget(&self) -> Option<&Arc<WriteBudget>> {
+        self.budget.as_ref()
+    }
+
+    /// Cancel every job a client request caused (class-18 residual: a
+    /// disconnected client's queued/running work). Two halves:
+    ///   - `Pending` rows are killed outright (`Killed`, never fetched);
+    ///   - `Queued`/`Running` rows get a durable `$.cancel` metadata mark and
+    ///     an in-process flag the worker consults at the next job boundary
+    ///     (`take_cancel` -> `AbortError` -> `Killed`, no retry burn).
+    /// Returns `(killed_pending, flagged_in_flight)`.
+    pub(crate) fn cancel_req(&self, req_id: &str) -> Result<(usize, usize)> {
+        let now = now_secs();
+        let db = plock(&self.db);
+        db.begin_immediate()?;
+        let body = (|| -> Result<(usize, Vec<String>)> {
+            let killed = db.exec_params(
+                "Jobs",
+                "UPDATE Jobs SET status='Killed', done_at=?2, \
+                   last_result='{\"Err\":\"cancelled: client request gone\"}' \
+                 WHERE json_extract(metadata, '$.req_id')=?1 AND status='Pending'",
+                &[req_id.into(), now.into()],
+            )?;
+            let in_flight: Vec<String> = db.query_rows(
+                "Jobs",
+                "SELECT idempotency_key FROM Jobs \
+                 WHERE json_extract(metadata, '$.req_id')=?1 AND status IN ('Queued','Running') \
+                   AND idempotency_key IS NOT NULL",
+                &[req_id.into()],
+                |r| Ok(r.get::<_, String>(0)?),
+            )?;
+            if !in_flight.is_empty() {
+                db.exec_params(
+                    "Jobs",
+                    "UPDATE Jobs SET metadata=json_set(metadata, '$.cancel', 1) \
+                     WHERE json_extract(metadata, '$.req_id')=?1 \
+                       AND status IN ('Queued','Running')",
+                    &[req_id.into()],
+                )?;
+            }
+            Ok((killed, in_flight))
+        })();
+        finish_tx(&db, &body)?;
+        drop(db);
+        let (killed, in_flight) = body?;
+        let flagged = in_flight.len();
+        if flagged > 0 {
+            let mut flags = plock(&self.cancel_flags);
+            for key in in_flight {
+                flags.insert(key);
+            }
+        }
+        if killed > 0 || flagged > 0 {
+            tracing::info!(req_id, killed, flagged, "[jobq] cancelled request's jobs");
+        }
+        Ok((killed, flagged))
+    }
+
+    /// Consume a cancellation flag for `key` (worker job-boundary check).
+    pub(crate) fn take_cancel(&self, key: &str) -> bool {
+        plock(&self.cancel_flags).remove(key)
+    }
+
+    /// Boot crash recovery, run before the workers spawn: any row left
+    /// `Queued`/`Running` by a previous (crashed/killed) process is reset to
+    /// `Pending` so a worker picks it up again — instantly, without waiting
+    /// for apalis's heartbeat-based `reenqueue_orphaned` window (which still
+    /// runs live and covers mid-life orphans). Returns the count reset.
+    pub(crate) fn reset_orphaned_on_boot(&self) -> Result<usize> {
         let db = plock(&self.db);
         let n = db.exec_on(
-            "_job",
-            "UPDATE _job SET state='pending', started_at=NULL WHERE state='running'",
+            "Jobs",
+            "UPDATE Jobs SET status='Pending', lock_at=NULL, lock_by=NULL, done_at=NULL \
+             WHERE status IN ('Queued','Running')",
         )?;
         Ok(n)
     }
 
-    /// Periodic maintenance, two ops in one write tx (the daemon's `idle_loop`
-    /// calls it, ~30s cadence):
-    ///   1. **lease reclaim** — any row still `running` whose `started_at`
-    ///      predates `now - lease_secs` is reset to `pending` (see `LEASE_SECS`).
-    ///      Wakes a worker when it reclaims anything so the re-pended job runs.
-    ///   2. **terminal retention** — `done` rows finished before
-    ///      `now - done_retain_secs` are deleted (see `DONE_RETAIN_SECS`).
-    /// Returns `(reclaimed, deleted)`. Both are set-ops, no per-row loop.
-    pub(crate) fn sweep(&self, lease_secs: i64, done_retain_secs: i64) -> Result<(usize, usize)> {
-        let now = now_secs();
-        let out = {
-            let db = plock(&self.db);
-            db.begin_immediate()?;
-            let body = (|| -> Result<(usize, usize)> {
-                let reclaimed = db.exec_params(
-                    "_job",
-                    "UPDATE _job SET state='pending', started_at=NULL \
-                     WHERE state='running' AND started_at IS NOT NULL AND started_at < ?1",
-                    &[(now - lease_secs).into()],
-                )?;
-                let deleted = db.exec_params(
-                    "_job",
-                    "DELETE FROM _job \
-                     WHERE state='done' AND finished_at IS NOT NULL AND finished_at < ?1",
-                    &[(now - done_retain_secs).into()],
-                )?;
-                Ok((reclaimed, deleted))
-            })();
-            finish_tx(&db, &body)?;
-            body?
-        };
-        if out.0 > 0 {
-            self.wake();
-        }
-        Ok(out)
-    }
-
-    /// Every job, newest first (`enqueued_at DESC`), off a read-only
-    /// connection — the lock-free `dl daemon jobs` read (never the engine lock,
-    /// never the queue mutex).
+    /// Every job, newest first, off a read-only connection — the lock-free
+    /// `dl daemon jobs` read (never the engine lock, never the queue mutex).
+    /// States are apalis's, lowercased for the CLI surface (`pending`,
+    /// `queued`, `running`, `done`, `failed`, `killed`).
     pub(crate) fn list(&self) -> Result<Vec<JobListRow>> {
         let db = crate::db::ReadDb::open(&self.db_path.to_string_lossy())?;
         let rows = db.query_rows(
-            "_job",
-            "SELECT key, kind, root, state, priority, attempts, run_at, \
-                    enqueued_at, started_at, finished_at, last_error \
-             FROM _job ORDER BY enqueued_at DESC, key",
+            "Jobs",
+            "SELECT COALESCE(idempotency_key, id), \
+                    COALESCE(json_extract(metadata, '$.kind'), job_type), \
+                    COALESCE(json_extract(metadata, '$.root'), ''), \
+                    lower(status), priority, attempts, run_at, \
+                    json_extract(metadata, '$.enqueued_at'), lock_at, done_at, \
+                    json_extract(last_result, '$.Err') \
+             FROM Jobs ORDER BY json_extract(metadata, '$.enqueued_at') DESC, id DESC",
             &[],
             |r| {
                 Ok(JobListRow {
@@ -608,98 +604,51 @@ impl JobQueue {
         Ok(rows)
     }
 
-    /// Bump the doorbell and wake every worker parked in `wait_for_work`.
-    pub(crate) fn wake(&self) {
-        {
-            let mut g = plock(&self.wake_gen);
-            *g = g.wrapping_add(1);
-        }
-        self.wake_cv.notify_all();
-    }
-
-    /// Block until the doorbell rings (an enqueue/requeue) or `timeout` — the
-    /// safety net that re-checks a future-`run_at` (backed-off) job even with no
-    /// new enqueue. `last_seen` carries the generation the caller last observed.
-    pub(crate) fn wait_for_work(&self, last_seen: &mut u64, timeout: Duration) {
-        let g = plock(&self.wake_gen);
-        if *g != *last_seen {
-            *last_seen = *g;
-            return;
-        }
-        let (g2, _timed_out) = self
-            .wake_cv
-            .wait_timeout(g, timeout)
-            .unwrap_or_else(|p| p.into_inner());
-        *last_seen = *g2;
-    }
-
-    /// Test-only raw row peek (state, dirty, arg, priority, attempts, run_at).
+    /// Test-only raw row peek by key:
+    /// `(status, dirty, payload_json, priority, attempts, run_at)`.
     #[cfg(test)]
-    fn peek(&self, key: &str) -> Option<(String, i64, String, i64, i64, i64)> {
+    pub(crate) fn peek(&self, key: &str) -> Option<(String, i64, String, i64, i64, i64)> {
         let db = plock(&self.db);
         db.query_opt(
-            "_job",
-            "SELECT state, dirty, arg, priority, attempts, run_at FROM _job WHERE key=?1",
+            "Jobs",
+            "SELECT status, COALESCE(json_extract(metadata, '$.dirty'), 0), \
+                    CAST(job AS TEXT), priority, attempts, run_at \
+             FROM Jobs WHERE idempotency_key=?1",
             &[key.into()],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
         )
         .ok()
         .flatten()
     }
+
+    /// Test-only direct SQL poke on the admission connection.
+    #[cfg(test)]
+    pub(crate) fn poke(&self, sql: &str, params: &[crate::db::SqlVal]) -> Result<usize> {
+        let db = plock(&self.db);
+        db.exec_params("Jobs", sql, params)
+    }
 }
 
-/// The one root a root-scoped `ColdExtract` claim should draw from (see
-/// `JobQueue::claim`'s doc):
-///
-/// - a root already MID-BATCH — has at least one `cold_extract` row `done` AND
-///   at least one still `pending` AND READY (`run_at<=now`) — stays active, so
-///   its remaining nodes (including a lower-priority one than another root's
-///   `scip-index`) finish before any other root's cold work starts. The
-///   single-flight cold worker never has two roots `running` at once, so at
-///   most one root can match here in steady state; `ORDER BY root` breaks a
-///   tie deterministically if crash-recovery ever produces one.
-/// - else (no root has any progress yet — a genuinely fresh multi-root blank
-///   boot) the root whose `cold_extract` rows were seeded EARLIEST (min
-///   `enqueued_at` among its pending rows) — first-seeded root goes first.
-/// - `None` when no `cold_extract` row is pending at all (nothing to scope).
-///
-/// A mid-batch root whose only remaining rows are backed off (`run_at` in the
-/// future, e.g. a retried failure) is NOT held active — it drops out of the
-/// "ready" check above so a claim falls through to another root's ready work
-/// instead of stalling every root behind one retry window; that root
-/// re-qualifies as active on its own next `done` (there is always at least a
-/// `done` row once it has run anything, and a `pending` id row it's still
-/// working through). Runs inside `claim`'s already-open `BEGIN IMMEDIATE`
-/// transaction on the shared connection; taking `&Db` here would need a
-/// second connection and break the transaction (SQLite single-writer).
-fn active_cold_root(db: &Db, now: i64) -> Result<Option<String>> {
-    let in_progress: Option<String> = db
-        .query_opt(
-            "_job",
-            "SELECT root FROM _job WHERE kind='cold_extract' \
-             AND root IN (SELECT root FROM _job WHERE kind='cold_extract' AND state='done') \
-             AND state='pending' AND cancelled=0 AND run_at<=?1 \
-             ORDER BY root LIMIT 1",
-            &[now.into()],
-            |r| Ok(r.get::<_, String>(0)?),
-        )?;
-    if in_progress.is_some() {
-        return Ok(in_progress);
-    }
+/// The one root with live UNHELD cold work (`Pending`/`Queued`/`Running`, or
+/// `Failed` with attempts left). The enqueue-side half of root serialization:
+/// a job for any OTHER root is pushed held. At most one such root exists by
+/// construction (enqueue holds newcomers, `reconcile` promotes one root).
+fn active_cold_root(db: &Db) -> Result<Option<String>> {
     db.query_opt(
-        "_job",
-        "SELECT root FROM _job WHERE kind='cold_extract' AND state='pending' AND cancelled=0 \
-         AND run_at<=?1 ORDER BY enqueued_at ASC, root ASC LIMIT 1",
-        &[now.into()],
+        "Jobs",
+        "SELECT json_extract(metadata, '$.root') FROM Jobs WHERE job_type=?1 \
+           AND json_extract(metadata, '$.hold') IS NULL \
+           AND (status IN ('Pending','Queued','Running') \
+                OR (status='Failed' AND attempts<max_attempts)) \
+         LIMIT 1",
+        &[COLD_QUEUE.into()],
         |r| Ok(r.get::<_, String>(0)?),
     )
     .map_err(Into::into)
 }
 
 /// Commit on `Ok`, roll back on `Err` — keeps a failed mid-transaction op from
-/// leaving the shared connection stuck inside a transaction (the next
-/// `BEGIN IMMEDIATE` would otherwise fail "cannot start a transaction within a
-/// transaction").
+/// leaving the shared connection stuck inside a transaction.
 fn finish_tx<T>(db: &Db, body: &Result<T>) -> Result<()> {
     match body {
         Ok(_) => db.commit()?,
@@ -711,19 +660,19 @@ fn finish_tx<T>(db: &Db, body: &Result<T>) -> Result<()> {
 }
 
 /// Union a Tick job's `paths` array across a coalescing re-request, order-
-/// preserving and deduped. Non-path args (SinkDrain's `{}`) pass through.
-fn merge_args(prev: &str, incoming: &Value) -> String {
-    let prev_v: Value = serde_json::from_str(prev).unwrap_or_else(|_| json!({}));
-    let mut paths = paths_of(&prev_v);
+/// preserving and deduped. Non-path args (SinkDrain's `{}`, ColdExtract's
+/// `{family, shard}`) pass the incoming value through.
+fn merge_args(prev: &Value, incoming: &Value) -> Value {
+    let mut paths = paths_of(prev);
     for p in paths_of(incoming) {
         if !paths.contains(&p) {
             paths.push(p);
         }
     }
     if paths.is_empty() {
-        incoming.to_string()
+        incoming.clone()
     } else {
-        json!({ "paths": paths }).to_string()
+        json!({ "paths": paths })
     }
 }
 
@@ -749,9 +698,29 @@ pub(crate) struct JobListRow {
     pub last_error: Option<String>,
 }
 
-mod dispatch;
-#[allow(unused_imports)] // `Dispatcher` is jobq-test-only since the daemon's
-                         // dispatcher moved to `daemon_shell::jobs`.
-pub(crate) use dispatch::{Dispatcher, JobRunner};
+/// Test-only open that first runs the apalis migrations (the daemon does this
+/// through `workers::open_pool` at boot) on a throwaway current-thread
+/// runtime, then opens the sync admission seam.
+#[cfg(test)]
+pub(crate) fn test_open(home: &Path) -> Arc<JobQueue> {
+    test_open_with_budget(home, None)
+}
+
+#[cfg(test)]
+pub(crate) fn test_open_with_budget(
+    home: &Path,
+    budget: Option<Arc<WriteBudget>>,
+) -> Arc<JobQueue> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test runtime");
+    let pool = rt
+        .block_on(workers::open_pool(&home.join("jobs.sqlite")))
+        .expect("apalis migrations");
+    rt.block_on(async { pool.close().await });
+    JobQueue::open_with_budget(home, budget).expect("open job queue")
+}
+
 #[cfg(test)]
 mod tests;

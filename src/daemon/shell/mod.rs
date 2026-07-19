@@ -30,7 +30,6 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 pub(crate) mod http;
-pub(crate) mod jobs;
 pub(crate) mod timers;
 pub(crate) mod watch;
 

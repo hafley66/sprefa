@@ -219,6 +219,17 @@ async fn rpc(State(state): State<HttpState>, Extension(transport): Extension<Tra
     }
     let is_shutdown = req.method == "shutdown";
     let req_id = crate::reqid::next();
+    // req_id cancellation (class-18 residual): a client that disconnects
+    // mid-request drops this handler future; the guard then cancels the jobs
+    // that request caused — pending rows are killed, an in-flight one is
+    // flagged and aborts at the worker's next job boundary. Disarmed on the
+    // normal completion path below.
+    let mut disconnect_guard = CancelOnDisconnect {
+        rt: state.ctx.rt.clone(),
+        daemon: state.daemon.clone(),
+        req_id: req_id.clone(),
+        armed: true,
+    };
     let method = req.method.clone();
     let root_owned = req.params.get("root").and_then(|v| v.as_str()).map(String::from);
     let bytes_in = body.len();
@@ -233,6 +244,7 @@ async fn rpc(State(state): State<HttpState>, Extension(transport): Extension<Tra
         Ok(r) => r,
         Err(_) => RpcResponse::err(0, crate::rpc::INTERNAL_ERROR, "dispatch task panicked"),
     };
+    disconnect_guard.armed = false;
     let out = serde_json::to_string(&resp.to_json()).unwrap_or_else(|_| "{}".into());
     daemon::log_access(
         transport.0, &req_id, &method, root_owned.as_deref(),
@@ -248,6 +260,34 @@ async fn rpc(State(state): State<HttpState>, Extension(transport): Extension<Tra
         });
     }
     json_response(StatusCode::OK, out)
+}
+
+/// Drop guard for the `/rpc` handler: an armed drop means the client
+/// disconnected before the response went out (axum drops the handler future
+/// when the connection dies). It cancels the request's jobs off-thread —
+/// `cancel_req` is sync SQLite, so it rides `spawn_blocking`.
+struct CancelOnDisconnect {
+    rt: tokio::runtime::Handle,
+    daemon: Arc<Daemon>,
+    req_id: String,
+    armed: bool,
+}
+
+impl Drop for CancelOnDisconnect {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let daemon = self.daemon.clone();
+        let req_id = std::mem::take(&mut self.req_id);
+        self.rt.spawn(async move {
+            let cancelled = tokio::task::spawn_blocking(move || daemon.jobs.cancel_req(&req_id))
+                .await;
+            if let Ok(Err(e)) = cancelled {
+                tracing::warn!("[daemon] disconnect cancel: {e}");
+            }
+        });
+    }
 }
 
 /// Anything but the three routes: 404 with a JSON error, mirroring the old

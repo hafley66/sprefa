@@ -164,7 +164,7 @@ fn sample_line(jobs: &crate::jobq::JobQueue) -> Value {
     let job = jobs
         .list()
         .ok()
-        .and_then(|rows| rows.into_iter().find(|r| r.state == "running"))
+        .and_then(|rows| rows.into_iter().find(|r| r.state == "running" || r.state == "queued"))
         .map(|r| r.key)
         .unwrap_or_default();
     let u = read_self_usage();
@@ -397,7 +397,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("dl_why_root_sample_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let jobs = crate::jobq::JobQueue::open(&dir).unwrap();
+        let jobs = crate::jobq::test_open(&dir);
 
         crate::activity::end_tick(); // start clean
         crate::activity::begin_tick(7, "test.dl", Path::new("/tmp/myroot"), "full");
