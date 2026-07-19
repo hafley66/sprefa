@@ -292,6 +292,11 @@ pub(crate) fn split_seed_and_derived<'a>(
 // minimal set of composite, ordered indexes via a min-chain-cover / Dilworth on
 // the lattice of search orders). One single-column index per join key captures
 // most of the win and stays trivial.
+//
+// This function stays the raw candidate generator. The planner-honesty demand
+// filters (PK-prefix coverage, tiny-rel floor, constant-column selectivity)
+// live in `Engine::create_auto_indexes`/`demand_auto_index`, which have the
+// db in hand for the rowid-mode check and the stats probes.
 pub(crate) fn auto_indexes(rules: &[&Rule], rels: &Rels) -> Vec<(String, String)> {
     let mut occ: HashMap<String, Vec<(String, usize)>> = HashMap::new();
     for r in rules {

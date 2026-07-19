@@ -7,24 +7,36 @@
 //! (309.8MB, 34% of a 921.9MB db) built up across every program run against
 //! that root over its history, not just the currently-discovered set.
 //!
-//! This file pins:
+//! Direction 5 residual (this arc): the reconcile's DEMAND side is now
+//! planner-honest. Raw join-key co-occurrence over-demanded — 771 idx_
+//! indexes (357.6MB) still stood on the live root under the reconcile alone.
+//! Three filters trim demand to what SQLite's planner actually needs (each
+//! backed by EQP + timing receipts on the live-root snapshot):
+//!   - PK-prefix on a rowid table: a candidate column that leads the rel's
+//!     PRIMARY KEY is never demanded (sqlite_autoindex already provides the
+//!     seek) — `covered_prefix_join_key_is_never_demanded`;
+//!   - tiny rel: under `TINY_REL_FLOOR` (1024) rows a scan beats a B-tree —
+//!     `tiny_rel_join_key_is_dropped_once_measured`;
+//!   - constant column: exactly one distinct value cannot discriminate —
+//!     `constant_join_key_is_dropped_once_measured`, which also carries the
+//!     determinism gate (dropping an index never changes rows). Anything
+//!     with >= 2 distinct values stays (`two_value_join_key_stays_demanded`:
+//!     value skew defeated the broader distinct-count filter in timing).
+//!
+//! The original reconcile pins still hold, on a fixture large and selective
+//! enough to clear the new demand filters:
 //!   - a join-key index gets created when a rule needs it
 //!     (`join_key_index_is_created_when_a_rule_needs_it`);
 //!   - the SAME index gets dropped on the very next tick of a DIFFERENT
-//!     program that no longer joins that column — the discriminating case
-//!     (`stale_join_key_index_is_pruned_when_no_longer_needed`), proven
-//!     fail-pre-fix: with `CREATE INDEX IF NOT EXISTS` alone (pre-fix code),
-//!     this index survives forever;
-//!   - the index comes back the next time a program needs it again — the
-//!     reconcile is non-destructive, not a one-way ratchet
+//!     program that no longer joins that column
+//!     (`stale_join_key_index_is_pruned_when_no_longer_needed`);
+//!   - the index comes back the next time a program needs it again
 //!     (`pruned_index_is_recreated_when_needed_again`);
-//!   - the sweep only ever touches the `idx_<rel>_<col>` naming convention —
-//!     a hand-authored index using a different name survives untouched
+//!   - a genuine join key survives the stats probe on a re-run of the SAME
+//!     program (`genuine_join_key_stays_demanded_after_probe`);
+//!   - the sweep only ever touches the `idx_<rel>_<col>` naming convention
 //!     (`hand_authored_index_survives_the_sweep`);
-//!   - a fixture shaped like the measured production join families (shared
-//!     join-key text repeated across two source rels) loses real index bytes
-//!     when the joining rule drops out of the served program
-//!     (`pruning_reclaims_measurable_index_bytes`).
+//!   - pruning reclaims real bytes (`pruning_reclaims_measurable_index_bytes`).
 
 use rusqlite::Connection;
 use sprefa_v5::spine::StringId;
@@ -37,11 +49,27 @@ const DL: &str = env!("CARGO_BIN_EXE_dl");
 // (the ambient-config friction item in CLAUDE.md) and scans real repos.
 const HERMETIC_CONFIG: &str = "/nonexistent/sprefa-hermetic.toml";
 
+/// One above `TINY_REL_FLOOR` (src/engine/declare.rs): fixtures that must
+/// KEEP their join-key index need at least this many extracted rows, or the
+/// tiny-rel demand filter (correctly) drops it.
+const BIG_FIXTURE_ROWS: usize = 1100;
+
 fn sandbox(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("storage_diet_index_{tag}"));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("src")).unwrap();
     dir
+}
+
+/// A source file with `n` distinct struct declarations: enough rows to clear
+/// the tiny-rel floor, and a distinct-per-row `name` column that clears the
+/// low-selectivity cutoff.
+fn struct_src(n: usize) -> String {
+    let mut src = String::new();
+    for i in 0..n {
+        src.push_str(&format!("struct Struct{i:05};\n"));
+    }
+    src
 }
 
 fn run(dir: &Path, db: &Path, prog: &str) -> String {
@@ -74,35 +102,35 @@ fn index_names(conn: &Connection, table: &str) -> Vec<String> {
 
 // Two source rels joined on `name` (a Rust struct name shared by two match
 // rules over the same files), plus a derived rel that performs the join —
-// the classic auto_indexes() shape: `name` occupies position 0 in both
-// `symbol` and `other` body atoms of the `joined` rule, so both get an
-// `idx_<rel>_name` index.
-const SRC: &str = "struct AuthService;\nstruct BillingGateway;\n";
-
+// the classic auto_indexes() shape: the shared variable `name` occupies
+// position 1 in both `symbol` and `other` body atoms of the `joined` rule,
+// so both get an `idx_<rel>_name` index. `name` is deliberately NOT the
+// first declared column: the default PK is the full row in declared order,
+// and a PK-prefix column is (correctly) never demanded anymore.
 const WITH_JOIN: &str = r#"
-rel symbol(name: text, path: file).
-symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /struct (?<name>\w+)/, line).
-rel other(name: text, path: file).
-other(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /struct (?<name>\w+)/, line).
+rel symbol(path: file, name: text).
+symbol(path, name) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /struct (?<name>\w+)/, line).
+rel other(path: file, name: text).
+other(path, name) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /struct (?<name>\w+)/, line).
 rel joined(name: text, path1: file, path2: file).
-joined(name, path1, path2) <- symbol(name, path1), other(name, path2).
+joined(name, path1, path2) <- symbol(path1, name), other(path2, name).
 ? joined(name, path1, path2).
 "#;
 
 // Same two source rels, no join: `name` occupies only one atom position per
 // rule body, so auto_indexes() no longer wants idx_symbol_name/idx_other_name.
 const WITHOUT_JOIN: &str = r#"
-rel symbol(name: text, path: file).
-symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /struct (?<name>\w+)/, line).
-rel other(name: text, path: file).
-other(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /struct (?<name>\w+)/, line).
-? symbol(name, path).
+rel symbol(path: file, name: text).
+symbol(path, name) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /struct (?<name>\w+)/, line).
+rel other(path: file, name: text).
+other(path, name) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /struct (?<name>\w+)/, line).
+? symbol(path, name).
 "#;
 
 #[test]
 fn join_key_index_is_created_when_a_rule_needs_it() {
     let d = sandbox("create");
-    fs::write(d.join("src/a.rs"), SRC).unwrap();
+    fs::write(d.join("src/a.rs"), struct_src(BIG_FIXTURE_ROWS)).unwrap();
     let db = d.join("db");
     run(&d, &db, WITH_JOIN);
 
@@ -122,7 +150,7 @@ fn join_key_index_is_created_when_a_rule_needs_it() {
 #[test]
 fn stale_join_key_index_is_pruned_when_no_longer_needed() {
     let d = sandbox("prune");
-    fs::write(d.join("src/a.rs"), SRC).unwrap();
+    fs::write(d.join("src/a.rs"), struct_src(BIG_FIXTURE_ROWS)).unwrap();
     let db = d.join("db");
     run(&d, &db, WITH_JOIN);
     {
@@ -153,21 +181,211 @@ fn stale_join_key_index_is_pruned_when_no_longer_needed() {
 #[test]
 fn pruned_index_is_recreated_when_needed_again() {
     let d = sandbox("recreate");
-    fs::write(d.join("src/a.rs"), SRC).unwrap();
+    fs::write(d.join("src/a.rs"), struct_src(BIG_FIXTURE_ROWS)).unwrap();
     let db = d.join("db");
     run(&d, &db, WITH_JOIN);
     run(&d, &db, WITHOUT_JOIN); // prunes idx_symbol_name / idx_other_name
     run(&d, &db, WITH_JOIN); // the join comes back
 
+    // The third run probes real stats (the rel has a digest now): the fixture
+    // clears the tiny-rel floor and `name` is distinct per row, so the index
+    // is re-demanded — the reconcile is non-destructive, not a one-way ratchet.
     let conn = Connection::open(&db).unwrap();
     assert!(index_names(&conn, "rel_symbol").iter().any(|n| n == "idx_symbol_name"));
     assert!(index_names(&conn, "rel_other").iter().any(|n| n == "idx_other_name"));
 }
 
 #[test]
+fn genuine_join_key_stays_demanded_after_probe() {
+    let d = sandbox("genuine");
+    fs::write(d.join("src/a.rs"), struct_src(BIG_FIXTURE_ROWS)).unwrap();
+    let db = d.join("db");
+    run(&d, &db, WITH_JOIN); // cold: index created before extraction fills rows
+    run(&d, &db, WITH_JOIN); // warm: stats probe runs against the filled rel
+
+    // 1100 rows, 1100 distinct names: above the floor, above the selectivity
+    // cutoff — the planner genuinely needs this index and demand keeps it.
+    let conn = Connection::open(&db).unwrap();
+    assert!(index_names(&conn, "rel_symbol").iter().any(|n| n == "idx_symbol_name"));
+    assert!(index_names(&conn, "rel_other").iter().any(|n| n == "idx_other_name"));
+}
+
+// The join variable sits at position 0 of both body atoms — the FIRST column
+// of each rel's (default, full-row) PRIMARY KEY. The PK B-tree already serves
+// an equality seek on its leading column, so demanding idx_<rel>_name here
+// duplicates 137.9MB worth of access paths on the measured root db.
+// Fail-pre-fix: the raw co-occurrence heuristic created both indexes.
+const COVERED_PREFIX_JOIN: &str = r#"
+rel first_key(name: text, path: file).
+first_key(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /struct (?<name>\w+)/, line).
+rel first_key_twin(name: text, path: file).
+first_key_twin(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /struct (?<name>\w+)/, line).
+rel first_join(name: text, path1: file, path2: file).
+first_join(name, path1, path2) <- first_key(name, path1), first_key_twin(name, path2).
+? first_join(name, path1, path2).
+"#;
+
+#[test]
+fn covered_prefix_join_key_is_never_demanded() {
+    let d = sandbox("covered");
+    fs::write(d.join("src/a.rs"), struct_src(8)).unwrap();
+    let db = d.join("db");
+    run(&d, &db, COVERED_PREFIX_JOIN);
+
+    let conn = Connection::open(&db).unwrap();
+    let first_key_idx = index_names(&conn, "rel_first_key");
+    let twin_idx = index_names(&conn, "rel_first_key_twin");
+    assert!(
+        !first_key_idx.iter().any(|n| n == "idx_first_key_name"),
+        "a PK-prefix column must never be demanded (the PK B-tree covers the seek): {first_key_idx:?}"
+    );
+    assert!(
+        !twin_idx.iter().any(|n| n == "idx_first_key_twin_name"),
+        "a PK-prefix column must never be demanded (the PK B-tree covers the seek): {twin_idx:?}"
+    );
+}
+
+/// A data file whose `kind` column carries exactly ONE value across
+/// `BIG_FIXTURE_ROWS` lines while `tag` is distinct per line.
+fn constant_column_src(n: usize) -> String {
+    let mut src = String::new();
+    for i in 0..n {
+        src.push_str(&format!("item kind_a tag_{i:05}\n"));
+    }
+    src.push_str("label kind_a alpha\n");
+    src
+}
+
+// `kind` is the join variable, at a non-PK-prefix position of `item`, over a
+// rel that clears the tiny floor — but it is CONSTANT (one distinct value
+// across 1100 rows). An equality seek on it matches the whole table, so the
+// B-tree cannot discriminate and demand drops it (the measured root carried
+// idx_df_node_repo_rev_repo, 10.2MB over a repo column with one value). The
+// kind_label side's `kind` is its PK prefix, so only rel_item grows a
+// candidate here.
+const CONSTANT_COLUMN_JOIN: &str = r#"
+rel item(path: file, kind: text, tag: text).
+item(path, kind, tag) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /item (?<kind>kind_[ab]) (?<tag>tag_\w+)/, line).
+rel kind_label(kind: text, label: text).
+kind_label(kind, label) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /label (?<kind>kind_[ab]) (?<label>\w+)/, line).
+rel labeled(tag: text, label: text).
+labeled(tag, label) <- item(path, kind, tag), kind_label(kind, label).
+? labeled(tag, label).
+"#;
+
+#[test]
+fn constant_join_key_is_dropped_once_measured() {
+    let d = sandbox("constcol");
+    fs::write(d.join("src/data.rs"), constant_column_src(BIG_FIXTURE_ROWS)).unwrap();
+    let db = d.join("db");
+
+    // Cold tick: no digest yet, so demand stays (the index is created empty,
+    // before extraction, and protects the first fixpoint).
+    let out_with_index = run(&d, &db, CONSTANT_COLUMN_JOIN);
+    {
+        let conn = Connection::open(&db).unwrap();
+        let item_idx = index_names(&conn, "rel_item");
+        assert!(
+            item_idx.iter().any(|n| n == "idx_item_kind"),
+            "cold tick keeps demand (no stats yet): {item_idx:?}"
+        );
+    }
+
+    // Warm tick of the SAME program: the stats probe sees 1100 rows / 1
+    // distinct kind and drops demand; the reconcile sweeps the index.
+    // Fail-pre-fix: the index survived every re-run.
+    let out_without_index = run(&d, &db, CONSTANT_COLUMN_JOIN);
+    let conn = Connection::open(&db).unwrap();
+    let item_idx = index_names(&conn, "rel_item");
+    assert!(
+        !item_idx.iter().any(|n| n == "idx_item_kind"),
+        "a constant join key on a 1100-row rel must lose its index: {item_idx:?}"
+    );
+
+    // Determinism gate: the first run answered the query WITH idx_item_kind
+    // in place, the second WITHOUT it. Same program, same facts — an index
+    // must never change results, byte for byte (`?` output is ordered).
+    assert_eq!(
+        out_with_index, out_without_index,
+        "dropping an index must never change query output"
+    );
+    assert!(
+        out_without_index.contains("tag_00000") && out_without_index.contains("alpha"),
+        "sanity: the join actually produced rows:\n{out_without_index}"
+    );
+}
+
+/// The skew lesson, pinned: a 2-distinct-value column KEEPS its index. On the
+/// measured root, dropping enum-like columns (kind, 23 distinct; pos, 13
+/// distinct) regressed rare-value probes by up to +110ms — distinct-count
+/// selectivity reasoning is only safe at exactly one value, where an equality
+/// seek provably equals the scan.
+#[test]
+fn two_value_join_key_stays_demanded() {
+    let d = sandbox("twovalue");
+    let mut src = String::new();
+    for i in 0..BIG_FIXTURE_ROWS {
+        let kind = if i % 2 == 0 { "kind_a" } else { "kind_b" };
+        src.push_str(&format!("item {kind} tag_{i:05}\n"));
+    }
+    src.push_str("label kind_a alpha\nlabel kind_b beta\n");
+    fs::write(d.join("src/data.rs"), src).unwrap();
+    let db = d.join("db");
+
+    run(&d, &db, CONSTANT_COLUMN_JOIN); // cold: created
+    run(&d, &db, CONSTANT_COLUMN_JOIN); // warm: probe sees 2 distinct -> keep
+
+    let conn = Connection::open(&db).unwrap();
+    let item_idx = index_names(&conn, "rel_item");
+    assert!(
+        item_idx.iter().any(|n| n == "idx_item_kind"),
+        "a 2-distinct-value join key must KEEP its index (skew makes it planner-needed): {item_idx:?}"
+    );
+}
+
+#[test]
+fn tiny_rel_join_key_is_dropped_once_measured() {
+    let d = sandbox("tiny");
+    // 20 items: far under TINY_REL_FLOOR. `tag` is distinct per row, so ONLY
+    // the tiny-rel filter (not selectivity) can be the reason it drops.
+    let mut src = String::new();
+    for i in 0..20 {
+        src.push_str(&format!("item kind_a tag_{i:05}\n"));
+        src.push_str(&format!("pair tag_{i:05} peer_{i:05}\n"));
+    }
+    fs::write(d.join("src/data.rs"), src).unwrap();
+    let db = d.join("db");
+    // `tag` joins at non-prefix positions of both rels.
+    let prog = r#"
+rel item(path: file, kind: text, tag: text).
+item(path, kind, tag) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /item (?<kind>kind_[ab]) (?<tag>tag_\w+)/, line).
+rel pair(path: file, tag: text, peer: text).
+pair(path, tag, peer) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /pair (?<tag>tag_\w+) (?<peer>peer_\w+)/, line).
+rel matched(tag: text, peer: text).
+matched(tag, peer) <- item(path1, kind, tag), pair(path2, tag, peer).
+? matched(tag, peer).
+"#;
+
+    run(&d, &db, prog); // cold: created empty (no stats yet)
+    run(&d, &db, prog); // warm: 20 rows < TINY_REL_FLOOR -> demand dropped
+
+    let conn = Connection::open(&db).unwrap();
+    let item_idx = index_names(&conn, "rel_item");
+    let pair_idx = index_names(&conn, "rel_pair");
+    assert!(
+        !item_idx.iter().any(|n| n == "idx_item_tag"),
+        "a 20-row rel must not keep a persistent join-key index: {item_idx:?}"
+    );
+    assert!(
+        !pair_idx.iter().any(|n| n == "idx_pair_tag"),
+        "a 20-row rel must not keep a persistent join-key index: {pair_idx:?}"
+    );
+}
+
+#[test]
 fn hand_authored_index_survives_the_sweep() {
     let d = sandbox("hand_index");
-    fs::write(d.join("src/a.rs"), SRC).unwrap();
+    fs::write(d.join("src/a.rs"), struct_src(BIG_FIXTURE_ROWS)).unwrap();
     let db = d.join("db");
     run(&d, &db, WITH_JOIN);
     {
@@ -210,7 +428,7 @@ fn object_bytes(conn: &Connection, name: &str) -> i64 {
 fn pruning_reclaims_measurable_index_bytes() {
     const ROWS: usize = 4000;
     let d = sandbox("bytes");
-    fs::write(d.join("src/a.rs"), SRC).unwrap();
+    fs::write(d.join("src/a.rs"), struct_src(BIG_FIXTURE_ROWS)).unwrap();
     let db = d.join("db");
     run(&d, &db, WITH_JOIN); // creates schema + idx_symbol_name/idx_other_name
 
@@ -222,20 +440,20 @@ fn pruning_reclaims_measurable_index_bytes() {
                 .prepare("INSERT OR IGNORE INTO _strings (id, content) VALUES (?1, ?2)")
                 .unwrap();
             let mut symbol_stmt = conn
-                .prepare("INSERT OR IGNORE INTO rel_symbol (name, path, __src) VALUES (?1, ?2, '')")
+                .prepare("INSERT OR IGNORE INTO rel_symbol (path, name, __src) VALUES (?1, ?2, '')")
                 .unwrap();
             let mut other_stmt = conn
-                .prepare("INSERT OR IGNORE INTO rel_other (name, path, __src) VALUES (?1, ?2, '')")
+                .prepare("INSERT OR IGNORE INTO rel_other (path, name, __src) VALUES (?1, ?2, '')")
                 .unwrap();
             for i in 0..ROWS {
-                let name = format!("Struct{i:04}");
+                let name = format!("Bulk{i:04}");
                 let path = format!("src/module_{i:04}/file_{i:04}.rs");
                 let name_id = StringId::of(&name).sqlite();
                 let path_id = StringId::of(&path).sqlite();
                 str_stmt.execute(rusqlite::params![name_id, name]).unwrap();
                 str_stmt.execute(rusqlite::params![path_id, path]).unwrap();
-                symbol_stmt.execute(rusqlite::params![name_id, path_id]).unwrap();
-                other_stmt.execute(rusqlite::params![name_id, path_id]).unwrap();
+                symbol_stmt.execute(rusqlite::params![path_id, name_id]).unwrap();
+                other_stmt.execute(rusqlite::params![path_id, name_id]).unwrap();
             }
         }
         conn.execute_batch("COMMIT").unwrap();
