@@ -1,5 +1,51 @@
 use super::*;
 
+/// Below this row count no auto-index is demanded (a scan of a handful of
+/// pages, or SQLite's automatic transient index inside a join loop, beats a
+/// persistent B-tree). Snapshot receipt: 349 of 771 standing idx_ indexes sat
+/// on sub-1024-row rels and held 2.2MB combined; timing showed sub-ms deltas.
+pub(crate) const TINY_REL_FLOOR: i64 = 1024;
+
+/// Cache row for one (rel, col) auto-index demand probe: the digest
+/// fingerprint the stats were measured at, and the verdict.
+pub(crate) struct IdxDemandProbe {
+    pub(crate) fingerprint: [u8; 32],
+    pub(crate) demand: bool,
+}
+
+/// First PRIMARY KEY column of a rel's table, mirroring the DDL in
+/// `Engine::declare`: an explicit `key(...)` names the PK; the default PK is
+/// the full row in declared column order. On a rowid table, a single-column
+/// auto-index on this column duplicates the leftmost prefix of the PK's
+/// `sqlite_autoindex_*`.
+fn pk_prefix_col(meta: &RelMeta) -> Option<&str> {
+    match &meta.key {
+        Some(key) => key.first().map(|name| name.as_str()),
+        None => meta.cols.first().map(|c| c.name.as_str()),
+    }
+}
+
+/// XOR-fold of every `_reldigest` namespace that tracks this rel's rows:
+/// `<rel>` (source-rule seed), `rows:<rel>` (builtin whole-rel refresh),
+/// `drv:<rel>` (derived digest-before-write). Motion in any one moves the
+/// fold; a rel with no digest row in any namespace returns `None` (cold).
+fn rel_digest_fingerprint(
+    digests: &HashMap<String, [u8; 32]>,
+    rel: &str,
+) -> Option<[u8; 32]> {
+    let keys = [rel.to_string(), format!("rows:{rel}"), format!("drv:{rel}")];
+    let mut fold: Option<[u8; 32]> = None;
+    for key in &keys {
+        if let Some(digest) = digests.get(key) {
+            let acc = fold.get_or_insert([0u8; 32]);
+            for (acc_byte, digest_byte) in acc.iter_mut().zip(digest.iter()) {
+                *acc_byte ^= digest_byte;
+            }
+        }
+    }
+    fold
+}
+
 impl Engine {
     pub(crate) fn create_rel_view(&self, rel: &str, meta: &RelMeta) -> Result<()> {
         let view = crate::lower::txt_tbl(rel);
@@ -337,15 +383,80 @@ impl Engine {
     /// receipt: `node_file_span_idx`, `_write_ledger_tick_idx`, etc., never
     /// the `idx_` prefix), so the sweep only ever touches indexes this
     /// function itself created.
+    /// Planner-honesty (storage-diet Direction 5, index audit residual): raw
+    /// join-key co-occurrence over-demands — the sprefa root still carried 771
+    /// idx_ indexes (357.6MB) of which EXPLAIN QUERY PLAN receipts over the
+    /// served program set showed only ~half ever chosen. Demand is filtered
+    /// three ways before the reconcile, each backed by before/after EQP +
+    /// timing receipts on the live-root snapshot (see the landing commit):
+    ///
+    ///   #1 PK-prefix on a ROWID table: the PK's `sqlite_autoindex_*` already
+    ///      serves the seek, so `idx_<rel>_<col>` on the PK's first column is
+    ///      a duplicate prefix. Timing: every affected shape flat (max
+    ///      +0.02ms). NOT applied to WITHOUT ROWID tables: dropping
+    ///      idx_df_edge_from (PK (from,to), junction) flipped a 209k-row
+    ///      fixpoint join's order (scan side <-> seek side) for a measured
+    ///      155ms -> 345ms — without `sqlite_stat1` the planner's cost model
+    ///      leans on the narrow secondary index to pick the cheap order, so
+    ///      on WR tables the "duplicate" B-tree stays.
+    ///   #2 tiny rel / #3 constant column: `demand_auto_index` below.
+    ///
+    /// A broader low-selectivity filter (drop when ndistinct <= rows/1024,
+    /// e.g. `kind` enums) was measured and REJECTED: value skew defeats
+    /// distinct-count reasoning — the served shapes probe RARE kinds, so
+    /// idx_df_node_kind (23 distinct over 280k rows) degraded 21 shapes by
+    /// +5..+110ms and idx_df_arg_pos (13 distinct) one by +80ms when dropped.
     pub(crate) fn create_auto_indexes(
         &self,
         derived_rules: &[&Rule],
         closures: &HashMap<String, String>,
     ) -> Result<()> {
-        let wanted: Vec<(String, String)> = auto_indexes(derived_rules, &self.rels)
+        let raw: Vec<(String, String)> = auto_indexes(derived_rules, &self.rels)
             .into_iter()
             .filter(|(rel, _)| !closures.contains_key(rel))
             .collect();
+        // Filter #1. One bulk sqlite_master read for rowid-mode (never a
+        // per-candidate point read); `tbl()` names only, so non-rel tables
+        // never match a candidate.
+        let without_rowid: HashSet<String> = self
+            .db
+            .query_rows(
+                "sqlite_master",
+                "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name LIKE 'rel\\_%' ESCAPE '\\'",
+                &[],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )?
+            .into_iter()
+            .filter(|(_, sql)| {
+                sql.as_deref()
+                    .is_some_and(|s| s.to_uppercase().trim_end().ends_with("WITHOUT ROWID"))
+            })
+            .map(|(name, _)| name)
+            .collect();
+        let candidates: Vec<(String, String)> = raw
+            .into_iter()
+            .filter(|(rel, col)| {
+                without_rowid.contains(&tbl(rel))
+                    || self
+                        .rels
+                        .get(rel)
+                        .and_then(pk_prefix_col)
+                        .is_none_or(|pk_first| pk_first != col)
+            })
+            .collect();
+        // Filters #2/#3. One bulk read of the whole digest table; each
+        // candidate rel's fingerprint folds every digest namespace that
+        // tracks its rows (`<rel>` for source rules, `rows:<rel>` for builtin
+        // refreshes, `drv:<rel>` for derived digest-before-write), so motion
+        // in any of them reprobes the stats.
+        let digests = self.load_rel_digests_prefix("")?;
+        let mut wanted: Vec<(String, String)> = Vec::new();
+        for (rel, col) in candidates {
+            let fingerprint = rel_digest_fingerprint(&digests, &rel);
+            if self.demand_auto_index(&rel, &col, fingerprint)? {
+                wanted.push((rel, col));
+            }
+        }
         let wanted_names: HashSet<String> = wanted
             .iter()
             .map(|(rel, col)| format!("idx_{rel}_{col}"))
@@ -379,6 +490,84 @@ impl Engine {
             )?;
         }
         Ok(())
+    }
+
+    /// Planner-honesty filters #2 and #3: should a join-key candidate index
+    /// actually be demanded, given the rel's measured shape?
+    ///
+    ///   - #2 tiny rel (`1 <= rows < TINY_REL_FLOOR`): a scan of a few pages —
+    ///     or SQLite's automatic transient index inside a join loop — beats
+    ///     maintaining a persistent B-tree. A rel with NO rows yet stays
+    ///     demanded: that is the cold-build tick (indexes are created before
+    ///     extraction fills the tables), an empty index costs nothing, and it
+    ///     protects the first fixpoint from the O(F*C) nested-scan trap.
+    ///   - #3 constant column (exactly one distinct value over a floor-sized
+    ///     rel): an equality seek either matches every row (= the scan) or
+    ///     nothing, so the B-tree cannot discriminate. Snapshot receipt: 11
+    ///     such indexes, 18.3MB, topped by idx_df_node_repo_rev_repo (10.2MB
+    ///     over a repo column with ONE value) and idx_df_node_repo_repo
+    ///     (6.2MB, same). Columns with >= 2 distinct values always stay:
+    ///     value skew makes distinct-count reasoning unsafe past this point
+    ///     (measured: rare-`kind` probes regressed up to +110ms when a
+    ///     23-distinct column lost its index).
+    ///
+    /// Probes are digest-gated (recompute-guard law): the counts re-run only
+    /// when the rel's digest fingerprint moves, so a quiet tick re-reads only
+    /// `_reldigest`. `fingerprint == None` (no digest row at all) is a cold
+    /// table: demand, and cache nothing so the first real fill reprobes.
+    fn demand_auto_index(
+        &self,
+        rel: &str,
+        col: &str,
+        fingerprint: Option<[u8; 32]>,
+    ) -> Result<bool> {
+        let Some(fingerprint) = fingerprint else {
+            return Ok(true);
+        };
+        let key = (rel.to_string(), col.to_string());
+        if let Some(probe) = self.idx_demand_cache.borrow().get(&key) {
+            if probe.fingerprint == fingerprint {
+                return Ok(probe.demand);
+            }
+        }
+        let table = tbl(rel);
+        let total_rows: i64 = self.db.query_one(
+            rel,
+            &format!("SELECT count(*) FROM {table}"),
+            &[],
+            |row| Ok(row.get(0)?),
+        )?;
+        let demand = if total_rows == 0 {
+            true // cold build: probes run pre-extraction; an empty index is free
+        } else if total_rows < TINY_REL_FLOOR {
+            false
+        } else {
+            // Bounded: stops at the second distinct value, so any
+            // discriminating column costs a short prefix scan. Only a truly
+            // constant column pays a full column scan, and the digest gate
+            // keeps that off every subsequent unchanged tick.
+            let distinct_seen: i64 = self.db.query_one(
+                rel,
+                &format!(
+                    "SELECT count(*) FROM (SELECT DISTINCT \"{col}\" FROM {table} LIMIT 2)"
+                ),
+                &[],
+                |row| Ok(row.get(0)?),
+            )?;
+            distinct_seen > 1
+        };
+        if !demand {
+            tracing::debug!(
+                rel,
+                col,
+                total_rows,
+                "auto-index demand dropped: planner-honesty probe (tiny rel or constant column)"
+            );
+        }
+        self.idx_demand_cache
+            .borrow_mut()
+            .insert(key, IdxDemandProbe { fingerprint, demand });
+        Ok(demand)
     }
 
     /// Declare every relation: closure heads become a VIEW over the condensation,

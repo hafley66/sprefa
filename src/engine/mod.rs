@@ -494,6 +494,13 @@ pub struct Engine {
     /// One graph adjacency load shared by native reach walks during this tick.
     /// Cleared at tick entry so a large graph is never retained across ticks.
     adjacency_cache: std::cell::RefCell<Option<derive::AdjacencyCache>>,
+    /// Auto-index demand probes (storage-diet Direction 5, planner-honest
+    /// demand): per (rel, col) join-key candidate, the rel's row-digest
+    /// fingerprint the size/selectivity stats were probed at plus the verdict.
+    /// Kept ACROSS ticks; a candidate is reprobed only when its rel's
+    /// `_reldigest` fingerprint moves (the recompute-guard digest-skip idiom),
+    /// so a quiet tick pays one bulk digest read and zero data scans.
+    idx_demand_cache: std::cell::RefCell<HashMap<(String, String), declare::IdxDemandProbe>>,
     /// Persistent reactive router for the family-derive call-rel flip — the
     /// SOLE writer of every public call rel (P4, capstone cutover). Holds a
     /// per-family memo (rows + rel footprint) across ticks so `react` reruns
@@ -669,6 +676,7 @@ impl Engine {
             node2vec_recomputed: 0,
             closure_cache: HashMap::new(),
             adjacency_cache: std::cell::RefCell::new(None),
+            idx_demand_cache: std::cell::RefCell::new(HashMap::new()),
             call_router: std::cell::RefCell::new(None),
             rev_cache: HashMap::new(),
             rev_sha_cache: HashMap::new(),
