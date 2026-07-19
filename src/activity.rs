@@ -36,25 +36,38 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
+/// An entered span parked in the TLS cells below. `ManuallyDrop` on purpose:
+/// if a thread dies with a span still entered (a tick that errored/aborted
+/// and never reached `end_tick`), the TLS destructor must LEAK the span, not
+/// drop it — dropping an `EnteredSpan` calls `Subscriber::exit`, and
+/// tracing-subscriber's registry reaches back into its own thread-locals,
+/// which are already mid-destruction at that point. The observed failure was
+/// a hard process abort ("thread local panicked on drop") whenever a test
+/// thread died after an erroring tick with a global subscriber installed.
+/// Every NORMAL path exits through `exit_span`, which un-wraps and exits
+/// properly; the leak fires only on abnormal thread death, where an unclosed
+/// registry slot is the same debris a SIGKILL leaves.
+type ParkedSpan = std::mem::ManuallyDrop<tracing::span::EnteredSpan>;
+
 thread_local! {
     /// The whole-tick span, entered in `begin_tick`, exited in `end_tick`.
     /// Parent of every `PHASE_SPAN` created on this same thread while it is
     /// entered (tracing derives span parentage from the thread-local "current
     /// span" stack, which is exactly what holding this entered accomplishes).
-    static TICK_SPAN: RefCell<Option<tracing::span::EnteredSpan>> = const { RefCell::new(None) };
+    static TICK_SPAN: RefCell<Option<ParkedSpan>> = const { RefCell::new(None) };
     /// The current phase's span, opened by `set`, closed by the NEXT `set`
     /// call or by `end_tick` — mirrors the existing non-lexical
     /// "close the previous phase when a new one starts" logic `set` already
     /// runs for the perf log, just for the span instead.
-    static PHASE_SPAN: RefCell<Option<tracing::span::EnteredSpan>> = const { RefCell::new(None) };
+    static PHASE_SPAN: RefCell<Option<ParkedSpan>> = const { RefCell::new(None) };
 }
 
 /// Exit whichever span is in `cell`, if any. Shared by `set`/`begin_tick`
 /// (defensive: an unmatched prior `begin_tick`/`set` shouldn't leak a
 /// dangling entered span forever) and `end_tick`.
-fn exit_span(cell: &RefCell<Option<tracing::span::EnteredSpan>>) {
+fn exit_span(cell: &RefCell<Option<ParkedSpan>>) {
     if let Some(prev) = cell.borrow_mut().take() {
-        prev.exit();
+        std::mem::ManuallyDrop::into_inner(prev).exit();
     }
 }
 
@@ -215,8 +228,20 @@ pub fn set(phase: Phase, detail: impl Into<String>) {
     PHASE_SPAN.with(|cell| {
         exit_span(cell);
         let span = tracing::info_span!("phase", tick, name = phase.as_str(), detail = %detail_s);
-        *cell.borrow_mut() = Some(span.entered());
+        *cell.borrow_mut() = Some(std::mem::ManuallyDrop::new(span.entered()));
     });
+}
+
+/// Exit THIS thread's tick/phase spans without touching the process-global
+/// slot. The abort path's span hygiene (`cancel::checkpoint`): an erroring
+/// tick never reaches its caller's `end_tick`, and the spans are per-thread
+/// state that would otherwise stay entered until the next tick on this
+/// thread. The slot is left alone deliberately — it is shared across
+/// threads, and the aborting job must not clear another root's in-flight
+/// phase (nor race tests that pin slot state under the test-globals lock).
+pub fn exit_thread_spans() {
+    PHASE_SPAN.with(exit_span);
+    TICK_SPAN.with(exit_span);
 }
 
 /// Set the repo root currently being served. Called by the daemon when it opens
@@ -265,7 +290,7 @@ pub fn begin_tick(tick: u64, program: &str, root: &Path, trigger: &str) {
         // leak a dangling entered span forever.
         exit_span(cell);
         let span = tracing::info_span!("tick", tick, root = %root.display(), trigger);
-        *cell.borrow_mut() = Some(span.entered());
+        *cell.borrow_mut() = Some(std::mem::ManuallyDrop::new(span.entered()));
     });
 }
 

@@ -419,6 +419,13 @@ impl Engine {
         let mut wiped: HashSet<String> = HashSet::new();
         for group in stratify(derived_rules)? {
             for (comp_rules, recursive) in rel_components(&group, derived_rules) {
+                // Mid-run cancellation (class-18 residual): abort BEFORE this
+                // component's unmark/wipe bracket, so completed components
+                // stay marked+populated and this one is untouched — the same
+                // recovery shape the `fail_rebuild_at_rel` crash tests pin,
+                // minus the wipe. Bounds a cancelled tick's abort latency to
+                // one component instead of the whole rebuild pass.
+                crate::cancel::checkpoint("derived-component")?;
                 let mut comp_rels: Vec<String> = comp_rules
                     .iter()
                     .map(|&ri| derived_rules[ri].head.rel.clone())

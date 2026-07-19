@@ -170,6 +170,7 @@ async fn run_job(
     tracing::info!(kind = ?kind, key = %key, root = %job.root, req_id, "[daemon] job claimed");
     let t = std::time::Instant::now();
     let runner = ctx.runner.clone();
+    let jobq_for_probe = ctx.jobq.clone();
     let job_for_run = job.clone();
     let outcome = match tokio::task::spawn_blocking(move || {
         // Governor gate between jobs (nothing-seizes-the-machine law): a
@@ -187,6 +188,19 @@ async fn run_job(
             req_id = %job_for_run.req_id.clone().unwrap_or_default(),
         )
         .entered();
+        // Mid-run cancellation probe (class-18 residual): the tick's stage
+        // checkpoints (`crate::cancel::checkpoint`) observe the flag
+        // `cancel_req` set and abort at the next safe boundary. Thread-local,
+        // entered inside spawn_blocking for the same reason as the span.
+        let probe_key = job_for_run.key.clone();
+        let _cancel_scope = crate::cancel::scope(std::sync::Arc::new(move |_stage: &str| {
+            jobq_for_probe.is_cancelled(&probe_key)
+        }));
+        // Request scope: follow-up jobs this run mints (e.g. `tick_full`'s
+        // cold staging) capture the CAUSING request's id via
+        // `reqid::current`, so a client disconnect reaches transitive work.
+        // Scheduler-originated jobs (`req_id: None`) install no scope.
+        let _req_scope = job_for_run.req_id.as_deref().map(crate::reqid::scope);
         runner.run(&job_for_run)
     })
     .await
@@ -206,6 +220,16 @@ async fn run_job(
             Ok(())
         }
         Err(e) => {
+            // Mid-run cancellation: a checkpoint abort surfaces as a runner
+            // error with the cancel flag still set. Consume the flag and park
+            // the row `Killed` without burning the retry ladder — the mid-run
+            // twin of the job-boundary check above.
+            if ctx.jobq.take_cancel(&job.key) {
+                tracing::info!(key = %key, ms, "[daemon] job aborted mid-run — request cancelled");
+                return Err(Box::new(AbortError::new(anyhow::anyhow!(
+                    "cancelled: client request gone"
+                ))));
+            }
             // apalis acks the row `Failed` (or `Killed` at the attempt cap)
             // AFTER this returns; the ack never touches `run_at`, so the
             // jittered backoff stamped here survives and defers the re-fetch.
