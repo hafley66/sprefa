@@ -494,6 +494,29 @@ consistent with the obs plan's subscriber migration.
 3. **Queue** last — largest surface; gated on 5.2 q1 prototype. Lands with
    the req_id cancellation wiring (class 18 residual) and re-targets
    scheduler steps 1-2 onto the adopted store per section 4a.
+   **EXECUTED 2026-07-18** (branch `queue-apalis`): rusqlite 0.32.1 bump
+   (lockfile unified on libsqlite3-sys 0.30.1), apalis `=1.0.0-rc.9` +
+   apalis-sqlite `=1.0.0-rc.8` exact-pinned. apalis absorbed: the durable
+   store (its `Jobs` schema/migrations in `<home>/jobs.sqlite`),
+   fetch/lock/ack, priority + `run_at` ordering, retry bookkeeping
+   (`max_attempts=5`, cap -> `Killed` park), worker registration/heartbeat +
+   live `reenqueue_orphaned` (retires the bespoke lease sweep), worker
+   machinery (`dl-engine` xN via `ConcurrencyLimitLayer`, `dl-cold` x1
+   single-flight, doorbell `StreamStrategy` + 500ms interval poll).
+   Stayed bespoke as the admission layer (1.6 q7): coalescing key-UPSERT
+   over the apalis table (arg union / dirty rerun via a reconciler task /
+   terminal reopen — idempotency_key alone is DO-NOTHING dedup),
+   root-serialized ColdExtract as hold/promote push gating (`run_at` far
+   future + metadata flag; the only pull-side knob an admission layer has),
+   jittered failure-backoff `run_at` stamping (apalis re-fetches Failed rows
+   immediately), done-row retention, boot-instant orphan reset, `dl daemon
+   jobs`/why reads as SQL over the apalis tables. Riders landed: req_id
+   cancellation (`cancel_req` + `/rpc` disconnect drop-guard; in-flight jobs
+   abort via `AbortError` at the next job boundary — intra-tick stratum
+   checks remain J3) and the cold write-volume budget lever
+   (`jobq::write_budget`, `DL_COLD_WRITE_BUDGET_BYTES_PER_MIN`, enforced as
+   reconcile deferral; per-shard perf-fed costs remain the scheduler arc's).
+   Gates: 601 lib + 919 it tests green.
 
 ### 5.4 Held work released by this plan's verdicts
 
