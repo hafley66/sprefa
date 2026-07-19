@@ -678,6 +678,34 @@ sites but not against new code. **missing** = nothing.
   do not trust any prior one-shot output produced without one under a live
   daemon.
 
+## 24. TLS-parked span guard dropped during thread-local destruction
+
+- WHAT IT LOOKS LIKE: a hard process abort (exit 101, "thread local panicked
+  on drop") when a thread dies after an erroring/aborted tick with a global
+  tracing subscriber installed — no assert, no test-code frame, flaky-looking
+  because it needs the thread to die with a span still entered.
+- HOW IT BIT US (2026-07-19, found during the reqid-midtick arc; pre-existing
+  at base ca0cd8e3, verified by a stash run where the base lib suite aborted):
+  activity.rs parks `tracing::span::EnteredSpan` guards in thread-local cells
+  (TICK_SPAN/PHASE_SPAN — they are `!Send`, TLS is the correct home). A tick
+  that errored before `end_tick` left the span entered; when the thread died,
+  the TLS destructor dropped the `EnteredSpan`, whose drop calls
+  `Subscriber::exit`, and tracing-subscriber's registry reaches back into its
+  OWN thread-locals — already mid-destruction — and the process aborts.
+- THE LAW: a guard parked in TLS must never run its real destructor during
+  thread-local destruction. Abnormal thread death LEAKS the span (an unclosed
+  registry slot is the same debris a SIGKILL leaves); only the normal exit
+  path closes it.
+- THE RAIL: enforced (9ddf1280): `ParkedSpan =
+  ManuallyDrop<tracing::span::EnteredSpan>`, every normal path exits through
+  `exit_span` (un-wrap then `exit()`), and the tick abort path calls
+  `exit_thread_spans()` explicitly; the cancel-abort tests exercise the
+  abnormal path under a live subscriber (src/jobq/tests_cancel.rs).
+- SAY THIS TO AN AGENT: an exit-101 abort at thread death with tracing
+  installed means a TLS destructor reached a subscriber — park `!Send` guards
+  in `ManuallyDrop` and close them only on explicit paths, leaking on
+  abnormal death.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
@@ -705,6 +733,7 @@ sites but not against new code. **missing** = nothing.
 | 21 | client poll blocking its own UI thread | half | instant conversions committed + pushed (74d6d36, 2026-07-18); still open: a "poll never blocks main" regression test in instant; audit remaining ~40 sync commands there |
 | 22 | effect-free root frozen unsettled | enforced | — (settle-aware poll gate + `effect_free_root_settles_after_boot`, failed pre-fix) |
 | 23 | one-shot positional swallowed by daemon program set | missing | erase-no-daemon-split arc: carry the positional through the daemon RPC, or fall through to in-process (with a loud line) when the positional is not the root's watched set; fail-pre-fix it-test = one-shot a file whose rels are disjoint from `.dl/*.dl` under a live daemon and assert its own query rels come back |
+| 24 | TLS-parked span guard dropped in thread-local destruction | enforced | — (ManuallyDrop park + explicit exit paths, 9ddf1280; abnormal-death coverage in src/jobq/tests_cancel.rs) |
 
 ## How a new rail gets born here
 
