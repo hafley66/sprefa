@@ -37,6 +37,7 @@ mod closure_query_guard;
 mod extract_cache;
 mod racy_mtime;
 mod graph_diff_rev;
+mod view_backed_rel;
 mod rev_alias_leak;
 mod perf_facts;
 mod perf_rels;

@@ -261,6 +261,12 @@ impl Engine {
                 );
             }
         }
+        // View-backed rel (see `RelDecl::view_body`): `rel_<name>` is a VIEW over
+        // its `_rev` twin, not a base table. Skips every base-table concern below
+        // (migration, PK, WITHOUT ROWID, autoindex) and the write path entirely.
+        if let Some(body) = &d.view_body {
+            return self.declare_view_backed(d, body);
+        }
         // Migrate a stale cached table whose column set OR primary key no longer
         // matches the decl. Two triggers:
         //   1. Column-set drift (e.g. a release added a leading column) — the
@@ -423,6 +429,32 @@ impl Engine {
                 without_rowid
             )
         };
+        // Revert guard: a rel that was view-backed on a prior run (see
+        // `declare_view_backed`) and is now a base table leaves a stale VIEW of
+        // this name. The migration drift check above reads PRAGMA table_info,
+        // which reports a view's columns too, so it never fires — and
+        // `CREATE TABLE IF NOT EXISTS` sees the view in the shared name space and
+        // silently no-ops, leaving the view in place. Drop it (and its `_txt`
+        // view) first. `DROP VIEW IF EXISTS` on a real table would error, so this
+        // is gated on the object actually being a view.
+        let stale_view = self
+            .db
+            .query_rows(
+                &d.name,
+                "SELECT 1 FROM sqlite_master WHERE type = 'view' AND name = ?1",
+                &[tbl(&d.name).as_str().into()],
+                |_row| Ok(()),
+            )
+            .map(|rows| !rows.is_empty())
+            .unwrap_or(false);
+        if stale_view {
+            self.db.exec_on(
+                &d.name,
+                &format!("DROP VIEW IF EXISTS {}", crate::lower::txt_tbl(&d.name)),
+            )?;
+            self.db
+                .exec_on(&d.name, &format!("DROP VIEW IF EXISTS {}", tbl(&d.name)))?;
+        }
         self.db.exec_on(&d.name, &sql)?;
         self.rels.insert(
             d.name.clone(),
@@ -431,9 +463,76 @@ impl Engine {
                 key: d.key.clone(),
                 merge: d.merge.clone(),
                 port: d.port.clone(),
+                view_backed: false,
             },
         );
         let meta = self.rels.get(&d.name).cloned().unwrap_or_default();
+        self.create_rel_view(&d.name, &meta)?;
+        Ok(())
+    }
+
+    /// Declare a view-backed rel: `rel_<name>` becomes a `CREATE VIEW` over the
+    /// authored `body` (a `SELECT DISTINCT <non-rev cols> FROM rel_<name>_rev`
+    /// for the twins this ships for), never a base table. No `__src`, no
+    /// autoindex, no rows, no `_reldigest`/`_derived_complete` row of its own.
+    /// Queries and `_txt` decode resolve it exactly like a table-backed rel.
+    fn declare_view_backed(&mut self, d: &RelDecl, body: &str) -> Result<()> {
+        let table = tbl(&d.name);
+        let txt = crate::lower::txt_tbl(&d.name);
+        // A prior run may have left `rel_<name>` as a base TABLE (pre-conversion)
+        // or as this VIEW already; the `_txt` decode view rides on top of it and
+        // must drop first. `DROP TABLE IF EXISTS` on an object that is a VIEW (or
+        // vice versa) ERRORS in SQLite even with IF EXISTS — the object exists,
+        // just as the wrong type — so pick the drop verb from the actual type.
+        self.db.exec_on(&d.name, &format!("DROP VIEW IF EXISTS {txt}"))?;
+        let existing_type: Option<String> = self
+            .db
+            .query_rows(
+                &d.name,
+                "SELECT type FROM sqlite_master WHERE name = ?1",
+                &[table.as_str().into()],
+                |row| Ok(row.get::<_, String>(0)?),
+            )
+            .ok()
+            .and_then(|rows| rows.into_iter().next());
+        match existing_type.as_deref() {
+            Some("table") => {
+                self.db.exec_on(&d.name, &format!("DROP TABLE {table}"))?;
+            }
+            Some("view") => {
+                self.db.exec_on(&d.name, &format!("DROP VIEW {table}"))?;
+            }
+            _ => {}
+        }
+        self.db
+            .exec_on(&d.name, &format!("CREATE VIEW {table} AS {body}"))?;
+        // This rel never owns rows/digest/completion. Clear any tracking a prior
+        // base-table incarnation wrote so a stale row cannot outlive the table.
+        for key in [d.name.clone(), format!("rows:{}", d.name), format!("drv:{}", d.name)] {
+            self.db.exec_params(
+                "_reldigest",
+                "DELETE FROM _reldigest WHERE rel = ?1",
+                &[key.into()],
+            )?;
+        }
+        self.db.exec_params(
+            "_derived_complete",
+            "DELETE FROM _derived_complete WHERE rel = ?1",
+            &[d.name.as_str().into()],
+        )?;
+        self.rels.insert(
+            d.name.clone(),
+            RelMeta {
+                cols: d.cols.clone(),
+                key: d.key.clone(),
+                merge: d.merge.clone(),
+                port: d.port.clone(),
+                view_backed: true,
+            },
+        );
+        let meta = self.rels.get(&d.name).cloned().unwrap_or_default();
+        // The `_txt` decode view reads `FROM rel_<name>` (a view now); SQLite
+        // resolves a view over a view fine. create_rel_view rebuilds it.
         self.create_rel_view(&d.name, &meta)?;
         Ok(())
     }
@@ -502,7 +601,13 @@ impl Engine {
     ) -> Result<()> {
         let mut raw: Vec<(String, String)> = auto_indexes(derived_rules, &self.rels);
         raw.extend(traversal_edge_cols(derived_rules, closures, &self.rels));
-        raw.retain(|(rel, _)| !closures.contains_key(rel));
+        // Skip closure heads (views) and view-backed rels (see
+        // `RelDecl::view_body`): a `CREATE INDEX` on a view errors, and a
+        // view-backed edge (e.g. `closure(type_edge)`) would otherwise reach
+        // here via `traversal_edge_cols`.
+        raw.retain(|(rel, _)| {
+            !closures.contains_key(rel) && !self.rels.get(rel).is_some_and(|meta| meta.view_backed)
+        });
         raw.sort();
         raw.dedup();
         // Filter #1. One bulk sqlite_master read for rowid-mode (never a

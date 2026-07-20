@@ -473,9 +473,13 @@ pub(crate) fn module_rel_decls() -> Vec<RelDecl> {
             doc: "resolved file-to-file import graph (rev-deduped union)", ..Default::default() },
         RelDecl { name: "module_edge_rev".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path), c("rev", Type::Rev)], group: "module",
             doc: "rev-aware module_edge", ..Default::default() },
+        // View-backed (2026-07-20): VIEW over `module_unresolved_rev`. The old
+        // `rebuild_legacy_module_rels` INSERT OR IGNORE'd over the full-row PK,
+        // so the DISTINCT view is row-identical.
         RelDecl { name: "module_unresolved".into(), cols: vec![
             c("file", Type::Path), c("specifier", Type::Text), c("reason", Type::Text), c("line", Type::Int)], group: "module",
-            doc: "broken imports: a reference that resolved to no project file (the linter question); line: 1-based", ..Default::default() },
+            doc: "broken imports: a reference that resolved to no project file (the linter question); line: 1-based",
+            view_body: Some("SELECT DISTINCT \"file\", \"specifier\", \"reason\", \"line\" FROM rel_module_unresolved_rev".into()), ..Default::default() },
         RelDecl { name: "module_unresolved_rev".into(), cols: vec![
             c("file", Type::Path), c("rev", Type::Rev), c("specifier", Type::Text), c("reason", Type::Text), c("line", Type::Int)], group: "module",
             doc: "rev-aware module_unresolved; line: 1-based", ..Default::default() },
@@ -484,23 +488,34 @@ pub(crate) fn module_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "module_binding_resolved_rev".into(), cols: vec![
             c("file", Type::Path), c("local", Type::Text), c("source", Type::Text), c("dst", Type::Path), c("rev", Type::Rev)], group: "module",
             doc: "the resolved subset (dst = resolved file, alias-only today) of module_binding: aliased-import local bindings from the module resolvers' own parse (Rust use..as, TS import{a as b}/default, Kotlin import..as) — the index-free equivalent of scip_binding; local is the binding name in scope at file, source is the exported name at dst (\"default\" for a default import)", ..Default::default() },
+        // View-backed (2026-07-20): VIEW over `module_binding_resolved_rev`,
+        // row-identical to the old INSERT-OR-IGNORE full-row-PK rebuild.
         RelDecl { name: "module_binding_resolved".into(), cols: vec![
             c("file", Type::Path), c("local", Type::Text), c("source", Type::Text), c("dst", Type::Path)], group: "module",
-            doc: "rev-deduped union of module_binding_resolved_rev", ..Default::default() },
+            doc: "rev-deduped union of module_binding_resolved_rev",
+            view_body: Some("SELECT DISTINCT \"file\", \"local\", \"source\", \"dst\" FROM rel_module_binding_resolved_rev".into()), ..Default::default() },
         RelDecl { name: "module_binding_rev".into(), cols: vec![
             c("file", Type::Path), c("local_name", Type::Text), c("source_module", Type::Text), c("imported_name", Type::Text), c("kind", Type::Text), c("rev", Type::Rev)], group: "module",
             doc: "every local binding an import introduces, parsed off the import AST so aliased/library symbols resolve without scip — unlike module_binding_resolved_rev (alias-hop only, resolved-file-only), this fires for EVERY resolution incl. External (library) and Unresolved, and covers plain named/namespace/default/side-effect bindings too, not just aliased ones; source_module is the specifier as written (module_import's specifier text), imported_name the canonical exported name at the import site (\"default\"/\"*\"/\"\" for default/namespace/side-effect), kind = named/default/namespace/side_effect/reexport (Rust pub use). Two-line join for \"which library does this local name come from\": binds_lib(local_name, source_module) <- module_binding(file, local_name, source_module, _, _). then query ? binds_lib(\"myAlias\", lib)", ..Default::default() },
+        // View-backed (2026-07-20): VIEW over `module_binding_rev`, row-identical
+        // to the old INSERT-OR-IGNORE full-row-PK rebuild.
         RelDecl { name: "module_binding".into(), cols: vec![
             c("file", Type::Path), c("local_name", Type::Text), c("source_module", Type::Text), c("imported_name", Type::Text), c("kind", Type::Text)], group: "module",
-            doc: "rev-deduped union of module_binding_rev", ..Default::default() },
+            doc: "rev-deduped union of module_binding_rev",
+            view_body: Some("SELECT DISTINCT \"file\", \"local_name\", \"source_module\", \"imported_name\", \"kind\" FROM rel_module_binding_rev".into()), ..Default::default() },
     ]
 }
 
 pub(crate) fn type_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
+        // View-backed (2026-07-20): VIEW over `type_edge_rev`. The old
+        // `rebuild_legacy_type_rels` INSERT OR IGNORE'd over the full-row PK, so
+        // the DISTINCT view is row-identical. closure/scc read `rel_type_edge_txt`
+        // (a view over this view), which resolves fine.
         RelDecl { name: "type_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), Col::branded("kind", "type_edge_kind"), c("repo", Type::Text)], group: "type",
-            doc: "type-graph edges across Rust (syn), Kotlin (tree-sitter), TS (oxc); kind is field/variant/impl/generic — Kotlin interface supertypes are generic, class/object impl, val/var ctor params + body properties field, enum entries variant; trailing repo column so two trees scanned together don't collapse same-named types into one node (closure/scc still walk cols 0/1, unaffected)", ..Default::default() },
+            doc: "type-graph edges across Rust (syn), Kotlin (tree-sitter), TS (oxc); kind is field/variant/impl/generic — Kotlin interface supertypes are generic, class/object impl, val/var ctor params + body properties field, enum entries variant; trailing repo column so two trees scanned together don't collapse same-named types into one node (closure/scc still walk cols 0/1, unaffected)",
+            view_body: Some("SELECT DISTINCT \"from\", \"to\", \"kind\", \"repo\" FROM rel_type_edge_rev".into()), ..Default::default() },
         RelDecl { name: "type_edge_rev".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), Col::branded("kind", "type_edge_kind"), c("rev", Type::Rev), c("repo", Type::Text)], group: "type",
             doc: "rev-aware type_edge (WORK-vs-HEAD type diff)", ..Default::default() },
         RelDecl { name: "type_entity".into(), cols: vec![
@@ -635,8 +650,14 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // pk_never_null: dataflow.rs pushes `vec![sym(&n.id), t(repo)]` per row
         // (extract/dataflow.rs) — a fixed 2-element literal from plain &str
         // fields, never Option, so no row can carry a NULL id/repo.
+        // View-backed (2026-07-20): `rel_df_node_repo` is a VIEW over its `_rev`
+        // twin, not a base table. The Rust dedup key (`seen_node_repo`, extract/
+        // dataflow.rs) is the FULL non-rev column set `(id, repo)`, so
+        // `SELECT DISTINCT id, repo FROM rel_df_node_repo_rev` is row-identical to
+        // the old direct-write table. Proven by tests/it/view_backed_rel.rs.
         RelDecl { name: "df_node_repo".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text)], group: "dataflow",
-            doc: "(df_node id, repo) — the repo (nearest .git basename) each node's file was read from; scopes df joins per-repo (df_node ids are path-keyed)", pk_never_null: true, ..Default::default() },
+            doc: "(df_node id, repo) — the repo (nearest .git basename) each node's file was read from; scopes df joins per-repo (df_node ids are path-keyed)",
+            view_body: Some("SELECT DISTINCT \"id\", \"repo\" FROM rel_df_node_repo_rev".into()), ..Default::default() },
         // rev-aware df_node_repo: id is the SAME raw id as df_node_rev.id (never
         // salted), rev as its own column. Repo attribution stays orthogonal to
         // rev — a multi-repo PR diff wants both axes. The full 3-column row
@@ -694,9 +715,13 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // pk_never_null: `arg_rows.push(vec![sym(call), Value::Int(*pos),
         // sym(arg)])` — fixed 3-element literal off a `(String, i64, String)`
         // tuple iteration, never Option.
+        // View-backed (2026-07-20): VIEW over `_rev` twin. Rust dedup key
+        // (`seen_arg`) is the full non-rev column set `(call, pos, arg)`, so the
+        // DISTINCT view is row-identical to the old direct-write table.
         RelDecl { name: "df_arg".into(), cols: vec![
             c("call", Type::Text), c("pos", Type::Int), c("arg", Type::Text)], group: "dataflow",
-            doc: "(call/new df_node id, slot, arg df_node id); 0-based, receiver at -1; aligns with df_param.pos for the positional arg->param hop", pk_never_null: true, ..Default::default() },
+            doc: "(call/new df_node id, slot, arg df_node id); 0-based, receiver at -1; aligns with df_param.pos for the positional arg->param hop",
+            view_body: Some("SELECT DISTINCT \"call\", \"pos\", \"arg\" FROM rel_df_arg_rev".into()), ..Default::default() },
         // rev-aware df_arg: both id columns (call, arg) are the SAME raw ids
         // df_node_rev.id uses (never salted) — a join against df_node_rev needs
         // an explicit `AND rev = rev` to stay scoped to one rev now that the id
@@ -718,9 +743,13 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // pk_never_null: `field_rows.push(vec![sym(id), t(field), sym(value)])`
         // — fixed 3-element literal off a `(String, String, String)` tuple
         // iteration, never Option.
+        // View-backed (2026-07-20): VIEW over `_rev` twin. Rust dedup key
+        // (`seen_field`) is the full non-rev column set `(id, field, value)`, so
+        // the DISTINCT view is row-identical to the old direct-write table.
         RelDecl { name: "df_field".into(), cols: vec![
             c("id", Type::Text), c("field", Type::Text), c("value", Type::Text)], group: "dataflow",
-            doc: "(new/call df_node id, field name, value df_node id); struct-literal fields, object-literal properties, Kotlin named args; \"..\" for spread/functional-update bases", pk_never_null: true, ..Default::default() },
+            doc: "(new/call df_node id, field name, value df_node id); struct-literal fields, object-literal properties, Kotlin named args; \"..\" for spread/functional-update bases",
+            view_body: Some("SELECT DISTINCT \"id\", \"field\", \"value\" FROM rel_df_field_rev".into()), ..Default::default() },
         // rev-aware df_field: both id columns (id, value) are the SAME raw ids
         // df_node_rev.id uses — value is always a value df_node id (never a
         // literal), so it matches df_node_rev.id the same way id does. legacy
@@ -761,10 +790,14 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
 pub(crate) fn const_value_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
+        // View-backed (2026-07-20): VIEW over `const_value_rev`, row-identical to
+        // the old INSERT-OR-IGNORE full-row-PK rebuild. `text` is a raw (non-
+        // interned) column and passes through the view unchanged.
         RelDecl { name: "const_value".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("field", Type::Text), Col::raw("text", Type::Text),
             Col::branded("kind", "const_value_kind"), c("file", Type::Path), c("line", Type::Int)], group: "type",
-            doc: "string value folded from a const (or as const) binding; sym is the owning type_entity (the const itself, or the enum for a string member), field is \"\" for a bare const or a dotted key path (\"home\", \"nested.a\") for an object literal; a let/var string initializer is never emitted (soundness rule); line: 1-based", ..Default::default() },
+            doc: "string value folded from a const (or as const) binding; sym is the owning type_entity (the const itself, or the enum for a string member), field is \"\" for a bare const or a dotted key path (\"home\", \"nested.a\") for an object literal; a let/var string initializer is never emitted (soundness rule); line: 1-based",
+            view_body: Some("SELECT DISTINCT \"repo\", \"sym\", \"field\", \"text\", \"kind\", \"file\", \"line\" FROM rel_const_value_rev".into()), ..Default::default() },
         RelDecl { name: "const_value_rev".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("field", Type::Text), Col::raw("text", Type::Text),
             Col::branded("kind", "const_value_kind"), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Rev)], group: "type",

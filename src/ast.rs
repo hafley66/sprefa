@@ -198,6 +198,16 @@ pub struct RelDecl {
     /// scip_local, scip_impl, scip_edge, scip_ref, scip_def) for the audited
     /// call sites; each carries a comment naming the exact push site.
     pub pk_never_null: bool,
+    /// View-backed rel: instead of a base `CREATE TABLE`, `Engine::declare`
+    /// issues `CREATE VIEW rel_<name> AS <this SQL body>`. The body is authored
+    /// SQL — for the rev-dedup twins this ships for, always a
+    /// `SELECT DISTINCT <non-rev cols> FROM rel_<name>_rev`. A view-backed rel
+    /// has no `__src`, no autoindex, no rows of its own, is skipped by the write
+    /// path (nothing inserts into a view) and by digest/derived-complete
+    /// tracking, and still resolves in queries and `_txt` decode exactly like a
+    /// table-backed rel. `None` = a normal base table. Set only at Rust-authored
+    /// built-in decls (src/engine/decls.rs); the `.dl` parser never sets it.
+    pub view_body: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -206,6 +216,10 @@ pub struct RelMeta {
     pub key: Option<Vec<String>>,
     pub merge: Option<MergeFn>,
     pub port: Option<Port>,
+    /// True when `rel_<name>` is a SQL VIEW (see `RelDecl::view_body`), not a
+    /// base table. `create_auto_indexes` reads this to skip proposing a
+    /// join-key index on a view (a `CREATE INDEX` on a view errors).
+    pub view_backed: bool,
 }
 
 impl RelMeta {
