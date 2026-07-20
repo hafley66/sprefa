@@ -89,7 +89,7 @@ named_call_site(caller_fn, call_file, call_line, callee_fn) <-
 rel loop_entry_fn(entry_fn: text).
 loop_entry_fn(entry_fn) <-
     nest(call_id, _, _, _),
-    df_node(call_id, "call_res", _, caller_fn, call_file, call_line),
+    df_node(call_id, "call_res", _, caller_fn, call_file, call_line, _),
     named_call_site(caller_fn, call_file, call_line, entry_fn).
 
 # transitive closure over the resolved call graph, starting from loop_entry_fn.

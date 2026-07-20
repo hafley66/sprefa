@@ -62,7 +62,7 @@ flow_edge(arg, param) <-
     call_node(c, op, _, _),
     df_arg(c, pos, arg),
     op_endpoint(op, fnb, _),
-    df_node(param, "param", _, fnb, _, _),
+    df_node(param, "param", _, fnb, _, _, _),
     df_param(param, pos).
 
 # Response: an endpoint's returned value flows back to the client call result.
@@ -70,7 +70,7 @@ flow_edge(r, c) <-
     service_op(op),
     call_node(c, op, _, _),
     op_endpoint(op, fnb, _),
-    df_node(r, "ret", _, fnb, _, _).
+    df_node(r, "ret", _, fnb, _, _, _).
 
 # Transitive reach over local flow + local interproc hops + the wire.
 rel service_reach(from: text, to: text).

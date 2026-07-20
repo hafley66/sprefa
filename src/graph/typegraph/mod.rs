@@ -377,6 +377,12 @@ pub struct DfNode {
     pub fn_sym: String, // enclosing def sym (file::function::name), joins call_def
     pub file: String,
     pub line: u32,
+    /// The coordinate column baked into `id` (`file:line:col:kind`): syn's
+    /// 0-based char column for rust/kotlin/python/go (`push_node`), the 0-based
+    /// byte column within the line for ts (`ts_push` via `line_col`). Stored as
+    /// a real `df_node` column so the id text (no longer interned into
+    /// `_strings`) reconstructs from (file, line, col, kind) at display time.
+    pub col: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -722,8 +728,55 @@ fn push_node(
         fn_sym: fn_sym.into(),
         file: file.into(),
         line,
+        col,
     });
     id
+}
+
+/// Bump every node's `line` to 1-based AND rebuild its `id` so the id's line
+/// component matches the stored column. A tree-sitter front-end mints ids from
+/// the raw 0-based row, then bumps the line column to 1-based (the df contract);
+/// that left the id's line one behind the column. That was invisible while the
+/// id was interned as opaque text, but the coordinate de-intern reconstructs the
+/// id FROM the columns (`file:line:col:kind`), so the id must equal that. Rebuild
+/// the id and remap every id-referencing fact (edges, args, fields, lits,
+/// param positions, lit spans) to the new id. `nests` are recomputed by the
+/// caller after this, so they pick up the rebuilt ids directly.
+pub(crate) fn bump_node_lines_1based(out: &mut DataflowFacts) {
+    use std::collections::HashMap;
+    let mut remap: HashMap<String, String> = HashMap::new();
+    for n in &mut out.nodes {
+        let old = std::mem::take(&mut n.id);
+        n.line += 1;
+        n.id = format!("{}:{}:{}:{}", n.file, n.line, n.col, n.kind);
+        remap.insert(old, n.id.clone());
+    }
+    let remap_one = |s: &mut String| {
+        if let Some(v) = remap.get(s) {
+            *s = v.clone();
+        }
+    };
+    for edge in &mut out.edges {
+        remap_one(&mut edge.from);
+        remap_one(&mut edge.to);
+    }
+    for arg in &mut out.args {
+        remap_one(&mut arg.0);
+        remap_one(&mut arg.2);
+    }
+    for field in &mut out.fields {
+        remap_one(&mut field.0);
+        remap_one(&mut field.2);
+    }
+    for lit in &mut out.lits {
+        remap_one(&mut lit.0);
+    }
+    for pp in &mut out.param_pos {
+        remap_one(&mut pp.0);
+    }
+    for span in &mut out.lit_spans {
+        remap_one(&mut span.0);
+    }
 }
 
 /// Post-pass over the lifted graph: for every `call_res` node, find each

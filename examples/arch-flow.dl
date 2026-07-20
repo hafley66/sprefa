@@ -272,23 +272,23 @@ df_near(from, to) <- df_near(from, mid), df_edge(mid, to).
 # line targeting B. The meeting node's local is `via` — the unifier.
 rel arch_df(src_url: text, dst_url: text, via: text).
 arch_df(src_url, dst_url, via) <-
-  df_node(result_id, "call_res", _, _, "src/engine/tick.rs", result_line),
+  df_node(result_id, "call_res", _, _, "src/engine/tick.rs", result_line, _),
   scip_result_line = result_line - 1,
   line_target("src/engine/tick.rs", scip_result_line, src_url),
   df_near(result_id, meeting_id),
   df_arg(consumer_call, _, meeting_id),
-  df_node(meeting_id, _, via, _, "src/engine/tick.rs", _), via != "",
-  df_node(consumer_call, "call_res", _, _, "src/engine/tick.rs", consumer_line),
+  df_node(meeting_id, _, via, _, "src/engine/tick.rs", _, _), via != "",
+  df_node(consumer_call, "call_res", _, _, "src/engine/tick.rs", consumer_line, _),
   scip_consumer_line = consumer_line - 1,
   line_target("src/engine/tick.rs", scip_consumer_line, dst_url),
   src_url != dst_url.
 # 0-hop: the call result IS the argument (f(g(...)) direct nesting)
 arch_df(src_url, dst_url, via) <-
-  df_node(result_id, "call_res", via, _, "src/engine/tick.rs", result_line),
+  df_node(result_id, "call_res", via, _, "src/engine/tick.rs", result_line, _),
   scip_result_line = result_line - 1,
   line_target("src/engine/tick.rs", scip_result_line, src_url),
   df_arg(consumer_call, _, result_id),
-  df_node(consumer_call, "call_res", _, _, "src/engine/tick.rs", consumer_line),
+  df_node(consumer_call, "call_res", _, _, "src/engine/tick.rs", consumer_line, _),
   scip_consumer_line = consumer_line - 1,
   line_target("src/engine/tick.rs", scip_consumer_line, dst_url),
   src_url != dst_url.
@@ -316,12 +316,12 @@ line_target_native(line, target_url) <-
 
 rel arch_df_native(src_url: text, dst_url: text, via: text).
 arch_df_native(src_url, dst_url, via) <-
-  df_node(result_id, "call_res", _, _, "src/engine/tick.rs", result_line),
+  df_node(result_id, "call_res", _, _, "src/engine/tick.rs", result_line, _),
   line_target_native(result_line, src_url),
   df_near(result_id, meeting_id),
   df_arg(consumer_call, _, meeting_id),
-  df_node(meeting_id, _, via, _, "src/engine/tick.rs", _), via != "",
-  df_node(consumer_call, "call_res", _, _, "src/engine/tick.rs", consumer_line),
+  df_node(meeting_id, _, via, _, "src/engine/tick.rs", _, _), via != "",
+  df_node(consumer_call, "call_res", _, _, "src/engine/tick.rs", consumer_line, _),
   line_target_native(consumer_line, dst_url),
   src_url != dst_url.
 

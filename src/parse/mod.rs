@@ -196,10 +196,7 @@ impl Parser {
                     let cname = self.ident()?;
                     self.expect(Tok::Colon)?;
                     let tname = self.ident()?;
-                    let col = match Type::parse(&tname) {
-                        Some(ty) => Col { name: cname, ty, brand: None, raw: false },
-                        None => Col { name: cname, ty: Type::Text, brand: Some(tname), raw: false },
-                    };
+                    let col = Col::from_type_name(cname, &tname);
                     cols.push(col);
                     match self.next()? {
                         Tok::Comma => continue,
@@ -244,10 +241,7 @@ impl Parser {
             // A keyword that is not a base type is taken as a brand reference; its
             // base storage type is resolved from the `type X <: Y` chain at load
             // (brands store as text until then). check_rule_types uses the name.
-            let col = match Type::parse(&tname) {
-                Some(ty) => Col { name: cname, ty, brand: None, raw: false },
-                None => Col { name: cname, ty: Type::Text, brand: Some(tname), raw: false },
-            };
+            let col = Col::from_type_name(cname, &tname);
             cols.push(col);
             match self.next()? {
                 Tok::Comma => continue,
@@ -348,10 +342,7 @@ impl Parser {
             let cname = self.ident()?;
             self.expect(Tok::Colon)?;
             let tname = self.ident()?;
-            let col = match Type::parse(&tname) {
-                Some(ty) => Col { name: cname, ty, brand: None, raw: false },
-                None => Col { name: cname, ty: Type::Text, brand: Some(tname), raw: false },
-            };
+            let col = Col::from_type_name(cname, &tname);
             outs.push(col);
             match self.next()? {
                 Tok::Comma => continue,

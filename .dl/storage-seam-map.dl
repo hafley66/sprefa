@@ -184,7 +184,7 @@ bare_fn_to_sym(bare, fn_sym) <- fn_bare_at("WORK", fn_sym, bare, _, _).
 rel df_node_in_fn(node: text, fn_sym: text, kind: text).
 df_node_in_fn(node, fn_sym, kind) <-
     current_rev("WORK"),
-    df_node(node, kind, _, bare, _, _),
+    df_node(node, kind, _, bare, _, _, _),
     bare_fn_to_sym(bare, fn_sym).
 
 rel df_kind(fn: text, kind: text, n: int).

@@ -31,7 +31,7 @@ seen(p) <- scan("*", "WORK", "src/**/*.{rs,ts}", p, rev).
 ? type_edge(from, to, kind, repo).
 ? call_def(repo, sym, kind, file, line, end).
 ? call_site(repo, caller, callee, file, line).
-? df_node(id, kind, var, fn, file, line).
+? df_node(id, kind, var, fn, file, line, _).
 ? df_lit(id, text, kind).
 ? df_param(id, pos).
 ? df_arg(call, pos, arg).

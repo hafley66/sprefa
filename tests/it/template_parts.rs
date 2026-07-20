@@ -148,7 +148,7 @@ fn template_node_joins_df_lit_and_df_edge() {
          piece_and_flow_in(path, kind, text, fromKind) <-\n\
              template_parts(path, _, node, 0, kind, text),\n\
              df_edge(from, node),\n\
-             df_node(from, fromKind, _, _, _, _).\n\
+             df_node(from, fromKind, _, _, _, _, _).\n\
          ? piece_and_flow_in(path, kind, text, fromKind).\n"
     );
     let (code, out, err) = run(&dir, &edge_prog);

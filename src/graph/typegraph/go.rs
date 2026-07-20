@@ -579,8 +579,11 @@ fn go_dataflow_from(root: tree_sitter::Node, src: &[u8], file: &str) -> Dataflow
     // tree-sitter rows are 0-based; the df contract is 1-based (see Kotlin's
     // identical bump), so bump reported node lines and loop spans. Node ids
     // keep the raw 0-based row (opaque; only uniqueness matters).
-    for n in &mut out.nodes { n.line += 1; }
+    // tree-sitter rows are 0-based -> 1-based; `bump_node_lines_1based` also
+    // rebuilds each node id so it reconstructs from the stored columns (the
+    // coordinate de-intern contract). Loops bump first; nests recompute after.
     for l in &mut out.loops { l.start += 1; l.end += 1; }
+    bump_node_lines_1based(&mut out);
     out.nests = compute_nests(&out.nodes, &out.loops);
     out
 }

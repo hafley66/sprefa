@@ -392,6 +392,7 @@ pub(crate) fn checkout_out_rel_decls() -> Vec<RelDecl> {
                 ty: Type::Text,
                 brand: Some("checkout_action".into()),
                 raw: true,
+                coord: false,
             },
             Col::plain("ok".into(), Type::Int),
             Col::raw("detail", Type::Text),
@@ -563,6 +564,13 @@ pub(crate) fn comment_rel_decls() -> Vec<RelDecl> {
 pub(crate) fn template_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
+        // `node` carries a df-coordinate id (joins df_lit.id/df_node.id) but is
+        // kept a normal interned `text` column, NOT `Col::node`: a MODULE-level
+        // template (`export const x = ` + backticks) has a template_parts row but
+        // NO df_node (the df lift only walks fn bodies), so coord reconstruction
+        // would have nothing to read. Template occurrences are few (~120 vs 126k
+        // df coords), so interning their text costs nothing meaningful, and the
+        // int join key still matches df_lit.id (same StringId hash).
         RelDecl { name: "template_parts".into(), cols: vec![
             c("file", Type::Path), c("line", Type::Int), c("node", Type::Text),
             c("idx", Type::Int), c("kind", Type::Text), Col::raw("text", Type::Text)], group: "template",
@@ -620,10 +628,16 @@ pub(crate) fn call_rel_decls() -> Vec<RelDecl> {
 pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
+        // NOT view-backed: unlike df_arg/df_field/df_node_repo (full-row-PK
+        // twins), df_node_rev is keyed `(id, rev)`, which drops divergent
+        // (var,fn)-within-one-rev rows the old df_node table kept (measured: 217
+        // on the sprefa corpus). Collapsing to a view over df_node_rev would
+        // change join results, so df_node stays a base table until the twin's key
+        // is widened (deferred follow-up; see plans/2026-07-20-...).
         RelDecl { name: "df_node".into(), cols: vec![
-            c("id", Type::Text), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
-            c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int)], group: "dataflow",
-            doc: "intra-procedural dataflow node (call_res/let_bind/param/ret/new/member/...); id is an interned StringId over file:line:col:kind (sym) — the display + join handle; the full kind vocabulary is rel_col's variants for this column; line: 1-based. IDENTITY is the full row (id, kind, var, fn, file, line): id encodes only (file,line,col,kind), and var/fn DIVERGE across revs (a position whose enclosing fn or bound var changed between the committed rev and WORK), so they are identity, not payload. The writer dedups on that full tuple, so the table equals SELECT DISTINCT over these columns — safe to collapse to a view over df_node_rev. Do NOT declare key(id); it would drop the divergent rows.", ..Default::default() },
+            Col::node("id"), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
+            c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int), c("col", Type::Int)], group: "dataflow",
+            doc: "intra-procedural dataflow node (call_res/let_bind/param/ret/new/member/...); id (type node) is a StringId JOIN HANDLE over file:line:col:kind whose TEXT is NOT interned into _strings (the coordinate de-intern) — on display it reconstructs from (file,line,col,kind); col is the coordinate column (syn char-col / tree-sitter+ts byte-col); the full kind vocabulary is rel_col's variants for this column; line: 1-based. IDENTITY is the full row (id, kind, var, fn, file, line, col): id encodes only (file,line,col,kind), and var/fn DIVERGE across revs (a position whose enclosing fn or bound var changed between the committed rev and WORK), so they are identity, not payload. The writer dedups on that full tuple. Do NOT declare key(id); it would drop the divergent rows.", ..Default::default() },
         // rev-aware df_node: id is the SAME interned id df_node uses (never
         // folded with rev) — rev is a real trailing column and `(id, rev)` is
         // the primary key, so two revs' `file:line:col` ids stay disjoint AS
@@ -637,8 +651,8 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // outside `wants_without_rowid`'s 2..=4 range regardless — no WITHOUT
         // ROWID vouch is needed or possible for this shape.
         RelDecl { name: "df_node_rev".into(), cols: vec![
-            c("id", Type::Text), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
-            c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Rev)],
+            Col::node("id"), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
+            c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int), c("col", Type::Int), c("rev", Type::Rev)],
             key: Some(vec!["id".into(), "rev".into()]), group: "dataflow",
             doc: "rev-aware df_node; id is the SAME interned id as df_node.id (never rev-folded); PRIMARY KEY (id, rev) keeps two revs' rows disjoint; legacy df_node keeps one deduped row per raw id; line: 1-based", ..Default::default() },
         // (df_node id, repo) — the repo (nearest `.git` basename) the node's file
@@ -655,7 +669,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // dataflow.rs) is the FULL non-rev column set `(id, repo)`, so
         // `SELECT DISTINCT id, repo FROM rel_df_node_repo_rev` is row-identical to
         // the old direct-write table. Proven by tests/it/view_backed_rel.rs.
-        RelDecl { name: "df_node_repo".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text)], group: "dataflow",
+        RelDecl { name: "df_node_repo".into(), cols: vec![Col::node("id"), c("repo", Type::Text)], group: "dataflow",
             doc: "(df_node id, repo) — the repo (nearest .git basename) each node's file was read from; scopes df joins per-repo (df_node ids are path-keyed)",
             view_body: Some("SELECT DISTINCT \"id\", \"repo\" FROM rel_df_node_repo_rev".into()), ..Default::default() },
         // rev-aware df_node_repo: id is the SAME raw id as df_node_rev.id (never
@@ -666,12 +680,12 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // narrowing here.
         // pk_never_null: same push site as df_node_repo, `vec![sym(&n.id),
         // t(repo), t(rev)]` — fixed 3-element literal, never Option.
-        RelDecl { name: "df_node_repo_rev".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text), c("rev", Type::Rev)], group: "dataflow",
+        RelDecl { name: "df_node_repo_rev".into(), cols: vec![Col::node("id"), c("repo", Type::Text), c("rev", Type::Rev)], group: "dataflow",
             doc: "rev-aware df_node_repo; id is the SAME interned id as df_node_rev.id (never rev-folded); legacy df_node_repo keeps the raw id", pk_never_null: true, ..Default::default() },
         // pk_never_null: `edge_rows.push(vec![sym(&e.from), sym(&e.to)])`
         // (extract/dataflow.rs) — both from a `TypeFacts` edge struct's plain
         // String fields, never Option; no row can carry a NULL endpoint.
-        RelDecl { name: "df_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text)], group: "dataflow",
+        RelDecl { name: "df_edge".into(), cols: vec![Col::node("from"), Col::node("to")], group: "dataflow",
             doc: "intra-procedural dataflow dependency edge", pk_never_null: true, ..Default::default() },
         // one row per loop, with its source span + loop variable. The flag rule
         // joins this against df_node/df_edge to find loop-invariant calls: a
@@ -696,7 +710,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // plain struct's fields (collection defaults to "" upstream, never
         // Option), never Option.
         RelDecl { name: "nest".into(), cols: vec![
-            c("call_id", Type::Text), c("loop_id", Type::Text),
+            Col::node("call_id"), c("loop_id", Type::Text),
             c("depth", Type::Int), c("collection", Type::Text)], group: "dataflow",
             doc: "one row per (call, enclosing loop); depth is nesting rank (1=outermost); raw material for symbolic Big-O over call_edge", pk_never_null: true, ..Default::default() },
         // (param df_node id, positional index) — the index counts only typed
@@ -706,7 +720,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // pk_never_null: `param_rows.push(vec![sym(id), i(*pos)])` — fixed
         // 2-element literal off a `(String, i64)` tuple iteration, never
         // Option.
-        RelDecl { name: "df_param".into(), cols: vec![c("id", Type::Text), c("pos", Type::Int)], group: "dataflow",
+        RelDecl { name: "df_param".into(), cols: vec![Col::node("id"), c("pos", Type::Int)], group: "dataflow",
             doc: "(param df_node id, positional index); index counts typed params only (self skipped) so it aligns with type_sig.pos for node-level type joins", pk_never_null: true, ..Default::default() },
         // (call/new node id, position, arg node id) — which argument slot a
         // value feeds. 0-based, method receivers at -1 (mirroring the skipped
@@ -719,7 +733,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // (`seen_arg`) is the full non-rev column set `(call, pos, arg)`, so the
         // DISTINCT view is row-identical to the old direct-write table.
         RelDecl { name: "df_arg".into(), cols: vec![
-            c("call", Type::Text), c("pos", Type::Int), c("arg", Type::Text)], group: "dataflow",
+            Col::node("call"), c("pos", Type::Int), Col::node("arg")], group: "dataflow",
             doc: "(call/new df_node id, slot, arg df_node id); 0-based, receiver at -1; aligns with df_param.pos for the positional arg->param hop",
             view_body: Some("SELECT DISTINCT \"call\", \"pos\", \"arg\" FROM rel_df_arg_rev".into()), ..Default::default() },
         // rev-aware df_arg: both id columns (call, arg) are the SAME raw ids
@@ -732,7 +746,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // sym(call), Value::Int(*pos), sym(arg), t(rev)])` — fixed 4-element
         // literal, never Option.
         RelDecl { name: "df_arg_rev".into(), cols: vec![
-            c("call", Type::Text), c("pos", Type::Int), c("arg", Type::Text), c("rev", Type::Rev)], group: "dataflow",
+            Col::node("call"), c("pos", Type::Int), Col::node("arg"), c("rev", Type::Rev)], group: "dataflow",
             doc: "rev-aware df_arg; call and arg are the SAME interned ids as df_node_rev.id (never rev-folded); legacy df_arg keeps raw ids", pk_never_null: true, ..Default::default() },
         // (new/call node id, field name, value node id) — named value flow
         // into a composite: Rust struct-literal fields (`..base` under the
@@ -747,7 +761,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // (`seen_field`) is the full non-rev column set `(id, field, value)`, so
         // the DISTINCT view is row-identical to the old direct-write table.
         RelDecl { name: "df_field".into(), cols: vec![
-            c("id", Type::Text), c("field", Type::Text), c("value", Type::Text)], group: "dataflow",
+            Col::node("id"), c("field", Type::Text), Col::node("value")], group: "dataflow",
             doc: "(new/call df_node id, field name, value df_node id); struct-literal fields, object-literal properties, Kotlin named args; \"..\" for spread/functional-update bases",
             view_body: Some("SELECT DISTINCT \"id\", \"field\", \"value\" FROM rel_df_field_rev".into()), ..Default::default() },
         // rev-aware df_field: both id columns (id, value) are the SAME raw ids
@@ -760,7 +774,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // sym(id), t(field), sym(value), t(rev)])` — fixed 4-element literal,
         // never Option.
         RelDecl { name: "df_field_rev".into(), cols: vec![
-            c("id", Type::Text), c("field", Type::Text), c("value", Type::Text), c("rev", Type::Rev)], group: "dataflow",
+            Col::node("id"), c("field", Type::Text), Col::node("value"), c("rev", Type::Rev)], group: "dataflow",
             doc: "rev-aware df_field; id and value are the SAME interned ids as df_node_rev.id (never rev-folded); legacy df_field keeps raw ids", pk_never_null: true, ..Default::default() },
         // (df_node id, text, kind) — one row per STRING-carrying value node
         // (string-values arc item 1). `kind` is lit/template/concat: `lit` is
@@ -768,8 +782,11 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // source slice (`${}` holes intact for a template, the written
         // operands for a `+` concat). TS/TSX/JS populate template/concat;
         // Rust populates lit only (Kotlin/Go/Python ledgered as follow-up).
+        // NOT view-backed (deferred with df_node for a single clean follow-up;
+        // df_lit_rev's full-row PK would make its collapse exact, but keeping the
+        // pair symmetric avoids a half-migrated dataflow family).
         RelDecl { name: "df_lit".into(), cols: vec![
-            c("id", Type::Text), Col::raw("text", Type::Text), Col::branded("kind", "const_value_kind")], group: "dataflow",
+            Col::node("id"), Col::raw("text", Type::Text), Col::branded("kind", "const_value_kind")], group: "dataflow",
             doc: "(df_node id, text, kind); lit=cooked string literal, template/concat=raw source slice with holes intact; TS/TSX/JS + Rust lit today. IDENTITY is the full row (id, text, kind): the same node id can carry divergent text/kind across revs (10 measured), so the writer dedups on all three columns, making the table equal SELECT DISTINCT id,text,kind — safe to collapse to a view over df_lit_rev.", ..Default::default() },
         // rev-aware df_lit: id is the SAME raw id df_node_rev.id uses (never
         // rev-folded) — same shape as df_field_rev (D5 pattern). The dedup key
@@ -778,7 +795,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // default PRIMARY KEY is still exactly as unique, no explicit
         // `key(...)` needed.
         RelDecl { name: "df_lit_rev".into(), cols: vec![
-            c("id", Type::Text), Col::raw("text", Type::Text), Col::branded("kind", "const_value_kind"), c("rev", Type::Rev)], group: "dataflow",
+            Col::node("id"), Col::raw("text", Type::Text), Col::branded("kind", "const_value_kind"), c("rev", Type::Rev)], group: "dataflow",
             doc: "rev-aware df_lit; id is the SAME interned id as df_node_rev.id (never rev-folded); legacy df_lit keeps the raw id", ..Default::default() },
     ]
 }

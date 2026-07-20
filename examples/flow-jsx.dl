@@ -26,7 +26,7 @@ src(p) <- scan("WORK", "src/**/*.{ts,tsx}", p, rev).
 # Where each component is used and which props it receives.
 rel jsx_use(comp: text, prop: text, path: file, line: int).
 jsx_use(comp, prop, p, l) <-
-    df_node(elem, "new", comp, _, p, l),
+    df_node(elem, "new", comp, _, p, l, _),
     df_field(elem, prop, _).
 
 # The JSX hop: a prop value flows into the component's matching prop target,
@@ -35,17 +35,17 @@ jsx_use(comp, prop, p, l) <-
 # the destructured param piece, and the `props.title` member read.
 rel prop_edge(value: text, comp: text, prop: text, target: text).
 prop_edge(v, comp, prop, target) <-
-    df_node(elem, "new", comp, caller_bare, _, _),
+    df_node(elem, "new", comp, caller_bare, _, _, _),
     df_field(elem, prop, v),
     call_edge_bare(caller_bare, callee_bare, _, callee_q),
     call_name(callee_q, comp),
-    df_node(target, "param", prop, callee_bare, _, _).
+    df_node(target, "param", prop, callee_bare, _, _, _).
 prop_edge(v, comp, prop, target) <-
-    df_node(elem, "new", comp, caller_bare, _, _),
+    df_node(elem, "new", comp, caller_bare, _, _, _),
     df_field(elem, prop, v),
     call_edge_bare(caller_bare, callee_bare, _, callee_q),
     call_name(callee_q, comp),
-    df_node(target, "member", prop, callee_bare, _, _).
+    df_node(target, "member", prop, callee_bare, _, _, _).
 
 # Union the JSX hop into the shared edge rel (std/flow.dl already contributed
 # df_edge + the interprocedural hops), ready for closure() by a consumer.

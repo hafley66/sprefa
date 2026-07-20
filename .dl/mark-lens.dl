@@ -35,7 +35,7 @@ mark_entity(marked, sym, kind, file, line) <-
 
 # df node for a marked variable: same var text, same file, same line
 rel mark_df(marked: text, id: text).
-mark_df(marked, id) <- mark(marked, path, line), df_node(id, _, marked, _, path, line).
+mark_df(marked, id) <- mark(marked, path, line), df_node(id, _, marked, _, path, line, _).
 
 # ── 2) anti-unification: the least general selector covering ALL marks ──────
 # kind axis: kind survives if no mark lacks an entity of that kind

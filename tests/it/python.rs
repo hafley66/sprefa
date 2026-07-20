@@ -130,7 +130,7 @@ fn call_edge_resolves_and_ctor_df_node_present_with_comprehension_loop() {
 rel seen(path: file).
 seen(path) <- scan("WORK", "src/**/*.py", path, rev), match(path, rev, /./, line).
 ? call_edge(caller, callee, kind).
-? df_node(id, kind, var, fn, file, line).
+? df_node(id, kind, var, fn, file, line, _).
 ? loop_over(file, start, end, var, collection, fn_sym).
 "#;
     let recs = run_json(&d, prog);

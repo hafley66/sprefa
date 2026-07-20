@@ -281,6 +281,7 @@ mod tests {
             ty,
             brand: None,
             raw,
+            coord: false,
         }
     }
 
@@ -414,12 +415,14 @@ mod tests {
             ty: Type::Text,
             brand: Some("severity".into()),
             raw: false,
+            coord: false,
         };
         let missing = Col {
             name: "value".into(),
             ty: Type::Text,
             brand: Some("future_type".into()),
             raw: false,
+            coord: false,
         };
         assert_eq!(types.lower_col(&known, &brands).unwrap().logical, severity);
         let unknown = types.lower_col(&missing, &brands).unwrap().logical;

@@ -82,10 +82,10 @@ const SUMMARY_PROG_BASE: &str = r#"
 use "std/flow.dl".
 rel src(p: file).
 src(p) <- scan("WORK", "src/**/*.rs", p, rev).
-rel flow_reach(from: text, to: text).
+rel flow_reach(from: node, to: node).
 flow_reach(a, b) <- closure(flow_edge).
 ? flow_reach(from, to).
-? df_node(id, kind, var, fn, file, line).
+? df_node(id, kind, var, fn, file, line, _).
 "#;
 
 fn reach_and_nodes(out: &str) -> (HashSet<(String, String)>, Vec<Vec<String>>) {
@@ -217,10 +217,10 @@ fn collection_lambda_hops_are_fact_driven_per_language() {
             "use \"std/flow-collections.dl\".\n\
              rel src(p: file).\n\
              src(p) <- scan(\"WORK\", \"src/**/*.{ext}\", p, rev).\n\
-             rel flow_reach(from: text, to: text).\n\
+             rel flow_reach(from: node, to: node).\n\
              flow_reach(a, b) <- closure(flow_edge).\n\
              ? flow_reach(from, to).\n\
-             ? df_node(id, kind, var, fn, file, line).\n"
+             ? df_node(id, kind, var, fn, file, line, _).\n"
         );
         let (code, out, err) = run(&d, &prog);
         assert_eq!(code, 0, "[{lang}] must not error:\n{err}");
@@ -280,7 +280,7 @@ use "std/flow.dl".
 rel src(p: file).
 src(p) <- scan("WORK", "src/**/*.ts", p, rev).
 ? arg_field_flow(value, field, call, target).
-? df_node(id, kind, var, fn, file, line).
+? df_node(id, kind, var, fn, file, line, _).
 "#;
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "must not error:\n{err}");

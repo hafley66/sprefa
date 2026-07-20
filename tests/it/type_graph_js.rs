@@ -39,7 +39,7 @@ seen(path) <- scan("WORK", "src/**/*.js", path, rev), match(path, rev, /./, line
 seen(path) <- scan("WORK", "src/**/*.jsx", path, rev), match(path, rev, /./, line).
 ? type_entity(repo, sym, name, kind, parent, file, line).
 ? call_edge(caller, callee, kind).
-? df_node(id, kind, var, callee_fn, file, line).
+? df_node(id, kind, var, callee_fn, file, line, _).
 ? df_field(id, field, value).
 ? doc_comment(repo, sym, line, text).
 "#;

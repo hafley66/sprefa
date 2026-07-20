@@ -29,7 +29,52 @@ fn esc(s: &str) -> String { s.replace('\'', "''") }
 /// concat, projection into a text column or query output); sym = sym joins
 /// and literal filters never decode.
 fn sym_decode(e: &str) -> String {
-    format!("(SELECT content FROM _strings WHERE id = {e})")
+    // A plain interned column decodes through `_strings`, BUT a df-coordinate id
+    // carried in an ordinary `text` column (the whole `.dl` ecosystem: flow_edge,
+    // string_flow, user reach closures, ...) has no `_strings` row after the
+    // coordinate de-intern. Fall back to reconstructing it from `rel_df_node`, so
+    // any text column holding a df id still displays its coordinate without the
+    // author having to spell the `node` type. COALESCE short-circuits: for a
+    // normal interned string (the _strings hit) the df_node fallback never runs.
+    format!("COALESCE((SELECT content FROM _strings WHERE id = {e}), {})", coord_reconstruct(e))
+}
+
+/// The `rel_df_node` reconstruction subquery for a coordinate id cell (shared by
+/// `coord_decode` and `sym_decode`'s fallback).
+fn coord_reconstruct(e: &str) -> String {
+    format!(
+        "(SELECT (SELECT content FROM _strings WHERE id = dn.\"file\") || ':' || \
+         dn.\"line\" || ':' || dn.\"col\" || ':' || \
+         (SELECT content FROM _strings WHERE id = dn.\"kind\") \
+         FROM rel_df_node dn WHERE dn.\"id\" = {e} LIMIT 1)"
+    )
+}
+
+/// Decode a df-coordinate id cell (`Col::coord`, spelled `node`) to its
+/// `file:line:col:kind` text by RECONSTRUCTING it from the `rel_df_node`
+/// coordinate columns — the coordinate text is no longer interned into
+/// `_strings` (it was 91.7% of the dictionary). Every coord id (`df_node.id`,
+/// `df_edge.from/to`, `df_arg.call/arg`, `df_lit.id`, `df_param.id`,
+/// `nest.call_id`, `template_parts.node`, and any user `node` column) is a
+/// df_node id, so one df_node lookup reconstructs all of them; for `df_node.id`
+/// itself this is a self-lookup that returns the same row's coordinate. `file`
+/// and `kind` stay ordinary interned text (few distinct values), so they decode
+/// through `_strings` inside the reconstruction.
+fn coord_decode(e: &str) -> String {
+    coord_reconstruct(e)
+}
+
+/// Decode a cell for a TEXT-consuming position, honoring the column's storage:
+/// a df-coordinate id reconstructs (`coord_decode`), a plain interned sym
+/// decodes through `_strings` (`sym_decode`), a raw/real column passes through.
+fn decode_cell(cell: &str, interned: bool, coord: bool) -> String {
+    if coord {
+        coord_decode(cell)
+    } else if interned {
+        sym_decode(cell)
+    } else {
+        cell.to_string()
+    }
 }
 
 /// A text literal compared against / inserted into a `sym` column lowers to
@@ -42,12 +87,15 @@ fn sym_lit(s: &str) -> String {
 /// an int compare; sym vs text hashes the TEXT side (`sprf_sym`) so the sym
 /// side never decodes; everything else is plain equality.
 #[derive(Clone, Copy, Debug)]
-struct VarTy { ty: Type, interned: bool }
+struct VarTy { ty: Type, interned: bool, coord: bool }
 type TyEnv = HashMap<String, VarTy>;
 
 fn var_ty(tys: &TyEnv, var: &str) -> Option<Type> { tys.get(var).map(|t| t.ty) }
 fn var_interned(tys: &TyEnv, var: &str) -> bool {
     tys.get(var).is_some_and(|t| t.interned)
+}
+fn var_coord(tys: &TyEnv, var: &str) -> bool {
+    tys.get(var).is_some_and(|t| t.coord)
 }
 fn term_interned(term: &Term, tys: &TyEnv) -> bool {
     match term {
@@ -75,12 +123,17 @@ fn eq_cond(a_sql: &str, a_ty: Option<Type>, a_interned: bool,
 /// with the fix. Text-ish columns decode sym vars; everything else is plain.
 fn head_term_sql(term: &Term, col: &Col, canon: &HashMap<String, String>, tys: &TyEnv) -> Result<String> {
     if col.interned() {
+        // A df-coordinate id column stores the hash but never interns the text,
+        // so a literal/computed value written into it hashes with `sprf_sym`
+        // (pure, no `_strings` queue) rather than `sprf_sym_intern`. An interned
+        // source var still passes its int handle through unchanged.
+        let hash_fn = if col.coord { "sprf_sym" } else { "sprf_sym_intern" };
         return match term {
-            Term::Str(s) => Ok(format!("sprf_sym_intern('{}')", esc(s))),
+            Term::Str(s) => Ok(format!("{hash_fn}('{}')", esc(s))),
             Term::Var(v) if var_interned(tys, v) => term_sql(term, canon, tys),
             Term::Call { name, args } if name == "sym" && args.len() == 1
                 && term_interned(&args[0], tys) => term_sql(&args[0], canon, tys),
-            _ => Ok(format!("sprf_sym_intern({})", term_sql_text(term, canon, tys)?)),
+            _ => Ok(format!("{hash_fn}({})", term_sql_text(term, canon, tys)?)),
         };
     }
     // Non-interned target column: decode any interned source var to its text so
@@ -99,6 +152,11 @@ fn term_sql_text(t: &Term, canon: &HashMap<String, String>, tys: &TyEnv) -> Resu
         }
     }
     if let Term::Var(v) = t {
+        if var_coord(tys, v) {
+            let cell = canon.get(v)
+                .ok_or_else(|| anyhow::anyhow!("unbound variable {v}"))?;
+            return Ok(coord_decode(cell));
+        }
         if var_interned(tys, v) {
             let cell = canon.get(v)
                 .ok_or_else(|| anyhow::anyhow!("unbound variable {v}"))?;
@@ -126,8 +184,9 @@ fn interp_sql(parts: &[InterpPart], canon: &HashMap<String, String>, tys: &TyEnv
             InterpPart::Var(v) => {
                 let cell = canon.get(v).cloned()
                     .ok_or_else(|| anyhow::anyhow!("unbound variable {v} in interpolation"))?;
-                // Interpolation consumes text: a sym var decodes here.
-                if var_interned(tys, v) { sym_decode(&cell) } else { cell }
+                // Interpolation consumes text: a coord id reconstructs, a sym
+                // var decodes here.
+                decode_cell(&cell, var_interned(tys, v), var_coord(tys, v))
             }
         });
     }
@@ -379,6 +438,7 @@ fn body_sql_ex(body: &[BodyItem], rels: &Rels, overrides: &HashMap<usize, String
                             tys.insert(v.clone(), VarTy {
                                 ty: meta.cols[pos].ty,
                                 interned: meta.cols[pos].interned(),
+                                coord: meta.cols[pos].coord,
                             });
                         }
                     },
@@ -411,7 +471,7 @@ fn body_sql_ex(body: &[BodyItem], rels: &Rels, overrides: &HashMap<usize, String
                     (Term::Var(v), rhs) if v != "_" && !canon.contains_key(v) && has_computation(rhs) => {
                         let e = term_sql(rhs, &canon, &tys)?;
                         if let Some(t) = term_ty(rhs, &tys) {
-                            tys.insert(v.clone(), VarTy { ty: t, interned: false });
+                            tys.insert(v.clone(), VarTy { ty: t, interned: false, coord: false });
                         }
                         canon.insert(v.clone(), e);
                         true
@@ -419,7 +479,7 @@ fn body_sql_ex(body: &[BodyItem], rels: &Rels, overrides: &HashMap<usize, String
                     (lhs, Term::Var(v)) if v != "_" && !canon.contains_key(v) && has_computation(lhs) => {
                         let e = term_sql(lhs, &canon, &tys)?;
                         if let Some(t) = term_ty(lhs, &tys) {
-                            tys.insert(v.clone(), VarTy { ty: t, interned: false });
+                            tys.insert(v.clone(), VarTy { ty: t, interned: false, coord: false });
                         }
                         canon.insert(v.clone(), e);
                         true
@@ -836,9 +896,10 @@ pub fn lower_query(q: &Query, rels: &Rels) -> Result<(String, Vec<String>)> {
                 None => {
                     canon.insert(v.clone(), (cell.clone(), is_sym, meta.cols[pos].ty));
                     // A sym column decodes through `_strings` for display so `?`
-                    // output stays human text — the id itself is an opaque join
-                    // key, never a query-visible value.
-                    let display = if is_sym { sym_decode(&cell) } else { cell.clone() };
+                    // output stays human text; a df-coordinate id reconstructs
+                    // from `rel_df_node` (`coord_decode`). The id itself is an
+                    // opaque join key, never a query-visible value.
+                    let display = decode_cell(&cell, is_sym, meta.cols[pos].coord);
                     sel.push(format!("{display} AS \"{v}\""));
                     headers.push(v.clone());
                 }
@@ -909,7 +970,7 @@ fn lower_query_agg(q: &Query, meta: &RelMeta) -> Result<(String, Vec<String>)> {
         if consumed[i] { continue; }
         let raw_cell = format!("\"{}\"", meta.col_name(i));
         let cell = format!("{}.\"{}\"", tbl(&q.head.rel), meta.col_name(i));
-        let display_cell = if meta.cols[i].interned() { sym_decode(&cell) } else { cell.clone() };
+        let display_cell = decode_cell(&cell, meta.cols[i].interned(), meta.cols[i].coord);
         match &terms[i] {
             Term::Wild => {}
             Term::Str(s) if meta.cols[i].interned() => wheres.push(format!("{raw_cell} = {}", sym_lit(s))),
@@ -946,8 +1007,8 @@ fn lower_query_agg(q: &Query, meta: &RelMeta) -> Result<(String, Vec<String>)> {
                     let label = take_label(args, &mut labels)?;
                     let val_raw_cell = format!("\"{}\"", meta.col_name(i + 1));
                     let val_cell = format!("{}.\"{}\"", tbl(&q.head.rel), meta.col_name(i + 1));
-                    let key_text = if meta.cols[i].interned() { sym_decode(&cell) } else { cell.clone() };
-                    let val_text = if meta.cols[i + 1].interned() { sym_decode(&val_cell) } else { val_cell.clone() };
+                    let key_text = decode_cell(&cell, meta.cols[i].interned(), meta.cols[i].coord);
+                    let val_text = decode_cell(&val_cell, meta.cols[i + 1].interned(), meta.cols[i + 1].coord);
                     let key_agg = if meta.cols[i].interned() { key_text } else { raw_cell.clone() };
                     let val_agg = if meta.cols[i + 1].interned() { val_text } else { val_raw_cell };
                     sel.push(format!("json_group_object({key_agg}, {val_agg} ORDER BY {key_agg}) AS \"{label}\""));
@@ -1031,12 +1092,12 @@ mod tests {
             "rel member(group_col: text, name: text).\n",
             "? member(group_col, json_group_array(names)).\n"));
         let (sql, headers) = lower_query(&q, &rels).unwrap();
-        assert!(sql.contains("json_group_array((SELECT content FROM _strings")
-            && sql.contains("ORDER BY (SELECT content FROM _strings")
+        assert!(sql.contains("json_group_array(COALESCE((SELECT content FROM _strings")
+            && sql.contains("ORDER BY COALESCE((SELECT content FROM _strings")
             && sql.contains("AS \"names\""),
             "array agg decodes and orders inside the call, labeled by the arg var: {sql}");
         assert!(sql.contains("GROUP BY \"group_col\""), "group key present: {sql}");
-        assert!(sql.contains("ORDER BY (SELECT content FROM _strings"), "deterministic decoded order by group: {sql}");
+        assert!(sql.contains("ORDER BY COALESCE((SELECT content FROM _strings"), "deterministic decoded order by group: {sql}");
         assert!(!sql.contains("DISTINCT"), "no DISTINCT under GROUP BY: {sql}");
         assert_eq!(headers, vec!["group_col".to_string(), "names".to_string()]);
     }
@@ -1092,8 +1153,8 @@ mod tests {
             "rel line(order_id: text, item: text, price: int).\n",
             "? line(order_id, json_group_object(items, prices), _).\n"));
         let (sql, headers) = lower_query(&q, &rels).unwrap();
-        assert!(sql.contains("json_group_object((SELECT content FROM _strings")
-            && sql.contains("\"price\" ORDER BY (SELECT content FROM _strings")
+        assert!(sql.contains("json_group_object(COALESCE((SELECT content FROM _strings")
+            && sql.contains("\"price\" ORDER BY COALESCE((SELECT content FROM _strings")
             && sql.contains("AS \"items\""),
             "key = col i, value = col i+1, ordered by decoded key: {sql}");
         assert!(sql.contains("GROUP BY \"order_id\""), "{sql}");
@@ -1176,7 +1237,10 @@ mod tests {
         let sql = lower_rule(&rule, &rels).unwrap();
         // text columns are interned: json (a text consumer) must see the decoded
         // value, and the interned head column re-interns the assembled json.
-        let name_txt = "(SELECT content FROM _strings WHERE id = r0.\"name\")";
+        // `sym_decode` now COALESCEs the `_strings` lookup with a df_node
+        // coordinate fallback; build the expected text from it so the two stay in
+        // sync.
+        let name_txt = sym_decode("r0.\"name\"");
         assert!(sql.contains(&format!("sprf_sym_intern(json_group_array({name_txt} ORDER BY {name_txt}))")),
             "array agg decodes input, orders inside the call, re-interns: {sql}");
         assert!(sql.contains("GROUP BY r0.\"g\""), "group key present: {sql}");
@@ -1186,8 +1250,8 @@ mod tests {
             "rel obj(g: text, payload: text).\n",
             "obj(g, json_group_object(k, v)) <- src(g, k, v).\n"));
         let sql = lower_rule(&rule, &rels).unwrap();
-        let k_txt = "(SELECT content FROM _strings WHERE id = r0.\"k\")";
-        let v_txt = "(SELECT content FROM _strings WHERE id = r0.\"v\")";
+        let k_txt = sym_decode("r0.\"k\"");
+        let v_txt = sym_decode("r0.\"v\"");
         assert!(sql.contains(&format!("sprf_sym_intern(json_group_object({k_txt}, {v_txt} ORDER BY {k_txt}))")),
             "object agg decodes key + value, orders by key, re-interns: {sql}");
     }

@@ -47,7 +47,7 @@ flow_reach(a, b) <- closure(flow_edge).
 # until the lift emits a parameter position.
 rel sink_callee(callee_sym: text).
 sink_callee(callee_q) <-
-    df_node(_, "call_res", _, caller_bare, _, _),
+    df_node(_, "call_res", _, caller_bare, _, _, _),
     call_edge_bare(caller_bare, _, _, callee_q).
 
 rel flow_param_type(callee_sym: text, pos: int, ty: text).
@@ -64,7 +64,7 @@ rel flow_node_type(node: text, callee_sym: text, ty: text).
 flow_node_type(param, callee_q, ty) <-
     sink_callee(callee_q),
     call_edge_bare(_, callee_bare, _, callee_q),
-    df_node(param, "param", _, callee_bare, _, _),
+    df_node(param, "param", _, callee_bare, _, _, _),
     df_param(param, pos),
     type_sig(callee_q, "param", pos, ty).
 
