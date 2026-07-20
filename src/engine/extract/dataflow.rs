@@ -97,14 +97,11 @@ impl Engine {
         let mut sink = spine::SymSink::new();
         let mut sym = |s: &str| Value::Int(sink.sym(s).cell());
         let mut node_rows: Vec<Vec<Value>> = Vec::new();
-        let mut node_repo_rows: Vec<Vec<Value>> = Vec::new();
         let mut edge_rows: Vec<Vec<Value>> = Vec::new();
         let mut loop_rows: Vec<Vec<Value>> = Vec::new();
         let mut alloc_rows: Vec<Vec<Value>> = Vec::new();
         let mut nest_rows: Vec<Vec<Value>> = Vec::new();
         let mut param_rows: Vec<Vec<Value>> = Vec::new();
-        let mut arg_rows: Vec<Vec<Value>> = Vec::new();
-        let mut field_rows: Vec<Vec<Value>> = Vec::new();
         let mut lit_rows: Vec<Vec<Value>> = Vec::new();
         // Rev-carrying twins (D5.4). `rev` is a plain trailing column and every
         // id-valued column carries the SAME raw id `df_node`/`df_arg`/... use
@@ -119,11 +116,8 @@ impl Engine {
         let mut field_rev_rows: Vec<Vec<Value>> = Vec::new();
         let mut lit_rev_rows: Vec<Vec<Value>> = Vec::new();
         let mut seen_param: HashSet<&str> = HashSet::new();
-        let mut seen_arg: HashSet<(&str, i64, &str)> = HashSet::new();
-        let mut seen_field: HashSet<(&str, &str, &str)> = HashSet::new();
         let mut seen_lit: HashSet<&str> = HashSet::new();
         let mut seen_node: HashSet<&str> = HashSet::new();
-        let mut seen_node_repo: HashSet<(&str, &str)> = HashSet::new();
         let mut seen_edge: HashSet<(&str, &str)> = HashSet::new();
         let mut seen_loop: HashSet<(&str, u32)> = HashSet::new();
         let mut seen_nest: HashSet<(&str, &str)> = HashSet::new();
@@ -159,16 +153,12 @@ impl Engine {
                 // each node to EVERY repo it appears in so a downstream join
                 // (member_node field/fill in flow-panel.dl) can scope a fill to
                 // its own repo instead of fanning across every repo that shares
-                // the constructed type's NAME. Emitted per (id, repo) OUTSIDE the
-                // node dedup: two repos with a byte-identical file share one
-                // df_node row but get TWO df_node_repo rows, so the join mints the
-                // field for BOTH (they both really have it). A fill unique to one
-                // repo (a working-tree-only edit) yields a single (id, repo) row,
-                // so it stays a per-repo fact — the property the worktree-pair diff
-                // needs.
-                if seen_node_repo.insert((n.id.as_str(), repo.as_str())) {
-                    node_repo_rows.push(vec![sym(&n.id), t(repo)]);
-                }
+                // the constructed type's NAME. Emitted per (id, repo, rev) into
+                // the `_rev` twin only; legacy `df_node_repo` is now a VIEW over
+                // it (`SELECT DISTINCT id, repo FROM rel_df_node_repo_rev`,
+                // src/engine/decls.rs). Two repos with a byte-identical file at a
+                // rev share one df_node row but get TWO df_node_repo(_rev) rows,
+                // so the join mints the field for BOTH (they both really have it).
                 if seen_node_repo_rev.insert((n.id.as_str(), repo.as_str(), rev.as_str())) {
                     node_repo_rev_rows.push(vec![sym(&n.id), t(repo), t(rev)]);
                 }
@@ -209,22 +199,20 @@ impl Engine {
                 }
             }
             for (call, pos, arg) in &f.args {
-                if seen_arg.insert((call.as_str(), *pos, arg.as_str())) {
-                    arg_rows.push(vec![sym(call), Value::Int(*pos), sym(arg)]);
-                }
-                // call/arg carry the raw df_node ids (matching df_node_rev.id);
-                // rev is its own trailing column, part of the row's dedup key.
+                // legacy df_arg is now a VIEW over rel_df_arg_rev
+                // (`SELECT DISTINCT call, pos, arg`, src/engine/decls.rs); only
+                // the `_rev` twin is written. call/arg carry the raw df_node ids
+                // (matching df_node_rev.id); rev is its own trailing dedup column.
                 if seen_arg_rev.insert((call.as_str(), *pos, arg.as_str(), rev.as_str())) {
                     arg_rev_rows.push(vec![sym(call), Value::Int(*pos), sym(arg), t(rev)]);
                 }
             }
             for (id, field, value) in &f.fields {
-                if seen_field.insert((id.as_str(), field.as_str(), value.as_str())) {
-                    field_rows.push(vec![sym(id), t(field), sym(value)]);
-                }
-                // id/value carry the raw df_node ids (matching df_node_rev.id);
-                // value is always a value df_node id (never a literal); field
-                // is a plain string, never interned as a node id.
+                // legacy df_field is now a VIEW over rel_df_field_rev
+                // (`SELECT DISTINCT id, field, value`, src/engine/decls.rs); only
+                // the `_rev` twin is written. id/value carry the raw df_node ids
+                // (matching df_node_rev.id); value is always a value df_node id
+                // (never a literal); field is a plain string, never interned.
                 if seen_field_rev.insert((
                     id.as_str(),
                     field.as_str(),
@@ -256,14 +244,11 @@ impl Engine {
 
         Ok(DataflowRowSet {
             node: node_rows,
-            node_repo: node_repo_rows,
             edge: edge_rows,
             loop_over: loop_rows,
             alloc: alloc_rows,
             nest: nest_rows,
             param: param_rows,
-            arg: arg_rows,
-            field: field_rows,
             lit: lit_rows,
             node_rev: node_rev_rows,
             node_repo_rev: node_repo_rev_rows,
@@ -286,7 +271,9 @@ impl Engine {
             &["id", "kind", "var", "fn", "file", "line"],
             &rows.node,
         )?;
-        rows_changed |= self.refresh_rel("df_node_repo", &["id", "repo"], &rows.node_repo)?;
+        // df_node_repo is VIEW-backed (VIEW over rel_df_node_repo_rev, declared
+        // in src/engine/decls.rs); no base-table write. The `_rev` twin's
+        // refresh below still flips `rows_changed`, so dependents re-derive.
         rows_changed |= self.refresh_rel("df_edge", &["from", "to"], &rows.edge)?;
         rows_changed |= self.refresh_rel(
             "loop_over",
@@ -300,8 +287,9 @@ impl Engine {
             &rows.nest,
         )?;
         rows_changed |= self.refresh_rel("df_param", &["id", "pos"], &rows.param)?;
-        rows_changed |= self.refresh_rel("df_arg", &["call", "pos", "arg"], &rows.arg)?;
-        rows_changed |= self.refresh_rel("df_field", &["id", "field", "value"], &rows.field)?;
+        // df_arg and df_field are VIEW-backed (VIEWs over their `_rev` twins,
+        // declared in src/engine/decls.rs); no base-table write. Their twin
+        // refreshes below still flip `rows_changed`.
         rows_changed |= self.refresh_rel("df_lit", &["id", "text", "kind"], &rows.lit)?;
         // Rev-carrying twins: same delete scope as type/call — wipe every corpus
         // rev and reinsert the whole-corpus rows (the emit above is whole-corpus;
@@ -351,7 +339,7 @@ impl Engine {
     /// content-addressed id shared across two slices.
     fn append_dataflow_rows(&self, rows: &DataflowRowSet) -> Result<()> {
         self.append_rel("df_node", &["id", "kind", "var", "fn", "file", "line"], &rows.node)?;
-        self.append_rel("df_node_repo", &["id", "repo"], &rows.node_repo)?;
+        // df_node_repo is VIEW-backed (see refresh_dataflow_rows); no append.
         self.append_rel("df_edge", &["from", "to"], &rows.edge)?;
         self.append_rel(
             "loop_over",
@@ -361,8 +349,7 @@ impl Engine {
         self.append_rel("allocates", &["fn"], &rows.alloc)?;
         self.append_rel("nest", &["call_id", "loop_id", "depth", "collection"], &rows.nest)?;
         self.append_rel("df_param", &["id", "pos"], &rows.param)?;
-        self.append_rel("df_arg", &["call", "pos", "arg"], &rows.arg)?;
-        self.append_rel("df_field", &["id", "field", "value"], &rows.field)?;
+        // df_arg and df_field are VIEW-backed (see refresh_dataflow_rows); no append.
         self.append_rel("df_lit", &["id", "text", "kind"], &rows.lit)?;
         self.append_rel(
             "df_node_rev",
@@ -381,14 +368,14 @@ impl Engine {
 /// so the wholesale and cold-chunk write paths share the parse+emit exactly.
 struct DataflowRowSet {
     node: Vec<Vec<Value>>,
-    node_repo: Vec<Vec<Value>>,
+    // df_node_repo, df_arg, df_field are VIEW-backed (VIEWs over their `_rev`
+    // twins, src/engine/decls.rs), so their non-rev rows are never collected or
+    // written; only the `_rev` fields below feed them.
     edge: Vec<Vec<Value>>,
     loop_over: Vec<Vec<Value>>,
     alloc: Vec<Vec<Value>>,
     nest: Vec<Vec<Value>>,
     param: Vec<Vec<Value>>,
-    arg: Vec<Vec<Value>>,
-    field: Vec<Vec<Value>>,
     lit: Vec<Vec<Value>>,
     node_rev: Vec<Vec<Value>>,
     node_repo_rev: Vec<Vec<Value>>,

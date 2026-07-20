@@ -586,33 +586,19 @@ impl Engine {
         Ok(())
     }
 
+    /// Rebuild the rev-less legacy `module_edge` from its `_rev` twin. The other
+    /// three legacy module rels — `module_unresolved`, `module_binding_resolved`,
+    /// `module_binding` — are now VIEW-backed (a `SELECT DISTINCT <non-rev cols>
+    /// FROM rel_<name>_rev`, declared in src/engine/decls.rs), so they need no
+    /// rebuild write here; the view reads live from the twin. `module_edge` stays
+    /// a base table (reader-blocked: editors/vscode-dl/media/flow-panel.html reads
+    /// `rel_module_edge` by name with `type='table'`).
     fn rebuild_legacy_module_rels(&self) -> Result<()> {
         let edge = tbl("module_edge");
         let edge_rev = tbl("module_edge_rev");
-        let unresolved = tbl("module_unresolved");
-        let unresolved_rev = tbl("module_unresolved_rev");
         self.db.exec(&format!("DELETE FROM {edge}"))?;
         self.db.exec(&format!(
             "INSERT OR IGNORE INTO {edge} (\"src\", \"dst\") SELECT \"src\", \"dst\" FROM {edge_rev}"
-        ))?;
-        self.db.exec(&format!("DELETE FROM {unresolved}"))?;
-        self.db.exec(&format!(
-            "INSERT OR IGNORE INTO {unresolved} (\"file\", \"specifier\", \"reason\", \"line\") \
-             SELECT \"file\", \"specifier\", \"reason\", \"line\" FROM {unresolved_rev}"
-        ))?;
-        let binding = tbl("module_binding_resolved");
-        let binding_rev = tbl("module_binding_resolved_rev");
-        self.db.exec(&format!("DELETE FROM {binding}"))?;
-        self.db.exec(&format!(
-            "INSERT OR IGNORE INTO {binding} (\"file\", \"local\", \"source\", \"dst\") \
-             SELECT \"file\", \"local\", \"source\", \"dst\" FROM {binding_rev}"
-        ))?;
-        let module_binding = tbl("module_binding");
-        let module_binding_rev = tbl("module_binding_rev");
-        self.db.exec(&format!("DELETE FROM {module_binding}"))?;
-        self.db.exec(&format!(
-            "INSERT OR IGNORE INTO {module_binding} (\"file\", \"local_name\", \"source_module\", \"imported_name\", \"kind\") \
-             SELECT \"file\", \"local_name\", \"source_module\", \"imported_name\", \"kind\" FROM {module_binding_rev}"
         ))?;
         Ok(())
     }
@@ -1306,13 +1292,12 @@ impl Engine {
     /// query target for the single-rev (WORK) daemon. A multi-rev db's legacy
     /// rel is the rev-deduped superimposition (plan open-question 3).
     fn rebuild_legacy_type_rels(&self) -> Result<()> {
-        let edge = tbl("type_edge");
-        let edge_rev = tbl("type_edge_rev");
-        self.db.exec(&format!("DELETE FROM {edge}"))?;
-        self.db.exec(&format!(
-            "INSERT OR IGNORE INTO {edge} (\"from\", \"to\", \"kind\", \"repo\") \
-             SELECT \"from\", \"to\", \"kind\", \"repo\" FROM {edge_rev}"
-        ))?;
+        // `type_edge` and `const_value` are now VIEW-backed (a `SELECT DISTINCT
+        // <non-rev cols> FROM rel_<name>_rev`, declared in src/engine/decls.rs),
+        // so they need no rebuild write here; the view reads live from the twin.
+        // `type_entity` and `type_link` stay base tables (reader-blocked:
+        // editors/vscode-dl/media/flow-panel.html reads rel_type_entity /
+        // rel_type_link by name with `type='table'`).
         let entity = tbl("type_entity");
         let entity_rev = tbl("type_entity_rev");
         self.db.exec(&format!("DELETE FROM {entity}"))?;
@@ -1326,13 +1311,6 @@ impl Engine {
         self.db.exec(&format!(
             "INSERT OR IGNORE INTO {link} (\"src\", \"dst\", \"kind\") \
              SELECT \"src\", \"dst\", \"kind\" FROM {link_rev}"
-        ))?;
-        let const_value = tbl("const_value");
-        let const_value_rev = tbl("const_value_rev");
-        self.db.exec(&format!("DELETE FROM {const_value}"))?;
-        self.db.exec(&format!(
-            "INSERT OR IGNORE INTO {const_value} (\"repo\", \"sym\", \"field\", \"text\", \"kind\", \"file\", \"line\") \
-             SELECT \"repo\", \"sym\", \"field\", \"text\", \"kind\", \"file\", \"line\" FROM {const_value_rev}"
         ))?;
         Ok(())
     }
