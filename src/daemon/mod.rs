@@ -845,7 +845,17 @@ mod tests {
     #[test]
     fn daemon_tracing_init_is_idempotent() {
         init_daemon_tracing();
+        assert!(
+            tracing::dispatcher::has_been_set(),
+            "init_daemon_tracing must install a global subscriber"
+        );
+        // The second call must not panic (try_init swallows the "already set"
+        // error) AND must leave the subscriber installed, not clear it.
         init_daemon_tracing();
+        assert!(
+            tracing::dispatcher::has_been_set(),
+            "a second init_daemon_tracing call must stay idempotent, not unset the subscriber"
+        );
     }
 
     #[test]

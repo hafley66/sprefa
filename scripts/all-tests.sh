@@ -41,6 +41,7 @@ tier2_it=(
   node2vec::node2vec_w2_cache_hit_on_revisited_graph
   node2vec::node2vec_w2_cache_is_bounded
   retraction_props::empty_changed_set_is_a_fixpoint_high_volume
+  retraction_props::equivalence_and_memo_hold_at_every_step_high_volume
 )
 for t in "${tier2_it[@]}"; do
   echo "[all-tests] serial: $t"
@@ -68,21 +69,19 @@ cat <<'EOF'
     daemon::linux_inotify_watch_count_tracks_unignored
         ^ NOT a flake: this test IS the spec for Linux per-directory watch
           pruning, which has not landed. It fails by design until it does.
-  GREEN-BY-SKIP, do not trust its PASS:
+  needs a pre-built SCIP index + minutes of wall time in debug mode:
     propose::tests::symbol_ranges_subset_of_ast_on_engine_rs
-        ^ needs <repo>/../index.scip, which is not in the tree. On a missing
-          index it hits `Err(_) => { warn; return; }` and reports PASS in
-          0.00s having asserted NOTHING (src/propose/mod.rs:868). It was in
-          tier 2 briefly and counted as real coverage; it is not. Generate the
-          index first, or the run is theater:
-            rust-analyzer scip . -o ../index.scip
+        ^ formerly GREEN-BY-SKIP (needed `<repo>/../index.scip`, a path that
+          stopped existing at the v5 lift, and a missing index hit
+          `Err(_) => { warn; return; }`, reporting PASS in 0.00s having
+          asserted NOTHING). The path is fixed (`<repo>/index.scip`) and the
+          missing-index arm now panics with the build command instead of
+          silently returning, so a run without the index FAILS LOUDLY rather
+          than reporting a false green. Build the index first:
+            rust-analyzer scip . -o index.scip
             cargo test --release --lib symbol_ranges_subset_of_ast_on_engine_rs -- --ignored
   needs an env-pinned production corpus:
     analysis_bundle_ab::production_corpus_full_warm_incremental  (DL_AB_ROOT, DL_AB_DB)
-  KNOWN BUG, not an exclusion we are comfortable with:
-    retraction_props::equivalence_and_memo_hold_at_every_step_high_volume
-        ^ blocked on a router empty-input footprint bug, reproducing seed
-          cc 0d80eca002b18e65b3098c2eb6b2308ccd1b0ba5edb79c527e349b5751592c9e
   measurement harnesses, not assertions (run when you want the numbers):
     family_scaling_probe, cst_node_perf, cold_stage::measure_*
       just perf-reactivity-build && just perf-reactivity
