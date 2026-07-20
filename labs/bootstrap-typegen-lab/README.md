@@ -1,68 +1,46 @@
-# Bootstrap typegen lab
+# Typed template bootstrap lab
 
-This is a standalone single-binary experiment. It does not import `sprefa` and
-does not invoke Soufflé.
+Standalone Rust binary. `Cargo.toml` has no path dependencies, Soufflé
+dependencies, or network-required dependencies.
 
-The Rust compiler binary reads `schema.dl`, parses its own type vocabulary and
-the application API vocabulary, then emits:
+The checked-in `schema.dl` exercises:
 
-```text
-target/bootstrap-generated/models.rs
-target/bootstrap-generated/server.rs
-target/bootstrap-generated/client.mjs
-target/bootstrap-generated/client-smoke.mjs
-target/bootstrap-generated/stage1.rs
-```
+- aliases and literal unions;
+- records, `Array`, `Map`, and `Optional` types;
+- brace slots `{name: Type}` and colon slots `:name`, with source spelling,
+  names, positions, spans, and normalized slot types retained;
+- HTTP and channel consumer declarations;
+- typed bind, match, destructure, composition, slot enumeration, and record
+  path enumeration.
 
-The schema declares the compiler-facing types first:
-
-```text
-type TypeDecl { ... }
-type Field { ... }
-type Endpoint { ... }
-```
-
-It then declares `User` and a `GET /users/{id}` endpoint. The same internal
-type graph drives all three outputs. The generated server uses only
-`std::net::TcpListener`, so the generated API has no runtime dependency.
-
-Run the compiler:
+Run the lab from the repository root:
 
 ```sh
-cargo run --manifest-path labs/bootstrap-typegen-lab/Cargo.toml
+cargo test --manifest-path labs/bootstrap-typegen-lab/Cargo.toml
+cargo run --manifest-path labs/bootstrap-typegen-lab/Cargo.toml -- check labs/bootstrap-typegen-lab/schema.dl
+cargo run --manifest-path labs/bootstrap-typegen-lab/Cargo.toml -- generate labs/bootstrap-typegen-lab/schema.dl
 ```
 
-Compile and run the generated server:
+`generate` writes `target/bootstrap-generated/models.rs`, `server.rs`,
+`models.mjs`, `client.mjs`, `client-smoke.mjs`, and `facts.txt`. The Rust
+server uses the normalized pattern table for route matching. The JavaScript
+client uses the same normalized pattern for URL construction. The generated
+model Rust source is standalone and can be checked with `rustc`.
 
 ```sh
 rustc labs/bootstrap-typegen-lab/target/bootstrap-generated/server.rs \
   -o labs/bootstrap-typegen-lab/target/bootstrap-generated/server
-labs/bootstrap-typegen-lab/target/bootstrap-generated/server
+node --check labs/bootstrap-typegen-lab/target/bootstrap-generated/client.mjs
 ```
 
-Then request the generated endpoint:
+`bootstrap` emits the stage-zero semantic model Rust types and
+`bootstrap-boundary.txt`. Stage-one self-regeneration stops at the exact
+parser/emitter boundary: parsing, semantic lowering, and emitters remain
+trusted Rust modules. A copied parser or emitter body would not constitute
+self-regeneration, so no fake `stage1.rs` artifact is emitted.
 
-```sh
-curl http://127.0.0.1:4000/users/abc
-```
-
-The generated `stage1.rs` contains the generated `TypeDecl`, `Field`, and
-`Endpoint` structs and a parser that uses those generated structs. Compile and
-run it:
-
-```sh
-rustc labs/bootstrap-typegen-lab/target/bootstrap-generated/stage1.rs \
-  -o labs/bootstrap-typegen-lab/target/bootstrap-generated/stage1
-labs/bootstrap-typegen-lab/target/bootstrap-generated/stage1 \
-  labs/bootstrap-typegen-lab/schema.dl
-```
-
-The generated `client-smoke.mjs` imports the generated client and calls the
-generated endpoint. With the generated server running, execute:
-
-```sh
-node labs/bootstrap-typegen-lab/target/bootstrap-generated/client-smoke.mjs
-```
-
-This is a stage-1 bootstrap: the stage-0 compiler still contains the parser
-template, while the stage-1 compiler parses using the generated model types.
+The fixed Rust fact vocabulary records type kinds, slots, consumers, and typed
+paths. Rule evaluation is embedded in the binary and performs one deterministic
+fact saturation pass. User-authored rules, recursive bootstrap generation,
+HTTP transport behavior, authentication, retries, source maps, LSP support,
+and production package integration remain outside this lab.
