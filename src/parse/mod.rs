@@ -1080,15 +1080,17 @@ mod tests {
     #[test]
     fn match_named_outputs_and_wild() {
         // Named end_col only: id/col default to `_` (None).
+        let mut found = false;
         for b in body_of("f(P,L,E) <- scan(\"**/*.rs\", P), match(P, \"WORK\", /x/, L, end_col: E).") {
             if let BodyItem::Match { id, col, end_col, .. } = b {
                 assert!(id.is_none());
                 assert!(col.is_none());
                 assert!(matches!(end_col, Some(t) if var_is(&t, "E")));
-                return;
+                found = true;
+                break;
             }
         }
-        panic!("no match body item");
+        assert!(found, "no match body item");
     }
 
     #[test]
@@ -1100,14 +1102,16 @@ mod tests {
     #[test]
     fn ast_named_id_output() {
         // Named id, end omitted.
+        let mut found = false;
         for b in body_of("f(P,L,I) <- scan(\"**/*.rs\", P), ast(P, \"WORK\", :rust, \"(x) @c\", L, id: I).") {
             if let BodyItem::Ast { end, id, .. } = b {
                 assert!(end.is_none());
                 assert!(matches!(id, Some(t) if var_is(&t, "I")));
-                return;
+                found = true;
+                break;
             }
         }
-        panic!("no ast body item");
+        assert!(found, "no ast body item");
     }
 
     /// A body bind (`callee = replace(..)`) and a bare var-var equality parse

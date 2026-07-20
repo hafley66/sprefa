@@ -126,10 +126,17 @@ silent_skip_finding(f, l) <- test_fn(f, s, e), bare_return_line(f, l), s <= l, l
 
 # --- arm 3: an #[ignore] parking a known defect -------------------------------
 # ENV-GATED is legitimate (network, rust-analyzer, a specific OS, a corpus).
-# Parking an unfixed BUG behind #[ignore] is how a real defect goes quiet: see
-# `retraction_props::equivalence_and_memo_hold_at_every_step_high_volume`,
-# ignored as "blocked on router empty-input footprint bug" with the reproducing
-# seed sitting inside the attribute string.
+# Parking an unfixed BUG/GAP behind #[ignore] is how a real defect goes quiet:
+# see `daemon::linux_inotify_watch_count_tracks_unignored`, ignored as "fails
+# until Linux per-directory watch pruning lands; this test is its spec" — the
+# feature it specs has not landed, so the #[ignore] names the real gap instead
+# of a tool the environment lacks.
+#
+# The router empty-input footprint bug this arm originally found
+# (`retraction_props::equivalence_and_memo_hold_at_every_step_high_volume`) was
+# fixed by 2acf0c71; that test's #[ignore] reason is now "high-volume T4
+# property suite: 200 cases" (a cost gate, not a bug), so it no longer matches
+# this arm and its `ignore_bug_baseline` row was removed.
 # THE ONE `match_line` IN THIS FILE, and it marks a real engine gap rather than
 # laziness. The predicate is on the ignore reason's TEXT CONTENT. match_ast
 # matches the shape `#[ignore = $REASON]` and yields its line, but
@@ -138,11 +145,15 @@ silent_skip_finding(f, l) <- test_fn(f, s, e), bare_return_line(f, l), s <= l, l
 # regex-filtered downstream. Until match_ast can export a metavar's text, a
 # content predicate over a matched string has no structural spelling. THIS is
 # the shape of the remaining legitimate `match_line` use.
+# `\bbug\b`, not bare `bug`: the substring version matched "debug" (e.g.
+# src/propose/mod.rs's `#[ignore = "slow: SCIP load ... in debug mode
+# (~80s)..."]`, a pure cost gate with no defect in it) and false-flagged a
+# clean ignore reason as parking a bug.
 rel ignore_hiding_bug(file: file, line: int).
 ignore_hiding_bug(f, l) <- scan("WORK", "tests/**/*.rs", f, rev),
-    match_line(f, rev, /#\[ignore[^\]]*(bug|blocked|broken|fails until|unfixed|FIXME|TODO)/, l).
+    match_line(f, rev, /#\[ignore[^\]]*(\bbug\b|blocked|broken|fails until|unfixed|FIXME|TODO)/, l).
 ignore_hiding_bug(f, l) <- scan("WORK", "src/**/*.rs", f, rev),
-    match_line(f, rev, /#\[ignore[^\]]*(bug|blocked|broken|fails until|unfixed|FIXME|TODO)/, l).
+    match_line(f, rev, /#\[ignore[^\]]*(\bbug\b|blocked|broken|fails until|unfixed|FIXME|TODO)/, l).
 
 # ── Ratchet baselines (mirrors no-new-eprintln.dl and composite-key-string.dl) ─
 # Measured 2026-07-20 on WORK, the day this rail was written: 50 findings over
@@ -164,41 +175,51 @@ ignore_hiding_bug(f, l) <- scan("WORK", "src/**/*.rs", f, rev),
 # reports them as excluded instead. Landed 2026-07-20 for every tests/it/ site
 # (16 files, 35 sites) plus the 2 tests/it/ assert-nothing sites
 # (call_golden.rs, family_scaling_probe.rs); the src/** sites and
-# tests/it/daemon.rs are out of scope for that pass and remain grandfathered
-# below. Tracked in plans/2026-07-20-test-audit.md.
+# tests/it/daemon.rs were out of scope for that pass and stayed grandfathered.
+# Tracked in plans/2026-07-20-test-audit.md.
+#
+# 2026-07-20 PM: drove the src/** sites and the stale retraction_props.rs
+# ignore_bug row to zero (fixed the test in each case rather than gutting an
+# assertion): src/parse/mod.rs's two `return;`s replaced with a found-flag +
+# `break` + trailing `assert!`; src/propose/mod.rs's SCIP-load-miss `return;`
+# now panics with the fix command (the test stays #[ignore]d for cost, but a
+# deliberate --ignored run without the index fails loudly instead of reporting
+# a false PASS); src/daemon/mod.rs's and src/trace.rs's "must not panic" tests
+# now assert observable state (`tracing::dispatcher::has_been_set()` /
+# `CHROME_GUARD` slot) instead of asserting nothing. Remaining rows are
+# grandfathered, not fixed, for two DIFFERENT reasons:
+#   - tests/it/daemon.rs silent_skip (1 row, line 286): the `bare_return_line`
+#     match_ast pattern "return;" also matches "return true;" (verified: an
+#     ast-grep probe over a 2-statement fn matched both), so this is a rail
+#     false positive on `wait_up`'s polling-loop `return true;`, not an actual
+#     skip — the real assertion runs after the loop. Not touched here: fixing
+#     the pattern is a repo-wide match_ast change outside this pass's scope.
+#   - tests/it/daemon.rs ignore_bug (1 row, line 1038): genuinely names an
+#     unbuilt feature (`linux_inotify_watch_count_tracks_unignored` is its own
+#     spec for Linux per-directory watch pruning, which has not landed).
+#   - the four remaining asserts_nothing rows (src/engine/**, src/graph/**)
+#     sit outside this pass's file ownership.
 
 rel silent_skip_count(file: file, hits: int).
 silent_skip_count(f, count(line)) <- silent_skip_finding(f, line).
 
 rel silent_skip_baseline(file: file, allowed: int).
-silent_skip_baseline("src/parse/mod.rs", 2).
-silent_skip_baseline("src/propose/mod.rs", 1).
 silent_skip_baseline("tests/it/daemon.rs", 1).
 
 rel asserts_nothing_count(file: file, hits: int).
 asserts_nothing_count(f, count(line)) <- asserts_nothing_finding(f, line).
 
 rel asserts_nothing_baseline(file: file, allowed: int).
-asserts_nothing_baseline("src/daemon/mod.rs", 1).
 asserts_nothing_baseline("src/engine/ownership.rs", 1).
 asserts_nothing_baseline("src/engine/pipeline/stage.rs", 1).
 asserts_nothing_baseline("src/graph/typegraph/go.rs", 1).
 asserts_nothing_baseline("src/graph/typegraph/ts/flow.rs", 1).
-asserts_nothing_baseline("src/trace.rs", 1).
 
 rel ignore_bug_count(file: file, hits: int).
 ignore_bug_count(f, count(line)) <- ignore_hiding_bug(f, line).
 
 rel ignore_bug_baseline(file: file, allowed: int).
-ignore_bug_baseline("src/propose/mod.rs", 1).
 ignore_bug_baseline("tests/it/daemon.rs", 1).
-# The router stale-rel bug: an empty call-family input rel on the tick that
-# first populates the router memo leaves that rel out of the memo footprint, so
-# later inserts never rerun the rule and the public rel stays stale. The
-# reproducing seed sits in the #[ignore] string and in
-# tests/proptest-regressions/retraction_props.txt. This is the one baseline row
-# that parks a KNOWN CORRECTNESS DEFECT rather than a missing tool.
-ignore_bug_baseline("tests/it/retraction_props.rs", 1).
 
 # --- diagnostics: over baseline, or no baseline at all ------------------------
 diag(path: f, line: 1, severity: "error", code: "test-silent-skip-exceeded",

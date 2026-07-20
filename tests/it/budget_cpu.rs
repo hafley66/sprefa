@@ -117,10 +117,23 @@ fn load_per_core() -> f64 {
 #[test]
 #[ignore = "load-sensitive; passes in isolation, flakes under full-suite contention"]
 fn governor_toggle_caps_cpu_concurrency() {
-    let load = load_per_core();
-    assert!(load <= 0.5,
-        "machine load {load:.2}/core too high for this timing receipt — needs a quiet machine \
-         (see this test's #[ignore] reason)");
+    // The quiet-machine precondition is opt-in (SPREFA_BUDGET_CPU_STRICT_LOAD),
+    // not a default hard gate: reading ambient `vm.loadavg` and asserting on it
+    // unconditionally REDs tier 2 nondeterministically on any machine busy with
+    // unrelated work, before the real signal below (the governor actually caps
+    // cpu/wall concurrency) ever runs. The bounded assertions further down —
+    // `ratio_off > 1.05` (uncapped run really was parallel) and
+    // `ratio_capped < ratio_off * 0.85` / `ratio_capped < 1.25` (the cap held)
+    // — are measured back-to-back on the same machine state and are the actual
+    // budget-works receipt; they stay hard assertions always. Set
+    // SPREFA_BUDGET_CPU_STRICT_LOAD=1 to also require a quiet machine, e.g. when
+    // deliberately capturing a clean timing receipt by hand.
+    if std::env::var_os("SPREFA_BUDGET_CPU_STRICT_LOAD").is_some() {
+        let load = load_per_core();
+        assert!(load <= 0.5,
+            "machine load {load:.2}/core too high for this timing receipt — needs a quiet machine \
+             (unset SPREFA_BUDGET_CPU_STRICT_LOAD to run without this precondition)");
+    }
     let dir = sandbox("toggle");
     let state = dir.join("state");
     fs::create_dir_all(&state).unwrap();

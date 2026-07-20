@@ -304,6 +304,11 @@ mod tests {
     /// paths, some of which never activated tracing at all) depends on.
     #[test]
     fn chrome_trace_finalize_and_flush_are_no_ops_without_a_layer() {
+        assert!(
+            chrome_guard_slot().lock().unwrap().is_none(),
+            "no DL_TRACE_CHROME layer is installed by any other lib test, so the \
+             guard slot should start empty"
+        );
         // Idempotent: calling twice (as several CLI exit sites can, e.g. a
         // nested `daemon serve` finalizing in `shutdown_cleanup` and then
         // `cli::run`'s own exit-site call finding it already taken) must not
@@ -311,5 +316,9 @@ mod tests {
         finish_chrome_trace();
         finish_chrome_trace();
         flush_chrome_trace();
+        assert!(
+            chrome_guard_slot().lock().unwrap().is_none(),
+            "finish/flush without an installed layer must leave the guard slot empty"
+        );
     }
 }

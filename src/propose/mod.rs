@@ -877,8 +877,15 @@ mod tests {
                     .collect();
             }
             Err(_) => {
-                tracing::warn!("[scip] no index; skipping symbol-⊆-ast property test");
-                return;
+                // This test is already behind #[ignore] for cost (~80s in debug),
+                // so anyone reaching it ran it deliberately with --ignored or
+                // --release. A missing index used to report PASS having tested
+                // nothing (the incident this test's doc comment records); fail
+                // loudly instead and name the fix, rather than silently skip.
+                panic!(
+                    "[scip] no index at {idx:?} — build it first: \
+                     `rust-analyzer scip . -o {idx:?}` (or `just oracle-index`)"
+                );
             }
         }
         let sym_p = symbol_shape_proposals(&src, &spans);
