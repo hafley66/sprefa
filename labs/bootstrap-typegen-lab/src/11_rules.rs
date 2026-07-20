@@ -1,6 +1,7 @@
 use crate::eval::enumerate_paths;
 use crate::facts::{Fact, FactStore};
 use crate::store::{Declaration, Store};
+use crate::types::Type;
 
 pub fn saturate(store: &Store, facts: &mut FactStore) -> usize {
     let mut inserted = 0;
@@ -13,6 +14,15 @@ pub fn saturate(store: &Store, facts: &mut FactStore) -> usize {
         }
     }
     for declaration in store.declarations.values() {
+        if let Declaration::Type(root) = declaration {
+            if let Type::Record(record) = &store.types[root.0 as usize] {
+                for field in &record.fields {
+                    if facts.insert(Fact::Field(*root, field.name, field.ty)) {
+                        inserted += 1;
+                    }
+                }
+            }
+        }
         if let Declaration::Pattern(pattern) = declaration {
             for slot in crate::eval::enumerate_slots(store, *pattern) {
                 if facts.insert(Fact::SlotType(*pattern, slot.position, slot.ty)) {

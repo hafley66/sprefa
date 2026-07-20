@@ -12,7 +12,7 @@ type User {
   metadata: Map<String, String>
 }
 
-pattern UserPath = `users/{id: UserId}`
+pattern UserPath = `/users/{id: UserId}`
 pattern UserEvent = `users/:id/events/{kind: EventKind}`
 pattern UserField = `users.{id: UserId}.profile.name`
 

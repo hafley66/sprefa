@@ -8,6 +8,7 @@ use crate::parser::parse;
 use crate::rules::saturate;
 use crate::source::Source;
 use crate::store::Store;
+use crate::types::{Primitive, Type, Value};
 use crate::SourceId;
 
 pub fn compile(path: &Path) -> Result<Store, String> {
@@ -47,12 +48,33 @@ pub fn generate(store: &Store, output: &Path) -> Result<(), String> {
 
 fn server_source(store: &Store) -> String {
     let mut out = emit_models(store);
-    out.push_str(r#"use std::io::{Read, Write};
+    out.push_str(
+        r#"use std::io::{Read, Write};
 use std::net::TcpListener;
 
-fn template_matches(template: &str, input: &str) -> bool {
+#[derive(Clone, Copy)]
+enum SlotKind {
+    String,
+    Int,
+    Bool,
+    Literal(&'static str),
+    OneOf(&'static [&'static str]),
+}
+
+fn slot_matches(kind: SlotKind, value: &str) -> bool {
+    match kind {
+        SlotKind::String => !value.is_empty(),
+        SlotKind::Int => value.parse::<i64>().is_ok(),
+        SlotKind::Bool => value.parse::<bool>().is_ok(),
+        SlotKind::Literal(expected) => value == expected,
+        SlotKind::OneOf(expected) => expected.iter().any(|item| *item == value),
+    }
+}
+
+fn template_matches(template: &str, kinds: &[SlotKind], input: &str) -> bool {
     let mut rest = input;
     let mut cursor = 0;
+    let mut slot_index = 0;
     while cursor < template.len() {
         let bytes = template.as_bytes();
         if bytes[cursor] == b'{' {
@@ -60,9 +82,16 @@ fn template_matches(template: &str, input: &str) -> bool {
             cursor += end + 1;
             let next = template[cursor..].find('{').map(|offset| cursor + offset).unwrap_or(template.len());
             let literal = &template[cursor..next];
-            if literal.is_empty() { return !rest.is_empty(); }
-            let Some(value_end) = rest.find(literal) else { return false; };
-            rest = &rest[value_end + literal.len()..];
+            let (capture, remainder) = if literal.is_empty() {
+                (rest, "")
+            } else {
+                let Some(value_end) = rest.find(literal) else { return false; };
+                (&rest[..value_end], &rest[value_end + literal.len()..])
+            };
+            let Some(kind) = kinds.get(slot_index).copied() else { return false; };
+            if !slot_matches(kind, capture) { return false; }
+            slot_index += 1;
+            rest = remainder;
             cursor = next;
         } else {
             let next = template[cursor..].find('{').map(|offset| cursor + offset).unwrap_or(template.len());
@@ -71,7 +100,7 @@ fn template_matches(template: &str, input: &str) -> bool {
             cursor = next;
         }
     }
-    rest.is_empty()
+    rest.is_empty() && slot_index == kinds.len()
 }
 
 fn main() {
@@ -83,18 +112,42 @@ fn main() {
     }
 }
 
-"#);
+"#,
+    );
     out.push_str("fn route(method: &str, path: &str) -> (&'static str, String) {\n");
     for (domain, operation, pattern, output) in &store.consumers {
         if domain == "http" {
             let template = normalized_template(store, *pattern);
             let body = json_value(store, *output);
-            out.push_str(&format!("    if method == \"{}\" && template_matches(\"{}\", path) {{ return (\"200 OK\", r#\"{}\"#.to_owned()); }}\n", operation.to_ascii_uppercase(), template, body));
+            let kinds = slot_kinds(store, *pattern).join(", ");
+            out.push_str(&format!("    if method == \"{}\" && template_matches(\"{}\", &[{}], path) {{ return (\"200 OK\", r#\"{}\"#.to_owned()); }}\n", operation.to_ascii_uppercase(), template, kinds, body));
         }
     }
+    out.push_str("    (\"404 Not Found\", r#\"{\"error\":\"not found\"}\"#.to_owned())\n}\n");
     out.push_str(
-        "    (\"404 Not Found\", r#\"{\\\"error\\\":\\\"not found\\\"}\"#.to_owned())\n}\n",
+        "\n#[cfg(test)]\nmod generated_matcher_tests {\n    use super::*;\n\n    #[test]\n    fn typed_routes_are_deterministic() {\n",
     );
+    for (domain, _, pattern, _) in &store.consumers {
+        if domain == "http" {
+            let template = normalized_template(store, *pattern);
+            let kinds = slot_kinds(store, *pattern);
+            out.push_str(&format!(
+                "        assert!(template_matches(\"{}\", &[{}], \"{}\"));\n",
+                template,
+                kinds.join(", "),
+                valid_template_input(store, *pattern)
+            ));
+            if kinds.iter().any(|kind| kind != "SlotKind::String") {
+                out.push_str(&format!(
+                    "        assert!(!template_matches(\"{}\", &[{}], \"{}\"));\n",
+                    template,
+                    kinds.join(", "),
+                    invalid_template_input(store, *pattern)
+                ));
+            }
+        }
+    }
+    out.push_str("    }\n}\n");
     out
 }
 
@@ -109,6 +162,81 @@ fn normalized_template(store: &Store, id: crate::PatternId) -> String {
             }
         })
         .collect()
+}
+
+fn slot_kinds(store: &Store, id: crate::PatternId) -> Vec<String> {
+    store.patterns[id.0 as usize]
+        .parts
+        .iter()
+        .filter_map(|part| match part {
+            crate::PatternPart::Slot(slot) => Some(slot_kind(store, slot.ty)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn slot_kind(store: &Store, id: crate::TypeId) -> String {
+    match &store.types[id.0 as usize] {
+        Type::Alias { target, .. } => slot_kind(store, *target),
+        Type::Primitive(Primitive::Int) => "SlotKind::Int".to_owned(),
+        Type::Primitive(Primitive::Bool) => "SlotKind::Bool".to_owned(),
+        Type::Literal(Value::String(value)) => format!("SlotKind::Literal(\"{value}\")"),
+        Type::Union(items) => {
+            let values = items
+                .iter()
+                .filter_map(|item| match &store.types[item.0 as usize] {
+                    Type::Literal(Value::String(value)) => Some(format!("\"{value}\"")),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            if values.len() == items.len() {
+                format!("SlotKind::OneOf(&[{}])", values.join(", "))
+            } else {
+                "SlotKind::String".to_owned()
+            }
+        }
+        _ => "SlotKind::String".to_owned(),
+    }
+}
+
+fn valid_template_input(store: &Store, id: crate::PatternId) -> String {
+    render_template_input(store, id, false)
+}
+
+fn invalid_template_input(store: &Store, id: crate::PatternId) -> String {
+    render_template_input(store, id, true)
+}
+
+fn render_template_input(store: &Store, id: crate::PatternId, invalid: bool) -> String {
+    store.patterns[id.0 as usize]
+        .parts
+        .iter()
+        .map(|part| match part {
+            crate::PatternPart::Literal { text, .. } => text.clone(),
+            crate::PatternPart::Slot(slot) => render_type_sample(store, slot.ty, invalid),
+        })
+        .collect()
+}
+
+fn render_type_sample(store: &Store, id: crate::TypeId, invalid: bool) -> String {
+    match &store.types[id.0 as usize] {
+        Type::Alias { target, .. } => render_type_sample(store, *target, invalid),
+        Type::Primitive(Primitive::Int) => if invalid { "invalid" } else { "42" }.to_owned(),
+        Type::Primitive(Primitive::Bool) => if invalid { "maybe" } else { "true" }.to_owned(),
+        Type::Literal(Value::String(value)) => {
+            if invalid {
+                "invalid".to_owned()
+            } else {
+                value.clone()
+            }
+        }
+        Type::Union(items) => match (items.first(), invalid) {
+            (Some(item), false) => render_type_sample(store, *item, false),
+            (Some(_), true) => "invalid".to_owned(),
+            (None, _) => "invalid".to_owned(),
+        },
+        _ => if invalid { "invalid" } else { "sample" }.to_owned(),
+    }
 }
 fn json_value(store: &Store, id: crate::TypeId) -> String {
     match &store.types[id.0 as usize] {

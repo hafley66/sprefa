@@ -199,10 +199,10 @@ fn walk_paths(
     id: TypeId,
     prefix: String,
     output: &mut Vec<TypedPath>,
-    visited: &mut HashSet<(TypeId, usize)>,
+    active: &mut HashSet<TypeId>,
 ) {
     let id = unwrap_alias(store, id);
-    if !visited.insert((id, prefix.len())) {
+    if !active.insert(id) {
         return;
     }
     match &store.types[id.0 as usize] {
@@ -218,7 +218,7 @@ fn walk_paths(
                     text: path.clone(),
                     leaf: field.ty,
                 });
-                walk_paths(store, field.ty, path, output, visited);
+                walk_paths(store, field.ty, path, output, active);
             }
         }
         Type::Array(item) => {
@@ -227,7 +227,7 @@ fn walk_paths(
                 text: path.clone(),
                 leaf: *item,
             });
-            walk_paths(store, *item, path, output, visited);
+            walk_paths(store, *item, path, output, active);
         }
         Type::Map { value, .. } => {
             let path = format!("{prefix}{{key}}");
@@ -235,16 +235,17 @@ fn walk_paths(
                 text: path.clone(),
                 leaf: *value,
             });
-            walk_paths(store, *value, path, output, visited);
+            walk_paths(store, *value, path, output, active);
         }
-        Type::Optional(inner) => walk_paths(store, *inner, prefix, output, visited),
+        Type::Optional(inner) => walk_paths(store, *inner, prefix, output, active),
         Type::Union(items) => {
             for item in items {
-                walk_paths(store, *item, prefix.clone(), output, visited);
+                walk_paths(store, *item, prefix.clone(), output, active);
             }
         }
         _ => {}
     }
+    active.remove(&id);
 }
 
 fn unwrap_alias(store: &Store, mut id: TypeId) -> TypeId {

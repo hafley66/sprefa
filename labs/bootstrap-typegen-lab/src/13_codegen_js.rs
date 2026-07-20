@@ -50,7 +50,7 @@ fn js_path(pattern: &Pattern, store: &Store) -> String {
         match part {
             PatternPart::Literal { text, .. } => out.push_str(&text.replace('`', "\\`")),
             PatternPart::Slot(slot) => out.push_str(&format!(
-                "${{{}}}",
+                "${{encodeURIComponent({})}}",
                 store.symbols.resolve(slot.name.unwrap())
             )),
         }
