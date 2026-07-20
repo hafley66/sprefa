@@ -1359,3 +1359,152 @@ fn df_node_repo_rev_keeps_without_rowid_after_desalting() {
         "WITHOUT ROWID table must carry no duplicate full-row PK autoindex"
     );
 }
+
+// ============================================================================
+// The KEY-SHAPE proof (dataflow-composite-key arc): the non-rev df_node and
+// df_lit writers must dedup on the FULL declared PRIMARY KEY, not on `id`
+// alone. `id` interns `file:line:col:kind`, so a position whose enclosing fn
+// or bound var (or literal text) changed between the committed rev and WORK
+// shares an id but is a DISTINCT row. id-only dedup dropped the second and
+// left the table narrower than `SELECT DISTINCT <key cols>`, which is what
+// blocked collapsing df_node/df_lit to a view over their _rev twins.
+// ============================================================================
+
+/// Commit `f(name)`/`g() { "aaaa" }` as HEAD, then edit the WORK tree so the
+/// SAME byte positions carry `f(zzzz)`/`g() { "bbbb" }`. `name`->`zzzz` and
+/// `"aaaa"`->`"bbbb"` are equal-length, so every node's `file:line:col:kind`
+/// id is byte-identical across the two revs; only `var` (df_node) and `text`
+/// (df_lit) diverge. That is the exact id-collision-with-divergent-payload
+/// shape the full-row key must keep distinct.
+fn write_divergent_rev_fixture(dir: &Path) {
+    fs::create_dir_all(dir.join("src")).unwrap();
+    let base = "pub fn f(name: &str) -> &str { name }\n\
+                pub fn g() -> &'static str { \"aaaa\" }\n";
+    fs::write(dir.join("src/a.rs"), base).unwrap();
+    git_rev(dir, &["init", "-q"]);
+    git_rev(dir, &["config", "user.email", "t@example.com"]);
+    git_rev(dir, &["config", "user.name", "T"]);
+    git_rev(dir, &["add", "."]);
+    git_rev(dir, &["commit", "-q", "-m", "base"]);
+    // WORK: identical byte layout, only the identifiers/literal text change.
+    let work = "pub fn f(zzzz: &str) -> &str { zzzz }\n\
+                pub fn g() -> &'static str { \"bbbb\" }\n";
+    fs::write(dir.join("src/a.rs"), work).unwrap();
+}
+
+const DIVERGENT_PROG: &str = r#"
+rel diff_pair(base_rev: text, head_rev: text).
+diff_pair("HEAD", "WORK").
+
+rel seen(path: file).
+seen(path) <- diff_pair(_, head_ref), scan(head_ref, "src/**/*.rs", path, rev).
+seen(path) <- diff_pair(base_ref, _), scan(base_ref, "src/**/*.rs", path, rev).
+
+? df_node(id, kind, var, fn, file, line).
+? df_lit(id, text, kind).
+"#;
+
+fn one(eng: &mut Engine, sql: &str) -> i64 {
+    eng.query_sql(sql, &[]).unwrap()[0][0].as_i64().unwrap()
+}
+
+/// df_node keeps BOTH `name` and `zzzz` for the single shared param id, and the
+/// table row count equals `SELECT DISTINCT id,kind,var,fn,file,line`. On the
+/// old id-only dedup the second rev's row was dropped, so the shared id carried
+/// exactly one row and `name`/`zzzz` never coexisted.
+#[test]
+fn df_node_keeps_divergent_var_across_revs() {
+    let d = sandbox("divergent_node");
+    write_divergent_rev_fixture(&d);
+    let prog = parse::parse(lex::lex(DIVERGENT_PROG).unwrap()).unwrap();
+    let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    for _ in 0..4 {
+        eng.tick(&prog, true).unwrap();
+    }
+
+    // Both revs actually landed (via df_node_rev, which carries rev).
+    let revs = one(
+        &mut eng,
+        "SELECT COUNT(*) FROM (SELECT DISTINCT rev FROM rel_df_node_rev_txt)",
+    );
+    assert_eq!(revs, 2, "fixture must span HEAD + WORK");
+
+    // Both divergent var names survive under fn `f` (old code kept only one).
+    let distinct_f_vars = one(
+        &mut eng,
+        "SELECT COUNT(*) FROM (SELECT DISTINCT var FROM rel_df_node_txt \
+         WHERE kind = 'param' AND fn LIKE '%function::f')",
+    );
+    assert_eq!(
+        distinct_f_vars, 2,
+        "param of fn f must keep BOTH `name` and `zzzz` across revs"
+    );
+
+    // At least one id carries multiple rows (the shared param/var_read ids).
+    let shared_ids = one(
+        &mut eng,
+        "SELECT COUNT(*) FROM (SELECT id FROM rel_df_node GROUP BY id HAVING COUNT(*) >= 2)",
+    );
+    assert!(
+        shared_ids >= 1,
+        "a shared id must keep >1 row when var diverges across revs; got {shared_ids}"
+    );
+
+    // THE INVARIANT: table rowcount == SELECT DISTINCT over the declared PK
+    // columns. Before the fix these differed (dedup narrower than the PK);
+    // now they agree, so df_node is safe to collapse to a DISTINCT view.
+    let total = one(&mut eng, "SELECT COUNT(*) FROM rel_df_node");
+    let distinct = one(
+        &mut eng,
+        "SELECT COUNT(*) FROM (SELECT DISTINCT id, kind, var, fn, file, line FROM rel_df_node)",
+    );
+    assert_eq!(
+        total, distinct,
+        "df_node dedup key must equal the declared PRIMARY KEY (view-DISTINCT)"
+    );
+}
+
+/// df_lit keeps BOTH `"aaaa"` and `"bbbb"` for the single shared lit id, and the
+/// table row count equals `SELECT DISTINCT id,text,kind`.
+#[test]
+fn df_lit_keeps_divergent_text_across_revs() {
+    let d = sandbox("divergent_lit");
+    write_divergent_rev_fixture(&d);
+    let prog = parse::parse(lex::lex(DIVERGENT_PROG).unwrap()).unwrap();
+    let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    for _ in 0..4 {
+        eng.tick(&prog, true).unwrap();
+    }
+
+    // Both literal texts survive at the shared lit id (old code kept one).
+    let distinct_texts = one(
+        &mut eng,
+        "SELECT COUNT(*) FROM (SELECT DISTINCT text FROM rel_df_lit_txt \
+         WHERE text IN ('aaaa', 'bbbb'))",
+    );
+    assert_eq!(
+        distinct_texts, 2,
+        "df_lit must keep BOTH `aaaa` and `bbbb` across revs"
+    );
+
+    let shared_lit_ids = one(
+        &mut eng,
+        "SELECT COUNT(*) FROM (SELECT id FROM rel_df_lit GROUP BY id HAVING COUNT(*) >= 2)",
+    );
+    assert!(
+        shared_lit_ids >= 1,
+        "a shared lit id must keep >1 row when text diverges; got {shared_lit_ids}"
+    );
+
+    let total = one(&mut eng, "SELECT COUNT(*) FROM rel_df_lit");
+    let distinct = one(
+        &mut eng,
+        "SELECT COUNT(*) FROM (SELECT DISTINCT id, text, kind FROM rel_df_lit)",
+    );
+    assert_eq!(
+        total, distinct,
+        "df_lit dedup key must equal the declared PRIMARY KEY (view-DISTINCT)"
+    );
+}

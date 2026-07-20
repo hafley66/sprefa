@@ -121,8 +121,22 @@ impl Engine {
         let mut seen_param: HashSet<&str> = HashSet::new();
         let mut seen_arg: HashSet<(&str, i64, &str)> = HashSet::new();
         let mut seen_field: HashSet<(&str, &str, &str)> = HashSet::new();
-        let mut seen_lit: HashSet<&str> = HashSet::new();
-        let mut seen_node: HashSet<&str> = HashSet::new();
+        // df_lit identity is the full row (id, text, kind), NOT id alone: across
+        // the corpus's live revs the SAME node id can carry divergent text/kind
+        // (10 measured), so keying on id would drop the second and make the
+        // table narrower than a `SELECT DISTINCT id,text,kind` view. Key on the
+        // full declared PRIMARY KEY so table dedup == PK == view-DISTINCT.
+        let mut seen_lit: HashSet<(&str, &str, &str)> = HashSet::new();
+        // df_node identity is the full row (id, kind, var, fn, file, line), NOT
+        // id alone. id interns `file:line:col:kind`, so var/fn are the only
+        // discriminants beyond it — and they DIVERGE across revs (503 measured:
+        // a position whose enclosing fn or bound var changed between the
+        // committed rev and WORK). var/fn are therefore IDENTITY, not payload.
+        // id-only dedup (first-seen wins) drops the second and leaves the table
+        // narrower than `SELECT DISTINCT id,kind,var,fn,file,line`, which is what
+        // blocked collapsing df_node to a view over df_node_rev. Key on the full
+        // PRIMARY KEY tuple so the two agree.
+        let mut seen_node: HashSet<(&str, &str, &str, &str, &str, u32)> = HashSet::new();
         let mut seen_node_repo: HashSet<(&str, &str)> = HashSet::new();
         let mut seen_edge: HashSet<(&str, &str)> = HashSet::new();
         let mut seen_loop: HashSet<(&str, u32)> = HashSet::new();
@@ -134,7 +148,14 @@ impl Engine {
         let mut seen_lit_rev: HashSet<(&str, &str)> = HashSet::new();
         for (repo, _, rev, f) in &facts {
             for n in &f.nodes {
-                if seen_node.insert(n.id.as_str()) {
+                if seen_node.insert((
+                    n.id.as_str(),
+                    n.kind.as_str(),
+                    n.var.as_str(),
+                    n.fn_sym.as_str(),
+                    n.file.as_str(),
+                    n.line,
+                )) {
                     node_rows.push(vec![
                         sym(&n.id),
                         t(&n.kind),
@@ -235,7 +256,7 @@ impl Engine {
                 }
             }
             for (id, text, kind) in &f.lits {
-                if seen_lit.insert(id.as_str()) {
+                if seen_lit.insert((id.as_str(), text.as_str(), *kind)) {
                     lit_rows.push(vec![sym(id), t(text), t(kind)]);
                 }
                 // id is the raw df_node id, matching df_node_rev.id (D5 pattern,
