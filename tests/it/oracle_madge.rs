@@ -1,7 +1,8 @@
 //! Differential oracle: validate examples/madge.dl (module dependency graph +
 //! circular detection over `module_edge`) against madge ground truth on a TS
-//! fixture with a cycle, an orphan, and a leaf. Same shape as oracle_kotlin:
-//! skips (does not fail) when no madge binary is found — set SPREFA_MADGE to
+//! fixture with a cycle, an orphan, and a leaf. `#[ignore]`d — no madge
+//! binary is a genuine environmental gap, not something the default
+//! `cargo test` run should silently count as coverage. Set SPREFA_MADGE to
 //! point at one explicitly (`npm i -g madge` provides it).
 
 use std::collections::{BTreeSet, HashSet};
@@ -195,11 +196,9 @@ fn dl_rows(dir: &Path) -> std::collections::HashMap<String, Vec<Vec<String>>> {
 }
 
 #[test]
+#[ignore = "needs madge on PATH (npm i -g madge, or set SPREFA_MADGE)"]
 fn madge_oracle_dep_graph_and_cycles_agree() {
-    let Some(madge) = find_madge() else {
-        eprintln!("SKIP oracle_madge: no madge binary (npm i -g madge, or set SPREFA_MADGE)");
-        return;
-    };
+    let madge = find_madge().expect("needs madge on PATH (npm i -g madge, or set SPREFA_MADGE)");
     let dir = std::env::temp_dir().join("sprefa_oracle_madge");
     let _ = fs::remove_dir_all(&dir);
     write_fixture(&dir);

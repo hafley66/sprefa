@@ -111,7 +111,8 @@ impl Engine {
     /// optimization). Used by the daemon RPC `query` path, which needs the
     /// rows without capturing stdout.
     fn query_one_sql(&self, q: &Query) -> Result<QueryResult> {
-        let (sql, columns) = lower_query(q, &self.rels)?;
+        let q = crate::lower::resolve_work_alias_query(q, &self.rels, &self.self_rev_text());
+        let (sql, columns) = lower_query(&q, &self.rels)?;
         let raw_rows = self.db.query_values(&q.head.rel, &sql, &[])?;
         let rows: Vec<Vec<serde_json::Value>> = raw_rows
             .iter()

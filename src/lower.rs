@@ -234,6 +234,87 @@ fn term_sql(t: &Term, canon: &HashMap<String, String>, tys: &TyEnv) -> Result<St
     }
 }
 
+/// Resolve every literal `WORK_ALIAS` ("WORK") term bound to a `Type::Rev`
+/// column — in the rule's body Pos/Neg atoms AND its head — to
+/// `resolved_work` (the tick's cached worktree rev text; see
+/// `Engine::self_rev_text`). A rev column stores the RESOLVED revision
+/// identity, never the alias (revid.rs INV-1): a program that filters or
+/// writes the literal "WORK" against a `Type::Rev`-typed position would
+/// otherwise silently match nothing (a filter) or store a nonsense value (a
+/// write), because storage moved off the alias-as-text convention while the
+/// program text still spells the alias. Positions typed anything else —
+/// including a plain `Type::Text` column that happens to hold the literal
+/// word "WORK" for an unrelated reason (a fact table, a display string) —
+/// are left untouched, so this is NOT a blunt substitution of the string
+/// "WORK": `.dl/dishonest-flag.dl`'s literal source-text matches over Rust
+/// code never pass through this function at all (they scan Rust files, not
+/// this program's own rule AST).
+///
+/// Runs once per rule, immediately before lowering, at every call site that
+/// crosses from the AST into a `lower::` SQL-emission entry point. lower.rs
+/// itself has no `Engine` access (see `Engine::resolve_rev` /
+/// `Engine::self_rev_text`, engine/repo.rs) and must not re-probe git per
+/// literal, so the resolution happens here, as a rewrite on an owned clone,
+/// using a value the engine already resolved once at the top of this tick.
+///
+/// GAP, named rather than faked: a `Cmp` comparison (`rev == "WORK"` where
+/// `rev` is a bound Var, not a positional atom argument) is not resolved —
+/// that needs the var's inferred type, which only exists inside
+/// `body_sql_ex`'s own traversal, after this function has already run. No
+/// currently known `.dl` program compares WORK this way; a future one would
+/// need this function ported into `body_sql_ex`'s `TyEnv`-aware Cmp pass.
+pub fn resolve_work_alias(rule: &Rule, rels: &Rels, resolved_work: &str) -> Rule {
+    let mut rule = rule.clone();
+    resolve_work_alias_body(&mut rule.body, rels, resolved_work);
+    if let Some(head_meta) = rels.get(&rule.head.rel) {
+        resolve_rev_terms(&mut rule.head.terms, &head_meta.cols, resolved_work);
+    }
+    rule
+}
+
+/// The body-only half of `resolve_work_alias`, for the headless lowering
+/// entry points (`lower_gen`, `lower_body_projection`) whose callers hold a
+/// `&[BodyItem]` with no enclosing `Rule`/head to resolve.
+pub fn resolve_work_alias_body(body: &mut [BodyItem], rels: &Rels, resolved_work: &str) {
+    for item in body {
+        if let BodyItem::Pos(atom) | BodyItem::Neg(atom) = item {
+            if let Some(meta) = rels.get(&atom.rel) {
+                resolve_rev_terms(&mut atom.terms, &meta.cols, resolved_work);
+            }
+        }
+    }
+}
+
+/// The `?` query half of `resolve_work_alias`: a `Query` is a bare head `Atom`
+/// with no body (`lower_query` is its own SQL-emission entry point, entirely
+/// separate from `body_sql_ex`/`lower_rule_to_ex`), so it needs its own small
+/// wrapper rather than routing through `resolve_work_alias`. Same rule: a
+/// literal "WORK" bound to a `Type::Rev`-typed position resolves; everything
+/// else is untouched.
+pub fn resolve_work_alias_query(q: &Query, rels: &Rels, resolved_work: &str) -> Query {
+    let mut q = q.clone();
+    if let Some(meta) = rels.get(&q.head.rel) {
+        resolve_rev_terms(&mut q.head.terms, &meta.cols, resolved_work);
+    }
+    q
+}
+
+/// Replace `Term::Str(WORK_ALIAS)` with `resolved_work` at every position
+/// whose declared column is `Type::Rev`, in step with `cols`. Extra/missing
+/// terms (an arity mismatch the caller's own validation will reject) simply
+/// stop at the shorter side via `zip`.
+fn resolve_rev_terms(terms: &mut [Term], cols: &[Col], resolved_work: &str) {
+    for (term, col) in terms.iter_mut().zip(cols.iter()) {
+        if col.ty == Type::Rev {
+            if let Term::Str(s) = term {
+                if s == crate::engine::WORK_ALIAS {
+                    *term = Term::Str(resolved_work.to_string());
+                }
+            }
+        }
+    }
+}
+
 /// Walk a body's Pos/Neg/Cmp items into (canon var->cell, var->type, FROM
 /// aliases, WHERE conds). Shared by `lower_rule` and `lower_gen`; other body
 /// items are the caller's concern (a derived rule never carries them, gen

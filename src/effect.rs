@@ -531,7 +531,9 @@ impl Engine {
                        a positive atom with at least one variable (or a wildcard-bucket \
                        `clock(secs, _)` atom to key the request on cadence)");
             }
-            let sql = crate::lower::lower_body_projection(&r.body, &self.rels, &vars)?;
+            let mut body = r.body.clone();
+            crate::lower::resolve_work_alias_body(&mut body, &self.rels, &self.self_rev_text());
+            let sql = crate::lower::lower_body_projection(&body, &self.rels, &vars)?;
             let solutions: Vec<serde_json::Map<String, serde_json::Value>> = {
                 let rows = self.db.query_values(&r.head.rel, &sql, &[])?;
                 rows.into_iter()

@@ -30,7 +30,7 @@ impl RelKind for FileLinesKind {
             cols: vec![
                 col("repo", Type::Text),
                 col("path", Type::Path),
-                col("rev", Type::Text),
+                col("rev", Type::Rev),
                 col("line_count", Type::Int),
             ],
             group: "file",

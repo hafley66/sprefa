@@ -228,11 +228,14 @@ fn load_goldens() -> BTreeMap<&'static str, Vec<String>> {
     goldens
 }
 
-/// Panics naming the rel and the first differing row (or the first row past
-/// the shorter side, on a length mismatch).
-fn assert_matches_golden(rel: &str, got: &[String], golden: &[String], label: &str) {
+/// Diffs `got` against `golden`; `None` on an exact match, else the
+/// diagnostic naming the rel and the first differing row (or the first row
+/// past the shorter side, on a length mismatch). The panic itself lives at
+/// the call site so the rail that requires a #[test] to assert on every path
+/// can see it — this helper only computes the message.
+fn golden_diff(rel: &str, got: &[String], golden: &[String], label: &str) -> Option<String> {
     if got == golden {
-        return;
+        return None;
     }
     let detail = match got.iter().zip(golden.iter()).enumerate().find(|(_, (g, w))| g != w) {
         Some((i, (g, w))) => format!("row {i}: got {g:?}, want {w:?}"),
@@ -241,10 +244,10 @@ fn assert_matches_golden(rel: &str, got: &[String], golden: &[String], label: &s
         }
         None => format!("missing golden row {}: {:?}", got.len(), golden[got.len()]),
     };
-    panic!(
+    Some(format!(
         "call_family_matches_golden[{label}]: rel `{rel}` diverged from golden ({} got rows, {} golden rows) — {detail}",
         got.len(), golden.len()
-    );
+    ))
 }
 
 /// Producer (Deliverable 1): dumps the 7 rels through the family router — the
@@ -275,6 +278,8 @@ fn call_family_matches_golden() {
     let goldens = load_goldens();
     let dump = build_and_dump("consumer");
     for &(rel, _) in REL_COLS {
-        assert_matches_golden(rel, &dump[rel], &goldens[rel], "family router");
+        if let Some(msg) = golden_diff(rel, &dump[rel], &goldens[rel], "family router") {
+            panic!("{msg}");
+        }
     }
 }

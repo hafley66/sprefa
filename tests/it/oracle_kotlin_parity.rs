@@ -5,8 +5,8 @@
 //! use). Shares `oracle_parity`'s scorer verbatim — same confirmed-
 //! positives-only contract as `oracle_rust`/`oracle_ts`.
 //!
-//! Runtime-SKIPs (does not fail) when no `scip-java`/JDK is found, same
-//! pattern as `oracle_kotlin.rs`'s `kotlin_module_edge_is_subset_of_scip`.
+//! `#[ignore]`d — no `scip-java`/JDK is a genuine environmental gap, not
+//! something the default `cargo test` run should silently count as coverage.
 //! Override with SPREFA_SCIP_JAVA.
 //!
 //! Kotlin `call_site` lines are 1-based (normalized in the typegraph
@@ -39,11 +39,9 @@ fn find_scip_java() -> Option<std::path::PathBuf> {
 ///
 /// Run: cargo test --test it kotlin_call_resolution_parity_vs_scip -- --nocapture
 #[test]
+#[ignore = "needs scip-java / JDK on PATH (set SPREFA_SCIP_JAVA)"]
 fn kotlin_call_resolution_parity_vs_scip() {
-    let Some(scip_java) = find_scip_java() else {
-        eprintln!("SKIP oracle_kotlin_parity: no scip-java binary (set SPREFA_SCIP_JAVA)");
-        return;
-    };
+    let scip_java = find_scip_java().expect("needs scip-java / JDK on PATH (set SPREFA_SCIP_JAVA)");
 
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/kt_ws");
 
@@ -62,11 +60,8 @@ fn kotlin_call_resolution_parity_vs_scip() {
         .args(["index", "--output", scip_out.to_str().unwrap()])
         .current_dir(&index_dir)
         .output().expect("run scip-java index");
-    if !scip_out.is_file() {
-        eprintln!("SKIP oracle_kotlin_parity: scip-java produced no index: {}",
-            String::from_utf8_lossy(&run.stderr));
-        return;
-    }
+    assert!(scip_out.is_file(), "scip-java produced no index: {}",
+        String::from_utf8_lossy(&run.stderr));
     let index = Index::parse_from_bytes(&std::fs::read(&scip_out).unwrap()).expect("parse scip");
 
     let dl_dir = std::env::temp_dir().join("sprefa_oracle_kt_parity_dl");

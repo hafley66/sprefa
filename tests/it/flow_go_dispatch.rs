@@ -11,8 +11,9 @@
 //! path of BOTH ops. Go's structural satisfaction is invisible to a syntactic
 //! pass; only the compiler-backed index carries it.
 //!
-//! Skips (does not fail) when no `scip-go` is found — set SPREFA_SCIP_GO or put
-//! it on PATH / in ~/go/bin. Build with `go install
+//! `#[ignore]`d — no `scip-go` on PATH is a genuine environmental gap, not
+//! something the default `cargo test` run should silently count as coverage.
+//! Set SPREFA_SCIP_GO or put it on PATH / in ~/go/bin. Build with `go install
 //! github.com/scip-code/scip-go/cmd/scip-go@latest`.
 
 use std::path::{Path, PathBuf};
@@ -64,11 +65,9 @@ fn query_block<'a>(stdout: &'a str, header: &str) -> Vec<Vec<&'a str>> {
 }
 
 #[test]
+#[ignore = "needs scip-go on PATH (set SPREFA_SCIP_GO)"]
 fn go_interface_dispatch_finds_function_on_two_op_paths() {
-    let Some(scip_go) = find_scip_go() else {
-        eprintln!("SKIP flow_go_dispatch: no scip-go (set SPREFA_SCIP_GO)");
-        return;
-    };
+    let scip_go = find_scip_go().expect("needs scip-go on PATH (set SPREFA_SCIP_GO)");
     let root = std::env::temp_dir().join(format!("flow_go_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     copy_dir(&PathBuf::from(FIXTURE), &root);
@@ -78,11 +77,8 @@ fn go_interface_dispatch_finds_function_on_two_op_paths() {
         .args(["--output", "index.scip"])
         .current_dir(&root)
         .output().expect("run scip-go");
-    if !root.join("index.scip").is_file() {
-        eprintln!("SKIP flow_go_dispatch: scip-go produced no index: {}",
-            String::from_utf8_lossy(&run.stderr));
-        return;
-    }
+    assert!(root.join("index.scip").is_file(), "scip-go produced no index: {}",
+        String::from_utf8_lossy(&run.stderr));
 
     let out = Command::new(DL)
         .arg(root.join("dispatch_flow.dl"))

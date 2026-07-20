@@ -128,13 +128,17 @@ pub(crate) fn count_lines(bytes: &[u8]) -> i64 {
 pub(crate) fn enumerate_with_hash(
     repo: &str,
     repo_root: &Path,
-    rev: &str,
+    rev: &RevId,
     union: &globset::GlobSet,
     prev: &FileMeta,
     walk_ref_secs: i64,
-) -> Result<Vec<(String, String, i64, i64, i64)>> {
+) -> Result<(Vec<(String, String, i64, i64, i64)>, usize)> {
     let max_size = max_filesize();
-    if rev == "WORK" {
+    // The cache probe below keys on the STORED rev text, which is now an oid,
+    // never the alias. Probing a literal here would miss every `_file` row and
+    // re-read + re-hash the whole corpus on every tick, silently.
+    let rev_text = rev.text();
+    if rev.is_worktree() {
         let mut files: Vec<(PathBuf, String, i64, i64)> = Vec::new();
         let mut walk = ignore::WalkBuilder::new(repo_root);
         walk.hidden(false).filter_entry(|e| {
@@ -181,11 +185,19 @@ pub(crate) fn enumerate_with_hash(
         // old row from before this column existed) still forces one read on
         // an otherwise-unchanged file, purely to count lines — the hash is
         // NOT recomputed, so this is a one-time cost per file, not a repeat.
+        // Files this walk actually read and re-hashed, i.e. the `(repo, path,
+        // rev)` probes that MISSED the prior `_file` set. Instrumentation, not
+        // policy: the probe key carries the RESOLVED rev, and a key naming the
+        // `WORK` alias instead would miss every oid-bearing row and re-read the
+        // whole corpus every tick, silently, since a re-hash of unchanged bytes
+        // yields the identical hash and moves no digest. Counted per walk rather
+        // than in a process global so parallel tests do not read each other's.
+        let rehashed = std::sync::atomic::AtomicUsize::new(0);
         let mut out: Vec<(String, String, i64, i64, i64)> = files
             .par_iter()
             .map(|(abs, rel, mt, sz)| {
                 if let Some((h, pmt, psz, plines)) =
-                    prev.get(&(repo.to_string(), rel.clone(), "WORK".to_string()))
+                    prev.get(&(repo.to_string(), rel.clone(), rev_text.clone()))
                 {
                     if pmt == mt && psz == sz && *pmt < walk_ref_secs {
                         if *plines >= 0 {
@@ -195,6 +207,7 @@ pub(crate) fn enumerate_with_hash(
                         return (rel.clone(), h.clone(), *mt, *sz, count_lines(&bytes));
                     }
                 }
+                rehashed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let bytes = std::fs::read(abs).unwrap_or_default();
                 (
                     rel.clone(),
@@ -207,17 +220,17 @@ pub(crate) fn enumerate_with_hash(
             .collect();
         out.sort();
         emit_corpus_scan_verdict(repo, &out);
-        Ok(out)
+        Ok((out, rehashed.load(std::sync::atomic::Ordering::Relaxed)))
     } else {
         // `git ls-tree -r -l <rev>` lines:
         // "<mode> <type> <oid> <size>\t<path>"
         let output = Command::new("git")
             .arg("-C")
             .arg(repo_root)
-            .args(["ls-tree", "-r", "-l", rev])
+            .args(["ls-tree", "-r", "-l", rev.git_oid().as_str()])
             .output()?;
         if !output.status.success() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), 0));
         }
         let text = String::from_utf8_lossy(&output.stdout);
         let mut out = Vec::new();
@@ -247,7 +260,8 @@ pub(crate) fn enumerate_with_hash(
                 out.push((path.to_string(), oid.to_string(), 0, size, -1));
             }
         }
-        Ok(out)
+        // A git rev reads blob oids from `ls-tree`; nothing is hashed here.
+        Ok((out, 0))
     }
 }
 

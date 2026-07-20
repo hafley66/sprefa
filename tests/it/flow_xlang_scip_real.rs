@@ -6,8 +6,9 @@
 //! same disambiguation holds on real monikers: the Rust getPet handler and the TS
 //! getPet stub are distinct symbols, so `impl_sym` selects only the Rust handler.
 //!
-//! Runtime-skips (does not fail) when either toolchain is absent. Override with
-//! SPREFA_RUST_ANALYZER / SPREFA_SCIP_TYPESCRIPT.
+//! `#[ignore]`d — a missing toolchain is a genuine environmental gap, not
+//! something the default `cargo test` run should silently count as coverage.
+//! Override with SPREFA_RUST_ANALYZER / SPREFA_SCIP_TYPESCRIPT.
 
 use protobuf::Message;
 use scip::types::Index;
@@ -67,12 +68,10 @@ fn load_prefixed(path: &Path, prefix: &str) -> Vec<scip::types::Document> {
 fn s(v: &serde_json::Value) -> String { v.as_str().unwrap_or_default().to_string() }
 
 #[test]
+#[ignore = "needs rust-analyzer AND scip-typescript on PATH (SPREFA_RUST_ANALYZER / SPREFA_SCIP_TYPESCRIPT)"]
 fn real_merged_index_disambiguates_handler_from_stub() {
-    let (Some(ra), Some(scip_ts)) = (find_ra(), find_scip_ts()) else {
-        eprintln!("SKIP flow_xlang_scip_real: need rust-analyzer AND scip-typescript \
-            (set SPREFA_RUST_ANALYZER / SPREFA_SCIP_TYPESCRIPT)");
-        return;
-    };
+    let ra = find_ra().expect("needs rust-analyzer on PATH (set SPREFA_RUST_ANALYZER)");
+    let scip_ts = find_scip_ts().expect("needs scip-typescript on PATH (set SPREFA_SCIP_TYPESCRIPT)");
 
     let root = std::env::temp_dir().join(format!("flow_scip_real_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);

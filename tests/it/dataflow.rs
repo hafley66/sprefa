@@ -1202,7 +1202,7 @@ fn df_node_rev_id_matches_df_node_raw_id() {
 /// `rev` here is the resolved value the `scan("HEAD", ...)` ref lowers to
 /// (the commit's real SHA, not the literal text "HEAD" — the same thing
 /// `graph_diff_rev.rs`'s `head_rev`/`base_rev` derived rels capture), so the
-/// base side is selected as `rev <> 'WORK'` rather than a literal `'HEAD'`.
+/// base side is selected as `rev NOT LIKE '%+'` rather than a literal `'HEAD'`.
 #[test]
 fn df_node_rev_keeps_revs_disjoint_by_rev_column() {
     let d = sandbox("rev_twin_disjoint");
@@ -1218,9 +1218,9 @@ fn df_node_rev_keeps_revs_disjoint_by_rev_column() {
     let shared = eng
         .query_sql(
             "SELECT COUNT(*) FROM (\
-               SELECT id FROM rel_df_node_rev_txt WHERE rev <> 'WORK' \
+               SELECT id FROM rel_df_node_rev_txt WHERE rev NOT LIKE '%+' \
                INTERSECT \
-               SELECT id FROM rel_df_node_rev_txt WHERE rev = 'WORK')",
+               SELECT id FROM rel_df_node_rev_txt WHERE rev LIKE '%+')",
             &[],
         )
         .unwrap()[0][0]
@@ -1231,9 +1231,9 @@ fn df_node_rev_keeps_revs_disjoint_by_rev_column() {
     let work_only = eng
         .query_sql(
             "SELECT COUNT(*) FROM (\
-               SELECT id FROM rel_df_node_rev_txt WHERE rev = 'WORK' \
+               SELECT id FROM rel_df_node_rev_txt WHERE rev LIKE '%+' \
                EXCEPT \
-               SELECT id FROM rel_df_node_rev_txt WHERE rev <> 'WORK')",
+               SELECT id FROM rel_df_node_rev_txt WHERE rev NOT LIKE '%+')",
             &[],
         )
         .unwrap()[0][0]
@@ -1245,12 +1245,12 @@ fn df_node_rev_keeps_revs_disjoint_by_rev_column() {
     // rows. If revs collapsed into one row per id (an (id)-only key instead
     // of (id, rev)) this equality would fail.
     let head_rows = eng
-        .query_sql("SELECT COUNT(*) FROM rel_df_node_rev_txt WHERE rev <> 'WORK'", &[])
+        .query_sql("SELECT COUNT(*) FROM rel_df_node_rev_txt WHERE rev NOT LIKE '%+'", &[])
         .unwrap()[0][0]
         .as_i64()
         .unwrap();
     let work_rows = eng
-        .query_sql("SELECT COUNT(*) FROM rel_df_node_rev_txt WHERE rev = 'WORK'", &[])
+        .query_sql("SELECT COUNT(*) FROM rel_df_node_rev_txt WHERE rev LIKE '%+'", &[])
         .unwrap()[0][0]
         .as_i64()
         .unwrap();

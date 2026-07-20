@@ -71,7 +71,7 @@ impl Engine {
         let rows = self.collect_comment_rows(&files)?;
         self.refresh_rel("comment_node", &COMMENT_NODE_COLS, &rows)?;
         for (rev, d) in &moved {
-            self.save_rel_digest(&extract_digest_key("comment", rev), d)?;
+            self.save_extract_digest("comment", rev, d)?;
         }
         Ok(true)
     }
@@ -98,7 +98,7 @@ impl Engine {
     pub(crate) fn save_comment_cold_digest(&self) -> Result<()> {
         let files = self.comment_file_set()?;
         for (rev, d) in self.moved_extract_revs("comment", &files, false)? {
-            self.save_rel_digest(&extract_digest_key("comment", &rev), &d)?;
+            self.save_extract_digest("comment", &rev, &d)?;
         }
         Ok(())
     }
@@ -223,7 +223,7 @@ impl Engine {
         let rows = self.collect_template_rows(&files)?;
         self.refresh_rel("template_parts", &TEMPLATE_PARTS_COLS, &rows)?;
         for (rev, d) in &moved {
-            self.save_rel_digest(&extract_digest_key("template", rev), d)?;
+            self.save_extract_digest("template", rev, d)?;
         }
         Ok(true)
     }
@@ -249,7 +249,7 @@ impl Engine {
     pub(crate) fn save_template_cold_digest(&self) -> Result<()> {
         let files = self.template_file_set()?;
         for (rev, d) in self.moved_extract_revs("template", &files, false)? {
-            self.save_rel_digest(&extract_digest_key("template", &rev), &d)?;
+            self.save_extract_digest("template", &rev, &d)?;
         }
         Ok(())
     }
@@ -354,7 +354,7 @@ impl Engine {
         let rows = self.collect_unresolved_rows(&files)?;
         self.refresh_rel("unresolved", &UNRESOLVED_COLS, &rows)?;
         for (rev, d) in &moved {
-            self.save_rel_digest(&extract_digest_key("unresolved", rev), d)?;
+            self.save_extract_digest("unresolved", rev, d)?;
         }
         Ok(true)
     }
@@ -380,7 +380,7 @@ impl Engine {
     pub(crate) fn save_unresolved_cold_digest(&self) -> Result<()> {
         let files = self.unresolved_file_set()?;
         for (rev, d) in self.moved_extract_revs("unresolved", &files, false)? {
-            self.save_rel_digest(&extract_digest_key("unresolved", &rev), &d)?;
+            self.save_extract_digest("unresolved", &rev, &d)?;
         }
         Ok(())
     }

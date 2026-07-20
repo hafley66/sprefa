@@ -213,10 +213,11 @@ impl ModuleFamily {
         full_work: bool,
         delta_paths: &HashSet<String>,
     ) -> Result<RefreshOutcome> {
+        let work_rev = eng.self_rev_text();
         if full_work {
-            eng.refresh_module_rels_for_revs(&["WORK"])?;
+            eng.refresh_module_rels_for_revs(&[work_rev.as_str()])?;
         } else if !delta_paths.is_empty() {
-            eng.refresh_module_rels_for_paths("WORK", delta_paths)?;
+            eng.refresh_module_rels_for_paths(&work_rev, delta_paths)?;
         } else {
             return Ok(RefreshOutcome::Unchanged);
         }

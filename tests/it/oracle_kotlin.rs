@@ -4,9 +4,10 @@
 //! with the real compiler). Same shape as tests/oracle_rust.rs: file-level
 //! edges from SCIP occurrences, assert precision, report recall.
 //!
-//! Skips (does not fail) when no `scip-java` binary or JDK is found — set
-//! SPREFA_SCIP_JAVA to point at one explicitly. The fixture is a minimal
-//! Gradle Kotlin project (scip-java drives the build tool).
+//! `#[ignore]`d — no `scip-java` binary or JDK is a genuine environmental gap,
+//! not something the default `cargo test` run should silently count as
+//! coverage. Set SPREFA_SCIP_JAVA to point at one explicitly. The fixture is a
+//! minimal Gradle Kotlin project (scip-java drives the build tool).
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -91,11 +92,9 @@ seen(path) <- scan("WORK", "**/*.kt", path, rev), match(path, rev, /./, line).
 }
 
 #[test]
+#[ignore = "needs scip-java / JDK on PATH (set SPREFA_SCIP_JAVA)"]
 fn kotlin_module_edge_is_subset_of_scip() {
-    let Some(scip_java) = find_scip_java() else {
-        eprintln!("SKIP oracle_kotlin: no scip-java binary (set SPREFA_SCIP_JAVA)");
-        return;
-    };
+    let scip_java = find_scip_java().expect("needs scip-java / JDK on PATH (set SPREFA_SCIP_JAVA)");
     let tmp = std::env::temp_dir().join("sprefa_oracle_kt_ws");
     let _ = std::fs::remove_dir_all(&tmp);
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/kt_ws");
@@ -106,12 +105,8 @@ fn kotlin_module_edge_is_subset_of_scip() {
         .args(["index", "--output", scip_out.to_str().unwrap()])
         .current_dir(&tmp)
         .output().expect("run scip-java index");
-    if !scip_out.is_file() {
-        // a JDK/Gradle problem is an environment skip, not an oracle failure
-        eprintln!("SKIP oracle_kotlin: scip-java produced no index: {}",
-            String::from_utf8_lossy(&run.stderr));
-        return;
-    }
+    assert!(scip_out.is_file(), "scip-java produced no index: {}",
+        String::from_utf8_lossy(&run.stderr));
 
     let bytes = std::fs::read(&scip_out).unwrap();
     let index = Index::parse_from_bytes(&bytes).expect("parse scip");

@@ -8,8 +8,10 @@ impl Engine {
     pub fn source_paths(&self) -> Result<Vec<String>> {
         let rows = self.db.query_rows(
             "_file",
-            "SELECT DISTINCT path FROM _file WHERE rev = 'WORK'",
-            &[],
+            // `WORK` is an ALIAS resolved at the scan seam, so the working
+            // tree's rows carry this tick's resolved rev, never the alias text.
+            "SELECT DISTINCT path FROM _file WHERE rev = ?1",
+            &[self.self_rev_text().into()],
             |r| Ok(r.get::<_, String>(0)?),
         )?;
         Ok(rows)

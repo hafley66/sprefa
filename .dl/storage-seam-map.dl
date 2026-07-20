@@ -69,17 +69,17 @@ mapping_case("storage-seam-01", "WORK",
 
 # Literal scans keep the command a one-run program. A variable-rev scan sourced
 # from mapping_case would be data-driven and would need daemon ticks to settle.
-rel mapped_source(side: text, path: file, rev: text).
+rel mapped_source(side: text, path: file, rev: rev).
 mapped_source("current", path, rev) <-
     scan("WORK", "src/**/*.rs", path, rev).
 mapped_source("previous", path, rev) <-
     scan("2b10fbd6159b786ef008a6e3d48698821dd44c4b",
          "src/**/*.rs", path, rev).
 
-rel current_rev(rev: text).
+rel current_rev(rev: rev).
 current_rev(rev) <- mapped_source("current", _, rev).
 
-rel previous_rev(rev: text).
+rel previous_rev(rev: rev).
 previous_rev(rev) <- mapped_source("previous", _, rev).
 
 # ── focus: explicit architectural roots + structurally discovered bindings ──
@@ -95,27 +95,27 @@ focus_file("src/engine/query.rs").
 focus_file("src/engine/pipeline/apply.rs").
 focus_file("src/engine/staged_delta/mod.rs").
 
-rel rusqlite_file_at(rev: text, file: file).
+rel rusqlite_file_at(rev: rev, file: file).
 rusqlite_file_at(rev, file) <-
     module_binding_rev(file, _, source, _, _, rev),
     source =~ /^rusqlite(::|$)/.
 
-rel seam_file_at(rev: text, file: file).
+rel seam_file_at(rev: rev, file: file).
 seam_file_at(rev, file) <- mapped_source(_, file, rev), focus_file(file).
 seam_file_at(rev, file) <- rusqlite_file_at(rev, file).
 
 # ── module layer ─────────────────────────────────────────────────────────────
-rel module_node_at(rev: text, id: text, label: text, file: file, line: int).
+rel module_node_at(rev: rev, id: text, label: text, file: file, line: int).
 module_node_at(rev, "module:${file}", file, file, 1) <- seam_file_at(rev, file).
 
 # Keep edges whose two ends both live in the discovered seam. One-hop external
 # callers are represented by the call layer below; this module view stays small.
-rel module_map_edge_at(rev: text, src: text, dst: text, kind: text).
+rel module_map_edge_at(rev: rev, src: text, dst: text, kind: text).
 module_map_edge_at(rev, "module:${a}", "module:${b}", "imports") <-
     module_edge_rev(a, b, rev), seam_file_at(rev, a), seam_file_at(rev, b).
 
 # ── type map ─────────────────────────────────────────────────────────────────
-rel type_node_at(rev: text, id: text, label: text, kind: text,
+rel type_node_at(rev: rev, id: text, label: text, kind: text,
                  file: file, line: int).
 type_node_at(rev, sym, name, kind, file, line) <-
     type_entity_rev(_, sym, name, kind, _, file, line, rev),
@@ -123,7 +123,7 @@ type_node_at(rev, sym, name, kind, file, line) <-
 
 # Include a linked type just outside the seam so the type boundary is visible,
 # but do not recursively walk the entire repository type graph.
-rel linked_type_at(rev: text, sym: text).
+rel linked_type_at(rev: rev, sym: text).
 linked_type_at(rev, dst) <-
     type_link_rev(src, dst, _, rev), type_node_at(rev, src, _, _, _, _).
 linked_type_at(rev, src) <-
@@ -133,21 +133,21 @@ type_node_at(rev, sym, name, kind, file, line) <-
     linked_type_at(rev, sym),
     type_entity_rev(_, sym, name, kind, _, file, line, rev).
 
-rel type_map_edge_at(rev: text, src: text, dst: text, kind: text).
+rel type_map_edge_at(rev: rev, src: text, dst: text, kind: text).
 type_map_edge_at(rev, src, dst, kind) <-
     type_link_rev(src, dst, kind, rev),
     type_node_at(rev, src, _, _, _, _),
     type_node_at(rev, dst, _, _, _, _).
 
 # ── call graph ───────────────────────────────────────────────────────────────
-rel fn_node_at(rev: text, id: text, label: text, kind: text,
+rel fn_node_at(rev: rev, id: text, label: text, kind: text,
                file: file, line: int).
 fn_node_at(rev, sym, replace_re(sym, "^.*::", ""), kind, file, line) <-
     call_def_rev(_, sym, kind, file, line, _, rev), seam_file_at(rev, file).
 
 # One-hop callers/callees expose blast radius without taking transitive closure
 # over the whole program.
-rel adjacent_fn_at(rev: text, sym: text).
+rel adjacent_fn_at(rev: rev, sym: text).
 adjacent_fn_at(rev, caller) <-
     call_edge_rev(caller, callee, _, rev),
     fn_node_at(rev, callee, _, _, _, _).
@@ -159,14 +159,14 @@ fn_node_at(rev, sym, replace_re(sym, "^.*::", ""), kind, file, line) <-
     adjacent_fn_at(rev, sym),
     call_def_rev(_, sym, kind, file, line, _, rev).
 
-rel call_map_edge_at(rev: text, src: text, dst: text, kind: text).
+rel call_map_edge_at(rev: rev, src: text, dst: text, kind: text).
 call_map_edge_at(rev, caller, callee, "calls") <-
     call_edge_rev(caller, callee, _, rev),
     fn_node_at(rev, caller, _, _, _, _),
     fn_node_at(rev, callee, _, _, _, _).
 
 # Bridge the repo-qualified call/type sym to df_node.fn's bare sym.
-rel fn_bare_at(rev: text, sym: text, bare: text, file: file, line: int).
+rel fn_bare_at(rev: rev, sym: text, bare: text, file: file, line: int).
 fn_bare_at(rev, sym, replace_re(sym, "^[^:]*::", ""), file, line) <-
     fn_node_at(rev, sym, _, _, file, line).
 
@@ -232,7 +232,7 @@ scip_map_edge("scip:${caller}", "scip:${callee}", "scip-call") <-
     scip_fn_edge(caller, callee).
 
 # ── unified, rev-aware map rows ──────────────────────────────────────────────
-rel map_node_at(rev: text, id: text, kind: text, label: text,
+rel map_node_at(rev: rev, id: text, kind: text, label: text,
                 file: file, line: int).
 map_node_at(rev, id, "module", label, file, line) <-
     module_node_at(rev, id, label, file, line).
@@ -241,7 +241,7 @@ map_node_at(rev, id, "type:${kind}", label, file, line) <-
 map_node_at(rev, id, "function:${kind}", label, file, line) <-
     fn_node_at(rev, id, label, kind, file, line).
 
-rel map_edge_at(rev: text, src: text, dst: text, kind: text).
+rel map_edge_at(rev: rev, src: text, dst: text, kind: text).
 map_edge_at(rev, src, dst, kind) <- module_map_edge_at(rev, src, dst, kind).
 map_edge_at(rev, src, dst, kind) <- type_map_edge_at(rev, src, dst, kind).
 map_edge_at(rev, src, dst, kind) <- call_map_edge_at(rev, src, dst, kind).

@@ -123,6 +123,7 @@ fn lock_eng<'a>(sr: &'a ServedRoot, method: &str) -> MutexGuard<'a, Engine> {
 mod budget;
 mod client;
 mod dispatch;
+pub mod gc;
 mod home;
 pub mod http_discovery;
 pub mod read;

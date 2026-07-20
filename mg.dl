@@ -1,0 +1,4 @@
+
+rel seen(path: file).
+seen(path) <- scan("WORK", "**/*.rs", path, rev), match(path, rev, /./, line).
+? module_edge(s, d).

@@ -65,12 +65,16 @@ fn fresh_engine(root: &PathBuf) -> Engine {
     let mut engine = Engine::new(db::open(None).unwrap(), root.clone());
     engine.ensure_meta().unwrap();
     engine.declare_builtins().unwrap();
+    // `WORK` is an ALIAS resolved at the scan seam; this fixture skips the
+    // scan, so resolve it directly and stamp the row with the result.
+    engine.resolve_self_rev().unwrap();
     engine
         .db
-        .exec_on(
+        .exec_params(
             "_file",
             "INSERT INTO _file (repo, path, rev, hash, mtime, size) \
-             VALUES ('', 'lib.rs', 'WORK', '', 0, 0)",
+             VALUES ('', 'lib.rs', ?1, '', 0, 0)",
+            &[crate::db::SqlVal::from(engine.self_rev_text())],
         )
         .unwrap();
     engine
@@ -80,13 +84,14 @@ fn engine_at(dir: &PathBuf, hash: &str) -> Engine {
     let mut engine = Engine::new(db::open(None).unwrap(), dir.clone());
     engine.ensure_meta().unwrap();
     engine.declare_builtins().unwrap();
+    engine.resolve_self_rev().unwrap();
     engine
         .db
         .exec_params(
             "_file",
             "INSERT INTO _file (repo, path, rev, hash, mtime, size) \
-             VALUES ('', 'lib.rs', 'WORK', ?1, 0, 0)",
-            &[hash.into()],
+             VALUES ('', 'lib.rs', ?1, ?2, 0, 0)",
+            &[crate::db::SqlVal::from(engine.self_rev_text()), hash.into()],
         )
         .unwrap();
     engine

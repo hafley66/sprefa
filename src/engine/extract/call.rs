@@ -24,9 +24,10 @@ impl Engine {
             return Ok(CallPathRefreshOutcome::Unsupported("call-path-not-existing"));
         }
 
+        let work_rev = self.self_rev_text();
         let files = self.extract_file_set()?;
         let work_files: Vec<ExtractFile> = files.iter()
-            .filter(|file| file.2 == "WORK")
+            .filter(|file| file.2 == work_rev)
             .cloned()
             .collect();
         let repos: HashSet<&str> = work_files.iter().map(|file| file.0.as_str()).collect();
@@ -40,8 +41,8 @@ impl Engine {
             return Ok(CallPathRefreshOutcome::Unsupported("call-owner-coordinate"));
         }
         let (repo, path, rev, fact_digest) = matching[0];
-        let digest = self.extract_input_digest("call", "WORK", &work_files, true);
-        if self.load_rel_digest(&extract_digest_key("call", "WORK"))? == Some(digest) {
+        let digest = self.extract_input_digest("call", &work_rev, &work_files, true);
+        if self.load_extract_digest("call", &work_rev)? == Some(digest) {
             return Ok(CallPathRefreshOutcome::Unchanged);
         }
 
@@ -100,12 +101,12 @@ impl Engine {
         };
         let outcome = self.db.apply_call_owner_delta(CallOwnerDelta {
             owner,
-            scip_dependency_digest: self.scip_resolution_dependency_digest("WORK"),
-            module_dependency_digest: self.module_resolution_dependency_digest("WORK"),
+            scip_dependency_digest: self.scip_resolution_dependency_digest(&work_rev),
+            module_dependency_digest: self.module_resolution_dependency_digest(&work_rev),
         })?;
         match outcome {
             CallDeltaOutcome::Applied => {
-                self.save_rel_digest(&extract_digest_key("call", "WORK"), &digest)?;
+                self.save_extract_digest("call", &work_rev, &digest)?;
                 // Flip: the family router is the SOLE writer of the public call
                 // rels (P4, capstone cutover), so re-derive them from the
                 // _call_* tables the delta just mutated. An owner delta
@@ -212,8 +213,12 @@ impl Engine {
         // Alias hop input: see refresh_type_rels, the same binding map feeds
         // both resolvers' index-free alias hop.
         let aliases = self.module_binding_resolved_map().unwrap_or_default();
+        // Worktree revs scanned this tick: the resolver's SCIP override only
+        // describes the working tree, and after alias resolution a rev is an
+        // oid, so the predicate is set membership rather than a text compare.
+        let work_revs = self.worktree_rev_texts.clone();
         let resolve_callee = |repo: &str, rev: &str, file: &str, callee: &str, line: u32| -> Option<String> {
-            if rev == "WORK" {
+            if work_revs.contains(rev) {
                 // Occurrence-level override (position before name): the exact
                 // symbol occurring at this call's (file, line) disambiguates a
                 // shared name the name-level `scip` map must drop. Preferred over
@@ -352,11 +357,11 @@ impl Engine {
             owners: &owners,
             def_buckets: &def_buckets,
             defs: &defs,
-            scip_dependency_digest: self.scip_resolution_dependency_digest("WORK"),
-            module_dependency_digest: self.module_resolution_dependency_digest("WORK"),
+            scip_dependency_digest: self.scip_resolution_dependency_digest(&self.self_rev_text()),
+            module_dependency_digest: self.module_resolution_dependency_digest(&self.self_rev_text()),
         })?;
         // Persisted only after the writes land, so a failed refresh retries.
-        for (rev, d) in &moved { self.save_rel_digest(&extract_digest_key("call", rev), d)?; }
+        for (rev, d) in &moved { self.save_extract_digest("call", rev, d)?; }
         // The family router is the SOLE writer of the public call rels (P4,
         // capstone cutover): derive every one of them from the owned _call_*
         // tables the write above just populated. A full refresh rewrote every

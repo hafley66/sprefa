@@ -185,9 +185,14 @@ fn rev_pair_diff_is_empty_when_work_equals_base() {
     // Both revs populated, with identical sym sets (the diff's premise).
     assert_eq!(col_set(&eng, "SELECT DISTINCT rev FROM rel_type_entity_rev_txt").len(), 2,
         "type_entity_rev spans HEAD + WORK");
-    let work = col_set(&eng, "SELECT sym FROM rel_bare_node_txt WHERE repo = 'WORK'");
+    // `WORK` is an ALIAS resolved at the scan seam, so the stored rev is an oid
+    // (`<sha>+` here: the sandbox's db files are untracked, so the tree is
+    // dirty). Read the head rev the program itself bound rather than a literal.
+    let work = col_set(&eng,
+        "SELECT sym FROM rel_bare_node_txt WHERE repo IN (SELECT rev FROM rel_head_rev_txt)");
     assert!(!work.is_empty(), "WORK nodes exist");
-    assert_eq!(work, col_set(&eng, "SELECT sym FROM rel_bare_node_txt WHERE repo <> 'WORK'"),
+    assert_eq!(work, col_set(&eng,
+        "SELECT sym FROM rel_bare_node_txt WHERE repo NOT IN (SELECT rev FROM rel_head_rev_txt)"),
         "the two revs carry identical sym sets");
 
     // The diff is empty across the board.

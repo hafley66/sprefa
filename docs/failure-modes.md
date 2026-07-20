@@ -858,6 +858,55 @@ sites but not against new code. **missing** = nothing.
   character or delimiter chosen specifically so it "never occurs" in either
   field is the loudest possible tell that this is happening.
 
+## 27. Empty input read recorded as no dependency
+
+- WHAT IT LOOKS LIKE: an incremental engine builds a unit's dependency set by
+  projecting the per-row reads it observed during a derive. A relation that was
+  scanned but held ZERO rows contributes zero observed reads, so the projected
+  set omits it, and omission is indistinguishable from "this unit never read
+  that relation". The unit then never reruns when the relation goes empty ->
+  populated, and its public output stays stale forever. Nothing errors; the
+  stale value is a well-formed empty answer, so every downstream consumer agrees
+  with it.
+- HOW IT BIT US (2026-07-16, found 2026-07-20): `rel_footprint`
+  (src/engine/family/router.rs:213) computed a call family's reactive footprint
+  as `deps.iter().map(|d| d.rel).collect()` over the `DepKey`s `Ctx::scan`
+  recorded. On the tick where `_call_def` was empty, the `CallDef` / `CallName`
+  / `CallDefRev` families derived over it, recorded zero `DepKey`s for it, and
+  memoized a footprint that did not name `_call_def`. The next tick inserted a
+  fn, `_call_def` gained a row, and `react` skipped all three families because
+  the changed-set did not intersect their footprints. Public `call_def`,
+  `call_name` and `call_def_rev` stayed EMPTY against a tree that defined a
+  function. Minimal sequence, three ticks: seed `m0.rs` defining `f0`; delete
+  `m0.rs` and add an empty `m1.rs`; add `f1` to `m1.rs`. Measured on the
+  pre-fix line: 0 incremental rows against 1 oracle row for `call_def`.
+- THE LAW: reading a relation is a dependency on that relation whatever its
+  cardinality. A dependency set derived only from observed rows must be unioned
+  with the set of relations the unit declared it reads, so that the empty case
+  and the never-touched case stay distinguishable.
+- THE RAIL: enforced, two layers. (1) The union lives inside `rel_footprint`
+  itself, the single helper that `cold` / `react` / `react_deltas` all build
+  memos through, so no caller can construct a `FamilyMemo` with a
+  projection-only footprint; the exact `DepKey`-count rails in
+  src/engine/storage/call.rs are untouched by it. (2) Two tests, both proven
+  fail-pre-fix by deleting the `rels.extend(family.input_rels()...)` line:
+  `tests/it/retraction_props.rs::empty_input_rel_still_reruns_the_family_after_insert`
+  is the deterministic three-tick pin (fails at
+  tests/it/retraction_props.rs:526 pre-fix, 0.19s), and the T4 equivalence
+  property `equivalence_and_memo_hold_at_every_step` replays the shrinking seed
+  `cc 0d80eca002b18e65b3098c2eb6b2308ccd1b0ba5edb79c527e349b5751592c9e` from
+  tests/proptest-regressions/retraction_props.txt on every run. The property is
+  what found the defect; the deterministic test is what keeps it found, since a
+  20-case random draw is not guaranteed to regenerate the shape. Residual gap:
+  the union is a discipline inside one helper, not a checkable rail. No `.dl`
+  rail asserts that every incremental-unit dependency set is built from declared
+  inputs rather than observed reads, so a second unit type added later can
+  reintroduce the same shape without tripping anything.
+- SAY THIS TO AN AGENT: when you compute what a cached computation depends on,
+  never derive that set purely from the rows it happened to see. An empty read
+  returns the same evidence as no read at all. Union in the declared inputs, and
+  keep the union inside the one constructor every caller goes through.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
@@ -887,6 +936,7 @@ sites but not against new code. **missing** = nothing.
 | 23 | one-shot positional swallowed by daemon program set | missing | erase-no-daemon-split arc: carry the positional through the daemon RPC, or fall through to in-process (with a loud line) when the positional is not the root's watched set; fail-pre-fix it-test = one-shot a file whose rels are disjoint from `.dl/*.dl` under a live daemon and assert its own query rels come back |
 | 24 | TLS-parked span guard dropped in thread-local destruction | enforced | — (ManuallyDrop park + explicit exit paths, 9ddf1280; abnormal-death coverage in src/jobq/tests_cancel.rs) |
 | 26 | composite key minted by string concatenation, stored as an id | half | promote `.dl/composite-key-string.dl` to error severity once the 14-row baseline is waiver-audited; arm 3 (declared-column join) not implemented — no fact links a `RelDecl` column to its writer expression; distinguish the hash-digest false-positive class (src/effect.rs:527/612/644) from a true raw-id fold in the message wording |
+| 27 | empty input read recorded as no dependency | enforced | — (union inside `rel_footprint` src/engine/family/router.rs:213, the one helper cold/react/react_deltas build memos through; deterministic pin `empty_input_rel_still_reruns_the_family_after_insert` + T4 property replaying seed `cc 0d80eca0`, both proven fail-pre-fix). Residual: no static rail asserts a dependency set is built from declared inputs rather than observed reads, so a new unit type can reintroduce the shape |
 
 ## How a new rail gets born here
 

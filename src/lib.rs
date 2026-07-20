@@ -807,7 +807,7 @@ pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> R
     // ref (commit, checkout, branch/tag update) fires a tick even when root is a
     // subdir of the repo and `.git` is not under it — without the objects churn.
     let scans_git = prog.items.iter().any(|i| matches!(i, ast::Item::Rule(r)
-        if r.body.iter().any(|b| matches!(b, ast::BodyItem::Scan { rev: ast::Term::Str(s), .. } if s.as_str() != "WORK"))));
+        if r.body.iter().any(|b| matches!(b, ast::BodyItem::Scan { rev: ast::Term::Str(s), .. } if s.as_str() != engine::WORK_ALIAS)))); 
     if scans_git {
         if let Ok(out) = std::process::Command::new("git").arg("-C").arg(&root).args(["rev-parse", "--git-dir"]).output() {
             if out.status.success() {

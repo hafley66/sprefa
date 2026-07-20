@@ -11,8 +11,10 @@
 //! fn-def attribution fix in scip_import (scip-python emits parameter symbols;
 //! RA/scip-go inline them), now locked by a loader unit test.
 //!
-//! Skips (does not fail) when no `scip-python` is found — set SPREFA_SCIP_PYTHON
-//! or put it on PATH. Install with `npm install -g @sourcegraph/scip-python`.
+//! `#[ignore]`d — no `scip-python` on PATH is a genuine environmental gap,
+//! not something the default `cargo test` run should silently count as
+//! coverage. Set SPREFA_SCIP_PYTHON or put it on PATH. Install with
+//! `npm install -g @sourcegraph/scip-python`.
 //!
 //! Unlike the Go test, this indexes the fixture IN PLACE rather than from a /tmp
 //! copy: scip-python walks parent directories for Python/environment config and
@@ -56,11 +58,9 @@ fn query_block<'a>(stdout: &'a str, header: &str) -> Vec<Vec<&'a str>> {
 }
 
 #[test]
+#[ignore = "needs scip-python on PATH (set SPREFA_SCIP_PYTHON)"]
 fn py_interface_dispatch_finds_function_on_two_op_paths() {
-    let Some(scip_python) = find_scip_python() else {
-        eprintln!("SKIP flow_py_dispatch: no scip-python (set SPREFA_SCIP_PYTHON)");
-        return;
-    };
+    let scip_python = find_scip_python().expect("needs scip-python on PATH (set SPREFA_SCIP_PYTHON)");
     let pid = std::process::id();
     let index = std::env::temp_dir().join(format!("flow_py_{pid}.scip"));
     let dbp = std::env::temp_dir().join(format!("flow_py_{pid}.db"));
@@ -72,11 +72,8 @@ fn py_interface_dispatch_finds_function_on_two_op_paths() {
         .arg(&index)
         .current_dir(FIXTURE)
         .output().expect("run scip-python");
-    if !index.is_file() {
-        eprintln!("SKIP flow_py_dispatch: scip-python produced no index: {}",
-            String::from_utf8_lossy(&run.stderr));
-        return;
-    }
+    assert!(index.is_file(), "scip-python produced no index: {}",
+        String::from_utf8_lossy(&run.stderr));
 
     let out = Command::new(DL)
         .arg(PathBuf::from(FLOW).join("dispatch_flow.dl"))

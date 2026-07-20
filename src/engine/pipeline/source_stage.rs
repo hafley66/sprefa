@@ -7,8 +7,19 @@ use std::collections::HashSet;
 const MAX_BUFFERED_ROWS: usize = 4096;
 const MAX_BUFFERED_BYTES: usize = 256 * 1024;
 const MAX_STAGE_ROWS: usize = 1_000_000;
-const MAX_STAGE_BYTES: usize = 64 * 1024 * 1024;
+/// Total staged bytes across the whole stage. These rows live in the SQLite
+/// TEMP store (`temp_store=FILE`), so this is a disk-volume cap, not a memory
+/// cap — resident memory is bounded by `MAX_BUFFERED_BYTES` alone. The prior
+/// 64MiB made `MAX_STAGE_ROWS` unreachable for any row averaging over 64
+/// bytes, so a real per-line source rule over a real repository tripped the
+/// byte term at roughly 650k rows and the engine refused to scan its own
+/// source tree. Sized so the row bound binds first at up to 256 bytes/row.
+const MAX_STAGE_BYTES: usize = 256 * 1024 * 1024;
 const MAX_STAGE_OWNERS: usize = 100_000;
+/// Cap on the per-owner duplicate-row filter. Beyond this many distinct rows
+/// for one (relation, repo, path), dedup stops and staging degrades to
+/// passing every row through, so the filter's memory stays bounded.
+const MAX_OWNER_DEDUP_KEYS: usize = 250_000;
 #[path = "source_codec.rs"]
 mod codec;
 #[path = "source_stage_read.rs"]
@@ -63,6 +74,8 @@ pub(super) struct StageStats {
     pub(super) peak_bytes: usize,
     pub(super) staged_bytes: usize,
     pub(super) owners: usize,
+    /// Rows dropped by the per-owner duplicate filter before staging.
+    pub(super) deduped: usize,
 }
 
 /// A completed source-stage seal, not the pipeline's transaction-ready token.
@@ -184,6 +197,8 @@ impl<'a> SourceStage<'a> {
             buffered: Vec::with_capacity(limits.max_rows),
             buffered_owners: Vec::new(),
             owner_set: HashSet::new(),
+            dedup_owner: None,
+            dedup_keys: HashSet::new(),
             stats: StageStats::default(),
         })
     }
@@ -341,10 +356,68 @@ pub(super) struct StageWriter<'a> {
     /// of the table's INSERT OR IGNORE dedup, so repeat completions neither
     /// re-buffer nor double-count `stats.owners`, across flushes.
     owner_set: HashSet<(String, String, String)>,
+    /// Encoded rows already staged for `dedup_owner`. A source relation is a
+    /// set and an owner's rows are replaced wholesale, so an extractor that
+    /// emits the same tuple twice for one file is emitting waste: a per-line
+    /// rule whose regex matches per character produced ~34 identical
+    /// `(path, line)` rows per line, 10x the distinct row count, and the
+    /// staged-byte cap fired long before the scan finished. Downstream
+    /// `insert_source_rows_for_paths` drops them at the rel table's unique
+    /// constraint anyway; dropping them here saves the staging write too.
+    dedup_owner: Option<(String, String, String)>,
+    dedup_keys: HashSet<Vec<u8>>,
     stats: StageStats,
 }
 
+#[derive(PartialEq, Eq)]
+enum RowSeen {
+    First,
+    Duplicate,
+}
+
 impl StageWriter<'_> {
+    fn limit_error(&self, term: &'static str, value: usize, limit: usize) -> SourceStageError {
+        SourceStageError::StageLimitExceeded {
+            term,
+            value,
+            limit,
+            rows: self.stats.rows,
+            staged_bytes: self.stats.staged_bytes,
+            owners: self.stats.owners,
+        }
+    }
+
+    /// Duplicate filter scoped to the owner currently being staged. Rows for
+    /// one (relation, repo, path) arrive contiguously from `stage_parsed_file`;
+    /// a change of owner resets the key set, so the filter holds one owner's
+    /// rows at most, and it gives up entirely past `MAX_OWNER_DEDUP_KEYS`.
+    fn note_owner_row(
+        &mut self,
+        relation: &str,
+        repo: &str,
+        path: &str,
+        encoded: &[u8],
+    ) -> RowSeen {
+        let owner_changed = self
+            .dedup_owner
+            .as_ref()
+            .is_none_or(|(rel, owner_repo, owner_path)| {
+                rel != relation || owner_repo != repo || owner_path != path
+            });
+        if owner_changed {
+            self.dedup_owner = Some((relation.to_string(), repo.to_string(), path.to_string()));
+            self.dedup_keys.clear();
+        }
+        if self.dedup_keys.len() >= MAX_OWNER_DEDUP_KEYS {
+            return RowSeen::First;
+        }
+        if self.dedup_keys.insert(encoded.to_vec()) {
+            RowSeen::First
+        } else {
+            RowSeen::Duplicate
+        }
+    }
+
     pub(super) fn push(
         &mut self,
         relation: &str,
@@ -369,14 +442,20 @@ impl StageWriter<'_> {
         if ordinal > i64::MAX as u64 {
             return Err(SourceStageError::EncodingTooLarge);
         }
-        if self.stats.rows >= self.limits.max_stage_rows
-            || self
-                .stats
-                .staged_bytes
-                .checked_add(bytes)
-                .is_none_or(|total| total > self.limits.max_stage_bytes)
-        {
-            return Err(SourceStageError::StageLimitExceeded);
+        if self.note_owner_row(relation, repo, path, &encoded) == RowSeen::Duplicate {
+            self.stats.deduped += 1;
+            return Ok(());
+        }
+        if self.stats.rows >= self.limits.max_stage_rows {
+            return Err(self.limit_error("rows", self.stats.rows, self.limits.max_stage_rows));
+        }
+        let staged_total = self
+            .stats
+            .staged_bytes
+            .checked_add(bytes)
+            .ok_or(SourceStageError::EncodingTooLarge)?;
+        if staged_total > self.limits.max_stage_bytes {
+            return Err(self.limit_error("bytes", staged_total, self.limits.max_stage_bytes));
         }
         if !self.buffered.is_empty()
             && (self.buffered.len() == self.limits.max_rows
@@ -424,7 +503,7 @@ impl StageWriter<'_> {
             return Ok(());
         }
         if self.stats.owners == self.limits.max_owners {
-            return Err(SourceStageError::StageLimitExceeded);
+            return Err(self.limit_error("owners", self.stats.owners + 1, self.limits.max_owners));
         }
         self.buffered_owners.push(key.clone());
         self.owner_set.insert(key);
@@ -697,7 +776,17 @@ pub(super) enum SourceStageError {
         bytes: usize,
         limit: usize,
     },
-    StageLimitExceeded,
+    /// One of the three total-stage terms hit its cap. The counters travel
+    /// with the error so the CLI line names the binding term; a bare
+    /// "exceeds total row/byte/owner bounds" cost hours of misattribution.
+    StageLimitExceeded {
+        term: &'static str,
+        value: usize,
+        limit: usize,
+        rows: usize,
+        staged_bytes: usize,
+        owners: usize,
+    },
     EncodingTooLarge,
     BadCodec,
     NonCanonical,
@@ -727,9 +816,18 @@ impl std::fmt::Display for SourceStageError {
             Self::RowTooLarge { bytes, limit } => {
                 write!(f, "source row {bytes} exceeds {limit} bytes")
             }
-            Self::StageLimitExceeded => {
-                f.write_str("source stage exceeds total row/byte/owner bounds")
-            }
+            Self::StageLimitExceeded {
+                term,
+                value,
+                limit,
+                rows,
+                staged_bytes,
+                owners,
+            } => write!(
+                f,
+                "source stage bound `{term}` exceeded: {value} > {limit} \
+                 (staged rows={rows}, bytes={staged_bytes}, owners={owners})"
+            ),
             Self::EncodingTooLarge => f.write_str("source-stage encoding is too large"),
             Self::BadCodec => f.write_str("corrupt source-stage value codec"),
             Self::NonCanonical => f.write_str("non-canonical source-stage value codec"),

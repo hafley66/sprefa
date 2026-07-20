@@ -221,7 +221,14 @@ fn run_and_report(file_count: usize) -> Vec<Sample> {
 #[ignore = "corpus-scaling profiling harness: run with `cargo test --release --test it family_scaling_probe -- --ignored --nocapture`"]
 fn family_derive_scan_scales_with_corpus_size() {
     for &file_count in &[10usize, 100, 1000] {
-        run_and_report(file_count);
+        let samples = run_and_report(file_count);
+        // The printed JSON is only meaningful if the router actually reacted
+        // at every measured repeat; assert that basic shape before trusting
+        // the numbers in it.
+        assert_eq!(samples.len(), WARMUP + REPEATS,
+            "expected {} total samples (warmup+repeats) at {file_count} files", WARMUP + REPEATS);
+        assert!(samples.iter().all(|sample| !sample.timings.is_empty()),
+            "call router produced no per-family timings at {file_count} files");
     }
 }
 

@@ -213,8 +213,9 @@ fn scan_star_fans_out_over_every_config_repo() {
     assert!(out.status.success(), "run failed: {stdout}\n{}", String::from_utf8_lossy(&out.stderr));
 
     let block = stdout.split("? file").nth(1).unwrap_or("");
-    assert!(block.contains("ra\tWORK\tsrc/lib.rs"), "repo ra file row: {stdout}");
-    assert!(block.contains("rb\tWORK\tsrc/lib.rs"), "repo rb file row: {stdout}");
+    let rev = crate::util::NO_HEAD_REV;
+    assert!(block.contains(&format!("ra\t{rev}\tsrc/lib.rs")), "repo ra file row: {stdout}");
+    assert!(block.contains(&format!("rb\t{rev}\tsrc/lib.rs")), "repo rb file row: {stdout}");
     assert!(block.contains("(2 rows)"), "both repos' files, distinct by repo: {stdout}");
 }
 

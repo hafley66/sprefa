@@ -22,7 +22,7 @@ impl Engine {
         let changed = self.write_dataflow_wholesale(&files, &rows)?;
         // Persisted only after the writes land, so a failed refresh retries.
         for (rev, digest) in &moved {
-            self.save_rel_digest(&extract_digest_key("dataflow", rev), digest)?;
+            self.save_extract_digest("dataflow", rev, digest)?;
         }
         Ok(changed)
     }
@@ -50,7 +50,7 @@ impl Engine {
     pub(crate) fn save_dataflow_cold_digest(&self) -> Result<()> {
         let files = self.extract_file_set()?;
         for (rev, digest) in self.moved_extract_revs("dataflow", &files, false)? {
-            self.save_rel_digest(&extract_digest_key("dataflow", &rev), &digest)?;
+            self.save_extract_digest("dataflow", &rev, &digest)?;
         }
         Ok(())
     }

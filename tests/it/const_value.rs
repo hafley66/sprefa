@@ -156,7 +156,8 @@ fn const_value_rev_carries_rev_column_and_reserved_name_rejected() {
     let eng = tick_once(&d);
     // const_value_rev: (repo, sym, field, text, kind, file, line, rev)
     let rev_rows = eng.rel_rows("const_value_rev", 8);
-    assert!(rev_rows.iter().any(|r| r[7] == "WORK"), "{rev_rows:?}");
+    // `WORK` is an ALIAS; a sandbox with no git HEAD stores the zero sentinel.
+    assert!(rev_rows.iter().any(|r| r[7] == crate::util::NO_HEAD_REV), "{rev_rows:?}");
 
     // A user program declaring `rel const_value` must bail (reserved name).
     let bad = d.join("bad.dl");

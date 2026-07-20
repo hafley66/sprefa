@@ -6,8 +6,9 @@
 //! scorer verbatim — same confirmed-positives-only contract as
 //! `oracle_rust`/`oracle_ts`/`oracle_go`.
 //!
-//! Runtime-SKIPs (does not fail) when no `scip-python` is found, same pattern
-//! as `oracle_go.rs`/`oracle_kotlin_parity.rs`. Override with SPREFA_SCIP_PYTHON.
+//! `#[ignore]`d — no `scip-python` is a genuine environmental gap, not
+//! something the default `cargo test` run should silently count as coverage.
+//! Override with SPREFA_SCIP_PYTHON. Run explicitly with `--ignored`.
 //!
 //! GOTCHAs for the indexer:
 //!  - `scip-python` crashes when indexing in a bare temp dir with no git repo
@@ -50,11 +51,9 @@ fn find_scip_python() -> Option<std::path::PathBuf> {
 ///
 /// Run: cargo test --test it python_call_resolution_parity_vs_scip -- --nocapture
 #[test]
+#[ignore = "needs scip-python on PATH (set SPREFA_SCIP_PYTHON)"]
 fn python_call_resolution_parity_vs_scip() {
-    let Some(scip_python) = find_scip_python() else {
-        eprintln!("SKIP oracle_python: no scip-python binary (set SPREFA_SCIP_PYTHON)");
-        return;
-    };
+    let scip_python = find_scip_python().expect("needs scip-python on PATH (set SPREFA_SCIP_PYTHON)");
 
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/py_ws");
 
@@ -73,20 +72,14 @@ fn python_call_resolution_parity_vs_scip() {
                "--output", "index.scip"])
         .current_dir(&index_dir)
         .output().expect("run scip-python index");
-    if !scip_out.is_file() {
-        eprintln!("SKIP oracle_python: scip-python produced no index (exit {}): {}",
-            run.status,
-            String::from_utf8_lossy(&run.stderr).lines().take(6).collect::<Vec<_>>().join(" | "));
-        return;
-    }
+    assert!(scip_out.is_file(), "scip-python produced no index (exit {}): {}",
+        run.status,
+        String::from_utf8_lossy(&run.stderr).lines().take(6).collect::<Vec<_>>().join(" | "));
     let index = Index::parse_from_bytes(&std::fs::read(&scip_out).unwrap()).expect("parse scip");
-    if index.documents.is_empty() {
-        // scip-python's fatal errors still exit 0 and leave a header-only index.
-        eprintln!("SKIP oracle_python: scip-python index has no documents (exit {}): {}",
-            run.status,
-            String::from_utf8_lossy(&run.stderr).lines().take(6).collect::<Vec<_>>().join(" | "));
-        return;
-    }
+    // scip-python's fatal errors still exit 0 and leave a header-only index.
+    assert!(!index.documents.is_empty(), "scip-python index has no documents (exit {}): {}",
+        run.status,
+        String::from_utf8_lossy(&run.stderr).lines().take(6).collect::<Vec<_>>().join(" | "));
 
     let dl_dir = std::env::temp_dir().join("sprefa_oracle_py_parity_dl");
     let _ = std::fs::remove_dir_all(&dl_dir);

@@ -33,7 +33,7 @@ impl Engine {
             }
             let spec = scan_spec_of(rule)?;
             let (repo, rev, glob) = (str_of(&spec.repo)?, str_of(&spec.rev)?, str_of(&spec.glob)?);
-            if rev != "WORK" || !(repo.is_empty() || repo == "." || repo == "self") {
+            if rev != WORK_ALIAS || !(repo.is_empty() || repo == "." || repo == "self") {
                 continue;
             }
             let matcher = globset::Glob::new(&glob)?.compile_matcher();
@@ -60,7 +60,7 @@ impl Engine {
         for (idx, rule) in source_rules.iter().enumerate() {
             let spec = scan_spec_of(rule)?;
             let (repo, rev, glob) = (str_of(&spec.repo)?, str_of(&spec.rev)?, str_of(&spec.glob)?);
-            if rev == "WORK" && (repo.is_empty() || repo == "." || repo == "self") {
+            if rev == WORK_ALIAS && (repo.is_empty() || repo == "." || repo == "self") {
                 work_rules.push((idx, globset::Glob::new(&glob)?.compile_matcher()));
             }
         }
@@ -68,6 +68,9 @@ impl Engine {
         let prev = self.load_file_meta()?;
         let mut current = prev.clone();
         let slug = self.self_slug();
+        // The `WORK` alias resolved: every coordinate written below is a rev,
+        // never the alias (INV-1).
+        let work_rev = self.self_rev_text();
         let mut result = PathSourceReconcile {
             changed_facts: false,
             changed_source_rels: HashSet::new(),
@@ -105,21 +108,21 @@ impl Engine {
             result.npaths += 1;
             let abs = self.root.join(&rel);
             if abs.is_file() {
-                next_rev_index.insert((slug.clone(), "WORK".into(), rel.clone()));
+                next_rev_index.insert((slug.clone(), work_rev.clone(), rel.clone()));
                 jobs.push(crate::engine::source_prepare::WorkPathExtractJob {
                     repo: slug.clone(),
                     path: rel,
-                    rev: "WORK".into(),
+                    rev: work_rev.clone(),
                     rule_indices: matching,
                 });
             } else {
-                if prev.contains_key(&(slug.clone(), rel.clone(), "WORK".into())) {
+                if prev.contains_key(&(slug.clone(), rel.clone(), work_rev.clone())) {
                     result.module_full_work = true;
                 }
                 result.node_delta_paths.insert(rel.clone());
                 retracts.insert((slug.clone(), rel.clone()));
-                next_rev_index.remove(&(slug.clone(), "WORK".into(), rel.clone()));
-                current.remove(&(slug.clone(), rel.clone(), "WORK".into()));
+                next_rev_index.remove(&(slug.clone(), work_rev.clone(), rel.clone()));
+                current.remove(&(slug.clone(), rel.clone(), work_rev.clone()));
                 for idx in matching {
                     result
                         .changed_source_rels

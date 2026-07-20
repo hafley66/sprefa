@@ -7,11 +7,14 @@ pub(crate) fn builtin_rel_decls() -> Vec<RelDecl> {
             doc: "zero-arity singleton; the always-succeeds atom", ..Default::default() },
         RelDecl { name: "repo".into(), cols: vec![c("slug", Type::Text), c("root", Type::Path), c("url", Type::Text)], group: "core",
             doc: "configured + dynamically-pulled repos whose root exists; writable as a sink — a repo(...) rule clones+registers when the github org is in `org` (hard filter); see docs/dynamic-reaching.md", ..Default::default() },
-        RelDecl { name: "rev".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text), c("oid", Type::Text), c("ts", Type::Int)], group: "core",
+        // `id` and `oid` both hold the same resolved rev text (declare.rs
+        // fills both from the one `rev` value carried off `_file`) — id is a
+        // legacy duplicate key, not a distinct identifier, so both retype.
+        RelDecl { name: "rev".into(), cols: vec![c("id", Type::Rev), c("repo", Type::Text), c("oid", Type::Rev), c("ts", Type::Int)], group: "core",
             doc: "git revs seen by scans", ..Default::default() },
         RelDecl { name: "content".into(), cols: vec![c("id", Type::Text), c("hash", Type::Text)], group: "core",
             doc: "content addresses", ..Default::default() },
-        RelDecl { name: "file".into(), cols: vec![c("repo", Type::Text), c("rev", Type::Text), c("path", Type::Path), c("content", Type::Text)], group: "core",
+        RelDecl { name: "file".into(), cols: vec![c("repo", Type::Text), c("rev", Type::Rev), c("path", Type::Path), c("content", Type::Text)], group: "core",
             doc: "scanned files, keyed by (repo, rev, path, content)", ..Default::default() },
     ]
 }
@@ -464,28 +467,28 @@ pub(crate) fn module_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "module_import".into(), cols: vec![
-            c("file", Type::Path), c("rev", Type::Text), c("specifier", Type::Text), c("kind", Type::Text), c("line", Type::Int)], group: "module",
+            c("file", Type::Path), c("rev", Type::Rev), c("specifier", Type::Text), c("kind", Type::Text), c("line", Type::Int)], group: "module",
             doc: "import statements (Rust + TS + Kotlin); Kotlin adds kind=same-package rows for bare uses of another file's column-0 decl, and an expect/actual decl fans edges to all declaring files; line: 1-based", ..Default::default() },
         RelDecl { name: "module_edge".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path)], group: "module",
             doc: "resolved file-to-file import graph (rev-deduped union)", ..Default::default() },
-        RelDecl { name: "module_edge_rev".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path), c("rev", Type::Text)], group: "module",
+        RelDecl { name: "module_edge_rev".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path), c("rev", Type::Rev)], group: "module",
             doc: "rev-aware module_edge", ..Default::default() },
         RelDecl { name: "module_unresolved".into(), cols: vec![
             c("file", Type::Path), c("specifier", Type::Text), c("reason", Type::Text), c("line", Type::Int)], group: "module",
             doc: "broken imports: a reference that resolved to no project file (the linter question); line: 1-based", ..Default::default() },
         RelDecl { name: "module_unresolved_rev".into(), cols: vec![
-            c("file", Type::Path), c("rev", Type::Text), c("specifier", Type::Text), c("reason", Type::Text), c("line", Type::Int)], group: "module",
+            c("file", Type::Path), c("rev", Type::Rev), c("specifier", Type::Text), c("reason", Type::Text), c("line", Type::Int)], group: "module",
             doc: "rev-aware module_unresolved; line: 1-based", ..Default::default() },
-        RelDecl { name: "crate_edge".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text), c("rev", Type::Text)], group: "module",
+        RelDecl { name: "crate_edge".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text), c("rev", Type::Rev)], group: "module",
             doc: "workspace-internal Cargo dependency edges", ..Default::default() },
         RelDecl { name: "module_binding_resolved_rev".into(), cols: vec![
-            c("file", Type::Path), c("local", Type::Text), c("source", Type::Text), c("dst", Type::Path), c("rev", Type::Text)], group: "module",
+            c("file", Type::Path), c("local", Type::Text), c("source", Type::Text), c("dst", Type::Path), c("rev", Type::Rev)], group: "module",
             doc: "the resolved subset (dst = resolved file, alias-only today) of module_binding: aliased-import local bindings from the module resolvers' own parse (Rust use..as, TS import{a as b}/default, Kotlin import..as) — the index-free equivalent of scip_binding; local is the binding name in scope at file, source is the exported name at dst (\"default\" for a default import)", ..Default::default() },
         RelDecl { name: "module_binding_resolved".into(), cols: vec![
             c("file", Type::Path), c("local", Type::Text), c("source", Type::Text), c("dst", Type::Path)], group: "module",
             doc: "rev-deduped union of module_binding_resolved_rev", ..Default::default() },
         RelDecl { name: "module_binding_rev".into(), cols: vec![
-            c("file", Type::Path), c("local_name", Type::Text), c("source_module", Type::Text), c("imported_name", Type::Text), c("kind", Type::Text), c("rev", Type::Text)], group: "module",
+            c("file", Type::Path), c("local_name", Type::Text), c("source_module", Type::Text), c("imported_name", Type::Text), c("kind", Type::Text), c("rev", Type::Rev)], group: "module",
             doc: "every local binding an import introduces, parsed off the import AST so aliased/library symbols resolve without scip — unlike module_binding_resolved_rev (alias-hop only, resolved-file-only), this fires for EVERY resolution incl. External (library) and Unresolved, and covers plain named/namespace/default/side-effect bindings too, not just aliased ones; source_module is the specifier as written (module_import's specifier text), imported_name the canonical exported name at the import site (\"default\"/\"*\"/\"\" for default/namespace/side-effect), kind = named/default/namespace/side_effect/reexport (Rust pub use). Two-line join for \"which library does this local name come from\": binds_lib(local_name, source_module) <- module_binding(file, local_name, source_module, _, _). then query ? binds_lib(\"myAlias\", lib)", ..Default::default() },
         RelDecl { name: "module_binding".into(), cols: vec![
             c("file", Type::Path), c("local_name", Type::Text), c("source_module", Type::Text), c("imported_name", Type::Text), c("kind", Type::Text)], group: "module",
@@ -498,7 +501,7 @@ pub(crate) fn type_rel_decls() -> Vec<RelDecl> {
     vec![
         RelDecl { name: "type_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), Col::branded("kind", "type_edge_kind"), c("repo", Type::Text)], group: "type",
             doc: "type-graph edges across Rust (syn), Kotlin (tree-sitter), TS (oxc); kind is field/variant/impl/generic — Kotlin interface supertypes are generic, class/object impl, val/var ctor params + body properties field, enum entries variant; trailing repo column so two trees scanned together don't collapse same-named types into one node (closure/scc still walk cols 0/1, unaffected)", ..Default::default() },
-        RelDecl { name: "type_edge_rev".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), Col::branded("kind", "type_edge_kind"), c("rev", Type::Text), c("repo", Type::Text)], group: "type",
+        RelDecl { name: "type_edge_rev".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), Col::branded("kind", "type_edge_kind"), c("rev", Type::Rev), c("repo", Type::Text)], group: "type",
             doc: "rev-aware type_edge (WORK-vs-HEAD type diff)", ..Default::default() },
         RelDecl { name: "type_entity".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("name", Type::Text), Col::branded("kind", "type_entity_kind"),
@@ -506,14 +509,14 @@ pub(crate) fn type_rel_decls() -> Vec<RelDecl> {
             doc: "every declared type; sym is file::kind::name, the cross-graph join key; scip_ref overrides name resolution when a SCIP index is present; line: 1-based", ..Default::default() },
         RelDecl { name: "type_entity_rev".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("name", Type::Text), Col::branded("kind", "type_entity_kind"),
-            c("parent", Type::Text), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Text)], group: "type",
+            c("parent", Type::Text), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Rev)], group: "type",
             doc: "rev-aware type_entity (rev is a column, never folded into the sym, so a diff compares the same sym across revs); legacy type_entity is the rev-deduped union; line: 1-based", ..Default::default() },
         RelDecl { name: "type_sig".into(), cols: vec![
             c("sym", Type::Text), c("slot", Type::Text), c("pos", Type::Int), c("ref", Type::Text)], group: "type",
             doc: "type signature slots (params, fields) per sym", ..Default::default() },
         RelDecl { name: "type_link".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text)], group: "type",
             doc: "cross-type links not carried by type_edge (SCIP-resolved sym to sym); src/dst are already repo-prefixed via type_entity's sym, so no separate repo column is needed", ..Default::default() },
-        RelDecl { name: "type_link_rev".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text), c("rev", Type::Text)], group: "type",
+        RelDecl { name: "type_link_rev".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text), c("rev", Type::Rev)], group: "type",
             doc: "rev-aware type_link (SCIP-resolved sym-to-sym per rev); legacy type_link is the rev-deduped union", ..Default::default() },
     ]
 }
@@ -570,7 +573,7 @@ pub(crate) fn call_rel_decls() -> Vec<RelDecl> {
             doc: "every callable; sym is repo-qualified repo::file::kind::name; line/end: 1-based", ..Default::default() },
         RelDecl { name: "call_def_rev".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("kind", Type::Text),
-            c("file", Type::Path), c("line", Type::Int), c("end", Type::Int), c("rev", Type::Text)], group: "call",
+            c("file", Type::Path), c("line", Type::Int), c("end", Type::Int), c("rev", Type::Rev)], group: "call",
             doc: "rev-aware call_def (rev is a column, never folded into the sym); legacy call_def is the rev-deduped union; line/end: 1-based", ..Default::default() },
         RelDecl { name: "call_site".into(), cols: vec![
             c("repo", Type::Text), c("caller", Type::Text), c("callee", Type::Text),
@@ -581,7 +584,7 @@ pub(crate) fn call_rel_decls() -> Vec<RelDecl> {
             doc: "resolved caller-sym to callee-sym edge (single-def or SCIP override)", ..Default::default() },
         RelDecl { name: "call_edge_rev".into(), cols: vec![
             c("caller", Type::Text), c("callee", Type::Text),
-            c("kind", Type::Text), c("rev", Type::Text)], group: "call",
+            c("kind", Type::Text), c("rev", Type::Rev)], group: "call",
             doc: "rev-aware call_edge", ..Default::default() },
         // def sym -> bare callable name, so rules can resolve a call_site's
         // callee text to the set of candidate def syms (then filter, e.g. by
@@ -620,7 +623,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // ROWID vouch is needed or possible for this shape.
         RelDecl { name: "df_node_rev".into(), cols: vec![
             c("id", Type::Text), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
-            c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Text)],
+            c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Rev)],
             key: Some(vec!["id".into(), "rev".into()]), group: "dataflow",
             doc: "rev-aware df_node; id is the SAME interned id as df_node.id (never rev-folded); PRIMARY KEY (id, rev) keeps two revs' rows disjoint; legacy df_node keeps one deduped row per raw id; line: 1-based", ..Default::default() },
         // (df_node id, repo) — the repo (nearest `.git` basename) the node's file
@@ -642,7 +645,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // narrowing here.
         // pk_never_null: same push site as df_node_repo, `vec![sym(&n.id),
         // t(repo), t(rev)]` — fixed 3-element literal, never Option.
-        RelDecl { name: "df_node_repo_rev".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text), c("rev", Type::Text)], group: "dataflow",
+        RelDecl { name: "df_node_repo_rev".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text), c("rev", Type::Rev)], group: "dataflow",
             doc: "rev-aware df_node_repo; id is the SAME interned id as df_node_rev.id (never rev-folded); legacy df_node_repo keeps the raw id", pk_never_null: true, ..Default::default() },
         // pk_never_null: `edge_rows.push(vec![sym(&e.from), sym(&e.to)])`
         // (extract/dataflow.rs) — both from a `TypeFacts` edge struct's plain
@@ -704,7 +707,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // sym(call), Value::Int(*pos), sym(arg), t(rev)])` — fixed 4-element
         // literal, never Option.
         RelDecl { name: "df_arg_rev".into(), cols: vec![
-            c("call", Type::Text), c("pos", Type::Int), c("arg", Type::Text), c("rev", Type::Text)], group: "dataflow",
+            c("call", Type::Text), c("pos", Type::Int), c("arg", Type::Text), c("rev", Type::Rev)], group: "dataflow",
             doc: "rev-aware df_arg; call and arg are the SAME interned ids as df_node_rev.id (never rev-folded); legacy df_arg keeps raw ids", pk_never_null: true, ..Default::default() },
         // (new/call node id, field name, value node id) — named value flow
         // into a composite: Rust struct-literal fields (`..base` under the
@@ -728,7 +731,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // sym(id), t(field), sym(value), t(rev)])` — fixed 4-element literal,
         // never Option.
         RelDecl { name: "df_field_rev".into(), cols: vec![
-            c("id", Type::Text), c("field", Type::Text), c("value", Type::Text), c("rev", Type::Text)], group: "dataflow",
+            c("id", Type::Text), c("field", Type::Text), c("value", Type::Text), c("rev", Type::Rev)], group: "dataflow",
             doc: "rev-aware df_field; id and value are the SAME interned ids as df_node_rev.id (never rev-folded); legacy df_field keeps raw ids", pk_never_null: true, ..Default::default() },
         // (df_node id, text, kind) — one row per STRING-carrying value node
         // (string-values arc item 1). `kind` is lit/template/concat: `lit` is
@@ -746,7 +749,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // default PRIMARY KEY is still exactly as unique, no explicit
         // `key(...)` needed.
         RelDecl { name: "df_lit_rev".into(), cols: vec![
-            c("id", Type::Text), Col::raw("text", Type::Text), Col::branded("kind", "const_value_kind"), c("rev", Type::Text)], group: "dataflow",
+            c("id", Type::Text), Col::raw("text", Type::Text), Col::branded("kind", "const_value_kind"), c("rev", Type::Rev)], group: "dataflow",
             doc: "rev-aware df_lit; id is the SAME interned id as df_node_rev.id (never rev-folded); legacy df_lit keeps the raw id", ..Default::default() },
     ]
 }
@@ -764,7 +767,7 @@ pub(crate) fn const_value_rel_decls() -> Vec<RelDecl> {
             doc: "string value folded from a const (or as const) binding; sym is the owning type_entity (the const itself, or the enum for a string member), field is \"\" for a bare const or a dotted key path (\"home\", \"nested.a\") for an object literal; a let/var string initializer is never emitted (soundness rule); line: 1-based", ..Default::default() },
         RelDecl { name: "const_value_rev".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("field", Type::Text), Col::raw("text", Type::Text),
-            Col::branded("kind", "const_value_kind"), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Text)], group: "type",
+            Col::branded("kind", "const_value_kind"), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Rev)], group: "type",
             doc: "rev-aware const_value (rev is a plain trailing column, like type_entity_rev — sym never collides across revs); legacy const_value is the rev-deduped union; line: 1-based", ..Default::default() },
     ]
 }

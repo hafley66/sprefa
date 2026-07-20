@@ -114,7 +114,9 @@ impl Engine {
                 vars.push(v);
             }
         }
-        let sql = crate::lower::lower_gen(&vars, &g.body, &self.rels)?;
+        let mut body = g.body.clone();
+        crate::lower::resolve_work_alias_body(&mut body, &self.rels, &self.self_rev_text());
+        let sql = crate::lower::lower_gen(&vars, &body, &self.rels)?;
         let rows: Vec<HashMap<String, String>> = {
             let values = self.db.query_values("gen", &sql, &[])?;
             values

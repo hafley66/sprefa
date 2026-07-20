@@ -462,24 +462,76 @@ fn run_fixpoint_property(script: &[Op]) {
 
 // ---- test definitions ---------------------------------------------------------
 
-// Property 1+2 (equivalence + memo=rel) is currently IGNORED because it found a
-// real engine bug in the router's relation-footprint computation:
+// Deterministic regression for the router empty-input footprint defect
+// (failure-modes class 27, fixed by 2acf0c71). The mechanism:
 //
 //   When a call-family input relation (e.g. `_call_def`) is empty on the tick
-//   that first populates the router memo, `Ctx::scan` records no per-row deps
-//   for that relation, so the family's memo rel-footprint does NOT include it.
-//   Later inserts into `_call_def` therefore do not trigger a rerun of the
-//   `call_def` / `call_name` / `call_def_rev` families, and the public rel
-//   stays stale.
+//   that repopulates the router memo, `Ctx::scan` records no per-row deps for
+//   that relation, so a footprint built purely by projecting the observed deps
+//   omits it. Later inserts into `_call_def` then fail to rerun the
+//   `call_def` / `call_name` / `call_def_rev` families and the public rel stays
+//   stale. `rel_footprint` (src/engine/family/router.rs) unions the declared
+//   `input_rels` into the footprint so that a scan of an empty relation is
+//   still a dependency on it.
 //
-// Shrunk reproduction (seed cc 0d80eca002b18e65b3098c2eb6b2308ccd1b0ba5edb79c527e349b5751592c9e):
-//   1. seed tree: m0.rs with f0, tick  -> router memo warm
-//   2. delete m0.rs, add empty m1.rs/m2.rs, tick  -> `_call_def` becomes empty
-//   3. add f1 to m1.rs, tick  -> `_call_def` has f1, but `call_def` public rel stays empty
-//      because the router footprint for CallDef/CallName/CallDefRev no longer
-//      contains `_call_def`.
+// This pins the shape the proptest found under seed
+// cc 0d80eca002b18e65b3098c2eb6b2308ccd1b0ba5edb79c527e349b5751592c9e
+// (persisted in tests/proptest-regressions/retraction_props.txt) without
+// depending on a random draw to rediscover it.
 //
-// Persisted in tests/proptest-regressions/retraction_props.txt.
+// Proven fail-pre-fix: with the `rels.extend(family.input_rels()...)` line in
+// `rel_footprint` removed, this test fails at the empty-then-insert step with
+// `rel `call_def` diverges from the fresh-engine oracle (0 incremental rows,
+// 1 oracle rows)`.
+#[test]
+fn empty_input_rel_still_reruns_the_family_after_insert() {
+    let dir = TempDir::new("empty_input");
+    let mut tree = seed_tree();
+    let mut engine = engine_at(dir.path(), "db");
+    let prog = call_prog();
+
+    // Step 0: m0.rs holds f0, so `_call_def` is populated and the router memo
+    // is warm with a footprint that observed real `_call_def` rows.
+    write_tree_to_disk(&tree, dir.path());
+    engine.tick(&prog, true).unwrap();
+    assert!(
+        !dump_call_rels(&engine)["call_def"].is_empty(),
+        "seed tick must populate `call_def`, otherwise the empty-then-insert \
+         transition below is not being exercised"
+    );
+
+    // Step 1: add an empty m1.rs and delete m0.rs. `_call_def` is now EMPTY on
+    // the tick that rebuilds the memo, so the derive observes zero per-row deps
+    // for it.
+    apply_op(&mut tree, &Op::AddFile);
+    apply_op(&mut tree, &Op::DeleteFile { file_idx: 0 });
+    write_tree_to_disk(&tree, dir.path());
+    engine.tick(&prog, true).unwrap();
+    assert!(
+        dump_call_rels(&engine)["call_def"].is_empty(),
+        "`call_def` must be empty after deleting the only file that defined a fn"
+    );
+
+    // Step 2: add f1 to the surviving m1.rs. `_call_def` goes empty -> populated.
+    // The family reruns only if the footprint recorded at step 1 still names
+    // `_call_def` despite it having had no rows to scan.
+    apply_op(&mut tree, &Op::AddFn { file_idx: 0, callee_idx: 0 });
+    write_tree_to_disk(&tree, dir.path());
+    engine.tick(&prog, true).unwrap();
+
+    let incremental = dump_call_rels(&engine);
+    let base_rels = dump_call_rels_base(&engine);
+    let oracle = oracle_dump_for(dir.path(), "empty_input_step2", CALL_PROG);
+
+    assert!(
+        !incremental["call_def"].is_empty(),
+        "`call_def` must refresh after an insert into a previously empty \
+         `_call_def`; an empty scan is still a dependency on the relation"
+    );
+    assert_matches_oracle("empty-input insert", &incremental, &oracle);
+    assert_memo_matches_rel("empty-input insert memo=rel", &engine, &base_rels);
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(20))]
 
@@ -495,7 +547,7 @@ proptest! {
 }
 
 #[test]
-#[ignore = "high-volume T4 property suite: 200 cases; blocked on router empty-input footprint bug (seed cc 0d80eca002b18e65b3098c2eb6b2308ccd1b0ba5edb79c527e349b5751592c9e)"]
+#[ignore = "high-volume T4 property suite: 200 cases"]
 fn equivalence_and_memo_hold_at_every_step_high_volume() {
     proptest!(ProptestConfig::with_cases(200), |(script in script_strategy())| {
         run_equivalence_property(&script);

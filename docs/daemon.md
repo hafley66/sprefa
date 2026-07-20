@@ -29,6 +29,7 @@ subcommand:
 | `dl daemon await-settle [--ms N]` | block until the cwd root is quiescent |
 | `dl daemon health` | storage report: per-db weights, orphan root dirs, duplicate rels — file-trail only, works with the daemon down |
 | `dl daemon events [--kind K] [--root R] [--limit N]` | replay the IO event trail — the ARGUMENTS of each discrete event (which paths changed, which file was written), not a cost sample; file-trail only, works with the daemon down |
+| `dl daemon gc [--root PATH] [--apply]` | sweep orphaned `_strings` intern rows (dry run unless `--apply`); WRITES, expects the daemon stopped |
 
 Source: [src/cli/](../src/cli/) (flag parsing + dispatch),
 [src/daemon/](../src/daemon/) (singleton + registry + spawn-if-missing
@@ -269,6 +270,7 @@ nearest `.dl/` ancestor, or `DL_DAEMON_ROOT` for a spawned helper):
 | `dl daemon await-settle [--ms N]` | block until the cwd root is quiescent (`await_quiescent` RPC), print `settled=<bool> tick=<n>`, exit 0 (settled) or 3 (timed out) |
 | `dl daemon health [--top N] [--root PATH] [--no-dupes]` | storage report per root db: dbstat buckets (rel tables / indexes / internal), heaviest tables with rows+bytes, orphan `roots/` dirs vs `roots.json` (class 14), identical-rowset rel pairs (`EXCEPT` both ways), static copy-rule scan, db/corpus ratio (class 17). Read-only opens, no socket — answers while the daemon is live, wedged, or down |
 | `dl daemon events [--kind K] [--root R] [--limit N]` | replay `<home>/events.jsonl[.1]`, newest last, optionally filtered by `kind`/`root` substring, tailed to `--limit` (default 100). Prints one line per event: `HH:MM:SS kind root-basename {compact json data}`. Unlike `why` (which samples the activity slot every 2s and renders a human-readable cost string — "15 changed path(s)") this records the ARGUMENTS of each discrete IO event as it happens — which paths changed, which file was written — so causality ("which 15 files?") is reconstructible after the fact, not just the cost. Reads the file trail only, no socket, no lock — answers while the daemon is wedged, crashed, or down. See `src/eventlog.rs` |
+| `dl daemon gc [--root PATH] [--apply]` | sweep the `_strings` intern dictionary for rows no live rel column, `_where_bytes.string_id`, `_embeddings.sid`, or `_node_embeddings.node` references. Reachability is read from the root's own `.dl` program (`RelDecl`/`Col::interned()`) plus the built-in rel catalog — never a hardcoded table list — so a program that fails to parse REFUSES to sweep rather than deleting against an incomplete picture. Dry run by default (reports the orphan count + a content-byte estimate); `--apply` deletes, inside one transaction. Opens a read-write connection (unlike `health`), so it contends with a live daemon — run it with the daemon stopped, same convention as the standing VACUUM step. Does not VACUUM; run that separately to reclaim pages. See `src/daemon/gc.rs` for the full reachability argument |
 
 ## Environment variables
 

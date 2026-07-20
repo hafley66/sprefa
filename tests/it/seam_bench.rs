@@ -163,10 +163,11 @@ fn seams_scale_on_real_repo() {
     let root = std::env::var("SPREFA_SEAM_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(MANIFEST));
-    if !root.join(".git").exists() && !root.exists() {
-        eprintln!("skip: no real repo at {}", root.display());
-        return;
-    }
+    // The default (this crate's own checkout) always exists and always carries
+    // a `.git`; only a bad SPREFA_SEAM_ROOT override can violate this, and
+    // that should fail loudly rather than silently pass.
+    assert!(root.join(".git").exists() || root.exists(),
+        "no real repo at {} (check SPREFA_SEAM_ROOT)", root.display());
     eprintln!("\n  scale on {}", root.display());
     eprintln!("  seam            rows     ms");
     eprintln!("  ------------------------------");

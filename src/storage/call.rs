@@ -316,18 +316,17 @@ fn apply_sqlite_call_owner_delta_inner(
     let repo_sid = StringId::of(&delta.owner.repo).sqlite();
     let rev_sid = StringId::of(&delta.owner.rev).sqlite();
     let path_sid = StringId::of(&delta.owner.path).sqlite();
-    let work_sid = StringId::of("WORK").sqlite();
     let (owners, repos, non_work): (i64, i64, i64) = db.query_row(
         "SELECT COUNT(*), COUNT(DISTINCT repo_sid), \
                 COALESCE(SUM(CASE WHEN rev_sid = ?1 THEN 0 ELSE 1 END), 0) \
          FROM _call_owner",
-        [work_sid],
+        [rev_sid],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
     if owners == 0 || repos != 1 {
         return Ok(CallDeltaOutcome::Unsupported("call-multi-repo-baseline"));
     }
-    if non_work != 0 || rev_sid != work_sid {
+    if non_work != 0 {
         return Ok(CallDeltaOutcome::Unsupported("call-non-work-baseline"));
     }
     let existing = {

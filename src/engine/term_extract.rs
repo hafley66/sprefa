@@ -154,7 +154,9 @@ impl Engine {
                 r.head.rel
             );
         }
-        let sql = crate::lower::lower_body_projection(&r.body, &self.rels, &vars)?;
+        let mut body = r.body.clone();
+        crate::lower::resolve_work_alias_body(&mut body, &self.rels, &self.self_rev_text());
+        let sql = crate::lower::lower_body_projection(&body, &self.rels, &vars)?;
         let join_rows: Vec<Bind> = {
             let rel = crate::lower::tbl(&r.head.rel);
             self.db

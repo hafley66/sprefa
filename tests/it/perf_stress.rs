@@ -1,9 +1,9 @@
 //! Large-repo e2e perf stress. Proves the full pipeline (scan + extract + the
 //! type/call/dataflow graphs + closure) runs to completion on a real large
 //! checkout, and reports the cold-vs-incremental ratio — the headline perf
-//! number. Skips (does not fail) when no fixture is present; provision one with
-//! `just v5-fixture-rust` (shallow-clones rust-analyzer, depth 1, gitignored).
-//! Override the fixture path with SPREFA_BENCH_ROOT.
+//! number. `#[ignore]`d — the fixture is a gitignored, opt-in shallow clone;
+//! provision one with `just v5-fixture-rust` (shallow-clones rust-analyzer,
+//! depth 1). Override the fixture path with SPREFA_BENCH_ROOT.
 //!
 //! What this answers that closure_incremental_bench does not: does the engine
 //! hold up on a real polyglot corpus with messy imports, real call graphs, and
@@ -72,11 +72,10 @@ fn parsed_count(stderr: &str) -> Option<usize> {
 }
 
 #[test]
+#[ignore = "needs tests/.fixtures/rust-analyzer corpus (provision with `just v5-fixture-rust`, or set SPREFA_BENCH_ROOT)"]
 fn full_pipeline_cold_and_incremental_on_large_repo() {
-    let Some(root) = fixture() else {
-        eprintln!("perf_stress: SKIPPED — no fixture. Run `just v5-fixture-rust` to provision.");
-        return;
-    };
+    let root = fixture().expect(
+        "needs tests/.fixtures/rust-analyzer corpus (provision with `just v5-fixture-rust`, or set SPREFA_BENCH_ROOT)");
     let rs = count_rs(&root);
     assert!(rs > 0, "fixture {root:?} has no .rs files");
     let db = std::env::temp_dir().join("sprefa_perf_stress.db");

@@ -626,8 +626,10 @@ impl Engine {
             ),
         )?;
         crate::activity::detail(format!("derived: {head_rel}"));
+        let resolved_work = self.self_rev_text();
         for &ri in comp_rules {
-            let sql = crate::lower::lower_rule_to(derived_rules[ri], &self.rels, &mirror, &[])?;
+            let rule = crate::lower::resolve_work_alias(derived_rules[ri], &self.rels, &resolved_work);
+            let sql = crate::lower::lower_rule_to(&rule, &self.rels, &mirror, &[])?;
             timed(head_rel, &sql)?;
         }
         // Pass boundary: strings these rules minted must be durable before a
@@ -690,10 +692,12 @@ impl Engine {
         derived_rules: &[&Rule],
         timed: &mut impl FnMut(&str, &str) -> Result<usize>,
     ) -> Result<()> {
+        let resolved_work = self.self_rev_text();
         let stmts: Vec<(&str, String)> = comp_rules
             .iter()
             .map(|&ri| {
-                let sql = lower_rule(derived_rules[ri], &self.rels)?;
+                let rule = crate::lower::resolve_work_alias(derived_rules[ri], &self.rels, &resolved_work);
+                let sql = lower_rule(&rule, &self.rels)?;
                 Ok((derived_rules[ri].head.rel.as_str(), sql))
             })
             .collect::<Result<_>>()?;
@@ -1039,8 +1043,10 @@ impl Engine {
             }
         }
 
+        let resolved_work = self.self_rev_text();
         for &rule_index in &base_indices {
-            let sql = lower_rule(derived_rules[rule_index], &self.rels)?;
+            let rule = crate::lower::resolve_work_alias(derived_rules[rule_index], &self.rels, &resolved_work);
+            let sql = lower_rule(&rule, &self.rels)?;
             timed(&head_rel, &sql)?;
         }
 
@@ -1370,8 +1376,10 @@ impl Engine {
 
         // === recognized: execute ===
         // 1. Base rules populate the head (already DELETE-cleared) = start frontier.
+        let resolved_work = self.self_rev_text();
         for &ri in &base_ris {
-            let sql = lower_rule(derived_rules[ri], &self.rels)?;
+            let rule = crate::lower::resolve_work_alias(derived_rules[ri], &self.rels, &resolved_work);
+            let sql = lower_rule(&rule, &self.rels)?;
             timed(&head_rel, &sql)?;
         }
 
@@ -1636,9 +1644,11 @@ impl Engine {
             }
         }
 
+        let resolved_work = self.self_rev_text();
         for &ri in &seed_ris {
             let rule = derived_rules[ri];
-            let sql = lower_rule(rule, &self.rels)?;
+            let resolved_rule = crate::lower::resolve_work_alias(rule, &self.rels, &resolved_work);
+            let sql = lower_rule(&resolved_rule, &self.rels)?;
             total_promoted = total_promoted.saturating_add(timed(&rule.head.rel, &sql)?);
         }
         check_fixpoint_row_budget(&comp_rel_names, total_promoted, row_max)?;
@@ -1719,12 +1729,13 @@ impl Engine {
             // table, deduped by its PK.
             for (ri, occs) in &rec_ris {
                 let rule = derived_rules[*ri];
+                let resolved_rule = crate::lower::resolve_work_alias(rule, &self.rels, &resolved_work);
                 let target = format!("_delta_new_{}", rule.head.rel);
                 for (k, rel_name) in occs {
                     let mut overrides: HashMap<usize, String> = HashMap::new();
                     overrides.insert(*k, format!("_delta_{rel_name}"));
                     let sql =
-                        crate::lower::lower_rule_to_ex(rule, &self.rels, &target, &[], &overrides)?;
+                        crate::lower::lower_rule_to_ex(&resolved_rule, &self.rels, &target, &[], &overrides)?;
                     timed(&rule.head.rel, &sql)?;
                 }
             }

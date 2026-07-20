@@ -38,7 +38,7 @@ impl Engine {
             for (rev, frev) in &by_rev {
                 let mut digest = self.extract_input_digest("doc", rev, frev, false);
                 let ty = self
-                    .load_rel_digest(&extract_digest_key("type", rev))?
+                    .load_extract_digest("type", rev)?
                     .map(|d| d.iter().map(|b| format!("{b:02x}")).collect::<String>())
                     .unwrap_or_default();
                 for (a, b) in digest
@@ -47,7 +47,7 @@ impl Engine {
                 {
                     *a ^= *b;
                 }
-                if self.load_rel_digest(&extract_digest_key("doc", rev))? == Some(digest) {
+                if self.load_extract_digest("doc", rev)? == Some(digest) {
                     continue;
                 }
                 moved.push(((*rev).to_string(), digest));
@@ -218,7 +218,7 @@ impl Engine {
         )?;
         // Persisted only after the writes land, so a failed refresh retries.
         for (rev, d) in &moved {
-            self.save_rel_digest(&extract_digest_key("doc", rev), d)?;
+            self.save_extract_digest("doc", rev, d)?;
         }
         Ok(true)
     }

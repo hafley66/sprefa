@@ -7,11 +7,21 @@ use crate::engine::Engine;
 
 fn engine() -> Engine {
     let conn = crate::db::open(None).unwrap();
-    Engine::new(conn, std::path::PathBuf::from("/tmp"))
+    let mut eng = Engine::new(conn, std::path::PathBuf::from("/tmp"));
+    // `WORK` is an ALIAS resolved at the scan seam; these fixtures skip the
+    // scan, so resolve it directly and use the resulting rev everywhere a row
+    // or a family call names the working tree.
+    eng.resolve_self_rev().unwrap();
+    eng
+}
+
+/// The resolved working-tree rev these fixtures write and query under.
+fn work_rev() -> String {
+    crate::engine::RevId::no_head().text()
 }
 
 fn extract_file(repo: &str, path: &str, hash: &str) -> ExtractFile {
-    (repo.to_string(), path.to_string(), "WORK".to_string(), hash.to_string())
+    (repo.to_string(), path.to_string(), work_rev(), hash.to_string())
 }
 
 #[test]
@@ -19,30 +29,32 @@ fn resolution_dependency_digests_are_stable_and_isolated() {
     let eng = engine();
     eng.db.execute_batch_on(
         "rel_scip_ref_txt",
-        "CREATE TABLE rel_scip_ref_txt (file TEXT, symbol TEXT, def_file TEXT, repo TEXT); \
+        &format!("CREATE TABLE rel_scip_ref_txt (file TEXT, symbol TEXT, def_file TEXT, repo TEXT); \
          CREATE TABLE rel_module_edge_rev_txt (src TEXT, dst TEXT, rev TEXT); \
          CREATE TABLE rel_module_binding_resolved_rev_txt \
              (file TEXT, local TEXT, source TEXT, dst TEXT, rev TEXT); \
          INSERT INTO rel_scip_ref_txt VALUES \
              ('src/a.rs', 'crate A#', 'src/def.rs', 'self'); \
          INSERT INTO rel_module_edge_rev_txt VALUES \
-             ('src/a.rs', 'src/def.rs', 'WORK'); \
+             ('src/a.rs', 'src/def.rs', '{rev}'); \
          INSERT INTO rel_module_binding_resolved_rev_txt VALUES \
-             ('src/a.rs', 'Alias', 'Actual', 'src/def.rs', 'WORK');",
+             ('src/a.rs', 'Alias', 'Actual', 'src/def.rs', '{rev}');",
+            rev = work_rev()),
     ).unwrap();
 
-    let scip_initial = eng.scip_resolution_dependency_digest("WORK");
-    let module_initial = eng.module_resolution_dependency_digest("WORK");
-    assert_eq!(scip_initial, eng.scip_resolution_dependency_digest("WORK"));
-    assert_eq!(module_initial, eng.module_resolution_dependency_digest("WORK"));
-    let mut expected_extract = *blake3::hash(b"call\0WORK").as_bytes();
+    let scip_initial = eng.scip_resolution_dependency_digest(&work_rev());
+    let module_initial = eng.module_resolution_dependency_digest(&work_rev());
+    assert_eq!(scip_initial, eng.scip_resolution_dependency_digest(&work_rev()));
+    assert_eq!(module_initial, eng.module_resolution_dependency_digest(&work_rev()));
+    let mut expected_extract =
+        *blake3::hash(format!("call\0{}", work_rev()).as_bytes()).as_bytes();
     for dependency in [scip_initial, module_initial] {
         for (slot, byte) in expected_extract.iter_mut().zip(dependency) {
             *slot ^= byte;
         }
     }
     assert_eq!(
-        eng.extract_input_digest("call", "WORK", &[], true),
+        eng.extract_input_digest("call", &work_rev(), &[], true),
         expected_extract,
         "factoring dependency folds changed the extract digest framing",
     );
@@ -51,8 +63,8 @@ fn resolution_dependency_digests_are_stable_and_isolated() {
         "rel_module_edge_rev_txt",
         "UPDATE rel_module_edge_rev_txt SET dst = 'src/other.rs'",
     ).unwrap();
-    let scip_after_module = eng.scip_resolution_dependency_digest("WORK");
-    let module_after_module = eng.module_resolution_dependency_digest("WORK");
+    let scip_after_module = eng.scip_resolution_dependency_digest(&work_rev());
+    let module_after_module = eng.module_resolution_dependency_digest(&work_rev());
     assert_eq!(scip_initial, scip_after_module, "module input changed SCIP digest");
     assert_ne!(module_initial, module_after_module, "module row change was invisible");
 
@@ -62,12 +74,12 @@ fn resolution_dependency_digests_are_stable_and_isolated() {
     ).unwrap();
     assert_ne!(
         scip_after_module,
-        eng.scip_resolution_dependency_digest("WORK"),
+        eng.scip_resolution_dependency_digest(&work_rev()),
         "SCIP row change was invisible",
     );
     assert_eq!(
         module_after_module,
-        eng.module_resolution_dependency_digest("WORK"),
+        eng.module_resolution_dependency_digest(&work_rev()),
         "SCIP input changed module digest",
     );
     assert_eq!(eng.scip_resolution_dependency_digest("HEAD"), [0; 32]);
@@ -80,7 +92,7 @@ fn resolution_dependency_digests_are_stable_and_isolated() {
 fn first_run_wins_over_every_other_category() {
     let eng = engine();
     let files = vec![extract_file("self", "src/a.rs", "hash-a")];
-    let reason = eng.extract_rebuild_reason("type", "WORK", &files, false, true);
+    let reason = eng.extract_rebuild_reason("type", &work_rev(), &files, false, true);
     assert_eq!(reason, "first-run");
 }
 
@@ -94,7 +106,7 @@ fn empty_hash_file_attributes_to_rev_set_changed() {
         extract_file("self", "src/a.rs", "hash-a"),
         extract_file("self", "src/b.rs", ""),
     ];
-    let reason = eng.extract_rebuild_reason("type", "WORK", &files, false, false);
+    let reason = eng.extract_rebuild_reason("type", &work_rev(), &files, false, false);
     assert_eq!(reason, "rev-set-changed");
 }
 
@@ -108,7 +120,7 @@ fn plain_content_change_falls_to_corpus_changed_with_file_count() {
         extract_file("self", "src/a.rs", "hash-a"),
         extract_file("self", "src/b.rs", "hash-b"),
     ];
-    let reason = eng.extract_rebuild_reason("type", "WORK", &files, false, false);
+    let reason = eng.extract_rebuild_reason("type", &work_rev(), &files, false, false);
     assert_eq!(reason, "corpus-changed (2 paths)");
 }
 
@@ -119,7 +131,7 @@ fn plain_content_change_falls_to_corpus_changed_with_file_count() {
 fn scip_category_is_gated_on_with_scip() {
     let eng = engine();
     let files = vec![extract_file("self", "src/a.rs", "hash-a")];
-    let reason = eng.extract_rebuild_reason("call", "WORK", &files, false, false);
+    let reason = eng.extract_rebuild_reason("call", &work_rev(), &files, false, false);
     assert_ne!(reason, "scip-index-changed");
 }
 
@@ -134,8 +146,8 @@ fn resolved_corpus_digest_is_stable_across_ticks() {
         extract_file("self", "src/a.rs", "hash-a"),
         extract_file("self", "src/b.rs", "hash-b"),
     ];
-    let first = eng.extract_input_digest("type", "WORK", &files, false);
-    let second = eng.extract_input_digest("type", "WORK", &files, false);
+    let first = eng.extract_input_digest("type", &work_rev(), &files, false);
+    let second = eng.extract_input_digest("type", &work_rev(), &files, false);
     assert_eq!(first, second, "a fully-resolved corpus must digest identically each tick");
 }
 
@@ -157,8 +169,8 @@ fn empty_hash_file_makes_digest_nondeterministic_the_cpu_storm() {
         extract_file("self", "src/a.rs", "hash-a"),
         extract_file("self", "src/b.rs", ""), // persistently unresolved path
     ];
-    let first = eng.extract_input_digest("type", "WORK", &files, false);
-    let second = eng.extract_input_digest("type", "WORK", &files, false);
+    let first = eng.extract_input_digest("type", &work_rev(), &files, false);
+    let second = eng.extract_input_digest("type", &work_rev(), &files, false);
     assert_eq!(
         first, second,
         "extract_input_digest folds a wall-clock nonce for an empty-hash file, so an \
@@ -185,9 +197,9 @@ fn exe_identity_changed_reports_true_then_false_after_tick_boundary() {
     let bogus = [0xffu8; 32];
     eng.save_rel_digest("extract:exe-stamp", &bogus).unwrap();
 
-    let first = eng.extract_rebuild_reason("type", "WORK", &files, false, false);
+    let first = eng.extract_rebuild_reason("type", &work_rev(), &files, false, false);
     assert_eq!(first, "exe-identity-changed");
-    let second = eng.extract_rebuild_reason("type", "WORK", &files, false, false);
+    let second = eng.extract_rebuild_reason("type", &work_rev(), &files, false, false);
     assert_eq!(
         second, "exe-identity-changed",
         "within one tick the cached answer must stay consistent across family lookups"
@@ -195,7 +207,7 @@ fn exe_identity_changed_reports_true_then_false_after_tick_boundary() {
 
     // Simulate the tick boundary where `tick` clears the cache.
     eng.clear_exe_identity_cache();
-    let third = eng.extract_rebuild_reason("type", "WORK", &files, false, false);
+    let third = eng.extract_rebuild_reason("type", &work_rev(), &files, false, false);
     assert_eq!(
         third, "corpus-changed (1 paths)",
         "after the tick boundary the saved stamp matches the current binary, so no exe change"
@@ -216,10 +228,10 @@ fn exe_identity_changed_is_isolated_across_engines() {
     eng1.save_rel_digest("extract:exe-stamp", &bogus).unwrap();
     eng2.save_rel_digest("extract:exe-stamp", &bogus).unwrap();
 
-    let reason1 = eng1.extract_rebuild_reason("type", "WORK", &files, false, false);
+    let reason1 = eng1.extract_rebuild_reason("type", &work_rev(), &files, false, false);
     assert_eq!(reason1, "exe-identity-changed");
 
-    let reason2 = eng2.extract_rebuild_reason("type", "WORK", &files, false, false);
+    let reason2 = eng2.extract_rebuild_reason("type", &work_rev(), &files, false, false);
     assert_eq!(
         reason2, "exe-identity-changed",
         "engine 2 must read its own db, not inherit engine 1's cached answer"

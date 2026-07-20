@@ -5,8 +5,9 @@
 //! the ground-truth file dependency graph. We assert every edge we emit is a real
 //! RA edge (precision == 1.0) and report recall (we are diet, so recall < 1).
 //!
-//! Skips (does not fail) when no rust-analyzer binary is found, since CI machines
-//! may lack one. Set SPREFA_RUST_ANALYZER to point at a binary explicitly.
+//! `#[ignore]`d — no rust-analyzer binary is a genuine environmental gap, not
+//! something the default `cargo test` run should silently count as coverage.
+//! Set SPREFA_RUST_ANALYZER to point at a binary explicitly.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -152,11 +153,9 @@ fn print_stats(label: &str, s: &OracleStats) {
 }
 
 #[test]
+#[ignore = "needs rust-analyzer on PATH (set SPREFA_RUST_ANALYZER)"]
 fn module_edge_is_subset_of_rust_analyzer() {
-    let Some(ra) = find_ra() else {
-        eprintln!("SKIP oracle_rust: no rust-analyzer binary (set SPREFA_RUST_ANALYZER)");
-        return;
-    };
+    let ra = find_ra().expect("needs rust-analyzer on PATH (set SPREFA_RUST_ANALYZER)");
     let tmp = std::env::temp_dir().join("sprefa_oracle_ra_ws");
     let _ = std::fs::remove_dir_all(&tmp);
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ra_ws");
@@ -170,12 +169,9 @@ fn module_edge_is_subset_of_rust_analyzer() {
 }
 
 #[test]
-#[ignore = "manual recall snapshot over the real v5 crate; RA output includes known duplicate-symbol warnings"]
+#[ignore = "needs rust-analyzer on PATH (SPREFA_RUST_ANALYZER); manual recall snapshot over the real v5 crate, RA output includes known duplicate-symbol warnings"]
 fn real_v5_crate_recall_snapshot() {
-    let Some(ra) = find_ra() else {
-        eprintln!("SKIP oracle_rust real crate: no rust-analyzer binary (set SPREFA_RUST_ANALYZER)");
-        return;
-    };
+    let ra = find_ra().expect("needs rust-analyzer on PATH (set SPREFA_RUST_ANALYZER)");
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let stats = compare_with_ra(&ra, root, "sprefa_oracle_v5_real", Some("src/"));
     print_stats("v5-real", &stats);
@@ -191,12 +187,9 @@ fn real_v5_crate_recall_snapshot() {
 ///
 /// Run: cargo test --test it call_resolution_parity_vs_rust_analyzer -- --ignored --nocapture
 #[test]
-#[ignore = "manual scip-parity snapshot; runs rust-analyzer scip over this crate (~minutes)"]
+#[ignore = "needs rust-analyzer on PATH (SPREFA_RUST_ANALYZER); manual scip-parity snapshot, runs rust-analyzer scip over this crate (~minutes)"]
 fn call_resolution_parity_vs_rust_analyzer() {
-    let Some(ra) = find_ra() else {
-        eprintln!("SKIP oracle parity: no rust-analyzer binary (set SPREFA_RUST_ANALYZER)");
-        return;
-    };
+    let ra = find_ra().expect("needs rust-analyzer on PATH (set SPREFA_RUST_ANALYZER)");
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
 
     // --- ground truth: rust-analyzer's SCIP index over this crate.

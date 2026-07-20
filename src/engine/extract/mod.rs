@@ -75,17 +75,55 @@ fn exe_stamp() -> u128 {
     })
 }
 
-/// The stored key for a family/rev extract digest. The running binary's stamp
-/// is a KEY NAMESPACE segment, not folded into the digest value: two different
-/// `dl` binaries sharing one `cache.db` (the classic case: a running daemon on
-/// the old image while a freshly `cargo install`ed CLI runs the same repo) then
-/// keep SEPARATE skip-state instead of clobbering each other's digest at a
-/// shared key and forcing a full re-extract on every tick (the ping-pong that
-/// pinned the machine). Rev stays the trailing segment so the gone-rev sweep's
-/// `substr` still recovers it. A new binary sees `None` (its namespace is
-/// empty) and does exactly one cold rebuild, then skips.
-fn extract_digest_key(family: &str, rev: &str) -> String {
-    format!("extract:{:032x}:{family}:{rev}", exe_stamp())
+/// The stored key for a family/rev extract digest: three atomic columns, never
+/// a `format!` fold. The running binary's stamp is a KEY NAMESPACE segment
+/// rather than part of the digest VALUE, so two `dl` binaries sharing one
+/// `cache.db` (the classic case: a running daemon on the old image while a
+/// freshly `cargo install`ed CLI runs the same repo) keep SEPARATE skip-state
+/// instead of clobbering each other at a shared key and forcing a full
+/// re-extract every tick. A new binary sees `None` (its namespace is empty),
+/// does exactly one cold rebuild, then skips.
+///
+/// The predecessor folded all three into one `_reldigest.rel` TEXT value, which
+/// forced the gone-rev sweep into a `LIKE 'prefix%'` scan plus a substring cut to get
+/// the rev back — a hand-rolled column projection over a key that should have
+/// had columns. Recovering a component is now a column read.
+fn extract_digest_exe() -> i64 {
+    exe_stamp() as u64 as i64
+}
+
+fn intern(text: &str) -> i64 {
+    crate::spine::StringId::of(text).sqlite()
+}
+
+impl Engine {
+    /// Skip-state for one (binary, family, rev). `None` means this binary has
+    /// never stored that family's outputs for that rev.
+    pub(crate) fn load_extract_digest(&self, family: &str, rev: &str) -> Result<Option<[u8; 32]>> {
+        let hex: Option<String> = self.db.query_opt(
+            "_extract_digest",
+            "SELECT digest FROM _extract_digest WHERE exe = ?1 AND family = ?2 AND rev = ?3",
+            &[extract_digest_exe().into(), intern(family).into(), intern(rev).into()],
+            |row| Ok(row.get::<_, String>(0)?),
+        )?;
+        Ok(hex.and_then(|h| crate::engine::hex_to_32(&h).ok()))
+    }
+
+    pub(crate) fn save_extract_digest(&self, family: &str, rev: &str, digest: &[u8; 32]) -> Result<()> {
+        let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        self.db.exec_params(
+            "_extract_digest",
+            "INSERT INTO _extract_digest(exe, family, rev, digest) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(exe, family, rev) DO UPDATE SET digest = excluded.digest",
+            &[
+                extract_digest_exe().into(),
+                intern(family).into(),
+                intern(rev).into(),
+                hex.into(),
+            ],
+        )?;
+        Ok(())
+    }
 }
 
 /// Split `files` into cache hits and misses (keyed by (repo, path, content
@@ -210,7 +248,7 @@ pub(crate) fn prime_analysis_bundles(eng: &Engine, prog: &Program) -> Result<()>
         }
         for (rev, frev) in by_rev {
             let digest = eng.extract_input_digest(family, rev, &frev, with_scip);
-            if eng.load_rel_digest(&extract_digest_key(family, rev))? != Some(digest) {
+            if eng.load_extract_digest(family, rev)? != Some(digest) {
                 return Ok(true);
             }
         }
@@ -600,7 +638,7 @@ impl Engine {
         let mut moved: Vec<(String, [u8; 32])> = Vec::new();
         for (rev, files) in &by_rev {
             let d = self.module_input_digest(rev, files);
-            if self.load_rel_digest(&extract_digest_key("module", rev))? == Some(d) { continue; }
+            if self.load_extract_digest("module", rev)? == Some(d) { continue; }
             moved.push((rev.clone(), d));
         }
         if moved.is_empty() { return Ok(false); }
@@ -618,7 +656,7 @@ impl Engine {
         self.insert_module_spans(&rows)?;
         self.rebuild_legacy_module_rels()?;
         for (rev, d) in &moved {
-            self.save_rel_digest(&extract_digest_key("module", rev), d)?;
+            self.save_extract_digest("module", rev, d)?;
         }
         Ok(true)
     }
@@ -740,7 +778,7 @@ impl Engine {
     /// digest contract; keep it byte-for-byte aligned with the original fold.
     pub(crate) fn scip_resolution_dependency_digest(&self, rev: &str) -> [u8; 32] {
         let mut acc = [0u8; 32];
-        if rev != "WORK" {
+        if !self.is_worktree_rev(rev) {
             return acc;
         }
         let rows = self.db.query_rows(
@@ -879,7 +917,7 @@ impl Engine {
         let mut moved: Vec<(String, [u8; 32])> = Vec::new();
         for (rev, frev) in &by_rev {
             let d = self.extract_input_digest(family, rev, frev, with_scip);
-            let prior = self.load_rel_digest(&extract_digest_key(family, rev))?;
+            let prior = self.load_extract_digest(family, rev)?;
             if prior == Some(d) {
                 crate::verdict::debug_verdict(
                     "extract-rebuild",
@@ -924,7 +962,7 @@ impl Engine {
         if self.exe_identity_changed_since_last_run() {
             return "exe-identity-changed".to_string();
         }
-        if with_scip && rev == "WORK" {
+        if with_scip && self.is_worktree_rev(rev) {
             let n: i64 = self.db
                 .query_one("scip_ref", &format!("SELECT COUNT(*) FROM {}", txt_tbl("scip_ref")), &[], |r| Ok(r.get(0)?))
                 .unwrap_or(0);
@@ -1084,26 +1122,22 @@ impl Engine {
             ))?;
         }
 
-        // `extract:<family>:<rev>` digest rows, one family prefix at a time
-        // (the families whose skip-check is keyed per rev: module/type/call/
-        // dataflow/doc/comment — see `moved_extract_revs` and
-        // `refresh_module_rels`'s digest gate). A rev that disappeared MUST take
-        // its digest with it: the digest certifies "I built and STORED this
-        // rev's outputs," and the twin DELETE above just wiped those outputs, so
-        // a surviving digest would make the next tick's gate skip repopulating
-        // them (the lint-imports/diag_mute regression).
-        // The exe stamp is a key-namespace segment (see `extract_digest_key`),
-        // so the prefix carries it and rev stays the trailing segment `substr`
-        // recovers. Only this binary's namespace is swept; a prior binary's
-        // stale digests are harmless (its skip-state, never read by this exe).
-        for family in ["module", "type", "call", "dataflow", "doc", "comment"] {
-            let prefix = format!("extract:{:032x}:{family}:", exe_stamp());
-            self.db.exec(&format!(
-                "DELETE FROM _reldigest WHERE rel LIKE '{prefix}%' \
-                 AND substr(rel, {}) NOT IN (SELECT rev FROM _live_rev_scope)",
-                prefix.chars().count() + 1,
-            ))?;
-        }
+        // Extract skip-state for a gone rev, every family at once. A rev that
+        // disappeared MUST take its digest with it: the digest certifies "I
+        // built and STORED this rev's outputs," and the twin DELETE above just
+        // wiped those outputs, so a surviving digest would make the next tick's
+        // gate skip repopulating them (the lint-imports/diag_mute regression).
+        // `rev` is a column, so this is one indexed set difference rather than
+        // the per-family `LIKE` scan with a `substr` projection it replaces, and
+        // it can no longer miss a family the old hardcoded list forgot.
+        // Only this binary's namespace is swept; a prior binary's stale digests
+        // are harmless (its skip-state, never read by this exe).
+        self.db.exec_params(
+            "_extract_digest",
+            "DELETE FROM _extract_digest WHERE exe = ?1 \
+             AND rev NOT IN (SELECT sprf_sym(rev) FROM _live_rev_scope)",
+            &[extract_digest_exe().into()],
+        )?;
 
         self.rebuild_legacy_type_rels()?;
         self.sweep_gone_call_inputs()?;

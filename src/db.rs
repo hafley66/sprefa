@@ -108,6 +108,20 @@ pub struct Db {
     /// corpus can't grow this unbounded; the cap just clears the set, which
     /// only causes re-offering, never a wrongly-skipped insert.
     persisted_strings: RefCell<HashSet<i64>>,
+    /// Ids attempted into `_strings` during the transaction `flush_syms` is
+    /// CURRENTLY nested inside; empty whenever `is_autocommit()` is true.
+    /// One write path routinely calls two intern-and-flush helpers back to
+    /// back over the same row set inside one caller-owned transaction
+    /// (`insert_spine_strings` then `encode_rel_rows`, both under
+    /// `insert_source_rows_for_paths`) — the second flush re-offers ids the
+    /// first already wrote, uncommitted, into this same transaction. This
+    /// set lets that second flush skip the redundant `INSERT OR IGNORE`
+    /// instead of re-issuing it for a row SQLite already holds (visible to
+    /// this connection, just not durable yet). It is NOT `persisted_strings`:
+    /// it never survives past this transaction's resolution (cleared in
+    /// `flush_syms` the moment autocommit returns), so it cannot make a
+    /// rolled-back id look durable to a later, unrelated transaction.
+    inflight_strings: RefCell<HashSet<i64>>,
 }
 
 /// Cap on `Db::persisted_strings`. At ~1.2M live strings measured on the
@@ -284,6 +298,7 @@ pub fn open(path: Option<&str>) -> Result<Db> {
         _memory_budget: memory,
         write_ledger: RefCell::new(Vec::new()),
         persisted_strings: RefCell::new(HashSet::new()),
+        inflight_strings: RefCell::new(HashSet::new()),
     })
 }
 
@@ -771,6 +786,22 @@ impl Db {
 
     fn bump(&self, key: &str) {
         *self.counts.borrow_mut().entry(key.to_string()).or_insert(0) += 1;
+        self.invalidate_inflight_strings_if_settled();
+    }
+
+    /// Drop the `inflight_strings` memo the moment the connection is back in
+    /// autocommit, i.e. the transaction those ids rode has resolved one way or
+    /// the other. Checking only inside `flush_syms` is not enough: a caller can
+    /// roll back and open a fresh transaction without ever flushing strings in
+    /// between, and the memo would then skip re-offering an id whose row the
+    /// rollback erased, leaving rel rows pointing at an absent `_strings` entry.
+    /// `bump` runs before its statement executes, so the `BEGIN` that opens the
+    /// next transaction still observes autocommit here and clears first.
+    fn invalidate_inflight_strings_if_settled(&self) {
+        if self.inflight_strings.borrow().is_empty() { return; }
+        if self.is_autocommit() {
+            self.inflight_strings.borrow_mut().clear();
+        }
     }
 
     /// Reset the per-tick statement counter.
@@ -1344,8 +1375,9 @@ impl Db {
     /// between two different texts hashing to the same id could go
     /// undetected because the id in question happened to already be cached.
     /// Only AFTER that check narrows `by_id` down to `_strings` ids not
-    /// already known-persisted (`persisted_strings`) — that's the actual
-    /// waste this cuts (see the field's doc comment on `Db`).
+    /// already known-persisted (`persisted_strings`) or already attempted
+    /// earlier in a still-open transaction (`inflight_strings`) — that's the
+    /// actual waste this cuts (see both fields' doc comments on `Db`).
     pub fn flush_syms(&self, sink: &mut crate::spine::SymSink) -> Result<usize> {
         use std::collections::BTreeMap;
         let pending = sink.drain();
@@ -1365,31 +1397,51 @@ impl Db {
                 }
             }
         }
+        // A return to autocommit means whatever transaction `inflight_strings`
+        // was tracking has already resolved (committed or rolled back) since
+        // the last flush through here — either way that memo is now stale: a
+        // committed id belongs in `persisted_strings` (which this same call
+        // populates below from its own attempted ids, same as before this
+        // field existed), and a rolled-back id must not keep looking known.
+        // Cleared here, before this call's own ids are ever added to it, so a
+        // resolved transaction never leaks into the next one.
+        let was_autocommit = self.is_autocommit();
+        if was_autocommit {
+            self.inflight_strings.borrow_mut().clear();
+        }
         let already_persisted = self.persisted_strings.borrow();
+        let already_inflight = self.inflight_strings.borrow();
         let to_send: Vec<(i64, String)> = by_id.into_iter()
-            .filter(|(id, _)| !already_persisted.contains(id))
+            .filter(|(id, _)| !already_persisted.contains(id) && !already_inflight.contains(id))
             .collect();
         drop(already_persisted);
+        drop(already_inflight);
         if to_send.is_empty() { return Ok(0); }
         let attempted_ids: Vec<i64> = to_send.iter().map(|(id, _)| *id).collect();
         let rows: Vec<Vec<Value>> = to_send.into_iter()
             .map(|(id, text)| vec![Value::Int(id), Value::Text(text)])
             .collect();
 
-        // Rollback safety: mark ids persisted ONLY when this flush ran outside
-        // any caller-owned transaction. `insert_rows` begins+commits its own
-        // transaction when autocommit (multi-chunk case) or issues a single
-        // auto-committing statement (small-batch case) whenever autocommit
-        // was already true at entry — either way, an `Ok` return then means
-        // every id in `attempted_ids` is durably in `_strings` (an
+        // Rollback safety: mark ids DURABLY persisted only when this flush ran
+        // outside any caller-owned transaction. `insert_rows` begins+commits
+        // its own transaction when autocommit (multi-chunk case) or issues a
+        // single auto-committing statement (small-batch case) whenever
+        // autocommit was already true at entry — either way, an `Ok` return
+        // then means every id in `attempted_ids` is durably in `_strings` (an
         // `INSERT OR IGNORE` that landed 0 rows for an id only happens
         // because that id was ALREADY there). If autocommit was false, this
         // flush is riding inside a transaction some caller still owns; that
         // caller can still roll back after we return, which would silently
-        // revert the row while the cache kept claiming it durable. So in
-        // that case we simply don't cache this batch — conservative, not
-        // wrong: the same ids just get re-offered next time.
-        let was_autocommit = self.is_autocommit();
+        // revert the row while `persisted_strings` kept claiming it durable.
+        // So in that case we don't touch `persisted_strings` — conservative,
+        // not wrong: the same ids just get re-offered to a FUTURE, unrelated
+        // transaction. Within THIS transaction, though, the ids are already
+        // written (uncommitted but visible to this connection), so they go
+        // into `inflight_strings` regardless, so a second flush_syms call
+        // nested in the same open transaction (e.g.
+        // `insert_source_rows_for_paths` calling `insert_spine_strings` then
+        // `encode_rel_rows` over the same row set) does not re-issue the same
+        // `INSERT OR IGNORE` for ids this transaction already holds.
         let total = self.insert_rows("_strings", &["id", "content"], &rows)?;
         if was_autocommit {
             let mut persisted = self.persisted_strings.borrow_mut();
@@ -1397,6 +1449,12 @@ impl Db {
                 persisted.clear();
             }
             persisted.extend(attempted_ids);
+        } else {
+            let mut inflight = self.inflight_strings.borrow_mut();
+            if inflight.len() + attempted_ids.len() > STRING_CACHE_CAP {
+                inflight.clear();
+            }
+            inflight.extend(attempted_ids);
         }
         Ok(total)
     }
@@ -1689,6 +1747,91 @@ mod tests {
             "_strings", "SELECT COUNT(*) FROM _strings", &[], |r| Ok(r.get(0)?),
         ).unwrap();
         assert_eq!(count_after_retry, 1);
+    }
+
+    /// The actual N+1 shape found in `insert_source_rows_for_paths`
+    /// (`src/engine/source_rows.rs`): two separate `SymSink`/`flush_syms`
+    /// calls, both nested in one caller-owned transaction, over the SAME
+    /// text. The second must not re-issue `INSERT OR IGNORE` for ids the
+    /// first already wrote (uncommitted) into this transaction — asserted
+    /// via the per-tick statement counter, not just the return value, same
+    /// discipline as `flush_syms_skips_ids_already_persisted`.
+    #[test]
+    fn flush_syms_skips_ids_already_inflight_in_the_same_open_transaction() {
+        let db = open(None).unwrap();
+        create_strings_table(&db);
+
+        db.begin_immediate().unwrap();
+        db.tick_begin();
+        let mut first = crate::spine::SymSink::new();
+        first.sym("SharedAcrossTwoHelpers");
+        assert_eq!(db.flush_syms(&mut first).unwrap(), 1, "first flush writes the row (uncommitted)");
+
+        let mut second = crate::spine::SymSink::new();
+        second.sym("SharedAcrossTwoHelpers");
+        assert_eq!(db.flush_syms(&mut second).unwrap(), 0, "second flush must skip the already-inflight id");
+        assert!(
+            db.tick_end().is_none(),
+            "an inflight-hit flush must never reach insert_rows/SQL a second time"
+        );
+
+        db.commit().unwrap();
+        let count: i64 = db.query_one("_strings", "SELECT COUNT(*) FROM _strings", &[], |r| Ok(r.get(0)?)).unwrap();
+        assert_eq!(count, 1, "the string is durably present exactly once after commit");
+    }
+
+    /// Sibling of `flush_syms_does_not_cache_ids_from_a_caller_owned_transaction_that_rolls_back`:
+    /// once the transaction that populated `inflight_strings` resolves (here,
+    /// via rollback), the memo must not leak into an unrelated later
+    /// transaction — a fresh attempt to intern the same text must still hit
+    /// SQL, not silently believe the id is already known.
+    #[test]
+    fn flush_syms_inflight_memo_does_not_survive_a_rollback() {
+        let db = open(None).unwrap();
+        create_strings_table(&db);
+
+        db.begin_immediate().unwrap();
+        let mut first = crate::spine::SymSink::new();
+        first.sym("InflightThenRolledBack");
+        assert_eq!(db.flush_syms(&mut first).unwrap(), 1);
+        let mut second = crate::spine::SymSink::new();
+        second.sym("InflightThenRolledBack");
+        assert_eq!(db.flush_syms(&mut second).unwrap(), 0, "second flush skips the inflight id pre-rollback");
+        db.rollback().unwrap();
+
+        let count_after_rollback: i64 = db.query_one(
+            "_strings", "SELECT COUNT(*) FROM _strings", &[], |r| Ok(r.get(0)?),
+        ).unwrap();
+        assert_eq!(count_after_rollback, 0, "the row must not survive the caller's rollback");
+
+        let mut retry = crate::spine::SymSink::new();
+        retry.sym("InflightThenRolledBack");
+        assert_eq!(db.flush_syms(&mut retry).unwrap(), 1, "must re-offer after the rollback, not skip it");
+    }
+
+    #[test]
+    fn flush_syms_inflight_memo_cleared_when_next_tx_opens_without_autocommit_flush() {
+        let db = open(None).unwrap();
+        create_strings_table(&db);
+
+        db.begin_immediate().unwrap();
+        let mut first = crate::spine::SymSink::new();
+        first.sym("RolledBackThenRetriedInsideTx");
+        assert_eq!(db.flush_syms(&mut first).unwrap(), 1);
+        db.rollback().unwrap();
+
+        // The retry rides a NEW caller-owned transaction, so `flush_syms`
+        // never sees autocommit between the rollback and here.
+        db.begin_immediate().unwrap();
+        let mut retry = crate::spine::SymSink::new();
+        retry.sym("RolledBackThenRetriedInsideTx");
+        assert_eq!(db.flush_syms(&mut retry).unwrap(), 1, "must re-offer the rolled-back id");
+        db.commit().unwrap();
+
+        let count: i64 = db.query_one(
+            "_strings", "SELECT COUNT(*) FROM _strings", &[], |r| Ok(r.get(0)?),
+        ).unwrap();
+        assert_eq!(count, 1, "the id must be durable after the committed retry");
     }
 
     #[test]

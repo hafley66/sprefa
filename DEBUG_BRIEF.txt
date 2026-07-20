@@ -1,0 +1,24 @@
+Your parity gate was VALID and it caught a REAL bug. Do not re-litigate the method. Pre-capture ran the rebuilt 0.9.0 base binary, post ran the rebuilt 0.10.0 sym binary. The flow graph genuinely drifted. Your refusal to commit was correct.
+
+FIX THE JOIN NOW. Stay in this worktree (codex/text-is-sym). No daemon, no dl --lsp. Hermetic: SPREFA_CONFIG=/nonexistent/x.toml DL_NO_DAEMON=1, scratch --db, fresh XDG_STATE_HOME=$(mktemp -d).
+
+Facts:
+- df_node bytes dropped 26,656,768 -> 16,703,488 (interning works; keep it).
+- First divergence is flow_edge (source). port_reach/member_edge/panel_node/panel_edge drift downstream of it. entry_reach*/op_*/mark_df are 0/0 (clean).
+- POST has MORE rows than PRE (flow_edge 106231->106742, only-pre 19489, only-post 20000). Rows both gained AND lost.
+
+Rows gained means interning BROADENED a join: two previously-distinct strings now share one StringId, so new edges appear; exact matches that no longer compare equal drop. Root-cause candidates, check in this order:
+1. MIXED join key: a flow_edge/df_node join where ONE side is interned (i64 StringId) and the OTHER side is still raw TEXT (or sprf_sym applied to only one operand). Read the LOWERED SQL for flow_edge and every rel it joins (df_node, df_edge, whatever feeds it). Every equijoin key must be interned on BOTH sides or raw on BOTH sides. Print the lowered SQL and inspect each join predicate.
+2. DECODE VIEW returning `norm` instead of `content`: if any decoded view or sprf_sym decode reads _strings.norm (case/whitespace-folded) instead of _strings.content, case-variant symbols collapse. Grep the view/decode codegen for `norm`.
+3. A column interned that should be raw (freeform body text used as a join key), or vice versa.
+
+Debug method (do this, show output):
+- On the sym tree, rebuild dl, capture flow_edge to a scratch db, and the base tree's flow_edge (stash+rebuild) as you did before.
+- Dump 30 only-post and 30 only-pre flow_edge rows with strings DECODED, plus the df_node rows that produce a sample only-post edge. Identify the exact pair of source strings that got merged (candidate 1/2) or the mixed key (candidate 1).
+- Print `lower_rule` SQL for flow_edge and its inputs.
+
+Then FIX, and re-run the SAME stash-based parity gate WITH the rebuilds (base binary for pre, sym binary for post -- do NOT skip either cargo build). Loop until ALL 10 rels are byte-identical.
+
+After parity is byte-identical: cargo test --lib (state counts) and cargo test --test it under fresh XDG_STATE_HOME (baseline 789 passed / 0 failed). Many of your 263 it-failures are likely this same join bug surfacing in flow tests -- expect them to resolve. Fix residual regressions. Budget: 3 full it runs.
+
+Commit ONLY when parity byte-identical AND lib+it green, in coherent steps per plans/2026-07-12-0.10.0-text-is-sym.md order-of-work. git commit -n. Do NOT push. If you cannot get parity clean, STOP and report the exact merged string pair or mixed join -- do not commit a changed flow graph.

@@ -35,7 +35,7 @@ use serde_json::{json, Value};
 
 use crate::db::ReadDb;
 
-use crate::ast::{AggFn, Item, Program, Query, Rels, Term};
+use crate::ast::{AggFn, Item, Program, Query, Rels, Term, Type};
 use crate::lower::{lower_query, txt_tbl};
 use crate::rpc::{INTERNAL_ERROR, INVALID_PARAMS};
 
@@ -89,6 +89,27 @@ impl ReadView {
             })
         })
     }
+
+    /// A query binding the literal `WORK_ALIAS` to a `Type::Rev`-typed head
+    /// position needs `Engine::self_rev_text()` to resolve (see
+    /// `lower::resolve_work_alias_query`) — the tick's cached worktree rev
+    /// text, refreshed every tick. This snapshot's `rels`/`queries` are only
+    /// refreshed on a program (re)load (see the struct doc), so caching a
+    /// resolved rev text here would go stale the moment a commit lands
+    /// between reloads — the exact silently-wrong-answer class this whole
+    /// mechanism exists to close. Rather than serve a stale or unresolved
+    /// answer, route straight to the engine-locked path, exactly like an
+    /// aggregate query already does.
+    fn any_work_alias_query(&self) -> bool {
+        self.queries.iter().any(|q| {
+            self.rels.get(&q.head.rel).is_some_and(|meta| {
+                q.head.terms.iter().zip(meta.cols.iter()).any(|(t, col)| {
+                    col.ty == Type::Rev
+                        && matches!(t, Term::Str(s) if s == crate::engine::WORK_ALIAS)
+                })
+            })
+        })
+    }
 }
 
 /// `None` = this RPC cannot be served lock-free; the caller falls back to the
@@ -99,13 +120,15 @@ pub type Served = Option<Result<Value, (i64, String)>>;
 
 /// The `query` RPC: run every `?` query in the program off a read-only
 /// connection. Returns `None` (fall back to the engine lock) when the program
-/// has no on-disk db or contains an aggregate query. Result shape is byte-for-
-/// byte the locked path's (`run_queries_capture` -> `{"results": [...]}`), minus
-/// the `_query_log` append the locked path does (a read-only connection cannot
-/// write; the daemon read log intentionally does not cover the fast path).
+/// has no on-disk db, contains an aggregate query, or binds the literal WORK
+/// to a `Type::Rev` column (see `any_work_alias_query`). Result shape is
+/// byte-for-byte the locked path's (`run_queries_capture` ->
+/// `{"results": [...]}`), minus the `_query_log` append the locked path does
+/// (a read-only connection cannot write; the daemon read log intentionally
+/// does not cover the fast path).
 pub fn query(view: &ReadView) -> Served {
     let db_path = view.db_path_str()?;
-    if view.any_aggregate_query() {
+    if view.any_aggregate_query() || view.any_work_alias_query() {
         return None;
     }
     Some(run_query(view, db_path))

@@ -7,8 +7,9 @@
 //! asserts every name reduces to a bare identifier, and that the impl-method name
 //! survives (the shape the naive split broke on).
 //!
-//! Skips (does not fail) when no rust-analyzer is found. Set SPREFA_RUST_ANALYZER
-//! to point at one.
+//! `#[ignore]`d — no rust-analyzer is a genuine environmental gap, not
+//! something the default `cargo test` run should silently count as coverage.
+//! Set SPREFA_RUST_ANALYZER to point at one.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -77,11 +78,9 @@ fn is_bare_ident(s: &str) -> bool {
 }
 
 #[test]
+#[ignore = "needs rust-analyzer on PATH (set SPREFA_RUST_ANALYZER)"]
 fn scip_name_reduces_every_real_moniker_to_a_bare_identifier() {
-    let Some(ra) = find_ra() else {
-        eprintln!("SKIP scip_name: no rust-analyzer binary (set SPREFA_RUST_ANALYZER)");
-        return;
-    };
+    let ra = find_ra().expect("needs rust-analyzer on PATH (set SPREFA_RUST_ANALYZER)");
     let root = std::env::temp_dir().join("sprefa_scip_names_ws");
     let _ = std::fs::remove_dir_all(&root);
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scip_names");

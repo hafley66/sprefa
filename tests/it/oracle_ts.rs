@@ -4,12 +4,11 @@
 //! ALIASED import, and one ambiguous bare name defined in two files). Shares
 //! `oracle_parity`'s scorer verbatim — same confirmed-positives-only contract.
 //!
-//! Runtime-SKIPs (does not fail) when no `scip-typescript` is found, mirroring
-//! `oracle_kotlin.rs`'s style: prints and returns rather than `#[ignore]`, so
-//! it participates in the default `cargo test` run and is a clean pass/skip
-//! either way. Override with SPREFA_SCIP_TYPESCRIPT; falls back to
+//! `#[ignore]`d — no `scip-typescript` on PATH is a genuine environmental gap,
+//! not something the default `cargo test` run should silently count as
+//! coverage. Override with SPREFA_SCIP_TYPESCRIPT; falls back to
 //! `npx --yes @sourcegraph/scip-typescript` when no bare binary is on PATH but
-//! npx is.
+//! npx is. Run explicitly with `--ignored`.
 
 use std::path::Path;
 use std::process::Command;
@@ -46,11 +45,9 @@ fn find_scip_ts() -> Option<Vec<String>> {
 ///
 /// Run: cargo test --test it ts_call_resolution_parity_vs_scip -- --nocapture
 #[test]
+#[ignore = "needs scip-typescript on PATH or npx (set SPREFA_SCIP_TYPESCRIPT)"]
 fn ts_call_resolution_parity_vs_scip() {
-    let Some(scip_ts) = find_scip_ts() else {
-        eprintln!("SKIP oracle_ts: no scip-typescript binary or npx (set SPREFA_SCIP_TYPESCRIPT)");
-        return;
-    };
+    let scip_ts = find_scip_ts().expect("needs scip-typescript on PATH or npx (set SPREFA_SCIP_TYPESCRIPT)");
 
     // Copy the fixture into a scratch dir dl will scan; the SCIP index is
     // written OUTSIDE that dir so the engine's scip importer never sees an
@@ -68,11 +65,8 @@ fn ts_call_resolution_parity_vs_scip() {
     cmd.args(["index", "--output"]).arg(&scip_out);
     cmd.current_dir(&tmp);
     let run = cmd.output().expect("run scip-typescript index");
-    if !scip_out.is_file() {
-        eprintln!("SKIP oracle_ts: scip-typescript produced no index: {}",
-            String::from_utf8_lossy(&run.stderr));
-        return;
-    }
+    assert!(scip_out.is_file(), "scip-typescript produced no index: {}",
+        String::from_utf8_lossy(&run.stderr));
     let index = Index::parse_from_bytes(&std::fs::read(&scip_out).unwrap()).expect("parse scip");
 
     let prog = format!(

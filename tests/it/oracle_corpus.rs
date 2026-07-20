@@ -151,7 +151,18 @@ fn run_dl(scan_dir: &Path, glob: &str, tag: &str, scip: Option<&Path>) -> (Strin
     }
     let started = Instant::now();
     let out = cmd.output().expect("run dl");
-    (String::from_utf8_lossy(&out.stdout).into_owned(), started.elapsed())
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    // Stderr used to be dropped on the floor here. A one-line engine error
+    // ("source stage bound ... exceeded") then surfaced downstream as "no call
+    // sites extracted" and cost hours of misattribution, so a nonzero exit
+    // fails loudly with both streams instead of returning empty stdout.
+    assert!(
+        out.status.success(),
+        "dl exited {:?} for arm {tag} in {scan_dir:?}\n--- stdout ---\n{stdout}\n--- stderr ---\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (stdout, started.elapsed())
 }
 
 fn report_arm(lang: &str, arm: &str, stats: &oracle_parity::ParityStats, wall: Duration) {
@@ -211,23 +222,19 @@ fn ensure_index(index_path: &Path, build: impl FnOnce(&Path) -> bool) -> Option<
 }
 
 #[test]
-#[ignore]
+#[ignore = "needs bench/corpus/otel-rust (submodule, set SPREFA_CORPUS_DIR) + rust-analyzer on PATH (SPREFA_RUST_ANALYZER)"]
 fn corpus_parity_rust() {
     let corpus = corpus_root();
     let sub = corpus.join("otel-rust");
-    if count_ext(&sub, ".rs") == 0 {
-        eprintln!("SKIP corpus_parity_rust: {} empty/uninitialized (set SPREFA_CORPUS_DIR)", sub.display());
-        return;
-    }
+    assert!(count_ext(&sub, ".rs") > 0,
+        "corpus_parity_rust: {} empty/uninitialized (set SPREFA_CORPUS_DIR)", sub.display());
     let index_path = corpus.join(".indexes/rust.scip");
-    let Some(index) = ensure_index(&index_path, |out| {
-        let Some(ra) = find_bin("SPREFA_RUST_ANALYZER", "rust-analyzer") else {
-            eprintln!("SKIP corpus_parity_rust: no rust-analyzer (set SPREFA_RUST_ANALYZER)");
-            return false;
-        };
+    let index = ensure_index(&index_path, |out| {
+        let ra = find_bin("SPREFA_RUST_ANALYZER", "rust-analyzer")
+            .unwrap_or_else(|| panic!("corpus_parity_rust: needs rust-analyzer on PATH (set SPREFA_RUST_ANALYZER)"));
         Command::new(ra).args(["scip", ".", "--output", out.to_str().unwrap()])
             .current_dir(&sub).status().map(|s| s.success()).unwrap_or(false)
-    }) else { return };
+    }).unwrap_or_else(|| panic!("corpus_parity_rust: rust-analyzer scip produced no usable index at {}", index_path.display()));
 
     let scan = std::env::temp_dir().join("sprefa_corpus_rust");
     let _ = std::fs::remove_dir_all(&scan);
@@ -236,24 +243,20 @@ fn corpus_parity_rust() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "needs bench/corpus/otel-go (submodule, set SPREFA_CORPUS_DIR) + scip-go on PATH (SPREFA_SCIP_GO or ~/go/bin)"]
 fn corpus_parity_go() {
     let corpus = corpus_root();
     let sub = corpus.join("otel-go/sdk");
-    if count_ext(&sub, ".go") == 0 {
-        eprintln!("SKIP corpus_parity_go: {} empty/uninitialized (set SPREFA_CORPUS_DIR)", sub.display());
-        return;
-    }
+    assert!(count_ext(&sub, ".go") > 0,
+        "corpus_parity_go: {} empty/uninitialized (set SPREFA_CORPUS_DIR)", sub.display());
     let index_path = corpus.join(".indexes/go.scip");
-    let Some(index) = ensure_index(&index_path, |out| {
-        let Some(scip_go) = find_bin("SPREFA_SCIP_GO", "scip-go") else {
-            eprintln!("SKIP corpus_parity_go: no scip-go (set SPREFA_SCIP_GO or add ~/go/bin to PATH)");
-            return false;
-        };
+    let index = ensure_index(&index_path, |out| {
+        let scip_go = find_bin("SPREFA_SCIP_GO", "scip-go")
+            .unwrap_or_else(|| panic!("corpus_parity_go: needs scip-go on PATH (set SPREFA_SCIP_GO or add ~/go/bin to PATH)"));
         let _ = Command::new("go").arg("mod").arg("download").current_dir(&sub).status();
         Command::new(scip_go).args(["--output", out.to_str().unwrap()])
             .current_dir(&sub).status().map(|s| s.success()).unwrap_or(false)
-    }) else { return };
+    }).unwrap_or_else(|| panic!("corpus_parity_go: scip-go produced no usable index at {}", index_path.display()));
 
     let scan = std::env::temp_dir().join("sprefa_corpus_go");
     let _ = std::fs::remove_dir_all(&scan);
@@ -262,28 +265,24 @@ fn corpus_parity_go() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "needs bench/corpus/otel-js (submodule, set SPREFA_CORPUS_DIR) + scip-typescript on PATH (SPREFA_SCIP_TYPESCRIPT)"]
 fn corpus_parity_ts() {
     let corpus = corpus_root();
     let sub = corpus.join("otel-js/packages/opentelemetry-core");
-    if count_ext(&sub, ".ts") == 0 {
-        eprintln!("SKIP corpus_parity_ts: {} empty/uninitialized (set SPREFA_CORPUS_DIR)", sub.display());
-        return;
-    }
+    assert!(count_ext(&sub, ".ts") > 0,
+        "corpus_parity_ts: {} empty/uninitialized (set SPREFA_CORPUS_DIR)", sub.display());
     let index_path = corpus.join(".indexes/ts.scip");
     let js_root = corpus.join("otel-js");
-    let Some(index) = ensure_index(&index_path, |out| {
-        let Some(scip_ts) = find_bin("SPREFA_SCIP_TYPESCRIPT", "scip-typescript") else {
-            eprintln!("SKIP corpus_parity_ts: no scip-typescript (set SPREFA_SCIP_TYPESCRIPT)");
-            return false;
-        };
+    let index = ensure_index(&index_path, |out| {
+        let scip_ts = find_bin("SPREFA_SCIP_TYPESCRIPT", "scip-typescript")
+            .unwrap_or_else(|| panic!("corpus_parity_ts: needs scip-typescript on PATH (set SPREFA_SCIP_TYPESCRIPT)"));
         // Workspace resolution needs the monorepo's node_modules present.
         if !js_root.join("node_modules").is_dir() {
             let _ = Command::new("npm").arg("ci").current_dir(&js_root).status();
         }
         Command::new(scip_ts).args(["index", "--output", out.to_str().unwrap()])
             .current_dir(&sub).status().map(|s| s.success()).unwrap_or(false)
-    }) else { return };
+    }).unwrap_or_else(|| panic!("corpus_parity_ts: scip-typescript produced no usable index at {}", index_path.display()));
 
     let scan = std::env::temp_dir().join("sprefa_corpus_ts");
     let _ = std::fs::remove_dir_all(&scan);
@@ -292,29 +291,25 @@ fn corpus_parity_ts() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "needs bench/corpus/otel-python (submodule, set SPREFA_CORPUS_DIR) + scip-python on PATH (SPREFA_SCIP_PYTHON)"]
 fn corpus_parity_python() {
     let corpus = corpus_root();
     let sub = corpus.join("otel-python");
-    if count_ext(&sub, ".py") == 0 {
-        eprintln!("SKIP corpus_parity_python: {} empty/uninitialized (set SPREFA_CORPUS_DIR)", sub.display());
-        return;
-    }
+    assert!(count_ext(&sub, ".py") > 0,
+        "corpus_parity_python: {} empty/uninitialized (set SPREFA_CORPUS_DIR)", sub.display());
     let index_path = corpus.join(".indexes/python.scip");
-    let Some(index) = ensure_index(&index_path, |out| {
-        let Some(scip_py) = find_bin("SPREFA_SCIP_PYTHON", "scip-python") else {
-            eprintln!("SKIP corpus_parity_python: no scip-python (set SPREFA_SCIP_PYTHON)");
-            return false;
-        };
-        // scip-python walks parent dirs; index IN PLACE (cwd inside the repo)
-        // and pass name/version since it can't read git metadata here. Fatal
-        // errors still exit 0 with a header-only index; load_cached_index
-        // rejects an empty-document index, so ensure_index skips on that.
+    // scip-python walks parent dirs; index IN PLACE (cwd inside the repo) and
+    // pass name/version since it can't read git metadata here. Fatal errors
+    // still exit 0 with a header-only index; load_cached_index rejects an
+    // empty-document index, so ensure_index rebuilds instead of using it.
+    let index = ensure_index(&index_path, |out| {
+        let scip_py = find_bin("SPREFA_SCIP_PYTHON", "scip-python")
+            .unwrap_or_else(|| panic!("corpus_parity_python: needs scip-python on PATH (set SPREFA_SCIP_PYTHON)"));
         Command::new(scip_py)
             .args(["index", "--project-name", "otel", "--project-version", "1.43.0",
                    "--output", out.to_str().unwrap()])
             .current_dir(&sub).status().map(|s| s.success()).unwrap_or(false)
-    }) else { return };
+    }).unwrap_or_else(|| panic!("corpus_parity_python: scip-python produced no usable index at {}", index_path.display()));
 
     let scan = std::env::temp_dir().join("sprefa_corpus_python");
     let _ = std::fs::remove_dir_all(&scan);
@@ -323,25 +318,19 @@ fn corpus_parity_python() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "needs bench/corpus/otel-kotlin (submodule, set SPREFA_CORPUS_DIR) + scip-java/JDK on PATH (SPREFA_SCIP_JAVA)"]
 fn corpus_parity_kotlin() {
     let corpus = corpus_root();
     let sub = corpus.join("otel-kotlin");
-    if count_ext(&sub, ".kt") == 0 {
-        eprintln!("SKIP corpus_parity_kotlin: {} empty/uninitialized (set SPREFA_CORPUS_DIR)", sub.display());
-        return;
-    }
+    assert!(count_ext(&sub, ".kt") > 0,
+        "corpus_parity_kotlin: {} empty/uninitialized (set SPREFA_CORPUS_DIR)", sub.display());
     let index_path = corpus.join(".indexes/kotlin.scip");
-    let Some(index) = ensure_index(&index_path, |out| {
-        // scip-java needs a JDK; runtime-skips loudly on a box without one
-        // (same convention as oracle_kotlin_parity.rs).
-        let Some(scip_java) = find_bin("SPREFA_SCIP_JAVA", "scip-java") else {
-            eprintln!("SKIP corpus_parity_kotlin: no scip-java / JDK (set SPREFA_SCIP_JAVA)");
-            return false;
-        };
+    let index = ensure_index(&index_path, |out| {
+        let scip_java = find_bin("SPREFA_SCIP_JAVA", "scip-java")
+            .unwrap_or_else(|| panic!("corpus_parity_kotlin: needs scip-java / JDK on PATH (set SPREFA_SCIP_JAVA)"));
         Command::new(scip_java).args(["index", "--output", out.to_str().unwrap()])
             .current_dir(&sub).status().map(|s| s.success()).unwrap_or(false)
-    }) else { return };
+    }).unwrap_or_else(|| panic!("corpus_parity_kotlin: scip-java produced no usable index at {}", index_path.display()));
 
     let scan = std::env::temp_dir().join("sprefa_corpus_kotlin");
     let _ = std::fs::remove_dir_all(&scan);

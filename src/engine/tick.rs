@@ -226,6 +226,9 @@ impl Engine {
     pub fn tick_report(&mut self, prog: &Program, quiet: bool) -> Result<TickReport> {
         let t_tick = std::time::Instant::now();
         self.rev_cache.clear();
+        self.worktree_rev.invalidate();
+        self.worktree_rev_texts.clear();
+        self.resolve_self_rev()?;
         self.extraction_drops.clear();
         self.shape_diags.clear();
         CMD_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
@@ -1204,6 +1207,9 @@ impl Engine {
     ) -> Result<PathTickOutcome> {
         let _tick_started = std::time::Instant::now();
         self.rev_cache.clear();
+        self.worktree_rev.invalidate();
+        self.worktree_rev_texts.clear();
+        self.resolve_self_rev()?;
         self.extraction_drops.clear();
         self.shape_diags.clear();
         CMD_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
@@ -1392,14 +1398,14 @@ impl Engine {
             // it as part of a file/rev delta.
             self.sweep_gone_revs()?;
         }
-        let module_dependency_before = self.module_resolution_dependency_digest("WORK");
+        let module_dependency_before = self.module_resolution_dependency_digest(&self.self_rev.text());
         let module_outcome = if wants_module_rels {
             crate::rels::ModuleFamily
                 .refresh_delta(self, module_full_work, &module_delta_paths)?
         } else {
             crate::rels::RefreshOutcome::Unchanged
         };
-        let module_dependency_after = self.module_resolution_dependency_digest("WORK");
+        let module_dependency_after = self.module_resolution_dependency_digest(&self.self_rev.text());
         let module_dependency_changed = module_dependency_before != module_dependency_after;
         if module_outcome.moved() {
             for m in MODULE_RELS {

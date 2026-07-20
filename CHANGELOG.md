@@ -171,8 +171,11 @@ tags consumed by cargo-dist.
 ### Performance
 - Auto-index demand is now planner-honest: PK-prefix on rowid tables, a
   tiny-relation floor, and a constant-column check replace the old broad
-  index-everything policy, cutting 771 indexes to 262 (-117.7MB on the
-  measured corpus).
+  index-everything policy, cutting the auto-index count from 771 to ~260 and
+  reclaiming on the order of 120MB. Both figures are single `dbstat` readings
+  of the sprefa root taken once, at dc9b67b1; a sibling reading of the same
+  arc put the saving at 130MB, so treat the magnitude as approximate. That
+  database has since been rebuilt, so neither number is reproducible today.
 - `WITHOUT ROWID` applied to vouched builtin junction relations drops their
   redundant primary-key autoindex twin.
 - `_strings.norm` column and its index are dropped; normalized comparison now
@@ -184,11 +187,16 @@ tags consumed by cargo-dist.
   family/op file passes a no-raw-SQL audit rail.
 - Cold-start extraction (a blank database's first tick) is staged in
   MB-bounded chunks across ticks instead of one blocking pass, extended from
-  dataflow to comment/template/unresolved relations; the longest cold-start
-  job measured cut 3.2x (2468ms to 766ms).
-- The `_source_stage_owner` per-call `INSERT` (a 386x-per-tick runtime N+1)
-  now batches at flush, and deltaflow per-change writes batch per loop
-  instead of per row.
+  dataflow to comment/template/unresolved relations. This shortens the longest
+  single blocking node 3.2x (dataflow/0 at 2468ms becomes dataflow/3 at 766ms,
+  one release-build run over a 3.37MB corpus). It trades total throughput for
+  responsiveness: the dataflow family's end-to-end time rises about 20% from
+  the per-slice re-parse and flush. Measurements in
+  plans/2026-07-17-cold-start-staging.md.
+- The `_source_stage_owner` per-call `INSERT` (a runtime N+1 that tripped the
+  scream at roughly 390 writes per tick; two runs recorded 386 and 388) now
+  batches at flush, and deltaflow per-change writes batch per loop instead of
+  per row.
 - Several slow rules (`port_of_reach`, `call_node`, `loop_entry_fn`, the
   `flow_edge` lambda-hop, `named_call_site`) are factored through
   intermediate relations and brought under the tick budget.

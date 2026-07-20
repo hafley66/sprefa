@@ -9,7 +9,7 @@ use std::path::Path;
 
 use super::root;
 
-const VERBS: &str = "verbs: status start [--foreground] stop restart install uninstall drop <root> [--purge] load load-once rows jobs await-settle url why invocations [--limit N] events [--kind K] [--root R] [--limit N] health [--top N] [--root PATH] [--no-dupes]";
+const VERBS: &str = "verbs: status start [--foreground] stop restart install uninstall drop <root> [--purge] load load-once rows jobs await-settle url why invocations [--limit N] events [--kind K] [--root R] [--limit N] health [--top N] [--root PATH] [--no-dupes] gc [--root PATH] [--apply]";
 
 /// Route `start`/`stop`/`restart` through the OS service manager (plan
 /// section 3.5.2: `dl daemon start/stop/restart` become thin launchctl/
@@ -218,6 +218,14 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
             // daemon state and never contends for the write lock.
             super::health::run(&args[1..])
         }
+        "gc" => {
+            // `_strings` intern-dictionary sweep. Unlike `health`, this WRITES
+            // when `--apply` is given, so it opens a real read-write
+            // connection and is expected to contend with a live daemon —
+            // meant to be run with the daemon stopped, same convention as the
+            // standing VACUUM maintenance step.
+            crate::daemon::gc::run(&args[1..])
+        }
         "invocations" => {
             // Reads only `<home>/invocations.db` — no engine lock — so it
             // answers regardless of daemon state. An open row whose pid is
@@ -282,6 +290,7 @@ fn print_help() {
     eprintln!("  await-settle [--ms N]          wait for the root to become quiescent"); // @eprintln-ok: usage/help text
     eprintln!("  url                            print the daemon's HTTP base URL (from http.json)"); // @eprintln-ok: usage/help text
     eprintln!("  health [--top N] [--root PATH] [--no-dupes]  storage report: per-db weights, orphan roots, dupe rels"); // @eprintln-ok: usage/help text
+    eprintln!("  gc [--root PATH] [--apply]     sweep orphaned `_strings` intern rows (dry run unless --apply)"); // @eprintln-ok: usage/help text
     eprintln!("  events [--kind K] [--root R] [--limit N]  replay the IO event trail (args of each discrete event, not samples)"); // @eprintln-ok: usage/help text
     eprintln!("options: --db PATH, --tray (start); --ms N (await-settle)"); // @eprintln-ok: usage/help text
 }

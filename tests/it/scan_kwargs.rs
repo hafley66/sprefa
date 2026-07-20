@@ -77,5 +77,7 @@ fn named_rev_out_binds_rev() {
         "f(p, r) <- scan(\"WORK\", \"src/**/*.rs\", path: p, rev_out: r).\n",
         "? f(p, r).\n"));
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("WORK"), "rev_out must bind WORK:\n{out}");
+    // `WORK` is an ALIAS: `rev_out` binds the RESOLVED rev (INV-1), which in a
+    // sandbox with no git HEAD is the all-zero oid plus the dirty marker.
+    assert!(out.contains(crate::util::NO_HEAD_REV), "rev_out must bind the resolved rev:\n{out}");
 }

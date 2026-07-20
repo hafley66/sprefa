@@ -609,7 +609,7 @@ pub(crate) fn parse_file(
                 }
                 // {file}: WORK reads the on-disk path; a git rev materializes the
                 // cached content to a content-addressed temp file (reused across ticks)
-                let file_arg = if rev == "WORK" {
+                let file_arg = if rev_text_is_dirty_worktree(rev) {
                     root.join(path).display().to_string()
                 } else {
                     let tmp = std::env::temp_dir().join(format!("dl_cmd_{hash}"));

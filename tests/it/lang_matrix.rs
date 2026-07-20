@@ -1,6 +1,6 @@
 //! Matrix-honesty rail: the per-op LANGUAGE MATRIX block in the embedded skill
 //! (`assets/sprefa-dl.skill.md`) must stay set-equal to the ACTUAL grammar
-//! tables — `sg::sg_langs()` (the ast-grep set the `sg`/`ast_yaml` ops accept)
+//! tables — `sg::sg_langs()` (the ast-grep set the `match_ast`/`ast_yaml` ops accept)
 //! and `engine::ast_langs()` (the tree-sitter set the `ast` op accepts). Adding
 //! a grammar to either table without updating the skill matrix fails this test,
 //! so a stale matrix cannot ship.
@@ -22,11 +22,11 @@ fn matrix_row(label: &str) -> BTreeSet<String> {
 }
 
 #[test]
-fn skill_sg_matrix_matches_the_grammar_table() {
-    let listed = matrix_row("sg, ast_yaml");
+fn skill_match_ast_matrix_matches_the_grammar_table() {
+    let listed = matrix_row("match_ast, ast_yaml");
     let actual: BTreeSet<String> = sprefa_v5::sg::sg_langs().into_iter().map(String::from).collect();
     assert_eq!(listed, actual,
-        "skill `sg, ast_yaml` matrix is stale vs SG_LANG_TABLE (sg::sg_langs())");
+        "skill `match_ast, ast_yaml` matrix is stale vs SG_LANG_TABLE (sg::sg_langs())");
 }
 
 #[test]

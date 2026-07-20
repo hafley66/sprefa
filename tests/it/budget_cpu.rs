@@ -118,10 +118,9 @@ fn load_per_core() -> f64 {
 #[ignore = "load-sensitive; passes in isolation, flakes under full-suite contention"]
 fn governor_toggle_caps_cpu_concurrency() {
     let load = load_per_core();
-    if load > 0.5 {
-        eprintln!("skip: machine load {load:.2}/core — timing receipt needs a quiet machine");
-        return;
-    }
+    assert!(load <= 0.5,
+        "machine load {load:.2}/core too high for this timing receipt — needs a quiet machine \
+         (see this test's #[ignore] reason)");
     let dir = sandbox("toggle");
     let state = dir.join("state");
     fs::create_dir_all(&state).unwrap();

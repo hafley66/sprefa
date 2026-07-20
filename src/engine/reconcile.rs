@@ -37,7 +37,7 @@ impl Engine {
         // produced this (slug, rev), so the rule head can reference the repo/rev
         // variable each file was scanned under (empty for a literal-coord scan).
         let mut groups: BTreeMap<
-            (String, String),
+            (String, RevId),
             (PathBuf, Vec<(usize, String, Vec<(String, String)>)>),
         > = BTreeMap::new();
         for (idx, rule) in source_rules.iter().enumerate() {
@@ -51,10 +51,10 @@ impl Engine {
             }
         }
         let group_list: Vec<(
-            &(String, String),
+            &(String, RevId),
             &(PathBuf, Vec<(usize, String, Vec<(String, String)>)>),
         )> = groups.iter().collect();
-        let enumerated: Vec<Result<Vec<(String, String, i64, i64, i64)>>> = group_list
+        let enumerated: Vec<Result<(Vec<(String, String, i64, i64, i64)>, usize)>> = group_list
             .par_iter()
             .map(|((slug, rev), (repo_root, rules))| {
                 let t = std::time::Instant::now();
@@ -62,7 +62,7 @@ impl Engine {
                 for (_, g, _) in rules {
                     union.add(globset::Glob::new(g)?);
                 }
-                let files = enumerate_with_hash(
+                let (files, rehashed) = enumerate_with_hash(
                     slug,
                     repo_root,
                     rev,
@@ -71,11 +71,7 @@ impl Engine {
                     prev_walk_ref_secs,
                 )?;
                 if crate::db::profiling() {
-                    let rev_short = if rev == "WORK" {
-                        "WORK"
-                    } else {
-                        &rev[..rev.len().min(8)]
-                    };
+                    let rev_short = rev.short();
                     let file_count = files.len();
                     let ms = t.elapsed().as_secs_f64() * 1000.0;
                     tracing::debug!(
@@ -86,7 +82,7 @@ impl Engine {
                         "[scan {slug}@{rev_short}] {file_count} file(s) in {ms:.1}ms"
                     );
                 }
-                Ok(files)
+                Ok((files, rehashed))
             })
             .collect();
         for (((slug, rev), (_, rules)), files) in group_list.iter().zip(enumerated) {
@@ -96,9 +92,12 @@ impl Engine {
                     Ok((*idx, globset::Glob::new(g)?.compile_matcher(), hb.clone()))
                 })
                 .collect::<Result<_>>()?;
-            for (path, h, mt, sz, lines) in files? {
+            let rev_text = rev.text();
+            let (files, rehashed) = files?;
+            self.file_hash_reads.set(self.file_hash_reads.get() + rehashed);
+            for (path, h, mt, sz, lines) in files {
                 current.insert(
-                    (slug.clone(), path.clone(), rev.clone()),
+                    (slug.clone(), path.clone(), rev_text.clone()),
                     (h.clone(), mt, sz, lines),
                 );
                 for (idx, m, hb) in &matchers {
@@ -107,7 +106,7 @@ impl Engine {
                             *idx,
                             slug.clone(),
                             path.clone(),
-                            rev.clone(),
+                            rev_text.clone(),
                             h.clone(),
                             hb.clone(),
                         ));
@@ -161,12 +160,7 @@ impl Engine {
                 .iter()
                 .filter(|(_, (_, rules))| rules.iter().any(|(i, _, _)| *i == idx))
                 .map(|((slug, rev), (root, _))| {
-                    let r = if rev == "WORK" {
-                        "WORK"
-                    } else {
-                        &rev[..rev.len().min(8)]
-                    };
-                    format!("{slug}@{r} ({})", root.display())
+                    format!("{slug}@{} ({})", rev.short(), root.display())
                 })
                 .collect();
             let where_ = if targets.is_empty() {

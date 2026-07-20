@@ -343,7 +343,13 @@ fn ready_row_pages_obey_encoded_byte_budget() {
                 "repo",
                 "large.rs",
                 ordinal,
-                &[Value::Text("x".repeat(64 * 1024))],
+                // Distinct per ordinal: identical rows for one owner are
+                // collapsed by the per-owner duplicate filter, and this test
+                // is about the read-side byte budget, not dedup.
+                &[Value::Text(format!(
+                    "{ordinal}{}",
+                    "x".repeat(64 * 1024)
+                ))],
             )
             .unwrap();
     }

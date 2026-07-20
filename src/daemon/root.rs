@@ -527,7 +527,7 @@ impl ServedRoot {
             if let crate::ast::Item::Rule(r) = item {
                 for b in &r.body {
                     if let crate::ast::BodyItem::Scan { rev: crate::ast::Term::Str(s), .. } = b {
-                        if s.as_str() != "WORK" && !names.contains(s) {
+                        if s.as_str() != crate::engine::WORK_ALIAS && !names.contains(s) {
                             names.push(s.clone());
                         }
                     }
@@ -540,6 +540,11 @@ impl ServedRoot {
     /// React to a `.git` change: diff each watched ref old→new against `_file` and
     /// broadcast `rev_advanced`. Returns (refs advanced, worktree files changed).
     pub(crate) fn on_git_event(&self) -> (usize, Vec<PathBuf>) {
+        // HEAD may have just moved, so the working-tree resolution cached for
+        // this tick is stale. The next tick re-invalidates anyway; dropping it
+        // here keeps the refs this function goes on to read consistent with
+        // whatever the engine reports for `WORK` in between.
+        lock(&self.eng).invalidate_worktree_rev();
         let mut repos: Vec<(String, PathBuf)> = vec![(self.root_label(), self.root.clone())];
         // This engine's corpus (hermetic served root => just its own root; the
         // config view => the config repos), not every ambient config repo.

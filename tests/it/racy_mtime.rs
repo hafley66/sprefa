@@ -29,7 +29,7 @@ seen(p) <- scan("WORK", "src/**/*.rs", p, rev).
 
 fn file_hash(eng: &Engine, path: &str) -> String {
     eng.query_sql(
-        "SELECT hash FROM _file WHERE path = ?1 AND rev = 'WORK'",
+        "SELECT hash FROM _file WHERE path = ?1",
         &[serde_json::Value::String(path.to_string())],
     )
     .unwrap()

@@ -59,8 +59,10 @@ fn file_lines_returns_real_counts() {
 
     let (code, out, err) = run(&d, "p.dl", &[]);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("src/three.rs\tWORK\t3"), "expected 3 lines for three.rs: {out}");
-    assert!(out.contains("src/one.rs\tWORK\t1"), "expected 1 line for one.rs (no trailing newline): {out}");
+    // `WORK` is an ALIAS; a sandbox with no git HEAD stores the zero sentinel.
+    let rev = crate::util::NO_HEAD_REV;
+    assert!(out.contains(&format!("src/three.rs\t{rev}\t3")), "expected 3 lines for three.rs: {out}");
+    assert!(out.contains(&format!("src/one.rs\t{rev}\t1")), "expected 1 line for one.rs (no trailing newline): {out}");
 }
 
 #[test]
@@ -72,7 +74,8 @@ fn file_lines_second_tick_reuses_stored_count_on_unchanged_mtime() {
 
     let (code1, out1, _) = run(&d, "p.dl", &[]);
     assert_eq!(code1, 0);
-    assert!(out1.contains("src/x.rs\tWORK\t2"), "{out1}");
+    let rev = crate::util::NO_HEAD_REV;
+    assert!(out1.contains(&format!("src/x.rs\t{rev}\t2")), "{out1}");
 
     // Second run, nothing touched: the mtime+size fast path must reuse the
     // stored hash AND the stored line count without re-reading the file.
@@ -81,7 +84,7 @@ fn file_lines_second_tick_reuses_stored_count_on_unchanged_mtime() {
     // means enumerate_with_hash never fell through to a fresh read+count.
     let (code2, out2, err2) = run(&d, "p.dl", &[]);
     assert_eq!(code2, 0);
-    assert!(out2.contains("src/x.rs\tWORK\t2"), "count must survive the fast path: {out2}");
+    assert!(out2.contains(&format!("src/x.rs\t{rev}\t2")), "count must survive the fast path: {out2}");
     assert!(err2.contains("files 0/") || err2.contains("0/1 parsed") || err2.contains("parsed"),
         "expected an unchanged-tick signal in stderr: {err2}");
     assert!(!err2.contains("files 1/1 parsed"),

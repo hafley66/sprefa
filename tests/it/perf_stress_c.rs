@@ -1,9 +1,9 @@
 //! C-focused e2e perf stress. Proves the scan + sg extract path runs to
 //! completion on a real large C checkout (redis/redis), and reports the
-//! cold-vs-incremental ratio — the headline perf number. Skips (does not fail)
-//! when no fixture is present; provision one with `just v5-fixture-c`
-//! (shallow-clones redis, depth 1, gitignored). Override the fixture path with
-//! DL_STRESS_C.
+//! cold-vs-incremental ratio — the headline perf number. `#[ignore]`d — the
+//! fixture is a gitignored, opt-in shallow clone; provision one with
+//! `just v5-fixture-c` (shallow-clones redis, depth 1). Override the fixture
+//! path with DL_STRESS_C.
 //!
 //! C has no type/call/dataflow graph support (rust/kotlin/ts only), so this
 //! isolates the source-extraction cost at corpus scale — the complement of
@@ -75,11 +75,10 @@ fn scanned_count(stdout: &str) -> usize {
 }
 
 #[test]
+#[ignore = "needs tests/.fixtures/redis corpus (provision with `just v5-fixture-c`, or set DL_STRESS_C)"]
 fn c_stress_cold_and_incremental_on_large_repo() {
-    let Some(root) = fixture() else {
-        eprintln!("perf_stress_c: SKIPPED — no fixture. Run `just v5-fixture-c` to provision.");
-        return;
-    };
+    let root = fixture().expect(
+        "needs tests/.fixtures/redis corpus (provision with `just v5-fixture-c`, or set DL_STRESS_C)");
     let c = count_c(&root);
     assert!(c > 0, "fixture {root:?} has no .c files");
     let db = std::env::temp_dir().join("sprefa_perf_stress_c.db");

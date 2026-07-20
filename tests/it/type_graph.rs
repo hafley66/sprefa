@@ -101,20 +101,24 @@ fn type_edges_carry_rev() {
     )
     .unwrap();
 
-    // A fresh (non-git) root scans everything as the WORK rev, so the rev-aware
-    // table tags edges WORK and a WORK-filtered relation recovers them.
+    // A fresh (non-git) root has no HEAD, so `WORK` resolves to the zero
+    // sentinel and the rev-aware table tags edges with it. `WORK` is an ALIAS
+    // resolved at the scan seam, never a stored value, so a rev-filtered
+    // relation binds the rev the scan itself produced.
     let prog = r#"
 rel seen(path: file).
 seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
+rel seen_rev(rev: text).
+seen_rev(rev) <- scan("WORK", "src/**/*.rs", path, rev).
 rel work_type(a: text, b: text).
-work_type(a, b) <- type_edge_rev(a, b, _, "WORK", _).
+work_type(a, b) <- seen_rev(work_rev), type_edge_rev(a, b, _, work_rev, _).
 ? type_edge_rev(f, t, k, rev, _).
 ? work_type(a, b).
 "#;
     let (code, out, err) = run(&d, prog, &[]);
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
     assert!(
-        out.contains("User\tId\tfield\tWORK"),
+        out.contains(&format!("User\tId\tfield\t{}", crate::util::NO_HEAD_REV)),
         "rev-tagged edge: {out}"
     );
     let work = out.split("? work_type").nth(1).unwrap_or("");

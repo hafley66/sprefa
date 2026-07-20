@@ -171,9 +171,16 @@ rel composite_key_baseline(source_file: file, allowed: int).
 # `dl .dl/composite-key-string.dl` run confirms zero findings for this file,
 # so its row is DELETED per this rail's own ratchet law ("delete rows that
 # reach 0"), not left stale at 1.
+# src/engine/extract/mod.rs's row is DELETED (2026-07-20, rev-identity arc).
+# The offender was `extract_digest_key`, which folded exe stamp + family + rev
+# into one `_reldigest.rel` TEXT key and then needed `LIKE 'prefix%'` plus a
+# substring cut to read the rev back out. It was NORMALIZED rather than waived:
+# the three components are now three atomic columns in `_extract_digest`
+# (exe, family, rev) with a composite PRIMARY KEY, and the gone-rev sweep is one
+# indexed set difference. A live `dl .dl/composite-key-string.dl` run confirms
+# zero findings for this file, so the row goes per this rail's ratchet law.
 composite_key_baseline("src/daemon/mod.rs", 1).
 composite_key_baseline("src/effect.rs", 4).
-composite_key_baseline("src/engine/extract/mod.rs", 1).
 composite_key_baseline("src/engine/repo.rs", 1).
 composite_key_baseline("src/graph/typegraph/mod.rs", 4).
 composite_key_baseline("src/graph/typegraph/ts/flow.rs", 1).

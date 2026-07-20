@@ -5,10 +5,9 @@
 //! defined in two packages). Shares `oracle_parity`'s scorer verbatim — same
 //! confirmed-positives-only contract as `oracle_rust`/`oracle_ts`/`oracle_kotlin`.
 //!
-//! Runtime-SKIPs (does not fail) when no `scip-go` is found, same pattern as
-//! `oracle_ts.rs`/`oracle_kotlin_parity.rs`: prints and returns rather than
-//! `#[ignore]`, so it participates in the default `cargo test` run and is a
-//! clean pass/skip either way. Override the binary with SPREFA_SCIP_GO.
+//! `#[ignore]`d — no `scip-go` on PATH is a genuine environmental gap, not
+//! something the default `cargo test` run should silently count as coverage.
+//! Override the binary with SPREFA_SCIP_GO. Run explicitly with `--ignored`.
 //!
 //! Go `call_site` lines are 1-based (typegraph extractor); SCIP ranges are
 //! 0-based. `oracle_parity`'s scorer already does the `line1.saturating_sub(1)`
@@ -41,11 +40,9 @@ fn find_scip_go() -> Option<std::path::PathBuf> {
 ///
 /// Run: cargo test --test it go_call_resolution_parity_vs_scip -- --nocapture
 #[test]
+#[ignore = "needs scip-go on PATH (set SPREFA_SCIP_GO)"]
 fn go_call_resolution_parity_vs_scip() {
-    let Some(scip_go) = find_scip_go() else {
-        eprintln!("SKIP oracle_go: no scip-go binary (set SPREFA_SCIP_GO)");
-        return;
-    };
+    let scip_go = find_scip_go().expect("needs scip-go on PATH (set SPREFA_SCIP_GO)");
 
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/go_ws");
 
@@ -64,11 +61,8 @@ fn go_call_resolution_parity_vs_scip() {
         .args(["index", "--output", scip_out.to_str().unwrap()])
         .current_dir(&index_dir)
         .output().expect("run scip-go index");
-    if !scip_out.is_file() {
-        eprintln!("SKIP oracle_go: scip-go produced no index: {}",
-            String::from_utf8_lossy(&run.stderr));
-        return;
-    }
+    assert!(scip_out.is_file(), "scip-go produced no index: {}",
+        String::from_utf8_lossy(&run.stderr));
     let index = Index::parse_from_bytes(&std::fs::read(&scip_out).unwrap()).expect("parse scip");
 
     let dl_dir = std::env::temp_dir().join("sprefa_oracle_go_parity_dl");

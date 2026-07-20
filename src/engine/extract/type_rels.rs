@@ -105,8 +105,11 @@ impl Engine {
         // Alias hop input: this file's aliased-import local bindings, read
         // once for the whole family, see `module_binding_resolved_map`.
         let aliases = self.module_binding_resolved_map().unwrap_or_default();
+        // See `refresh_call_rels`: the SCIP override describes the working tree
+        // only, and a rev is an oid after alias resolution.
+        let work_revs = self.worktree_rev_texts.clone();
         let resolve = |repo: &str, rev: &str, file: &str, name: &str| -> Option<String> {
-            if rev == "WORK" {
+            if work_revs.contains(rev) {
                 if let Some(def_file) =
                     scip.get(&(repo.to_string(), file.to_string(), name.to_string()))
                 {
@@ -364,7 +367,7 @@ impl Engine {
         }
         // Persisted only after the writes land, so a failed refresh retries.
         for (rev, d) in &moved {
-            self.save_rel_digest(&extract_digest_key("type", rev), d)?;
+            self.save_extract_digest("type", rev, d)?;
         }
         Ok(rows_changed)
     }

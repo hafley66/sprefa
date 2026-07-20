@@ -2,27 +2,36 @@ use super::*;
 use crate::db::SqlVal;
 
 impl Engine {
-    /// Resolve a declared rev to a stable commit SHA (WORK stays WORK).
+    /// Resolve a declared rev to a `RevId`. The `WORK` ALIAS resolves here to
+    /// the repo's actual revision identity (HEAD's oid, `+` when the working
+    /// tree differs); every other literal resolves to a commit oid as before.
     /// Cached per tick so a moving ref is re-resolved each tick.
-    pub(crate) fn resolve_rev(&mut self, repo_root: &Path, rev: &str) -> Result<String> {
-        if rev == "WORK" {
-            return Ok("WORK".to_string());
+    ///
+    /// This is the single funnel every scan rev literal passes through, and the
+    /// only place an alias may become a rev. Downstream of `ScanBinding.rev`
+    /// there is no alias text left to leak into storage.
+    pub(crate) fn resolve_rev(&mut self, repo_root: &Path, rev: &str) -> Result<RevId> {
+        if rev == WORK_ALIAS {
+            // The alias never touches `cache_rev`: see `WorktreeRev`.
+            let resolved = self.worktree_rev.resolve(repo_root)?;
+            self.worktree_rev_texts.insert(resolved.text());
+            return Ok(resolved);
         }
         // Cache by (repo, rev): the same tag resolves to different shas per repo.
         // Immutable (hex-SHA) revs live in the cross-tick cache; movable refs in
         // the per-tick one. A hit in either means we already have it — no spawn.
         let key = format!("{}::{rev}", repo_root.display());
         if let Some(s) = self.rev_sha_cache.get(&key) {
-            return Ok(s.clone());
+            return Ok(RevId::commit(s.clone()));
         }
         if let Some(s) = self.rev_cache.get(&key) {
-            return Ok(s.clone());
+            return Ok(RevId::commit(s.clone()));
         }
         // Present rev: unchanged fast path — rev-parse resolves, cache, return
         // the identical sha the caller has always seen.
         if let Some(sha) = Self::rev_parse(repo_root, rev)? {
             self.cache_rev(key, rev, sha.clone());
-            return Ok(sha);
+            return Ok(RevId::commit(sha));
         }
         // Miss: the rev isn't in this repo's object db. Offline mode throws
         // without touching the network; otherwise fetch this specific rev
@@ -69,7 +78,7 @@ impl Engine {
             resolved = Self::rev_parse(repo_root, rev)?;
         }
         match resolved {
-            Some(sha) => { self.cache_rev(key, rev, sha.clone()); Ok(sha) }
+            Some(sha) => { self.cache_rev(key, rev, sha.clone()); Ok(RevId::commit(sha)) }
             None => bail!("git rev-parse {rev} still missing in {} after fetching tags/unshallowing from origin",
                 repo_root.display()),
         }
@@ -123,6 +132,33 @@ impl Engine {
         Ok(Some(sha))
     }
 
+    /// Resolve this engine's own working tree once per tick, so `&self` code
+    /// paths that mean "my own working tree" have a rev without re-probing git.
+    pub(crate) fn resolve_self_rev(&mut self) -> Result<()> {
+        let root = self.root.clone();
+        self.self_rev = self.resolve_rev(&root, WORK_ALIAS)?;
+        Ok(())
+    }
+
+    /// Drop the cached working-tree resolutions. Called when `.git` moves, so
+    /// a HEAD advance is not read through a resolution taken before it.
+    pub(crate) fn invalidate_worktree_rev(&mut self) {
+        self.worktree_rev.invalidate();
+    }
+
+    /// Is this STORED rev text a working tree scanned this tick? The worktree
+    /// predicate for code holding `_file.rev` text rather than a `RevId` (the
+    /// extraction resolvers, `read_content`, the `cmd` op's `{file}`).
+    pub(crate) fn is_worktree_rev(&self, rev: &str) -> bool {
+        self.worktree_rev_texts.contains(rev)
+    }
+
+    /// The stored rev text for this engine's own working tree, as resolved at
+    /// the top of this tick by `resolve_self_rev`.
+    pub(crate) fn self_rev_text(&self) -> String {
+        self.self_rev.text()
+    }
+
     /// A rev whose object mapping can't change: a full or prefix hex SHA. Movable
     /// refs (branch/tag/HEAD names) are not hex. Gates both the cross-tick cache
     /// and the `cat-file` existence probe.
@@ -132,6 +168,12 @@ impl Engine {
 
     /// Record a resolution in the cross-tick cache for an immutable SHA, else the
     /// per-tick cache for a movable ref.
+    ///
+    /// HAZARD, do not "simplify" the `WORK` alias arm of `resolve_rev` into this
+    /// function. A CLEAN working tree resolves to a bare 40-hex oid, which
+    /// passes `is_immutable_rev`, so it would be filed into the CROSS-TICK
+    /// `rev_sha_cache` and pin a stale HEAD until process restart. Alias
+    /// resolutions belong in `WorktreeRev`, which is cleared every tick.
     pub(crate) fn cache_rev(&mut self, key: String, rev: &str, sha: String) {
         if Self::is_immutable_rev(rev) {
             self.rev_sha_cache.insert(key, sha);
@@ -306,7 +348,7 @@ impl Engine {
         if let Some(v) = rev_var {
             sel_vars.push(v.to_string());
         }
-        let binding_atoms: Vec<BodyItem> = rule
+        let mut binding_atoms: Vec<BodyItem> = rule
             .body
             .iter()
             .filter(|b| matches!(b, BodyItem::Pos(_) | BodyItem::Neg(_) | BodyItem::Cmp(_)))
@@ -319,6 +361,7 @@ impl Engine {
                 rule.head.rel
             );
         }
+        crate::lower::resolve_work_alias_body(&mut binding_atoms, &self.rels, &self.self_rev_text());
         let sql = crate::lower::lower_gen(&sel_vars, &binding_atoms, &self.rels)?;
         // Collect the coordinate tuples fully (drop the statement borrow) before
         // the resolve loop: resolve_rev takes &mut self (rev_cache).
@@ -477,7 +520,9 @@ impl Engine {
                     tracing::warn!("[repo-sink] head must be all variables (slug, root, url) or an all-literal ground fact; skipping");
                     continue;
                 }
-                let sql = crate::lower::lower_gen(&vars, &rule.body, &self.rels)?;
+                let mut body = rule.body.clone();
+                crate::lower::resolve_work_alias_body(&mut body, &self.rels, &self.self_rev_text());
+                let sql = crate::lower::lower_gen(&vars, &body, &self.rels)?;
                 self.db.query_rows(&rule.head.rel, &sql, &[], |r| {
                     Ok((
                         r.get::<_, String>(0)?,
@@ -1121,8 +1166,9 @@ impl GitBatch {
         })
     }
 
-    pub(crate) fn read(&mut self, rev: &str, path: &str) -> Result<String> {
+    pub(crate) fn read(&mut self, rev: GitOid<'_>, path: &str) -> Result<String> {
         use std::io::{BufRead, Read, Write};
+        let rev = rev.as_str();
         writeln!(self.stdin, "{rev}:{path}")?;
         self.stdin.flush()?;
         // header: `<oid> <type> <size>` or `<object> missing` / `... ambiguous`
@@ -1140,7 +1186,7 @@ impl GitBatch {
     }
 }
 
-pub(crate) fn git_batch_read(root: &Path, rev: &str, path: &str) -> Result<String> {
+pub(crate) fn git_batch_read(root: &Path, rev: GitOid<'_>, path: &str) -> Result<String> {
     static BATCHES: OnceLock<
         std::sync::Mutex<HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<GitBatch>>>>,
     > = OnceLock::new();

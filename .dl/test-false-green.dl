@@ -156,12 +156,16 @@ ignore_hiding_bug(f, l) <- scan("WORK", "src/**/*.rs", f, rev),
 # one. Lower a row when a commit shrinks the count; delete rows that reach 0.
 # Rows only ever go down. Raising one is the defect this rail exists to stop.
 #
-# The 39 silent skips are one shape: an early exit on a missing external tool
+# The 39 silent skips were one shape: an early exit on a missing external tool
 # (rust-analyzer, a language toolchain, a vendored corpus) with no #[ignore].
-# `oracle_go.rs`/`oracle_ts.rs` module docs call this INTENTIONAL; the
-# documented rationale IS the anti-pattern, because a run that skips them
-# counts them as coverage. The fix is `#[ignore = "<the tool it needs>"]`,
-# which reports them as excluded instead. Tracked in plans/2026-07-20-test-audit.md.
+# `oracle_go.rs`/`oracle_ts.rs` module docs used to call this INTENTIONAL; the
+# documented rationale WAS the anti-pattern, because a run that skips them
+# counted them as coverage. The fix, `#[ignore = "<the tool it needs>"]`,
+# reports them as excluded instead. Landed 2026-07-20 for every tests/it/ site
+# (16 files, 35 sites) plus the 2 tests/it/ assert-nothing sites
+# (call_golden.rs, family_scaling_probe.rs); the src/** sites and
+# tests/it/daemon.rs are out of scope for that pass and remain grandfathered
+# below. Tracked in plans/2026-07-20-test-audit.md.
 
 rel silent_skip_count(file: file, hits: int).
 silent_skip_count(f, count(line)) <- silent_skip_finding(f, line).
@@ -169,23 +173,7 @@ silent_skip_count(f, count(line)) <- silent_skip_finding(f, line).
 rel silent_skip_baseline(file: file, allowed: int).
 silent_skip_baseline("src/parse/mod.rs", 2).
 silent_skip_baseline("src/propose/mod.rs", 1).
-silent_skip_baseline("tests/it/budget_cpu.rs", 1).
 silent_skip_baseline("tests/it/daemon.rs", 1).
-silent_skip_baseline("tests/it/flow_go_dispatch.rs", 2).
-silent_skip_baseline("tests/it/flow_py_dispatch.rs", 2).
-silent_skip_baseline("tests/it/flow_xlang_scip_real.rs", 1).
-silent_skip_baseline("tests/it/oracle_corpus.rs", 10).
-silent_skip_baseline("tests/it/oracle_go.rs", 2).
-silent_skip_baseline("tests/it/oracle_kotlin.rs", 2).
-silent_skip_baseline("tests/it/oracle_kotlin_parity.rs", 2).
-silent_skip_baseline("tests/it/oracle_madge.rs", 1).
-silent_skip_baseline("tests/it/oracle_python.rs", 3).
-silent_skip_baseline("tests/it/oracle_rust.rs", 3).
-silent_skip_baseline("tests/it/oracle_ts.rs", 2).
-silent_skip_baseline("tests/it/perf_stress.rs", 1).
-silent_skip_baseline("tests/it/perf_stress_c.rs", 1).
-silent_skip_baseline("tests/it/scip_name.rs", 1).
-silent_skip_baseline("tests/it/seam_bench.rs", 1).
 
 rel asserts_nothing_count(file: file, hits: int).
 asserts_nothing_count(f, count(line)) <- asserts_nothing_finding(f, line).
@@ -197,8 +185,6 @@ asserts_nothing_baseline("src/engine/pipeline/stage.rs", 1).
 asserts_nothing_baseline("src/graph/typegraph/go.rs", 1).
 asserts_nothing_baseline("src/graph/typegraph/ts/flow.rs", 1).
 asserts_nothing_baseline("src/trace.rs", 1).
-asserts_nothing_baseline("tests/it/call_golden.rs", 1).
-asserts_nothing_baseline("tests/it/family_scaling_probe.rs", 1).
 
 rel ignore_bug_count(file: file, hits: int).
 ignore_bug_count(f, count(line)) <- ignore_hiding_bug(f, line).

@@ -34,8 +34,8 @@ impl Engine {
     pub(crate) fn work_file_id(&self, path: &str) -> Result<Option<spine::FileId>> {
         let row = self.db.query_opt(
             "_file",
-            "SELECT hash, size FROM _file WHERE path = ?1 AND rev = 'WORK' LIMIT 1",
-            &[SqlVal::from(path)],
+            "SELECT hash, size FROM _file WHERE path = ?1 AND rev = ?2 LIMIT 1",
+            &[SqlVal::from(path), SqlVal::from(self.self_rev_text())],
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
         )?;
         Ok(row.and_then(|(hash, size)| {
@@ -364,8 +364,8 @@ impl Engine {
     pub(crate) fn repo_for_path(&self, path: &str) -> String {
         self.try_rows(
             "_file",
-            "SELECT repo FROM _file WHERE path = ?1 AND rev = 'WORK' LIMIT 1",
-            &[SqlVal::from(path)],
+            "SELECT repo FROM _file WHERE path = ?1 AND rev = ?2 LIMIT 1",
+            &[SqlVal::from(path), SqlVal::from(self.self_rev_text())],
             |r| r.get::<_, String>(0),
         )
         .into_iter()
@@ -520,7 +520,7 @@ impl Engine {
             .get(&repo)
             .cloned()
             .unwrap_or_else(|| self.root.clone());
-        let content = read_content(&root, "WORK", path).unwrap_or_default();
+        let content = std::fs::read_to_string(root.join(path)).unwrap_or_default();
         let (cl, cc) = byte_to_lc0(&content, byte);
         let (cl, cc) = (cl as i64, cc as i64);
 
@@ -918,7 +918,7 @@ impl Engine {
             .get(&repo)
             .cloned()
             .unwrap_or_else(|| self.root.clone());
-        let content = read_content(&root, "WORK", path).unwrap_or_default();
+        let content = std::fs::read_to_string(root.join(path)).unwrap_or_default();
         let (cl, cc) = byte_to_lc0(&content, byte);
         let (cl, cc) = (cl as i64, cc as i64);
 
@@ -1099,7 +1099,7 @@ impl Engine {
                     .get(&repo)
                     .cloned()
                     .unwrap_or_else(|| self.root.clone());
-                read_content(&root, "WORK", &path).unwrap_or_default()
+                std::fs::read_to_string(root.join(&path)).unwrap_or_default()
             });
             let (sl, sc) = byte_to_lc0(content, lo);
             let (el, ec) = byte_to_lc0(content, hi);

@@ -298,8 +298,10 @@ fn module_edge_rev_keeps_head_and_work_separate() {
 rel seen(path: file, rev: text).
 seen(path, rev) <- scan("HEAD", "src/**/*.rs", path, rev), match(path, rev, /./, line).
 seen(path, rev) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
+rel work_rev(rev: text).
+work_rev(rev) <- scan("WORK", "src/**/*.rs", path, rev).
 rel work_edge(src: text, dst: text).
-work_edge(src, dst) <- module_edge_rev(src, dst, "WORK").
+work_edge(src, dst) <- work_rev(rev), module_edge_rev(src, dst, rev).
 rel work_reaches(src: text, dst: text).
 work_reaches(src, dst) <- closure(work_edge).
 ? module_edge_rev(s, d, r).
@@ -308,10 +310,19 @@ work_reaches(src, dst) <- closure(work_edge).
     let (code, out, err) = run(&d, prog, &[]);
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
     assert!(out.contains("src/lib.rs\tsrc/a.rs\t"), "HEAD edge keeps its rev: {out}");
-    assert!(out.contains("src/lib.rs\tsrc/b.rs\tWORK"), "WORK edge keeps WORK rev: {out}");
+    // `WORK` resolves to HEAD's oid plus `+` (the sandbox has untracked files),
+    // so the worktree row is the one whose rev carries the dirty marker.
+    assert!(work_row(&out, "src/lib.rs", "src/b.rs"), "WORK edge keeps the worktree rev: {out}");
     let work = out.split("? work_reaches").nth(1).unwrap_or("");
     assert!(work.contains("src/lib.rs\tsrc/b.rs"), "filtered WORK closure includes b: {out}");
     assert!(!work.contains("src/lib.rs\tsrc/a.rs"), "filtered WORK closure must not include HEAD-only a: {out}");
+}
+
+/// Is there an output row `src\tdst\t<rev>` whose rev carries the dirty marker,
+/// i.e. the row belonging to the resolved `WORK` alias rather than a commit?
+fn work_row(out: &str, src: &str, dst: &str) -> bool {
+    let head = format!("{src}\t{dst}\t");
+    out.lines().any(|line| line.starts_with(&head) && line.trim_end().ends_with('+'))
 }
 
 #[test]
@@ -339,14 +350,14 @@ seen(path, rev) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./,
     let (code, out, err) = run(&d, prog, &[]);
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
     assert!(out.contains("src/lib.rs\tsrc/a.rs\t"), "cold HEAD edge present: {out}");
-    assert!(out.contains("src/lib.rs\tsrc/b.rs\tWORK"), "cold WORK edge present: {out}");
+    assert!(work_row(&out, "src/lib.rs", "src/b.rs"), "cold WORK edge present: {out}");
 
     fs::write(d.join("src/lib.rs"), "mod c;\nfn x() {}\n").unwrap();
     let (code, out, err) = run(&d, prog, &["--changed", "src/lib.rs"]);
     assert_eq!(code, 0, "changed run failed:\nstdout={out}\nstderr={err}");
     assert!(out.contains("src/lib.rs\tsrc/a.rs\t"), "delta keeps HEAD edge: {out}");
-    assert!(out.contains("src/lib.rs\tsrc/c.rs\tWORK"), "delta updates WORK edge: {out}");
-    assert!(!out.contains("src/lib.rs\tsrc/b.rs\tWORK"), "delta drops old WORK edge: {out}");
+    assert!(work_row(&out, "src/lib.rs", "src/c.rs"), "delta updates WORK edge: {out}");
+    assert!(!work_row(&out, "src/lib.rs", "src/b.rs"), "delta drops old WORK edge: {out}");
 }
 
 #[test]
@@ -367,7 +378,7 @@ seen(path) <- scan("WORK", "**/*.rs", path, rev), match(path, rev, /./, line).
 "#;
     let (code, out, err) = run(&d, prog, &[]);
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
-    assert!(out.contains("app\tcorelib\tdependencies\tWORK"),
+    assert!(out.contains(&format!("app\tcorelib\tdependencies\t{}", crate::util::NO_HEAD_REV)),
         "Cargo package= rename dependency should be a crate_edge: {out}");
 }
 

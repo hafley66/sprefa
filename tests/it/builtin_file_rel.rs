@@ -42,7 +42,7 @@ fn file_relation_is_queryable_without_scan() {
 rel seen(path: file).
 rel known(path: file).
 seen(path) <- scan("WORK", "src/**/*.rs", path, rev), sg(path, rev, :rust, "fn $N() {}", line).
-known(p) <- file(_, "WORK", p, _).
+known(p) <- file(_, rev, p, _).
 ? known(p).
 "#;
     let (code, out, _) = run(&d, prog, &[]);
@@ -132,7 +132,7 @@ fn cross_file_ref_drops_when_target_deleted() {
 rel link(src: file, dst: text).
 rel holds(src: file, dst: text).
 link(src, dst) <- scan("WORK", "*.txt", src, rev), match(src, rev, /ref (?<dst>\S+)/, line).
-holds(src, dst) <- link(src, dst), file(_, "WORK", dst, _).
+holds(src, dst) <- link(src, dst), file(_, rev, dst, _).
 ? holds(src, dst).
 "#;
     let (_, out, _) = run(&d, prog, &[]);

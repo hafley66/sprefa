@@ -12,6 +12,8 @@ use crate::lower::{lower_query, lower_rule, tbl};
 use crate::scc;
 use crate::spine;
 
+pub(crate) use revid::{GitOid, RevId, WorktreeRev, WORK_ALIAS};
+
 // The effect runtime moved to crate::effect (engine breakdown Stage 5).
 // Re-export the names external call sites (daemon, tests) and the rest of
 // engine.rs reach via `engine::`, so their paths keep resolving.
@@ -42,6 +44,7 @@ pub(crate) mod query;
 mod reconcile;
 mod repo;
 mod results;
+pub(crate) mod revid;
 mod rpc;
 mod source_prepare;
 mod source_rows;
@@ -355,7 +358,7 @@ fn module_manifest_path(path: &str) -> bool {
 
 /// Parse a 64-char hex string into 32 bytes. Errs on wrong length or non-hex
 /// (e.g. the `''` __src default on a derived row), so the caller can skip it.
-fn hex_to_32(s: &str) -> Result<[u8; 32]> {
+pub(crate) fn hex_to_32(s: &str) -> Result<[u8; 32]> {
     let b = s.as_bytes();
     if b.len() != 64 {
         bail!("not a 32-byte hex digest");
@@ -470,6 +473,22 @@ pub struct Engine {
     /// can't change), kept ACROSS ticks so a pinned rev spawns git exactly once
     /// for the daemon's lifetime instead of once per tick.
     rev_sha_cache: HashMap<String, String>,
+    /// Working-tree resolutions of the `WORK` alias, one per repo root. Cleared
+    /// each tick alongside `rev_cache`, and by `invalidate` on a git event, so a
+    /// tick spanning a commit uses ONE oid throughout. Kept apart from
+    /// `rev_sha_cache` on purpose — see `cache_rev`'s hazard note.
+    worktree_rev: WorktreeRev,
+    /// Stored rev texts this tick's alias resolutions produced. The worktree
+    /// predicate for a rev read back OUT of storage, where no `RevId` is in hand
+    /// (extraction closures receive `_file.rev` text). A clean tree's
+    /// `scan("HEAD", …)` matches this set too, which is correct: when the tree is
+    /// clean the filesystem and the committed blob hold the same bytes.
+    worktree_rev_texts: HashSet<String>,
+    /// This engine's own working-tree rev, resolved at the top of every tick.
+    /// The stand-in for code that used to write the literal `WORK` meaning "my
+    /// own working tree" (the call/module family digests, the module refresh
+    /// entry points).
+    self_rev: RevId,
     /// (repo slug, rev, path) of every tracked source file this tick — the
     /// existence oracle for `:file`/`:path`/`:dir` type checks against off-disk
     /// revs (where the filesystem cannot answer).
@@ -544,6 +563,10 @@ pub struct Engine {
     /// pass); an edit bumps it by the changed-file count per family, not the
     /// corpus. The structural proof of perf gap A.
     pub extract_files_parsed: std::cell::Cell<usize>,
+    /// Files read and re-hashed by the working-tree walk this process, i.e. the
+    /// `_file` mtime/size fast path's MISSES. Test/bench instrumentation in the
+    /// `extract_files_parsed` idiom; an unchanged corpus must not move it.
+    pub file_hash_reads: std::cell::Cell<usize>,
     /// Production A/B lever for bundled type/call/dataflow extraction. False
     /// uses one language parse to prime all requested family caches; true
     /// restores the legacy independent family calls. Seeded from
@@ -680,6 +703,9 @@ impl Engine {
             call_router: std::cell::RefCell::new(None),
             rev_cache: HashMap::new(),
             rev_sha_cache: HashMap::new(),
+            worktree_rev: WorktreeRev::default(),
+            worktree_rev_texts: HashSet::new(),
+            self_rev: RevId::no_head(),
             rev_index: std::collections::HashSet::new(),
             repos: Vec::new(),
             logged_repo_dedup: HashSet::new(),
@@ -690,6 +716,7 @@ impl Engine {
             last_n1: None,
             last_node_files_walked: std::cell::Cell::new(0),
             extract_files_parsed: std::cell::Cell::new(0),
+            file_hash_reads: std::cell::Cell::new(0),
             force_separate_analysis_extractors: std::cell::Cell::new(
                 std::env::var("DL_DISABLE_ANALYSIS_BUNDLE").ok().as_deref() == Some("1"),
             ),
@@ -1063,7 +1090,7 @@ fn scan_spec_of(rule: &Rule) -> Result<ScanSpec> {
 struct ScanBinding {
     slug: String,
     root: PathBuf,
-    rev: String,
+    rev: RevId,
     glob: String,
     head_binds: Vec<(String, String)>,
 }
@@ -1086,11 +1113,26 @@ pub fn scan_has_var_coords(rule: &Rule) -> bool {
     })
 }
 
+/// Read one file's content at a stored rev.
+///
+/// The read path is decided from the rev text alone, which is sound because a
+/// rev WITHOUT the `+` marker is byte-identical on disk and in the git object
+/// (the marker is exactly the statement that they differ). A dirty worktree rev
+/// has no git object to read, so it takes the filesystem; a clean one takes the
+/// cheaper object read whether it was scanned as `WORK` or as an explicit rev.
+/// Does this stored rev text name bytes that live only in the working tree?
+/// True for the `+` marker (the tree differed from its oid) and for anything
+/// that is not a rev at all, so an unexpected value degrades to the filesystem
+/// read rather than a git failure.
+pub(crate) fn rev_text_is_dirty_worktree(rev: &str) -> bool {
+    RevId::parse(rev).map(|parsed| parsed.dirty()).unwrap_or(true)
+}
+
 pub(crate) fn read_content(root: &Path, rev: &str, path: &str) -> Result<String> {
-    if rev == "WORK" {
-        Ok(std::fs::read_to_string(root.join(path))?)
-    } else {
-        git_batch_read(root, rev, path)
+    match GitOid::of(rev) {
+        Some(oid) => git_batch_read(root, oid, path),
+        // The dirty marker: these bytes exist only on disk.
+        None => Ok(std::fs::read_to_string(root.join(path))?),
     }
 }
 
@@ -1214,7 +1256,7 @@ fn check_type(
         Value::Int(_) => return ty == Type::Int || ty == Type::Text,
         Value::Null => return true,
     };
-    if rev != "WORK" {
+    if !rev_text_is_dirty_worktree(rev) {
         return match ty {
             Type::File | Type::Path => {
                 rev_index.contains(&(repo.to_string(), rev.to_string(), p.clone()))

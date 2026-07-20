@@ -1,5 +1,12 @@
 //! Shared helpers for it-tests that spawn a real `dl --daemon` child.
 
+/// The stored rev a `scan("WORK", …)` produces in a sandbox with no git HEAD:
+/// git's all-zero oid plus the dirty marker. `WORK` is an ALIAS resolved at
+/// `Engine::resolve_rev`, so no stored rev ever holds the alias text (INV-1),
+/// and a non-git sandbox is deterministic without any override.
+#[allow(dead_code)]
+pub const NO_HEAD_REV: &str = "0000000000000000000000000000000000000000+";
+
 use std::io::{Read, Write};
 use std::ops::{Deref, DerefMut};
 use std::process::Child;

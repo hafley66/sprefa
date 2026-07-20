@@ -1,7 +1,10 @@
 // ARCH {"url":"engine/55-meta","role":"digest-store"}
 use super::*;
 
-const SCHEMA_EPOCH: i64 = 10;
+// 11 (2026-07-20, rev identity normalization): `_file.rev` and every `_rev`
+// twin now hold a resolved oid instead of the `WORK` alias, and the extract
+// digest key moved out of `_reldigest` into the columned `_extract_digest`.
+const SCHEMA_EPOCH: i64 = 12;
 
 /// Result of `Engine::derived_rule_diff` — which derived rels' rule shapes
 /// moved since the stored `drv:` baseline, whether that motion is fully
@@ -166,6 +169,7 @@ impl Engine {
             if self.column_exists("_reldigest", "rel")? {
                 self.db.exec_on("_reldigest", "DELETE FROM _reldigest")?;
             }
+            self.db.exec_on("_extract_digest", "DROP TABLE IF EXISTS _extract_digest")?;
             if self.column_exists("_derived_complete", "rel")? {
                 self.db.exec_on("_derived_complete", "DELETE FROM _derived_complete")?;
             }
@@ -200,7 +204,13 @@ impl Engine {
                     "_strings",
                     "DROP TABLE IF EXISTS _strings;
                      DROP TABLE IF EXISTS _where_bytes;
-                     DELETE FROM _reldigest WHERE key LIKE 'extract:%';",
+                     -- Clearing extraction skip-state, the arm's actual intent.
+                     -- The predecessor was `DELETE FROM _reldigest WHERE key
+                     -- LIKE 'extract:%'`, and `_reldigest` has no `key` column,
+                     -- so this batch ERRORED (execute_batch_on propagates) on
+                     -- every db that reached it. Skip state now has its own
+                     -- table, which is the right target.
+                     DROP TABLE IF EXISTS _extract_digest;",
                 )?;
             }
         }
@@ -210,6 +220,22 @@ impl Engine {
                  mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, lines INTEGER DEFAULT -1, PRIMARY KEY (repo, path, rev));
              CREATE TABLE IF NOT EXISTS _prov (rel TEXT, repo TEXT NOT NULL DEFAULT '', path TEXT, src TEXT, PRIMARY KEY (rel, repo, path, src));
              CREATE TABLE IF NOT EXISTS _reldigest (rel TEXT PRIMARY KEY, digest TEXT);
+             -- Per-(binary, family, rev) extraction skip-state. Three atomic
+             -- interned columns, carved out of `_reldigest`'s `extract:` key
+             -- namespace so the gone-rev sweep is an indexed set difference
+             -- instead of a `LIKE` scan with a substring cut. `family`/`rev`
+             -- carry `StringId::of` hashes, matching `sprf_sym` in the sweep;
+             -- no REFERENCES to `_strings`, because the hash is computed WITHOUT
+             -- interning the text and `PRAGMA foreign_keys` is ON for some
+             -- connections (measured: resolver_repo_scope fails the constraint).
+             CREATE TABLE IF NOT EXISTS _extract_digest (
+                 exe    INTEGER NOT NULL,
+                 family INTEGER NOT NULL,
+                 rev    INTEGER NOT NULL,
+                 digest TEXT    NOT NULL,
+                 PRIMARY KEY (exe, family, rev)
+             ) WITHOUT ROWID;
+             CREATE INDEX IF NOT EXISTS idx__extract_digest_rev ON _extract_digest(rev);
              -- Singleton: wall-clock second as of the last completed WORK-arm
              -- walk in `enumerate_with_hash`. See `load_walk_ref_secs`.
              CREATE TABLE IF NOT EXISTS _file_walk (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), ref_secs INTEGER NOT NULL DEFAULT 0);
@@ -1472,9 +1498,11 @@ impl Engine {
                 &[nxt.into()],
             )?;
         }
+        let resolved_work = self.self_rev_text();
         for r in next_rules {
+            let rule = crate::lower::resolve_work_alias(r, &self.rels, &resolved_work);
             let sql = crate::lower::lower_rule_to(
-                r,
+                &rule,
                 &self.rels,
                 &carry_tbl(&r.head.rel),
                 &[("tx".to_string(), nxt.to_string())],
