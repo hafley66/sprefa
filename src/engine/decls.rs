@@ -623,7 +623,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "df_node".into(), cols: vec![
             c("id", Type::Text), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
             c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int)], group: "dataflow",
-            doc: "intra-procedural dataflow node (call_res/let_bind/param/ret/new/member/...); id is an interned StringId over file::line::kind (sym — BREAKING as of the intern-key arc) — the full kind vocabulary is rel_col's variants for this column; line: 1-based", ..Default::default() },
+            doc: "intra-procedural dataflow node (call_res/let_bind/param/ret/new/member/...); id is an interned StringId over file:line:col:kind (sym) — the display + join handle; the full kind vocabulary is rel_col's variants for this column; line: 1-based. IDENTITY is the full row (id, kind, var, fn, file, line): id encodes only (file,line,col,kind), and var/fn DIVERGE across revs (a position whose enclosing fn or bound var changed between the committed rev and WORK), so they are identity, not payload. The writer dedups on that full tuple, so the table equals SELECT DISTINCT over these columns — safe to collapse to a view over df_node_rev. Do NOT declare key(id); it would drop the divergent rows.", ..Default::default() },
         // rev-aware df_node: id is the SAME interned id df_node uses (never
         // folded with rev) — rev is a real trailing column and `(id, rev)` is
         // the primary key, so two revs' `file:line:col` ids stay disjoint AS
@@ -770,7 +770,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // Rust populates lit only (Kotlin/Go/Python ledgered as follow-up).
         RelDecl { name: "df_lit".into(), cols: vec![
             c("id", Type::Text), Col::raw("text", Type::Text), Col::branded("kind", "const_value_kind")], group: "dataflow",
-            doc: "(df_node id, text, kind); lit=cooked string literal, template/concat=raw source slice with holes intact; TS/TSX/JS + Rust lit today", ..Default::default() },
+            doc: "(df_node id, text, kind); lit=cooked string literal, template/concat=raw source slice with holes intact; TS/TSX/JS + Rust lit today. IDENTITY is the full row (id, text, kind): the same node id can carry divergent text/kind across revs (10 measured), so the writer dedups on all three columns, making the table equal SELECT DISTINCT id,text,kind — safe to collapse to a view over df_lit_rev.", ..Default::default() },
         // rev-aware df_lit: id is the SAME raw id df_node_rev.id uses (never
         // rev-folded) — same shape as df_field_rev (D5 pattern). The dedup key
         // (seen_lit_rev) is only (id, rev); text/kind are functionally

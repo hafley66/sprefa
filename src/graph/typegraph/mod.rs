@@ -701,6 +701,10 @@ fn is_noise_type(name: &str) -> bool {
 /// id is `file:line:col:kind`: a parent expression and its first child share a
 /// start position (e.g. `a + 1` starts where `a` starts), so the kind suffix
 /// disambiguates them — every lifted node is a distinct (position, kind) pair.
+/// The id is the interned display + join handle only; the node's full IDENTITY
+/// (see `df_node`'s decl) is the whole row (id, kind, var, fn, file, line),
+/// because var/fn diverge across revs at the same coordinate. The `df_node`
+/// writer dedups on that full tuple, so id alone is NOT the dedup key.
 fn push_node(
     out: &mut DataflowFacts,
     file: &str,
