@@ -1169,7 +1169,14 @@ impl GitBatch {
     pub(crate) fn read(&mut self, rev: GitOid<'_>, path: &str) -> Result<String> {
         use std::io::{BufRead, Read, Write};
         let rev = rev.as_str();
-        writeln!(self.stdin, "{rev}:{path}")?;
+        // `<rev>:<path>` resolves from the REPO root, but `path` here is
+        // relative to the scan root, and the two only coincide when the scan
+        // root is the repo root. Under a scan root nested in the repo (a
+        // bench/ or crate/ subdirectory) the plain form asks git for the wrong
+        // path and fails. The `./` form resolves relative to the process cwd,
+        // which `open` already pinned to `root` via `-C`, so it names the same
+        // file under either layout.
+        writeln!(self.stdin, "{rev}:./{path}")?;
         self.stdin.flush()?;
         // header: `<oid> <type> <size>` or `<object> missing` / `... ambiguous`
         let mut header = String::new();
@@ -1184,6 +1191,30 @@ impl GitBatch {
         buf.pop();
         Ok(String::from_utf8_lossy(&buf).to_string())
     }
+}
+
+/// Is this scan root inside a git work tree at all? A root that is not (a
+/// corpus copied to a temp directory, an unpacked archive, a plain folder in
+/// view) has no object database behind it, so no rev names bytes there and the
+/// filesystem is the only truth. Answering this before shelling out keeps a
+/// rootless corpus from failing every read against a rev it cannot resolve.
+/// Cached per root: the answer cannot change for a path we are already
+/// scanning, and the probe is a process spawn.
+pub(crate) fn root_is_inside_work_tree(root: &Path) -> bool {
+    static CACHE: OnceLock<std::sync::Mutex<HashMap<PathBuf, bool>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(known) = cache.lock().unwrap().get(root) {
+        return *known;
+    }
+    let inside = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false);
+    cache.lock().unwrap().insert(root.to_path_buf(), inside);
+    inside
 }
 
 pub(crate) fn git_batch_read(root: &Path, rev: GitOid<'_>, path: &str) -> Result<String> {

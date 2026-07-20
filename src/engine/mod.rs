@@ -1130,6 +1130,11 @@ pub(crate) fn rev_text_is_dirty_worktree(rev: &str) -> bool {
 
 pub(crate) fn read_content(root: &Path, rev: &str, path: &str) -> Result<String> {
     match GitOid::of(rev) {
+        // A rev only names bytes in an object database. Without one, the
+        // filesystem is the only place those bytes exist.
+        Some(_) if !crate::engine::repo::root_is_inside_work_tree(root) => {
+            Ok(std::fs::read_to_string(root.join(path))?)
+        }
         Some(oid) => git_batch_read(root, oid, path),
         // The dirty marker: these bytes exist only on disk.
         None => Ok(std::fs::read_to_string(root.join(path))?),
