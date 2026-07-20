@@ -29,7 +29,7 @@ fn sandbox(tag: &str) -> PathBuf {
 
 fn run(dir: &Path) -> (i32, String, String) {
     // The example also queries df_node; append it so the test can map ids.
-    let prog = format!("{PROG}\n? df_node(id, kind, var, fn, file, line).\n");
+    let prog = format!("{PROG}\n? df_node(id, kind, var, fn, file, line, _).\n");
     fs::write(dir.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))

@@ -14,7 +14,7 @@ rel seen(path: file).
 seen(p) <- scan("WORK", "src/**/*.rs", p, rev), match(p, rev, /fn/, line).
 ? type_entity(repo, sym, name, kind, parent, file, line).
 ? call_def(repo, sym, kind, file, line, end).
-? df_node(id, kind, var, fn, file, line).
+? df_node(id, kind, var, fn, file, line, _).
 "#;
 
 fn relation_fingerprint(eng: &Engine) -> (usize, String) {

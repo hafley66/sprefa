@@ -85,17 +85,19 @@ impl Engine {
 
         let t = |s: &str| Value::Text(s.to_string());
         let i = |n: u32| Value::Int(n as i64);
-        // Opaque id-handle columns (df_node.id and every column that carries one:
-        // df_edge.from/to, df_arg.call/arg, df_field.id/value, df_param.id,
-        // df_lit.id, df_node_repo.id, and their `_rev` twins — the twin id
-        // columns carry the SAME raw id, never a rev-folded string) intern
-        // through one `SymSink` so joins on them are int compares. The text
-        // these ids are BUILT from (fn_sym, var, kind, file, ...) stays plain
-        // text — only the opaque handle itself interns. `Db::flush_syms` drains
-        // the sink into ONE batched `_strings` insert below, so `sym(id)`
-        // decodes.
-        let mut sink = spine::SymSink::new();
-        let mut sym = |s: &str| Value::Int(sink.sym(s).cell());
+        // Opaque df-coordinate id columns (df_node.id and every column that
+        // carries one: df_edge.from/to, df_arg.call/arg, df_field.id/value,
+        // df_param.id, df_lit.id, df_node_repo.id, nest.call_id, and the `_rev`
+        // twins — the twin id columns carry the SAME raw id, never a rev-folded
+        // string) store the id's blake3 `StringId` hash as the join handle, but
+        // the `file:line:col:kind` TEXT is NEVER interned into `_strings` (it was
+        // 91.7% of the dictionary). Every such column is declared `Col::node`
+        // (coord), so on display it reconstructs from the df_node coordinate
+        // columns (`coord_decode`) instead of a `_strings` lookup. `nid` is the
+        // pure hash — no queue, no `_strings` row. The text these ids are BUILT
+        // from (fn_sym, var, kind, file, ...) still interns normally via
+        // `encode_rel_rows` (those columns stay `Value::Text`).
+        let nid = |s: &str| Value::Int(crate::spine::StringId::of(s).sqlite());
         let mut node_rows: Vec<Vec<Value>> = Vec::new();
         let mut edge_rows: Vec<Vec<Value>> = Vec::new();
         let mut loop_rows: Vec<Vec<Value>> = Vec::new();
@@ -121,7 +123,6 @@ impl Engine {
         // (10 measured), so keying on id would drop the second and make the
         // table narrower than a `SELECT DISTINCT id,text,kind` view. Key on the
         // full declared PRIMARY KEY so table dedup == PK == view-DISTINCT.
-        let mut seen_lit: HashSet<(&str, &str, &str)> = HashSet::new();
         // df_node identity is the full row (id, kind, var, fn, file, line), NOT
         // id alone. id interns `file:line:col:kind`, so var/fn are the only
         // discriminants beyond it — and they DIVERGE across revs (503 measured:
@@ -133,6 +134,7 @@ impl Engine {
         // (df_node_repo, df_arg, df_field are now views over their _rev twin —
         // their table dedup sets were deleted in the view-backed-rel arc.)
         let mut seen_node: HashSet<(&str, &str, &str, &str, &str, u32)> = HashSet::new();
+        let mut seen_lit: HashSet<(&str, &str, &str)> = HashSet::new();
         let mut seen_edge: HashSet<(&str, &str)> = HashSet::new();
         let mut seen_loop: HashSet<(&str, u32)> = HashSet::new();
         let mut seen_nest: HashSet<(&str, &str)> = HashSet::new();
@@ -152,22 +154,24 @@ impl Engine {
                     n.line,
                 )) {
                     node_rows.push(vec![
-                        sym(&n.id),
+                        nid(&n.id),
                         t(&n.kind),
                         t(&n.var),
                         t(&n.fn_sym),
                         t(&n.file),
                         i(n.line),
+                        i(n.col),
                     ]);
                 }
                 if seen_node_rev.insert((n.id.as_str(), rev.as_str())) {
                     node_rev_rows.push(vec![
-                        sym(&n.id),
+                        nid(&n.id),
                         t(&n.kind),
                         t(&n.var),
                         t(&n.fn_sym),
                         t(&n.file),
                         i(n.line),
+                        i(n.col),
                         t(rev),
                     ]);
                 }
@@ -182,12 +186,12 @@ impl Engine {
                 // rev share one df_node row but get TWO df_node_repo(_rev) rows,
                 // so the join mints the field for BOTH (they both really have it).
                 if seen_node_repo_rev.insert((n.id.as_str(), repo.as_str(), rev.as_str())) {
-                    node_repo_rev_rows.push(vec![sym(&n.id), t(repo), t(rev)]);
+                    node_repo_rev_rows.push(vec![nid(&n.id), t(repo), t(rev)]);
                 }
             }
             for e in &f.edges {
                 if seen_edge.insert((e.from.as_str(), e.to.as_str())) {
-                    edge_rows.push(vec![sym(&e.from), sym(&e.to)]);
+                    edge_rows.push(vec![nid(&e.from), nid(&e.to)]);
                 }
             }
             for l in &f.loops {
@@ -208,7 +212,7 @@ impl Engine {
             for ns in &f.nests {
                 if seen_nest.insert((ns.call_id.as_str(), ns.loop_id.as_str())) {
                     nest_rows.push(vec![
-                        t(&ns.call_id),
+                        nid(&ns.call_id),
                         t(&ns.loop_id),
                         i(ns.depth),
                         t(&ns.collection),
@@ -217,7 +221,7 @@ impl Engine {
             }
             for (id, pos) in &f.param_pos {
                 if seen_param.insert(id.as_str()) {
-                    param_rows.push(vec![sym(id), i(*pos)]);
+                    param_rows.push(vec![nid(id), i(*pos)]);
                 }
             }
             for (call, pos, arg) in &f.args {
@@ -226,7 +230,7 @@ impl Engine {
                 // the `_rev` twin is written. call/arg carry the raw df_node ids
                 // (matching df_node_rev.id); rev is its own trailing dedup column.
                 if seen_arg_rev.insert((call.as_str(), *pos, arg.as_str(), rev.as_str())) {
-                    arg_rev_rows.push(vec![sym(call), Value::Int(*pos), sym(arg), t(rev)]);
+                    arg_rev_rows.push(vec![nid(call), Value::Int(*pos), nid(arg), t(rev)]);
                 }
             }
             for (id, field, value) in &f.fields {
@@ -241,28 +245,25 @@ impl Engine {
                     value.as_str(),
                     rev.as_str(),
                 )) {
-                    field_rev_rows.push(vec![sym(id), t(field), sym(value), t(rev)]);
+                    field_rev_rows.push(vec![nid(id), t(field), nid(value), t(rev)]);
                 }
             }
             for (id, text, kind) in &f.lits {
                 if seen_lit.insert((id.as_str(), text.as_str(), *kind)) {
-                    lit_rows.push(vec![sym(id), t(text), t(kind)]);
+                    lit_rows.push(vec![nid(id), t(text), t(kind)]);
                 }
                 // id is the raw df_node id, matching df_node_rev.id (D5 pattern,
                 // same shape as df_field_rev); rev is a plain trailing column.
                 if seen_lit_rev.insert((id.as_str(), rev.as_str())) {
-                    lit_rev_rows.push(vec![sym(id), t(text), t(kind), t(rev)]);
+                    lit_rev_rows.push(vec![nid(id), t(text), t(kind), t(rev)]);
                 }
             }
         }
 
-        // One batched `_strings` flush for every df id-handle hashed above (the
-        // legacy rels and their `_rev` twins alike — twin ids are the SAME raw
-        // strings, so this is one intern per distinct id, not one per twin), so
-        // `sym(df_node.id)` decodes back to the id text in any text context
-        // (hover, panel, hand queries). Collect-then-flush — the N+1 law
-        // applies to this intern just like any other.
-        self.db.flush_syms(&mut sink)?;
+        // No `_strings` flush for the df ids: `nid` hashes only (the coordinate
+        // TEXT is never interned — that dictionary bloat is what this arc
+        // deletes). The remaining text columns (kind/var/fn/file/lit-text)
+        // intern normally in `encode_rel_rows` at write time.
 
         Ok(DataflowRowSet {
             node: node_rows,
@@ -290,12 +291,12 @@ impl Engine {
         let mut rows_changed = false;
         rows_changed |= self.refresh_rel(
             "df_node",
-            &["id", "kind", "var", "fn", "file", "line"],
+            &["id", "kind", "var", "fn", "file", "line", "col"],
             &rows.node,
         )?;
-        // df_node_repo is VIEW-backed (VIEW over rel_df_node_repo_rev, declared
-        // in src/engine/decls.rs); no base-table write. The `_rev` twin's
-        // refresh below still flips `rows_changed`, so dependents re-derive.
+        // df_node_repo, df_arg, df_field are VIEW-backed (VIEWs over their `_rev`
+        // twins, src/engine/decls.rs); no base-table write. Their twin refreshes
+        // below still flip `rows_changed`, so dependents re-derive.
         rows_changed |= self.refresh_rel("df_edge", &["from", "to"], &rows.edge)?;
         rows_changed |= self.refresh_rel(
             "loop_over",
@@ -309,9 +310,6 @@ impl Engine {
             &rows.nest,
         )?;
         rows_changed |= self.refresh_rel("df_param", &["id", "pos"], &rows.param)?;
-        // df_arg and df_field are VIEW-backed (VIEWs over their `_rev` twins,
-        // declared in src/engine/decls.rs); no base-table write. Their twin
-        // refreshes below still flip `rows_changed`.
         rows_changed |= self.refresh_rel("df_lit", &["id", "text", "kind"], &rows.lit)?;
         // Rev-carrying twins: same delete scope as type/call — wipe every corpus
         // rev and reinsert the whole-corpus rows (the emit above is whole-corpus;
@@ -323,7 +321,7 @@ impl Engine {
         let all_rev_refs: Vec<&str> = all_revs.iter().map(|s| s.as_str()).collect();
         rows_changed |= self.refresh_rel_for_revs(
             "df_node_rev",
-            &["id", "kind", "var", "fn", "file", "line", "rev"],
+            &["id", "kind", "var", "fn", "file", "line", "col", "rev"],
             &rows.node_rev,
             &all_rev_refs,
         )?;
@@ -360,8 +358,9 @@ impl Engine {
     /// reinsert; `INSERT OR IGNORE` covers a crash-resumed slice and the rare
     /// content-addressed id shared across two slices.
     fn append_dataflow_rows(&self, rows: &DataflowRowSet) -> Result<()> {
-        self.append_rel("df_node", &["id", "kind", "var", "fn", "file", "line"], &rows.node)?;
-        // df_node_repo is VIEW-backed (see refresh_dataflow_rows); no append.
+        self.append_rel("df_node", &["id", "kind", "var", "fn", "file", "line", "col"], &rows.node)?;
+        // df_node_repo, df_arg, df_field are VIEW-backed (see refresh_dataflow_rows);
+        // no base-table append, only their `_rev` twins.
         self.append_rel("df_edge", &["from", "to"], &rows.edge)?;
         self.append_rel(
             "loop_over",
@@ -371,11 +370,10 @@ impl Engine {
         self.append_rel("allocates", &["fn"], &rows.alloc)?;
         self.append_rel("nest", &["call_id", "loop_id", "depth", "collection"], &rows.nest)?;
         self.append_rel("df_param", &["id", "pos"], &rows.param)?;
-        // df_arg and df_field are VIEW-backed (see refresh_dataflow_rows); no append.
         self.append_rel("df_lit", &["id", "text", "kind"], &rows.lit)?;
         self.append_rel(
             "df_node_rev",
-            &["id", "kind", "var", "fn", "file", "line", "rev"],
+            &["id", "kind", "var", "fn", "file", "line", "col", "rev"],
             &rows.node_rev,
         )?;
         self.append_rel("df_node_repo_rev", &["id", "repo", "rev"], &rows.node_repo_rev)?;
@@ -389,10 +387,12 @@ impl Engine {
 /// Every dataflow rel's built rows from one `collect_dataflow_rows` pass, split
 /// so the wholesale and cold-chunk write paths share the parse+emit exactly.
 struct DataflowRowSet {
-    node: Vec<Vec<Value>>,
     // df_node_repo, df_arg, df_field are VIEW-backed (VIEWs over their `_rev`
     // twins, src/engine/decls.rs), so their non-rev rows are never collected or
-    // written; only the `_rev` fields below feed them.
+    // written; only the `_rev` fields below feed them. df_node and df_lit stay
+    // base tables (df_node_rev's (id,rev) key can't reproduce df_node's full-row
+    // dedup — see decls.rs), so their non-rev rows ARE collected/written.
+    node: Vec<Vec<Value>>,
     edge: Vec<Vec<Value>>,
     loop_over: Vec<Vec<Value>>,
     alloc: Vec<Vec<Value>>,

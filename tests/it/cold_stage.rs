@@ -246,7 +246,7 @@ calls_reach(caller, callee) <- closure(call_edge).
 rel type_reach(sub: text, sup: text).
 type_reach(sub, sup) <- closure(type_edge).
 rel df_touch(node: text).
-df_touch(node) <- df_node(node, _kind, _var, _fn, _file, _line).
+df_touch(node) <- df_node(node, _kind, _var, _fn, _file, _line, _).
 "#;
 
 const COMPARE_RELS_DF: &[&str] = &[

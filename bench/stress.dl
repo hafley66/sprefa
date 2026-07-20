@@ -42,7 +42,7 @@ rel call_site_count(n: int).
 call_site_count(count(caller)) <- call_site(_, caller, _, _, _).
 
 rel df_count(n: int).
-df_count(count(id)) <- df_node(id, _, _, _, _, _).
+df_count(count(id)) <- df_node(id, _, _, _, _, _, _).
 
 ? entity_count(n).
 ? call_site_count(n).

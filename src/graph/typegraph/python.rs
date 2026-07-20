@@ -710,8 +710,11 @@ fn py_parse_sphinx_tags(text: &str) -> Vec<DocTag> {
 fn py_dataflow_from(root: tree_sitter::Node, src: &[u8], file: &str) -> DataflowFacts {
     let mut out = DataflowFacts::default();
     py_walk_fns(root, src, file, &mut out);
-    for n in &mut out.nodes { n.line += 1; }
+    // tree-sitter rows are 0-based -> 1-based; `bump_node_lines_1based` also
+    // rebuilds each node id so it reconstructs from the stored columns (the
+    // coordinate de-intern contract). Loops bump first; nests recompute after.
     for l in &mut out.loops { l.start += 1; l.end += 1; }
+    bump_node_lines_1based(&mut out);
     out.nests = compute_nests(&out.nodes, &out.loops);
     out
 }

@@ -82,7 +82,7 @@ rel entry_seed(node: text).
 entry_seed(node) <-
   entry(_, sym, kind), kind != "pkg-main",
   bare = replace_re(sym, "^[^:]*::", ""),
-  df_node(node, _, _, bare, _, _).
+  df_node(node, _, _, bare, _, _, _).
 
 # Shortest hops from any entry point to each df_node, as a MinBy lattice keyed
 # on the node: exactly one row per node, holding its minimum depth. A bare
@@ -101,7 +101,7 @@ entry_reach_node(to, d0 + 1) <-
 # replacing the old entry_reach_raw/not_min negation dedup.
 rel entry_reach(sym: text, d: int) key(sym) merge(MinBy(d)).
 entry_reach(fnb, d) <-
-  entry_reach_node(node, d), df_node(node, _, _, fnb, _, _).
+  entry_reach_node(node, d), df_node(node, _, _, fnb, _, _, _).
 
 # ---- labeled wire reachability -----------------------------------------------
 # Same bridge, per-operation instead of per-any-entry: seed every df_node
@@ -111,7 +111,7 @@ entry_reach(fnb, d) <-
 # enclosing fn's bare name, the query-useful form.
 rel op_reach_seed(op: text, node: text).
 op_reach_seed(op, node) <-
-  op_endpoint(op, fnb, _), df_node(node, _, _, fnb, _, _).
+  op_endpoint(op, fnb, _), df_node(node, _, _, fnb, _, _, _).
 
 # Same depth-capped MinBy lattice, keyed per (op, node) so the recursion holds
 # one row per operation-node pair instead of the per-depth product. op_reach
@@ -125,4 +125,4 @@ rel op_reach(op: text, n: text).
 op_reach(op, n) <- op_reach_node(op, n, _).
 
 rel op_reach_fn(op: text, fnb: text).
-op_reach_fn(op, fnb) <- op_reach(op, n), df_node(n, _, _, fnb, _, _).
+op_reach_fn(op, fnb) <- op_reach(op, n), df_node(n, _, _, fnb, _, _, _).

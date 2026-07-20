@@ -120,8 +120,29 @@ impl Engine {
     pub(crate) fn create_rel_view(&self, rel: &str, meta: &RelMeta) -> Result<()> {
         let view = crate::lower::txt_tbl(rel);
         let columns: Vec<String> = meta.cols.iter().map(|col| {
-            if col.interned() {
-                format!("(SELECT content FROM _strings WHERE _strings.id = rel_{rel}.\"{}\") AS \"{}\"", col.name, col.name)
+            if col.coord {
+                // A df-coordinate id: reconstruct `file:line:col:kind` from
+                // rel_df_node (the coordinate text is no longer in `_strings`).
+                format!(
+                    "(SELECT (SELECT content FROM _strings WHERE _strings.id = dn.\"file\") || ':' || \
+                     dn.\"line\" || ':' || dn.\"col\" || ':' || \
+                     (SELECT content FROM _strings WHERE _strings.id = dn.\"kind\") \
+                     FROM rel_df_node dn WHERE dn.\"id\" = rel_{rel}.\"{}\" LIMIT 1) AS \"{}\"",
+                    col.name, col.name
+                )
+            } else if col.interned() {
+                // COALESCE fallback: an ordinary `text` column carrying a df
+                // coordinate id (ecosystem flow rels) reconstructs from
+                // rel_df_node when its text is absent from `_strings`. Short-
+                // circuits for a normal interned string (the _strings hit).
+                format!(
+                    "COALESCE((SELECT content FROM _strings WHERE _strings.id = rel_{rel}.\"{name}\"), \
+                     (SELECT (SELECT content FROM _strings WHERE _strings.id = dn.\"file\") || ':' || \
+                     dn.\"line\" || ':' || dn.\"col\" || ':' || \
+                     (SELECT content FROM _strings WHERE _strings.id = dn.\"kind\") \
+                     FROM rel_df_node dn WHERE dn.\"id\" = rel_{rel}.\"{name}\" LIMIT 1)) AS \"{name}\"",
+                    name = col.name
+                )
             } else {
                 format!("\"{}\"", col.name)
             }
@@ -1206,13 +1227,21 @@ impl Engine {
         self.db
             .exec_on(&d.name, &format!("DROP TABLE IF EXISTS {v}"))?;
         let (c0, c1) = (&d.cols[0].name, &d.cols[1].name);
+        // Re-encode an SCC node name back to the head column's stored int handle
+        // by HASHING (`sprf_sym`, pure), not a `_strings` content lookup: the
+        // hash IS the id (`_strings.id = StringId::of(content)` by construction),
+        // so this is equivalent for an interned-text head — and it is the ONLY
+        // form that works for a df-coordinate (`node`) head, whose coordinate
+        // text is no longer in `_strings`. `na.name` is the decoded/reconstructed
+        // edge endpoint (from `rel_<edge>_txt`), so `sprf_sym(na.name)` recovers
+        // the same id `df_edge.from` carries.
         let output_name = |column: &str| {
             if d.cols
                 .iter()
                 .find(|c| c.name == column)
                 .is_some_and(|c| c.interned())
             {
-                format!("(SELECT id FROM _strings WHERE _strings.content = na.name)")
+                "sprf_sym(na.name)".to_string()
             } else {
                 "na.name".to_string()
             }
@@ -1223,7 +1252,7 @@ impl Engine {
                 .find(|c| c.name == column)
                 .is_some_and(|c| c.interned())
             {
-                format!("(SELECT id FROM _strings WHERE _strings.content = nb.name)")
+                "sprf_sym(nb.name)".to_string()
             } else {
                 "nb.name".to_string()
             }
@@ -1249,6 +1278,32 @@ impl Engine {
             ),
         )?;
         if d.cols[0].interned() && d.cols[1].interned() {
+            // Decode a closure head column for `_txt`: a df-coordinate (`node`)
+            // column reconstructs `file:line:col:kind` from rel_df_node (its text
+            // is no longer interned); a plain interned column decodes through
+            // `_strings`.
+            let decode_head = |col: &Col| -> String {
+                if col.coord {
+                    format!(
+                        "(SELECT (SELECT content FROM _strings WHERE _strings.id = dn.\"file\") || ':' || \
+                         dn.\"line\" || ':' || dn.\"col\" || ':' || \
+                         (SELECT content FROM _strings WHERE _strings.id = dn.\"kind\") \
+                         FROM rel_df_node dn WHERE dn.\"id\" = rel_{}.\"{}\" LIMIT 1)",
+                        d.name, col.name
+                    )
+                } else {
+                    // COALESCE fallback (see create_rel_view): a `text` closure
+                    // head carrying df ids reconstructs from rel_df_node.
+                    format!(
+                        "COALESCE((SELECT content FROM _strings WHERE _strings.id = rel_{name}.\"{col}\"), \
+                         (SELECT (SELECT content FROM _strings WHERE _strings.id = dn.\"file\") || ':' || \
+                         dn.\"line\" || ':' || dn.\"col\" || ':' || \
+                         (SELECT content FROM _strings WHERE _strings.id = dn.\"kind\") \
+                         FROM rel_df_node dn WHERE dn.\"id\" = rel_{name}.\"{col}\" LIMIT 1))",
+                        name = d.name, col = col.name
+                    )
+                }
+            };
             self.db.exec_on(
                 &d.name,
                 &format!("DROP VIEW IF EXISTS {}", crate::lower::txt_tbl(&d.name)),
@@ -1258,15 +1313,9 @@ impl Engine {
                 &format!(
                     "CREATE VIEW {} AS SELECT {} AS \"{}\", {} AS \"{}\" FROM {}",
                     crate::lower::txt_tbl(&d.name),
-                    format!(
-                        "(SELECT content FROM _strings WHERE _strings.id = rel_{}.\"{}\")",
-                        d.name, c0
-                    ),
+                    decode_head(&d.cols[0]),
                     c0,
-                    format!(
-                        "(SELECT content FROM _strings WHERE _strings.id = rel_{}.\"{}\")",
-                        d.name, c1
-                    ),
+                    decode_head(&d.cols[1]),
                     c1,
                     tbl(&d.name),
                 ),

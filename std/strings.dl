@@ -25,14 +25,14 @@
 # query output order.
 
 # (origin df_lit id, node reached by following df_edge forward from it).
-rel string_flow(from: text, to: text).
+rel string_flow(from: node, to: node).
 string_flow(lit_id, x) <- df_lit(lit_id, _, _), df_edge(lit_id, x).
 string_flow(lit_id, y) <- string_flow(lit_id, x), df_edge(x, y).
 
 # Readable trace: every string_flow pair with the ORIGIN literal's own text
 # and kind attached, so a query reads the actual string value alongside the
 # flow instead of just node ids.
-rel string_flow_trace(text: text, kind: text, from: text, to: text).
+rel string_flow_trace(text: text, kind: text, from: node, to: node).
 string_flow_trace(text, kind, from, to) <-
     string_flow(from, to),
     df_lit(from, text, kind).

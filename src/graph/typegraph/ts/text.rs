@@ -117,8 +117,13 @@ impl<'a, 's> OxcVisit<'a> for TsTemplateWalker<'s> {
 
     fn visit_template_literal(&mut self, it: &ts_ast::TemplateLiteral<'a>) {
         let anchor = self.tag_anchor.take().unwrap_or(it.span.start);
-        let node = format!("{}:{anchor}:template", self.file);
-        let line = line_at(self.starts, anchor as usize);
+        // Mirror `ts_push`'s id scheme EXACTLY (`{file}:{line}:{col}:{kind}`,
+        // 1-based line + 0-based byte col via `line_col`) so this `node` id joins
+        // `df_lit.id`/`df_node.id`/`df_edge.to` for the same occurrence. The df
+        // coordinate de-intern reconstructs these ids from (file,line,col,kind),
+        // so the byte-offset scheme this used before no longer matches.
+        let (line, col) = line_col(self.starts, anchor as usize);
+        let node = format!("{}:{line}:{col}:template", self.file);
         let mut idx = 0u32;
         // `quasis`/`expressions` strictly alternate (quasis.len() ==
         // expressions.len() + 1): static, expr, static, expr, ..., static. An

@@ -17,7 +17,7 @@
 # To target a DIFFERENT variable, edit the seed's var literal (and, if the
 # name is shadowed across functions, pin `fn`/`file`/`line` too — every
 # df_node carries all four). To seed one exact node instead, dump
-# `? df_node(id, kind, var, fn, file, line).`, copy an id, and write
+# `? df_node(id, kind, var, fn, file, line, _).`, copy an id, and write
 # `seed("src/lib.rs:42:8").` — node ids are stable strings.
 
 use "std/flow.dl".
@@ -29,8 +29,8 @@ src(p) <- scan("WORK", "src/**/*.{rs,ts,kt}", p, rev).
 # Seed: every binding (let/param) named `token`. Pin `fn`/`line` in the body
 # to disambiguate a shadowed name; unpinned = the union over all `token`s.
 rel seed(node: text).
-seed(n) <- df_node(n, "let_bind", "token", _, _, _).
-seed(n) <- df_node(n, "param", "token", _, _, _).
+seed(n) <- df_node(n, "let_bind", "token", _, _, _, _).
+seed(n) <- df_node(n, "param", "token", _, _, _, _).
 
 # Forward reachability from the seed. The two rules are the frontier and its
 # transitive walk — the same magic-set shape as flow-ctor.dl's from_new.
@@ -42,7 +42,7 @@ forward(y) <- forward(x), flow_edge(x, y).
 # nodes (empty var — call results, binops, literals) are dropped for legibility;
 # drop the `v != ""` guard to see them.
 rel reaches(kind: text, var: text, fn: text, file: file, line: int).
-reaches(k, v, f, p, l) <- forward(n), df_node(n, k, v, f, p, l), v != "".
+reaches(k, v, f, p, l) <- forward(n), df_node(n, k, v, f, p, l, _), v != "".
 
 # ── 2. backward slice of a local ─────────────────────────────────────────────
 # "What feeds `token`?" — the same rules with flow_edge flipped. Seeds on the
@@ -55,7 +55,7 @@ backward(x) <- seed(n), flow_edge(x, n).
 backward(x) <- backward(y), flow_edge(x, y).
 
 rel fed_by(kind: text, var: text, fn: text, file: file, line: int).
-fed_by(k, v, f, p, l) <- backward(n), df_node(n, k, v, f, p, l), v != "".
+fed_by(k, v, f, p, l) <- backward(n), df_node(n, k, v, f, p, l, _), v != "".
 
 # ── 3. field-accurate slice of ONE instance ──────────────────────────────────
 # Seed a single instantiation (a `new` node — pin file/line to one alloc site,
@@ -63,7 +63,7 @@ fed_by(k, v, f, p, l) <- backward(n), df_node(n, k, v, f, p, l), v != "".
 # into field F of that instance reaches downstream `member` reads of the SAME
 # field name — field-sensitive, so a read of a different field is excluded.
 rel inst(node: text).
-inst(n) <- df_node(n, "new", "Config", _, _, _).   # edit: the type / alloc site
+inst(n) <- df_node(n, "new", "Config", _, _, _, _).   # edit: the type / alloc site
 
 rel from_inst(node: text).
 from_inst(x) <- inst(n), flow_edge(n, x).
@@ -72,7 +72,7 @@ from_inst(y) <- from_inst(x), flow_edge(x, y).
 rel inst_field_read(value: text, field: text, read: text).
 inst_field_read(v, fld, rd) <-
     inst(n), df_field(n, fld, v),
-    from_inst(rd), df_node(rd, "member", fld, _, _, _).
+    from_inst(rd), df_node(rd, "member", fld, _, _, _, _).
 
 ? reaches(kind, var, fn, file, line).
 ? fed_by(kind, var, fn, file, line).

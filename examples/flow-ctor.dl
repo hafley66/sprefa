@@ -20,26 +20,26 @@ src(p) <- scan("WORK", "src/**/*.{rs,ts,kt}", p, rev).
 
 # Every instantiation: the constructed type, where, in which fn.
 rel ctor(node: text, ty: text, fn: text, path: file, line: int).
-ctor(n, ty, f, p, l) <- df_node(n, "new", ty, f, p, l).
+ctor(n, ty, f, p, l) <- df_node(n, "new", ty, f, p, l, _).
 
 # Which value fills which field of which type: the ctor-field inventory,
 # with the kind of value landing in each field (lit / var_read / call_res / ...).
 rel field_fill(ty: text, field: text, value: text, vkind: text).
 field_fill(ty, fld, v, vk) <-
-    df_node(n, "new", ty, _, _, _),
+    df_node(n, "new", ty, _, _, _, _),
     df_field(n, fld, v),
-    df_node(v, vk, _, _, _, _).
+    df_node(v, vk, _, _, _, _, _).
 
 # Positional slots: what kind of value feeds slot N of a call or instantiation.
 rel arg_slot(call: text, pos: int, arg: text, akind: text).
-arg_slot(c, pos, a, ak) <- df_arg(c, pos, a), df_node(a, ak, _, _, _, _).
+arg_slot(c, pos, a, ak) <- df_arg(c, pos, a), df_node(a, ak, _, _, _, _, _).
 
 # Reachability seeded FROM instantiations, as a plain recursive rule. A closure
 # rel can't be read unpinned inside a rule body (it would materialize the full
 # closure); seeding the frontier at `new` nodes keeps the fixpoint restricted
 # to what the field-flow join below actually consumes — the magic-set shape.
 rel from_new(n: text, x: text).
-from_new(n, x) <- df_node(n, "new", _, _, _, _), df_edge(n, x).
+from_new(n, x) <- df_node(n, "new", _, _, _, _, _), df_edge(n, x).
 from_new(n, y) <- from_new(n, x), df_edge(x, y).
 
 # Field-sensitive flow: a value stored into field F of an instantiation reaches
@@ -50,7 +50,7 @@ rel field_flow(value: text, ctor_node: text, field: text, read: text).
 field_flow(v, n, fld, r) <-
     df_field(n, fld, v),
     from_new(n, r),
-    df_node(r, "member", fld, _, _, _).
+    df_node(r, "member", fld, _, _, _, _).
 
 ? ctor(node, ty, fn, path, line).
 ? field_fill(ty, field, value, vkind).

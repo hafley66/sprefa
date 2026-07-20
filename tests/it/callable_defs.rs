@@ -122,8 +122,8 @@ fn every_lambda_sym_names_a_df_closure_scope() {
 rel lam(sym: text).
 lam(stripped) <- call_def(_, sym, \"lambda\", _, _, _), stripped = replace_re(sym, \"^[^:]+::\", \"\").
 rel df_scope(sym: text).
-df_scope(var) <- df_node(_, \"closure\", var, _, _, _).
-df_scope(fnsym) <- df_node(_, _, _, fnsym, _, _).
+df_scope(var) <- df_node(_, \"closure\", var, _, _, _, _).
+df_scope(fnsym) <- df_node(_, _, _, fnsym, _, _, _).
 rel orphan(sym: text).
 orphan(sym) <- lam(sym), !df_scope(sym).
 ? orphan(sym).

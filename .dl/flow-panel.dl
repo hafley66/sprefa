@@ -201,13 +201,13 @@ owner_in_repo(owner_sym, name, replace_re(owner_sym, "::.*$", "")) <-
 # fallback would race the decl row under MaxBy(line) and could pick the
 # wrong one -- the negation is what keeps the two rules from racing.
 member_node("${owner_sym}::field::${fld}", fld, "field", decl_path, decl_line, owner_sym) <-
-  df_node(n, "new", ty, _, _, _),
+  df_node(n, "new", ty, _, _, _, _),
   df_node_repo(n, repo),
   df_field(n, fld, _), fld != "..",
   owner_in_repo(owner_sym, ty, repo),
   fdecl(ty, fld, decl_path, decl_line).
 member_node("${owner_sym}::field::${fld}", fld, "field", file, line, owner_sym) <-
-  df_node(n, "new", ty, _, file, line),
+  df_node(n, "new", ty, _, file, line, _),
   df_node_repo(n, repo),
   df_field(n, fld, _), fld != "..",
   owner_in_repo(owner_sym, ty, repo),
@@ -236,7 +236,7 @@ member_bare_repo(sym, bare, replace_re(sym, "::.*$", "")) <- member_bare(sym, ba
 # materialize the full closure), so the frontier is a plain seeded recursive
 # rule instead, restricted to what fills downstream of a `new` node.
 rel member_from_new(n: text, x: text).
-member_from_new(n, x) <- df_node(n, "new", _, _, _, _), df_edge(n, x).
+member_from_new(n, x) <- df_node(n, "new", _, _, _, _, _), df_edge(n, x).
 member_from_new(n, y) <- member_from_new(n, x), df_edge(x, y).
 
 # flow-ctor.dl's field_flow shape verbatim: a value stored into field F of an
@@ -247,7 +247,7 @@ rel member_field_flow(value: text, ctor_node: text, field: text, read: text).
 member_field_flow(v, n, fld, r) <-
   df_field(n, fld, v), fld != "..",
   member_from_new(n, r),
-  df_node(r, "member", fld, _, _, _).
+  df_node(r, "member", fld, _, _, _, _).
 
 # (a) type_link's field/impl/generic/param/returns/uses edges, restricted to
 # both endpoints already being a member_node (mirrors panel_edge above).
@@ -284,7 +284,7 @@ member_call_edge(src, dst) <-
 # rules do not pay for string interpolation per edge.
 rel field_fill_owner(node: text, owner_sym: text, field_name: text, repo: text, bare_fn: text).
 field_fill_owner(node, owner_sym, field_name, repo, bare_fn) <-
-  df_node(node, "new", type_name, bare_fn, _, _),
+  df_node(node, "new", type_name, bare_fn, _, _, _),
   df_node_repo(node, repo),
   df_field(node, field_name, _),
   field_name != "..",
@@ -316,7 +316,7 @@ field_read_lookup(bare_fn, repo, field_sym) <-
   member_field_flow(_, node, field_name, read_node),
   field_fill_owner(node, owner_sym, field_name, repo, _),
   field_node_sym(owner_sym, field_name, field_sym),
-  df_node(read_node, "member", field_name, bare_fn, _, _).
+  df_node(read_node, "member", field_name, bare_fn, _, _, _).
 
 rel field_read_edge(field_sym: text, fn_sym: text).
 field_read_edge(field_sym, fn_sym) <-
@@ -367,7 +367,7 @@ fn_bare(sym, replace_re(sym, "^[^:]*::", "")) <- type_entity(_, sym, _, "method"
 # row whose pos no sibling row for the same (fn_sym, var) beats downward.
 rel member_param_raw(fn_sym: text, var: text, pos: int, file: file, line: int).
 member_param_raw(fn_sym, var, pos, file, line) <-
-  df_node(n, "param", var, bare_fn, file, line),
+  df_node(n, "param", var, bare_fn, file, line, _),
   df_param(n, pos),
   fn_bare(fn_sym, bare_fn).
 
@@ -414,7 +414,7 @@ member_edge("${fn_sym}::param::${var}", ref_sym, "uses") <-
 # a fn with no `ret` df node at all -- no return, unit body -- mints no ret
 # port, same "silently skipped" contract as the field mint).
 member_node("${fn_sym}::ret", "ret", "ret", file, line, fn_sym) <-
-  df_node(r, "ret", _, bare_fn, file, line),
+  df_node(r, "ret", _, bare_fn, file, line, _),
   fn_bare(fn_sym, bare_fn).
 
 # port_of: the node itself IS a port pin (a param entry point or a ret exit
@@ -424,10 +424,10 @@ member_node("${fn_sym}::ret", "ret", "ret", file, line, fn_sym) <-
 # out to more than one port_of row; over-generation, not a bug.
 rel port_of(node: text, port: text).
 port_of(n, "${fn_sym}::param::${var}") <-
-  df_node(n, "param", var, bare_fn, _, _),
+  df_node(n, "param", var, bare_fn, _, _, _),
   fn_bare(fn_sym, bare_fn).
 port_of(r, "${fn_sym}::ret") <-
-  df_node(r, "ret", _, bare_fn, _, _),
+  df_node(r, "ret", _, bare_fn, _, _, _),
   fn_bare(fn_sym, bare_fn).
 
 # port_in: a value node's value LANDS in a field port at a ctor fill --
@@ -435,7 +435,7 @@ port_of(r, "${fn_sym}::ret") <-
 # value node is not itself the field pin; it just gets stored into one).
 rel port_in(node: text, port: text).
 port_in(value, "${owner_sym}::field::${fld}") <-
-  df_node(n, "new", ty, _, _, _),
+  df_node(n, "new", ty, _, _, _, _),
   df_field(n, fld, value), fld != "..",
   owner_entity(owner_sym, ty, _, _, _).
 
@@ -445,7 +445,7 @@ port_in(value, "${owner_sym}::field::${fld}") <-
 rel port_out(port: text, node: text).
 port_out("${owner_sym}::field::${fld}", r) <-
   member_field_flow(_, n, fld, r),
-  df_node(n, "new", ty, _, _, _),
+  df_node(n, "new", ty, _, _, _, _),
   owner_entity(owner_sym, ty, _, _, _).
 
 # Contraction: walk flow_edge forward from a port's own node (port_of) or a
@@ -588,7 +588,7 @@ rel trace_seed_node(seed: text, node: text).
 trace_seed_node(seed, node) <-
   trace_seed(seed),
   bare = replace_re(seed, "^[^:]*::", ""),
-  df_node(node, _, _, bare, _, _).
+  df_node(node, _, _, bare, _, _, _).
 
 rel trace_step_raw(seed: text, n: text, d: int).
 trace_step_raw(seed, n, 0) <- trace_seed_node(seed, n).
@@ -599,7 +599,7 @@ trace_step_raw(seed, to, d0 + 1) <-
 # same not-min dedup shape as std/entry.dl's entry_reach.
 rel trace_step_sym_raw(seed: text, sym: text, d: int).
 trace_step_sym_raw(seed, fnb, d) <-
-  trace_step_raw(seed, n, d), df_node(n, _, _, fnb, _, _).
+  trace_step_raw(seed, n, d), df_node(n, _, _, fnb, _, _, _).
 
 rel trace_step_not_min(seed: text, sym: text, d: int).
 trace_step_not_min(seed, sym, d) <-

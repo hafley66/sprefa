@@ -23,7 +23,7 @@ rel seen(path: file).
 seen(p) <- scan("WORK", "src/**/*.rs", p, rev), match(p, rev, /fn/, line).
 ? type_entity(repo, sym, name, kind, parent, file, line).
 ? call_def(repo, sym, kind, file, line, end).
-? df_node(id, kind, var, fn, file, line).
+? df_node(id, kind, var, fn, file, line, _).
 "#;
 
 #[test]
@@ -309,7 +309,7 @@ const DF_TWIN_PROG: &str = r#"
 rel seen(path: file).
 seen(p) <- scan("WORK", "src/**/*.rs", p, rev), match(p, rev, /fn/, line).
 seen(p) <- scan("HEAD", "src/**/*.rs", p, rev), match(p, rev, /fn/, line).
-? df_node_rev(id, kind, var, fn, file, line, rev).
+? df_node_rev(id, kind, var, fn, file, line, _, rev).
 ? df_node_repo_rev(id, repo, rev).
 ? df_arg_rev(call, pos, arg, rev).
 ? df_field_rev(id, field, value, rev).
@@ -392,7 +392,7 @@ seen(p) <- scan("WORK", "src/**/*.rs", p, rev), match(p, rev, /fn/, line).
 seen(p) <- scan("HEAD", "src/**/*.rs", p, rev), match(p, rev, /fn/, line).
 ? type_entity_rev(repo, sym, name, kind, parent, file, line, rev).
 ? call_def_rev(repo, sym, kind, file, line, end, rev).
-? df_node_rev(id, kind, var, fn, file, line, rev).
+? df_node_rev(id, kind, var, fn, file, line, _, rev).
 "#;
 
 const RETRACT_PROG_WORK_ONLY: &str = r#"
@@ -400,7 +400,7 @@ rel seen(path: file).
 seen(p) <- scan("WORK", "src/**/*.rs", p, rev), match(p, rev, /fn/, line).
 ? type_entity_rev(repo, sym, name, kind, parent, file, line, rev).
 ? call_def_rev(repo, sym, kind, file, line, end, rev).
-? df_node_rev(id, kind, var, fn, file, line, rev).
+? df_node_rev(id, kind, var, fn, file, line, _, rev).
 "#;
 
 /// D5.5: a rev that stops being scanned (here the `scan("HEAD", ...)` rule is

@@ -77,10 +77,13 @@ fn kotlin_dataflow_from(root: tree_sitter::Node, src: &[u8], file: &str) -> Data
     // line_at both emit 1-based), so a (file, line) join against call_site —
     // the call_node bridge every interprocedural hop rides — is a single
     // equality across languages. Nodes and loop spans bump together, so the
-    // nest containment below stays internally consistent. Node IDS keep the
-    // raw 0-based row (they are opaque; only uniqueness matters).
-    for n in &mut out.nodes { n.line += 1; }
+    // nest containment below stays internally consistent. `bump_node_lines_1based`
+    // bumps each node's line AND rebuilds its id to match (the coordinate
+    // de-intern reconstructs the id from the columns, so the id's line must equal
+    // the stored line), remapping every id-referencing fact; `compute_nests`
+    // below then reads the rebuilt ids.
     for l in &mut out.loops { l.start += 1; l.end += 1; }
+    bump_node_lines_1based(&mut out);
     out.nests = compute_nests(&out.nodes, &out.loops);
     out
 }

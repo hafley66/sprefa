@@ -7,9 +7,14 @@ use super::super::*;
 
 fn ts_push(out: &mut DataflowFacts, file: &str, starts: &[usize], byte_off: u32, kind: &str, var: &str, fn_sym: &str) -> String {
     // kind suffix disambiguates a parent from its first child where spans share
-    // a start byte (see push_node); byte_off alone is not unique for `a + 1`.
-    let id = format!("{file}:{byte_off}:{kind}");
-    let line = line_at(starts, byte_off as usize);
+    // a start position (see push_node); (line,col) alone is not unique for
+    // `a + 1`. The id is `file:line:col:kind` (uniform with push_node) so the
+    // coordinate text reconstructs from (file, line, col, kind) at display time
+    // — never interned into `_strings`. col is the 0-based BYTE column within
+    // the line (`line_col`); (line,col) is a bijection with byte_off given the
+    // file, so this keeps every id distinct exactly as `byte_off:kind` did.
+    let (line, col) = line_col(starts, byte_off as usize);
+    let id = format!("{file}:{line}:{col}:{kind}");
     out.nodes.push(DfNode {
         id: id.clone(),
         kind: kind.into(),
@@ -17,6 +22,7 @@ fn ts_push(out: &mut DataflowFacts, file: &str, starts: &[usize], byte_off: u32,
         fn_sym: fn_sym.into(),
         file: file.into(),
         line,
+        col,
     });
     id
 }

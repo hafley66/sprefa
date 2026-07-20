@@ -110,9 +110,9 @@ fn dataflow_lazy_gate_smoke() {
     let prog = concat!(
         "rel seen(path: file).\n",
         "seen(path) <- scan(\"WORK\", \"src/**/*.txt\", path, rev), match(path, rev, /./, line).\n",
-        "rel df_reaches(from: text, to: text).\n",
+        "rel df_reaches(from: node, to: node).\n",
         "df_reaches(a, b) <- closure(df_edge).\n",
-        "? df_node(id, kind, var, fn, file, line).\n",
+        "? df_node(id, kind, var, fn, file, line, _).\n",
         "? df_reaches(a, b).\n",
     );
     let (code, out, err) = run(&d, prog);
@@ -147,9 +147,9 @@ fn rust_lift_closes_transitively() {
     let prog = concat!(
         "rel seen(path: file).\n",
         "seen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /./, line).\n",
-        "rel df_reaches(from: text, to: text).\n",
+        "rel df_reaches(from: node, to: node).\n",
         "df_reaches(a, b) <- closure(df_edge).\n",
-        "? df_node(id, kind, var, fn, file, line).\n",
+        "? df_node(id, kind, var, fn, file, line, _).\n",
         "? df_edge(from, to).\n",
         "? df_reaches(from, to).\n",
     );
@@ -239,9 +239,9 @@ fn ts_class_method_body_flows_like_a_function() {
     let prog = concat!(
         "rel seen(path: file).\n",
         "seen(path) <- scan(\"WORK\", \"src/**/*.ts\", path, rev), match(path, rev, /./, line).\n",
-        "rel df_reaches(from: text, to: text).\n",
+        "rel df_reaches(from: node, to: node).\n",
         "df_reaches(a, b) <- closure(df_edge).\n",
-        "? df_node(id, kind, var, fn, file, line).\n",
+        "? df_node(id, kind, var, fn, file, line, _).\n",
         "? df_edge(from, to).\n",
         "? df_reaches(from, to).\n",
     );
@@ -321,9 +321,9 @@ fn taint_propagates_through_operations_per_language() {
         let prog = format!(
             "rel seen(path: file).\n\
              seen(path) <- scan(\"WORK\", \"src/**/*.{ext}\", path, rev), match(path, rev, /./, line).\n\
-             rel df_reaches(from: text, to: text).\n\
+             rel df_reaches(from: node, to: node).\n\
              df_reaches(a, b) <- closure(df_edge).\n\
-             ? df_node(id, kind, var, fn, file, line).\n\
+             ? df_node(id, kind, var, fn, file, line, _).\n\
              ? df_edge(from, to).\n\
              ? df_reaches(from, to).\n",
         );
@@ -440,7 +440,7 @@ fn config_repo_work_edit_produces_dataflow_rows() {
         d.join("p.dl"),
         "rel seen(p: file).\n\
          seen(p) <- scan(\"*\", \"WORK\", \"src/**/*.rs\", p, rev).\n\
-         ? df_node(id, kind, var, fn, file, line).\n\
+         ? df_node(id, kind, var, fn, file, line, _).\n\
          ? df_field(id, field, value).\n",
     )
     .unwrap();
@@ -528,12 +528,12 @@ fn loop_invariant_call_flags_recomputation_per_iteration() {
         "rel lic(file: path, fn: text, loop_start: int, call_line: int, var: text).\n",
         "lic(file, fn, ls, cl, pname) <-\n",
         "    loop_over(file, ls, le, lvar, col, fn),\n",
-        "    df_node(call_id, \"call_res\", _, fn, file, cl),\n",
+        "    df_node(call_id, \"call_res\", _, fn, file, cl, _),\n",
         "    cl >= ls, cl <= le,\n",
         "    df_edge(vr, call_id),\n",
         "    df_edge(param, vr),\n",
-        "    df_node(param, \"param\", pname, fn, _, _),\n",
-        "    df_node(vr, \"var_read\", _, fn, _, _),\n",
+        "    df_node(param, \"param\", pname, fn, _, _, _),\n",
+        "    df_node(vr, \"var_read\", _, fn, _, _, _),\n",
         "    pname != lvar.\n",
         "? loop_over(file, start, end, var, collection, fn).\n",
         "? lic(file, fn, loop_start, call_line, var).\n",
@@ -594,7 +594,7 @@ fn strict_rule_isolates_pure_recomputation() {
         "seen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /./, line).\n",
         // a call is loop-carried if any input derives from a def inside its loop.
         "rel lcc(call_id: text).\n",
-        "lcc(c) <- df_edge(d, a), df_edge(a, c), df_node(d, _, _, fn, file, dl),\n",
+        "lcc(c) <- df_edge(d, a), df_edge(a, c), df_node(d, _, _, fn, file, dl, _),\n",
         "       loop_over(file, ls, le, _, _, fn), dl >= ls, dl <= le.\n",
         // strict: allocating callee, call in loop, a loop-invariant input, and
         // NO loop-carried input at all -> pure recomputation.
@@ -605,11 +605,11 @@ fn strict_rule_isolates_pure_recomputation() {
         // (replace removes `asym` from `csym` iff it occurs).
         "lic_strict(file, fn, ls, cl, csym) <-\n",
         "    loop_over(file, ls, le, lvar, col, fn),\n",
-        "    df_node(call_id, \"call_res\", _, fn, file, cl), cl >= ls, cl <= le,\n",
+        "    df_node(call_id, \"call_res\", _, fn, file, cl, _), cl >= ls, cl <= le,\n",
         "    call_site(_, caller, ctext, file, cl), call_name(csym, ctext),\n",
         "    allocates(asym), stripped = replace(csym, asym, \"\"), stripped != csym,\n",
         "    df_edge(def, arg), df_edge(arg, call_id),\n",
-        "    df_node(def, _, _, fn, _, dl), dl < ls,\n",
+        "    df_node(def, _, _, fn, _, dl, _), dl < ls,\n",
         "    !lcc(call_id).\n",
         "? lic_strict(file, fn, ls, cl, callee).\n",
     );
@@ -773,7 +773,7 @@ fn nest_composes_over_call_edge_into_symbolic_cost() {
         // call_site on (file, line) instead.
         "direct_cost(callee, depth) <-\n",
         "    nest(call_id, _, depth, _),\n",
-        "    df_node(call_id, \"call_res\", _, _, file, line),\n",
+        "    df_node(call_id, \"call_res\", _, _, file, line, _),\n",
         "    call_site(_, _, callee_text, file, line),\n",
         "    call_name(callee, callee_text).\n",
         "? call_reaches(caller, callee).\n",
@@ -859,9 +859,9 @@ fn rust_lift_carries_branch_tails_into_bindings() {
     let prog = concat!(
         "rel seen(path: file).\n",
         "seen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /./, line).\n",
-        "rel df_reaches(from: text, to: text).\n",
+        "rel df_reaches(from: node, to: node).\n",
         "df_reaches(a, b) <- closure(df_edge).\n",
-        "? df_node(id, kind, var, fn, file, line).\n",
+        "? df_node(id, kind, var, fn, file, line, _).\n",
         "? df_reaches(from, to).\n",
     );
     let (code, out, err) = run(&d, prog);
@@ -951,9 +951,9 @@ fn rust_lift_carries_loop_break_tails_into_bindings() {
     let prog = concat!(
         "rel seen(path: file).\n",
         "seen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /./, line).\n",
-        "rel df_reaches(from: text, to: text).\n",
+        "rel df_reaches(from: node, to: node).\n",
         "df_reaches(a, b) <- closure(df_edge).\n",
-        "? df_node(id, kind, var, fn, file, line).\n",
+        "? df_node(id, kind, var, fn, file, line, _).\n",
         "? df_reaches(from, to).\n",
     );
     let (code, out, err) = run(&d, prog);
@@ -1032,9 +1032,9 @@ fn rust_lift_carries_labeled_loop_break_tails_into_bindings() {
     let prog = concat!(
         "rel seen(path: file).\n",
         "seen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /./, line).\n",
-        "rel df_reaches(from: text, to: text).\n",
+        "rel df_reaches(from: node, to: node).\n",
         "df_reaches(a, b) <- closure(df_edge).\n",
-        "? df_node(id, kind, var, fn, file, line).\n",
+        "? df_node(id, kind, var, fn, file, line, _).\n",
         "? df_reaches(from, to).\n",
     );
     let (code, out, err) = run(&d, prog);
@@ -1117,7 +1117,7 @@ rel seen(path: file).
 seen(path) <- diff_pair(_, head_ref), scan(head_ref, "src/**/*.rs", path, rev).
 seen(path) <- diff_pair(base_ref, _), scan(base_ref, "src/**/*.rs", path, rev).
 
-? df_node_rev(id, kind, var, fn, file, line, rev).
+? df_node_rev(id, kind, var, fn, file, line, _, rev).
 "#;
 
 /// Commit a shared `alpha`/`greet` pair as HEAD, then append a WORK-only
@@ -1400,7 +1400,7 @@ rel seen(path: file).
 seen(path) <- diff_pair(_, head_ref), scan(head_ref, "src/**/*.rs", path, rev).
 seen(path) <- diff_pair(base_ref, _), scan(base_ref, "src/**/*.rs", path, rev).
 
-? df_node(id, kind, var, fn, file, line).
+? df_node(id, kind, var, fn, file, line, _).
 ? df_lit(id, text, kind).
 "#;
 
@@ -1506,5 +1506,108 @@ fn df_lit_keeps_divergent_text_across_revs() {
     assert_eq!(
         total, distinct,
         "df_lit dedup key must equal the declared PRIMARY KEY (view-DISTINCT)"
+    );
+}
+
+/// COORDINATE DE-INTERN PROOF (2026-07-20). The df coordinate id
+/// `file:line:col:kind` is no longer interned into `_strings` (it was 91.7% of
+/// the dictionary); the id integer stays the blake3 `StringId` join handle and
+/// the display string reconstructs from the df_node columns. Proven four ways
+/// against the on-disk db: (1) NO coordinate text survives in `_strings`,
+/// (2) the id integer IS the hash of the coordinate (the join key is intact),
+/// (3) the display boundary reconstructs `file:line:col:kind` exactly, and
+/// (4) df_reaches (closure over df_edge) still joins transitively across the
+/// surrogate — every endpoint reconstructs, none is stranded.
+#[test]
+fn coordinate_id_deinterned_but_joins_and_display_hold() {
+    let d = sandbox("deintern");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(
+        d.join("src/lib.rs"),
+        "fn use1(g: &str) -> String { String::new() }\n\
+         fn use2(x: &str) -> String { String::new() }\n\
+         fn sink(v: &str) {}\n\
+         fn f(name: &str) {\n    \
+             let s = use1(name);\n    \
+             let u = use2(&s);\n    \
+             sink(&u);\n\
+         }\n",
+    )
+    .unwrap();
+    let prog = concat!(
+        "rel seen(path: file).\n",
+        "seen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /./, line).\n",
+        "rel df_reaches(from: node, to: node).\n",
+        "df_reaches(a, b) <- closure(df_edge).\n",
+        "? df_node(id, kind, var, fn, file, line, col).\n",
+        "? df_reaches(from, to).\n",
+    );
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "must not error:\n{err}");
+
+    let secs = sections(&out);
+    assert!(secs.len() >= 2, "expected 2 query sections:\n{out}");
+
+    // (3) DISPLAY RECONSTRUCTION: every df_node id equals file:line:col:kind of
+    // its own columns (the id text is rebuilt, never read from _strings).
+    let node_rows = rows(&secs[0]);
+    assert!(!node_rows.is_empty(), "df_node non-empty:\n{out}");
+    for r in &node_rows {
+        assert_eq!(r.len(), 7, "df_node projects 7 columns now: {r:?}");
+        let (id, kind, file, line, col) = (&r[0], &r[1], &r[4], &r[5], &r[6]);
+        assert_eq!(
+            id,
+            &format!("{file}:{line}:{col}:{kind}"),
+            "df_node.id reconstructs from (file,line,col,kind): {r:?}"
+        );
+    }
+
+    // (4) JOIN INTEGRITY across the surrogate: df_reaches walked df_edge and every
+    // endpoint reconstructs to a real coordinate (none stranded/empty).
+    let reach_rows = rows(&secs[1]);
+    assert!(!reach_rows.is_empty(), "df_reaches non-empty:\n{out}");
+    for r in &reach_rows {
+        assert_eq!(r.len(), 2, "df_reaches row: {r:?}");
+        assert!(!r[0].is_empty() && !r[1].is_empty(), "endpoints reconstruct: {r:?}");
+    }
+    // the gate property, restated: name(param) REACHES the read of u several hops
+    // later — a transitive pair the base df_edge does not carry.
+    let name_id = node_rows.iter().find(|r| r[1] == "param" && r[2] == "name").map(|r| r[0].clone());
+    let u_read = node_rows.iter().find(|r| r[1] == "var_read" && r[2] == "u").map(|r| r[0].clone());
+    if let (Some(name_id), Some(u_read)) = (name_id, u_read) {
+        assert!(
+            reach_rows.iter().any(|r| r[0] == name_id && r[1] == u_read),
+            "name must transitively reach the read of u across the de-interned surrogate:\n{out}"
+        );
+    }
+
+    let conn = rusqlite::Connection::open(d.join("db")).unwrap();
+
+    // (1) DE-INTERN: no coordinate id text (`src/...:N:N:kind`, single colons)
+    // survives in `_strings`. fn-syms (`file::function::name`, double colons) are
+    // excluded — they are legitimate interned text, not df coordinate ids.
+    let coord_rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM _strings WHERE content GLOB 'src/*:*:*:*' AND content NOT GLOB '*::*'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(coord_rows, 0, "no df coordinate id text may remain interned in _strings");
+
+    // (2) JOIN KEY intact: the stored df_node.id integer is exactly the blake3
+    // StringId of the reconstructed coordinate, so int==int joins are unchanged.
+    let known = node_rows[0][0].clone();
+    let want = sprefa_v5::spine::StringId::of(&known).sqlite();
+    let matches: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM rel_df_node WHERE id = ?1",
+            [want],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        matches >= 1,
+        "df_node.id must store StringId::of(coordinate) — the surrogate join key"
     );
 }

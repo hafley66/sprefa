@@ -70,7 +70,7 @@ type_neighbor(t) <- target(s), type_link(s, t, _).
 
 # ── dataflow dimension ──────────────────────────────────────────────────
 rel df_var(v: text).
-df_var(v) <- target(s), df_node(_, _, v, s, _, _).
+df_var(v) <- target(s), df_node(_, _, v, s, _, _, _).
 rel does_alloc(flag: text).
 does_alloc("yes") <- target(s), allocates(s).
 

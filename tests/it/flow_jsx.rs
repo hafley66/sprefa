@@ -155,11 +155,11 @@ src(p) <- scan("WORK", "src/**/*.{ts,tsx}", p, rev).
 
 rel prop_edge(value: text, comp: text, prop: text, target: text).
 prop_edge(value, comp, prop, target) <-
-    df_node(elem, "new", comp, caller_bare, _, _),
+    df_node(elem, "new", comp, caller_bare, _, _, _),
     df_field(elem, prop, value),
     call_edge_bare(caller_bare, callee_bare, _, callee_q),
     call_name(callee_q, comp),
-    df_node(target, "param", prop, callee_bare, _, _).
+    df_node(target, "param", prop, callee_bare, _, _, _).
 flow_edge(value, target) <- prop_edge(value, _, _, target).
 
 rel reach(from: text, to: text).
@@ -167,7 +167,7 @@ reach(a, b) <- flow_edge(a, b).
 reach(a, c) <- reach(a, b), flow_edge(b, c).
 
 rel src_read(id: text, name: text).
-src_read(id, name) <- df_node(id, "var_read", name, _, _, _).
+src_read(id, name) <- df_node(id, "var_read", name, _, _, _, _).
 
 rel prop_reaches(name: text, comp: text, prop: text).
 prop_reaches(name, comp, prop) <-

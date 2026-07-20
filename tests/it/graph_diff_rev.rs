@@ -263,7 +263,7 @@ fn_at_rev(fn_sym, replace_re(fn_sym, "^[^:]*::", ""), replace_re(fn_sym, "::.*$"
   type_entity_rev(_, fn_sym, _, "method", _, _, _, rev).
 
 bare_node(rev, "${owner_sym}::field::${fld}", "field") <-
-  df_node_rev(node, "new", ty, _, _, _, rev),
+  df_node_rev(node, "new", ty, _, _, _, _, rev),
   df_node_repo_rev(node, repo, rev),
   df_field_rev(node, fld, _, rev), fld != "..",
   owner_at_rev(owner_sym, ty, repo, rev).
@@ -278,7 +278,7 @@ bare_edge(rev, caller, callee, "call") <-
   bare_node(rev, caller, _),
   bare_node(rev, callee, _).
 bare_edge(rev, fn_sym, "${owner_sym}::field::${fld}", "fill") <-
-  df_node_rev(node, "new", ty, fill_fn, _, _, rev),
+  df_node_rev(node, "new", ty, fill_fn, _, _, _, rev),
   df_node_repo_rev(node, repo, rev),
   df_field_rev(node, fld, _, rev), fld != "..",
   owner_at_rev(owner_sym, ty, repo, rev),

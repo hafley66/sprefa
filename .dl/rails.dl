@@ -66,7 +66,7 @@ named_call_site(caller, p, l, fn) <-
 rel loop_entry_fn(fn: text).
 loop_entry_fn(fn) <-
     nest(call_id, _, _, _),
-    df_node(call_id, "call_res", _, caller, p, l),
+    df_node(call_id, "call_res", _, caller, p, l, _),
     named_call_site(caller, p, l, fn).
 
 # 2-col view of call_edge. (We do not use closure(call_pair) here because the

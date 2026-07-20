@@ -54,12 +54,38 @@ pub struct Col {
     pub brand: Option<String>,
     /// Freeform text columns stay as SQLite TEXT and do not enter `_strings`.
     pub raw: bool,
+    /// A dataflow-coordinate id column: stores an interned-style INTEGER
+    /// `StringId` hash (the join handle) but its `file:line:col:kind` TEXT is
+    /// NEVER interned into `_strings`. On display it is RECONSTRUCTED from the
+    /// `rel_df_node` coordinate columns (`coord_decode`) instead of a `_strings`
+    /// lookup. Storage/joins/`sprf_sym` literal filters are identical to a plain
+    /// interned column (`interned()` stays true); only the DECODE and the
+    /// WRITE-side intern branch on `coord`. Spelled `node` on the `.dl` surface.
+    pub coord: bool,
 }
 
 impl Col {
-    pub fn plain(name: String, ty: Type) -> Col { Col { name, ty, brand: None, raw: false } }
+    pub fn plain(name: String, ty: Type) -> Col { Col { name, ty, brand: None, raw: false, coord: false } }
     pub fn raw(name: &str, ty: Type) -> Col {
-        Col { name: name.to_string(), ty, brand: None, raw: true }
+        Col { name: name.to_string(), ty, brand: None, raw: true, coord: false }
+    }
+    /// A dataflow-coordinate id column (see `Col::coord`). Storage is an
+    /// interned-style INTEGER hash; the coordinate text is never interned;
+    /// display reconstructs from `rel_df_node`.
+    pub fn node(name: &str) -> Col {
+        Col { name: name.to_string(), ty: Type::Text, brand: None, raw: false, coord: true }
+    }
+    /// Resolve a `.dl` column type keyword to a `Col`: a base `Type`, the
+    /// `node` coordinate type, or (unknown keyword) a text column carrying that
+    /// brand name.
+    pub fn from_type_name(name: String, tname: &str) -> Col {
+        if tname == "node" {
+            return Col::node(&name);
+        }
+        match Type::parse(tname) {
+            Some(ty) => Col { name, ty, brand: None, raw: false, coord: false },
+            None => Col { name, ty: Type::Text, brand: Some(tname.to_string()), raw: false, coord: false },
+        }
     }
     pub fn interned(&self) -> bool { self.ty.textish() && !self.raw }
     pub fn sql(&self) -> &'static str {
@@ -70,7 +96,7 @@ impl Col {
     /// resolves through the ambient `engine::builtin_enum_brands` table, so a
     /// literal pin outside the set is an `enum-variant-unknown` typecheck error.
     pub fn branded(name: &str, brand: &str) -> Col {
-        Col { name: name.to_string(), ty: Type::Text, brand: Some(brand.to_string()), raw: false }
+        Col { name: name.to_string(), ty: Type::Text, brand: Some(brand.to_string()), raw: false, coord: false }
     }
 }
 
