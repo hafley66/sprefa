@@ -1,26 +1,25 @@
-// The compiler's own schema vocabulary.
-type TypeDecl {
+type UserId = String
+type EventKind = "created" | "deleted"
+
+type Profile {
   name: String
-  fields: Array<Field>
 }
 
-type Field {
-  name: String
-  type_name: String
-}
-
-type Endpoint {
-  name: String
-  method: String
-  path: String
-  response: String
-}
-
-// Application schema.
 type User {
-  id: String
-  name: String
-  active: Bool
+  id: UserId
+  profile: Optional<Profile>
+  tags: Array<String>
+  metadata: Map<String, String>
 }
 
-endpoint get_user GET /users/{id} -> User
+pattern UserPath = `users/{id: UserId}`
+pattern UserEvent = `users/:id/events/{kind: EventKind}`
+pattern UserField = `users.{id: UserId}.profile.name`
+
+consumer http {
+  get UserPath -> User
+}
+
+consumer channel {
+  subscribe UserEvent -> User
+}
