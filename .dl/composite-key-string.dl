@@ -132,84 +132,42 @@ arm2_separator_key(source_file, line, "format!(...) mixes a control-character se
 #      way. Arm 3 is not implemented; a faked join would misreport
 #      confidence rather than name the gap.
 
-# ── Union + waiver ─────────────────────────────────────────────────────────
+# ── Union ─────────────────────────────────────────────────────────────────
 rel composite_key_candidate(source_file: file, line: int, detail: text).
 composite_key_candidate(source_file, line, detail) <- arm1_let_bound_id(source_file, line, detail).
 composite_key_candidate(source_file, line, detail) <- arm1_id_named_fn(source_file, line, detail).
 composite_key_candidate(source_file, line, detail) <- arm2_separator_key(source_file, line, detail).
 
-# Waiver: a legitimate instance, admitted with a written reason (same shape
-# as `file-size.dl`'s `big_file_ok`).
-rel composite_key_ok(path: text, line: int, reason: text).
-
+# NO WAIVER, NO BASELINE (user law, 2026-07-20): this is the single most
+# important invariant in the repo. A composite key minted by string
+# concatenation is the first-normal-form violation that has bitten us
+# repeatedly, and it shipped in the dataflow node id precisely because a
+# grandfathered baseline row waived it. There is no `composite_key_ok` rel and
+# no `composite_key_baseline`: every candidate is a finding, full stop. Fix the
+# site — split the folded value into two columns with a composite PRIMARY KEY,
+# or key it through a dictionary surrogate — never grandfather it.
 rel composite_key_finding(source_file: file, line: int, detail: text).
 composite_key_finding(source_file, line, detail) <-
-    composite_key_candidate(source_file, line, detail),
-    !composite_key_ok(source_file, line, _).
+    composite_key_candidate(source_file, line, detail).
 
-# ── Ratchet baseline (mirrors no-new-eprintln.dl): every file with a finding
-# today is grandfathered at its measured count. A file OVER its baseline
-# warns at file-head; a file with NO baseline row warns per hit line (a
-# brand-new site). Lower a row when a commit shrinks the count; delete rows
-# that reach 0.
-rel composite_key_count(source_file: file, hits: int).
-composite_key_count(source_file, count(line)) <- composite_key_finding(source_file, line, _).
-
-rel composite_key_baseline(source_file: file, allowed: int).
-# Measured 2026-07-20 on WORK (14 findings total, one row per affected
-# file): src/engine/extract/mod.rs holds `extract_digest_key` only —
-# `salt_rev` itself was deleted from this file by a concurrent edit mid-
-# session (the composite-key-as-id anti-pattern it caused; see the incident
-# receipt above), confirmed the rail fires on it via a HEAD-rev run (see
-# docs/failure-modes.md). src/engine/family/mod.rs:233 WAS a new instance
-# (`format!("{rel}\u{1}{col_list}")` cache key) that landed in this same
-# session, on a file this rail's author does not own — proof the shape
-# detector fires on a live contributor site, not just the motivating one.
-# That site is now FIXED (2026-07-20, mint_sym arc): the cache key is a
-# two-level `HashMap<&'static str, HashMap<String, ...>>` (`ScanCache`,
-# family/mod.rs) instead of a folded `rel\u{1}col_list` string — a live
-# `dl .dl/composite-key-string.dl` run confirms zero findings for this file,
-# so its row is DELETED per this rail's own ratchet law ("delete rows that
-# reach 0"), not left stale at 1.
-# src/engine/extract/mod.rs's row is DELETED (2026-07-20, rev-identity arc).
-# The offender was `extract_digest_key`, which folded exe stamp + family + rev
-# into one `_reldigest.rel` TEXT key and then needed `LIKE 'prefix%'` plus a
-# substring cut to read the rev back out. It was NORMALIZED rather than waived:
-# the three components are now three atomic columns in `_extract_digest`
-# (exe, family, rev) with a composite PRIMARY KEY, and the gone-rev sweep is one
-# indexed set difference. A live `dl .dl/composite-key-string.dl` run confirms
-# zero findings for this file, so the row goes per this rail's ratchet law.
-composite_key_baseline("src/daemon/mod.rs", 1).
-composite_key_baseline("src/effect.rs", 4).
-composite_key_baseline("src/engine/repo.rs", 1).
-composite_key_baseline("src/graph/typegraph/mod.rs", 4).
-composite_key_baseline("src/graph/typegraph/ts/flow.rs", 1).
-composite_key_baseline("src/lsp.rs", 1).
-
-diag(
-    path: source_file,
-    line: 1,
-    severity: "warning",
-    code: "composite-key-exceeded",
-    msg: "composite-key-as-string sites grew past this file's grandfathered baseline — split the folded value into two columns with a composite PRIMARY KEY (see docs/failure-modes.md), or waive the line with composite_key_ok"
-) <-
-    composite_key_count(source_file, hits),
-    composite_key_baseline(source_file, allowed),
-    hits > allowed.
-
+# Every finding is reported at its own line. No baseline rel, no grandfather
+# count, no per-file allowance — the six baseline rows that used to live here
+# (daemon/mod.rs, effect.rs, repo.rs, typegraph/mod.rs, ts/flow.rs, lsp.rs)
+# were deleted 2026-07-20 by the "no more waiving" law. Severity stays WARNING,
+# never error: an error-severity rail exiting non-zero from a PostToolUse hook
+# blocks every write repo-wide (the 2026-07-11 outage law). Warning + no waiver
+# means the violation is ALWAYS visible on every run and can never be hidden.
 diag(
     path: source_file,
     line: line,
     severity: "warning",
     code: "composite-key-as-string",
-    msg: "composite key minted by string concatenation then stored as an id (${detail}) — a composite key belongs in two columns with a composite PRIMARY KEY, not one folded TEXT column"
+    msg: "composite key minted by string concatenation then stored as an id (${detail}) — a composite key belongs in two columns with a composite PRIMARY KEY, or a dictionary surrogate, never one folded TEXT column. No waiver: fix the site."
 ) <-
-    composite_key_finding(source_file, line, detail),
-    !composite_key_baseline(source_file, _).
+    composite_key_finding(source_file, line, detail).
 
 diag_stage("composite-key-as-string", "agent-turn").
 diag_stage("composite-key-as-string", "commit").
-diag_stage("composite-key-exceeded", "commit").
 
 ? composite_key_finding(source_file, line, detail).
 ? diag(path, line, severity, code, msg).
