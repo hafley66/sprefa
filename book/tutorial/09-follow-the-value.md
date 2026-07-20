@@ -14,8 +14,8 @@ standard library module joins them across function boundaries.
 
 Two built-ins carry the intra-function graph:
 
-- `df_node(id, kind, var, fn_sym, path, line)` — one node per value event. The
-  `kind` vocabulary you will meet on the fixture: `param`, `let_bind`,
+- `df_node(id, kind, var, fn_sym, path, line, col)` — one node per value event.
+  The `kind` vocabulary you will meet on the fixture: `param`, `let_bind`,
   `var_read`, `call_res` (a call's result), `ret`, `lit`, `new`.
 - `df_edge(from, to)` — value moves from one node to the next, inside one
   function.
@@ -26,7 +26,7 @@ Look at a few before joining anything. Save as `09-peek.dl`:
 rel src_file(path: file).
 src_file(path) <- scan("src/**/*.rs", path).
 
-? df_node(id, kind, var, fn_sym, path, line).
+? df_node(id, kind, var, fn_sym, path, line, col).
 ```
 
 As in lesson 4, the bare `scan` is what triggers the extraction; the relation
@@ -34,9 +34,9 @@ holding the paths is incidental. Run it and find these rows among the ~29 (the
 `run` method from `src/app.rs`):
 
 ```
-  src/app.rs:13:25:lit	lit		src/app.rs::method::App.run	src/app.rs	13
-  src/app.rs:13:19:call_res	call_res		src/app.rs::method::App.run	src/app.rs	13
-  src/app.rs:13:12:let_bind	let_bind	note	src/app.rs::method::App.run	src/app.rs	13
+  src/app.rs:13:12:let_bind	let_bind	note	src/app.rs::method::App.run	src/app.rs	13	12
+  src/app.rs:13:19:call_res	call_res		src/app.rs::method::App.run	src/app.rs	13	19
+  src/app.rs:13:25:lit	lit		src/app.rs::method::App.run	src/app.rs	13	25
 ```
 
 That is line 13, `let note = parse("hello");`, exploded: the literal `"hello"`,
@@ -59,13 +59,13 @@ src_file(path) <- scan("src/**/*.rs", path).
 
 rel tainted(node_id: text).
 tainted(node_id) <-
-    df_node(node_id, "lit", _, _, "src/app.rs", 13).
+    df_node(node_id, "lit", _, _, "src/app.rs", 13, _).
 tainted(next_node) <-
     tainted(node_id), flow_edge(node_id, next_node).
 
 rel taint_report(path: file, line: int, kind: text, fn_sym: text).
 taint_report(path, line, kind, fn_sym) <-
-    tainted(node_id), df_node(node_id, kind, _, fn_sym, path, line).
+    tainted(node_id), df_node(node_id, kind, _, fn_sym, path, line, _).
 
 ? taint_report(path, line, kind, fn_sym).
 ```
@@ -87,21 +87,21 @@ dl 09.dl --no-daemon
 
 ```
 ? taint_report => path	line	kind	fn_sym
-  src/app.rs	13	call_res	src/app.rs::method::App.run
   src/app.rs	13	let_bind	src/app.rs::method::App.run
   src/app.rs	13	lit	src/app.rs::method::App.run
-  src/app.rs	14	call_res	src/app.rs::method::App.run
+  src/app.rs	13	call_res	src/app.rs::method::App.run
   src/app.rs	14	var_read	src/app.rs::method::App.run
+  src/app.rs	14	call_res	src/app.rs::method::App.run
   src/app.rs	18	param	src/app.rs::function::parse
-  src/app.rs	19	call_res	src/app.rs::function::parse
   src/app.rs	19	ret	src/app.rs::function::parse
   src/app.rs	19	var_read	src/app.rs::function::parse
+  src/app.rs	19	call_res	src/app.rs::function::parse
   src/app.rs	22	param	src/app.rs::function::save
-  src/app.rs	23	call_res	src/app.rs::function::save
   src/app.rs	23	var_read	src/app.rs::function::save
+  src/app.rs	23	call_res	src/app.rs::function::save
   src/app.rs	26	param	src/app.rs::function::log_note
-  src/app.rs	27	call_res	src/app.rs::function::log_note
   src/app.rs	27	var_read	src/app.rs::function::log_note
+  src/app.rs	27	call_res	src/app.rs::function::log_note
   (15 rows)
 ```
 
@@ -121,6 +121,6 @@ library functions you cannot parse.
 ## Exercise
 
 Change the seed to the other literal in the fixture, the `"hello"`'s eventual
-resting place: `df_node(node_id, "lit", _, _, "src/note.rs", 8)` (the `false`
-in `Note::new`). Predict which functions the report will mention before you
-run it, and explain why the flow is so much shorter.
+resting place: `df_node(node_id, "lit", _, _, "src/note.rs", 8, _)` (the
+`false` in `Note::new`). Predict which functions the report will mention
+before you run it, and explain why the flow is so much shorter.

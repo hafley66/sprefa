@@ -907,6 +907,94 @@ sites but not against new code. **missing** = nothing.
   returns the same evidence as no read at all. Union in the declared inputs, and
   keep the union inside the one constructor every caller goes through.
 
+## 28. Clean-tree-only code path masked by an always-dirty verification tree
+
+- WHAT IT LOOKS LIKE: a rev-resolution or git-object code path exists in the
+  source, but the local tree used to "verify" is always dirty (uncommitted
+  changes, a live agent worktree), so the alias that would exercise the
+  clean-tree branch never resolves that way, and a passing test suite ships a
+  branch nobody ran.
+- HOW IT BIT US: commit a0a0ff25 made `WORK` resolve to a bare git oid on a
+  clean tree, routing `read_content` (src/engine/mod.rs) through the
+  git-object path for the first time. Two bugs surfaced, both masked on a
+  dirty tree because the `+` dirty suffix always routes reads to the
+  filesystem: (1) `git_batch_read` (src/engine/repo.rs:1220) wrote
+  `<rev>:<path>` to `git cat-file --batch`, which git resolves from the REPO
+  root, so a nested scan root (bench/flow, a crate subdir) failed every
+  historical read; (2) a scan root outside any git work tree (a temp-dir
+  corpus) has no object database, so a bare-oid rev could not resolve there
+  at all. The commit's own "962 passed" gate was measured on a DIRTY tree,
+  where neither branch runs. Under `DL_REV_OVERRIDE=<clean-sha>` the it-suite
+  went from 500 failed to 45 — the residual 45 collapse HEAD and WORK to one
+  value, a probe artifact of the override itself, not an engine fault
+  (spot-verified: `module_edge_rev_keeps_head_and_work_separate` passes on a
+  normal run).
+- THE LAW: a rev-resolution branch that only fires on a clean tree needs its
+  own clean-tree measurement, or a forced probe (`DL_REV_OVERRIDE`) — a green
+  suite measured exclusively on a dirty tree proves nothing about the
+  clean-tree path.
+- THE RAIL: half. Fix a7350f95 — `git_batch_read` now writes `<rev>:./<path>`
+  (cwd-relative, cwd pinned to `root` via `-C`), and `read_content` checks
+  `git rev-parse --is-inside-work-tree` (`root_is_inside_work_tree`,
+  src/engine/repo.rs:1203, cached per root) and reads from disk when there is
+  no work tree. tests/it/rev_alias_leak.rs pins the alias-resolution
+  behavior. The DETECTION-gap rail — a clean-rev CI condition distinct from
+  the dirty working tree every local run measures — does NOT exist yet;
+  nothing in CI forces `DL_REV_OVERRIDE` or a clean checkout, so a future
+  clean-tree-only branch can ship un-exercised the same way.
+- SAY THIS TO AN AGENT: before trusting an "N passed" gate on rev-resolution
+  or git-object code, check whether the tree was dirty when it ran — the `+`
+  suffix silently disables the entire git-object branch, and a passing suite
+  on a dirty tree says nothing about it. Force the branch with
+  `DL_REV_OVERRIDE=<clean-sha>` or a clean checkout before believing the gate.
+
+## 29. Read-shaped CLI flag silently retargets --db to the real served root
+
+- WHAT IT LOOKS LIKE: `dl <file> --check` / `--diag-json` / `--lsp`, run
+  without an explicit `--db`, ticks against the user's REAL per-root database
+  (`~/.local/state/sprefa/roots/<key>/db.sqlite`) instead of an isolated or
+  in-memory db — a command that reads like "just check this file" silently
+  writes into live analysis state.
+- HOW IT BIT US: an agent ran `dl <file> --check` from a worktree under the
+  daemon-enabled default. `want_default` (src/cli/mod.rs:421-422:
+  `programs.is_empty() || (daemon_on && (cli.lsp || cli.check ||
+  cli.diag_json))`) defaults `--db` to the real per-root file whenever the
+  daemon is enabled and any of `--lsp`/`--check`/`--diag-json` is set — the
+  empty-positional case (a genuine "attach to the served root" request) and
+  the "I gave a file, just check it" case share the same default. The tick
+  ran against that file and narrowed its cache: reconcile dropped source rows
+  for every path the worktree's own (partial) scan did not cover, reducing an
+  ~860MB analysis cache to ~0.6MB of rel tables + freelist. The damage is a
+  regenerable analysis cache, not source or git data — but it is a silent
+  write to the user's real db from a read-shaped command.
+- THE LAW: a read-shaped, file-scoped invocation (a positional program under
+  `--check`) never defaults onto the daemon's real served-root db — only the
+  discovery mode (no positional, `programs.is_empty()`) may attach to it.
+- THE RAIL: none — open defect. RCA: the `want_default` heuristic
+  (src/cli/mod.rs:421-422) conflates "user asked for a check" with "attach to
+  the served root": the empty-positional discovery arm and the
+  `--lsp`/`--check`/`--diag-json` arm share one default, so a file-scoped
+  `--check` gets the same real db as a no-positional discovery run. The
+  class-14 rail (`hook::refuse_worktree_cold_check`, src/hook.rs:461, wired
+  at src/cli/mod.rs:476) does not catch this shape: it refuses only when the
+  db is blank/absent AND the root is unregistered in `roots.json`; a
+  worktree whose resolved root already carries a warm, registered db sails
+  through untouched and gets ticked against. Mitigation in force: every
+  agent prompt this session forbids `dl --check`/`--diag-json`/`--lsp` from a
+  worktree — a process rule, not an engine one. Proposed rail (not
+  implemented; owned by src/cli/mod.rs, outside docs ownership): parallel to
+  class 14's worktree-cold-build refusal, refuse or force an isolated db
+  when a positional program is given under `--check`/`--diag-json`/`--lsp`
+  from a linked worktree unless an explicit `--db` was passed. Fail-pre-fix
+  test shape: `dl <file> --check` from a linked worktree against a warm real
+  db asserts zero `_write_ledger` rows land for the served root.
+- SAY THIS TO AN AGENT: never run `dl --check`/`--diag-json`/`--lsp` without
+  an explicit `--db` (`:memory:` or a scratch `DL_STATE_DIR`) when you are
+  not certain you want to attach to the served root — the daemon-enabled
+  default silently retargets onto the real per-root db, and a narrowed
+  860MB→0.6MB cache is the same shape as class 14's orphan-db incident, just
+  against a REGISTERED root instead of an unregistered one.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
@@ -937,6 +1025,8 @@ sites but not against new code. **missing** = nothing.
 | 24 | TLS-parked span guard dropped in thread-local destruction | enforced | — (ManuallyDrop park + explicit exit paths, 9ddf1280; abnormal-death coverage in src/jobq/tests_cancel.rs) |
 | 26 | composite key minted by string concatenation, stored as an id | half | promote `.dl/composite-key-string.dl` to error severity once the 14-row baseline is waiver-audited; arm 3 (declared-column join) not implemented — no fact links a `RelDecl` column to its writer expression; distinguish the hash-digest false-positive class (src/effect.rs:527/612/644) from a true raw-id fold in the message wording |
 | 27 | empty input read recorded as no dependency | enforced | — (union inside `rel_footprint` src/engine/family/router.rs:213, the one helper cold/react/react_deltas build memos through; deterministic pin `empty_input_rel_still_reruns_the_family_after_insert` + T4 property replaying seed `cc 0d80eca0`, both proven fail-pre-fix). Residual: no static rail asserts a dependency set is built from declared inputs rather than observed reads, so a new unit type can reintroduce the shape |
+| 28 | clean-tree-only code path masked by an always-dirty verification tree | half | wire a clean-tree (or `DL_REV_OVERRIDE`) measurement into CI so rev-resolution / git-object branches actually get exercised, not just measured on a dirty tree |
+| 29 | read-shaped CLI flag retargets --db to the real served root | missing | refuse (parallel to class 14) when a positional program is given under `--check`/`--diag-json`/`--lsp` from a linked worktree without an explicit `--db`; fail-pre-fix test = assert zero `_write_ledger` rows land for the served root |
 
 ## How a new rail gets born here
 
