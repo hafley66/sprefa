@@ -1,0 +1,132 @@
+# Rail: WORK bound to a column named `rev` that is not typed `rev`
+#
+# Incident (2026-07-20): `WORK` used to be stored LITERALLY as the text
+# "WORK" in every rev column. An arc landed that resolves it instead — at
+# `Engine::resolve_rev` (src/engine/repo.rs) — to `<HEAD sha>` or
+# `<HEAD sha>+` (dirty suffix); see src/engine/revid.rs's INV-1 ("no rev
+# column in any table ever holds an alias"). `scan("WORK", ...)` was updated
+# for this and is fine. Every OTHER place a `.dl` program filtered or wrote a
+# stored rev column by the literal string "WORK" went silently vacuous: the
+# column now holds a resolved sha, never the alias, so `rel(..., "WORK", ...)`
+# matches zero rows with no error. Five files were bitten this way
+# (file_lines/file/module_edge_rev/type_edge_rev builtins, plus user-declared
+# current_rev/seam_file_at/fn_bare_at/map_node_at in storage-seam-map.dl).
+#
+# The fix (this session) is type-directed: rev-carrying columns get a real
+# `Type::Rev` (`rev` in the surface DSL), and lowering resolves a literal
+# "WORK" bound to a `Type::Rev` position to the tick's cached worktree rev
+# text (`crate::lower::resolve_work_alias` / `resolve_work_alias_query`) —
+# EXCEPT `scan(...)`, whose own rev coordinate resolves through a different,
+# already-correct seam. This rail is the backstop: a FUTURE column named
+# `rev` that stays `text` (a builtin decls.rs column, or a user `.dl` rel
+# declaration) reintroduces the exact same silent-vacuous-match trap the
+# moment anyone writes `rel(..., "WORK", ...)` against it.
+#
+# Two arms, joined the same way: does relation `rel_name` have a column
+# literally named `rev` that is NOT typed `rev`, AND is `rel_name` invoked
+# somewhere with the literal "WORK" bound in its argument list?
+#   - builtin arm: the engine's own `rel_col` self-describing catalog
+#     (rel, pos, col, type) — `.dl` source cannot see decls.rs directly, but
+#     every built-in schema is projected into this table already.
+#   - user arm: a `rel NAME(..., rev: TYPE, ...)` declaration inside this
+#     repo's own `.dl` corpus, regex-extracted (no tree-sitter grammar for
+#     the dl language itself exists to `match_ast` this the way
+#     composite-key-string.dl matches Rust).
+#
+# GAP, named rather than faked (same honesty convention as
+# composite-key-string.dl's Arm 3): the usage match is POSITIONLESS — it
+# flags "this relation has an untyped rev column AND is called somewhere
+# with a WORK literal", not "WORK lands in that column's own position". A
+# relation with an unrelated Text column plus a separate WORK use on a
+# different column would false-positive; in practice a program writing the
+# literal "WORK" anywhere almost always means the rev coordinate, and this
+# rail is advisory (warning, never error). The decl regex also only sees a
+# `rel NAME(...)` declaration whose `rev: TYPE` portion is on the SAME
+# physical line as the opening paren — a rev column on a later continuation
+# line of a multi-line declaration is missed. Both gaps are cheaper to name
+# than to solve with regex-only extraction over a language with no grammar
+# here.
+#
+# Own bare scan per rel (S6 sharp edge: a source-op body cannot join other
+# rels), so this program works loaded alone or merged with anything else.
+# Severity is WARNING, never error (the 2026-07-11 outage law).
+#
+# Run: dl .dl/rev-alias-mistyped.dl --no-daemon
+# Gate: dl .dl/rev-alias-mistyped.dl --check
+
+# ── user-declared rel: a `rev` column NOT typed `rev`, same physical line ──
+# (corpus = this repo's own .dl/ rails + examples/ — not a downstream user's
+# programs; a per-repo copy of this rail audits that repo's own .dl files
+# the same way.)
+rel decl_rev_col(source_file: file, decl_line: int, REL_NAME: text, REV_TYPE: text).
+decl_rev_col(source_file, decl_line, REL_NAME, REV_TYPE) <-
+    scan("WORK", ".dl/**/*.dl", source_file, source_rev),
+    match_line(source_file, source_rev,
+        /rel\s+(?<REL_NAME>[A-Za-z_][A-Za-z0-9_]*)\([^)]*\brev\s*:\s*(?<REV_TYPE>[A-Za-z_][A-Za-z0-9_]*)/,
+        decl_line).
+decl_rev_col(source_file, decl_line, REL_NAME, REV_TYPE) <-
+    scan("WORK", "examples/**/*.dl", source_file, source_rev),
+    match_line(source_file, source_rev,
+        /rel\s+(?<REL_NAME>[A-Za-z_][A-Za-z0-9_]*)\([^)]*\brev\s*:\s*(?<REV_TYPE>[A-Za-z_][A-Za-z0-9_]*)/,
+        decl_line).
+
+rel user_rel_untyped_rev(REL_NAME: text).
+user_rel_untyped_rev(REL_NAME) <-
+    decl_rev_col(_, _, REL_NAME, REV_TYPE),
+    REV_TYPE != "rev".
+
+# ── builtin rel: same test against the engine's self-describing catalog ──
+rel builtin_rel_untyped_rev(REL_NAME: text).
+builtin_rel_untyped_rev(REL_NAME) <-
+    rel_col(REL_NAME, _, "rev", REV_TYPE, _),
+    REV_TYPE != "rev".
+
+rel untyped_rev_rel(REL_NAME: text).
+untyped_rev_rel(REL_NAME) <- user_rel_untyped_rev(REL_NAME).
+untyped_rev_rel(REL_NAME) <- builtin_rel_untyped_rev(REL_NAME).
+
+# ── usage: literal "WORK" bound anywhere in rel_name(...)'s argument list,
+# on one line — every known-broken site (body Pos/Neg atoms, ground facts)
+# is this shape. `scan(...)`/`match_line(...)`/etc. never join here: their
+# names are keywords, never a `rel NAME(...)` declaration and never a row in
+# `rel_col`, so the untyped_rev_rel join structurally excludes them. ──
+rel work_literal_usage(source_file: file, usage_line: int, REL_NAME: text).
+work_literal_usage(source_file, usage_line, REL_NAME) <-
+    scan("WORK", ".dl/**/*.dl", source_file, source_rev),
+    match_line(source_file, source_rev,
+        /\b(?<REL_NAME>[A-Za-z_][A-Za-z0-9_]*)\([^)]*"WORK"[^)]*\)/,
+        usage_line).
+work_literal_usage(source_file, usage_line, REL_NAME) <-
+    scan("WORK", "examples/**/*.dl", source_file, source_rev),
+    match_line(source_file, source_rev,
+        /\b(?<REL_NAME>[A-Za-z_][A-Za-z0-9_]*)\([^)]*"WORK"[^)]*\)/,
+        usage_line).
+
+rel rev_alias_candidate(source_file: file, usage_line: int, REL_NAME: text).
+rev_alias_candidate(source_file, usage_line, REL_NAME) <-
+    work_literal_usage(source_file, usage_line, REL_NAME),
+    untyped_rev_rel(REL_NAME).
+
+# Waiver: a legitimate instance, admitted with a written reason (same shape
+# as file-size.dl's big_file_ok / composite-key-string.dl's composite_key_ok).
+rel rev_alias_ok(path: text, line: int, reason: text).
+
+rel rev_alias_finding(source_file: file, usage_line: int, REL_NAME: text).
+rev_alias_finding(source_file, usage_line, REL_NAME) <-
+    rev_alias_candidate(source_file, usage_line, REL_NAME),
+    !rev_alias_ok(source_file, usage_line, _).
+
+diag(
+    path: source_file,
+    line: usage_line,
+    severity: "warning",
+    code: "rev-alias-mistyped",
+    msg: "literal WORK bound against `${REL_NAME}`, which has a column named `rev` NOT typed `rev` — WORK will not resolve here and this filter/write silently matches nothing (or stores the alias text itself); retype the column `rev: rev` (built-in: src/engine/decls.rs / src/rels/*.rs; user rel: this program's own `rel ${REL_NAME}(...)` declaration), or waive with rev_alias_ok"
+) <-
+    rev_alias_finding(source_file, usage_line, REL_NAME).
+
+diag_stage("rev-alias-mistyped", "agent-turn").
+diag_stage("rev-alias-mistyped", "commit").
+
+? rev_alias_finding(source_file, usage_line, REL_NAME).
+? diag(path, line, severity, code, msg).
