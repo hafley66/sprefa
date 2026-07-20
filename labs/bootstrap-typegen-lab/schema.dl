@@ -1,0 +1,26 @@
+// The compiler's own schema vocabulary.
+type TypeDecl {
+  name: String
+  fields: Array<Field>
+}
+
+type Field {
+  name: String
+  type_name: String
+}
+
+type Endpoint {
+  name: String
+  method: String
+  path: String
+  response: String
+}
+
+// Application schema.
+type User {
+  id: String
+  name: String
+  active: Bool
+}
+
+endpoint get_user GET /users/{id} -> User
