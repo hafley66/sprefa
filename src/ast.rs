@@ -332,8 +332,14 @@ pub enum BodyItem {
     /// `col`/`end_col` are the whole-match span's 0-based byte columns within
     /// `line`. Optional trailing args after `line`: 1 ⇒ `id`; 2 ⇒ `col, end_col`;
     /// 3 ⇒ `id, col, end_col`. Feeds sub-line diagnostic spans.
+    ///
+    /// Canonical spelling is `match_line` — a LINE REGEX, correct only for flat
+    /// text (ini/env/log/csv). `legacy_name: true` = the program spelled it
+    /// `match` (the pre-rename name); `typecheck::normalize_body_item` emits a
+    /// `deprecated-op-name` warning pointing at `match_line`, and (for source
+    /// code) at `match_ast`. Both spellings parse identically otherwise.
     Match { path: Term, rev: Term, regex: String, line: Term, id: Option<Term>,
-            col: Option<Term>, end_col: Option<Term> },
+            col: Option<Term>, end_col: Option<Term>, legacy_name: bool },
     Ast { path: Term, rev: Term, lang: String, query: String, line: Term, end: Option<Term>, id: Option<Term> },
     /// `line`/`col`/`end_line`/`end_col` are the match span (1-based lines,
     /// 0-based byte columns). All four accept the kwarg/`_` form: positional in
@@ -349,8 +355,15 @@ pub enum BodyItem {
     /// string (byte 0 = the start of that value, not the enclosing file), and it
     /// carries no `id` (there is no file to locate against — the caller adds the
     /// enclosing region's own line to lift spans back to file coordinates).
+    ///
+    /// Canonical spelling is `match_ast` — ast-grep structural matching, the
+    /// right tool for source code (sees multi-line/AST constructs a line regex
+    /// cannot). `legacy_name: true` = the program spelled it `sg` (the
+    /// pre-rename name); `typecheck::normalize_body_item` emits a
+    /// `deprecated-op-name` warning pointing at `match_ast`. Both spellings
+    /// parse identically otherwise, file form and term form alike.
     Sg { src: Term, rev: Option<Term>, lang: String, pattern: String, line: Term,
-         col: Term, end_line: Term, end_col: Term, id: Option<Term> },
+         col: Term, end_line: Term, end_col: Term, id: Option<Term>, legacy_name: bool },
     /// ast-grep relational YAML rule (RuleCore: inside/has/any/all/not/kind/
     /// regex/pattern). `yaml` is the (usually backtick, multiline) body; the
     /// span + capture binds mirror `Sg`. Superset of `Sg` — a bare `pattern:`

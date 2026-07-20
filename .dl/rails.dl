@@ -3,7 +3,7 @@
 # error severity blocks the agent (exit 2); warn reports without failing.
 
 # `col`/`end_col` are 0-based byte columns of the offending span within `line`
-# (match's +2 trailing args bind the whole-match span). The LSP renders a
+# (match_line's +2 trailing args bind the whole-match span). The LSP renders a
 # sub-line squiggle when set; --check ignores them. end_line defaults to line.
 
 # ---- banned identifiers (CLAUDE.md style rule) --------------------------------
@@ -12,7 +12,7 @@ banned_hit(p, l, c, ec, w) <-
     scan("WORK", "src/**/*.rs", p, rev),
 # Substring + case-insensitive on purpose: identifiers concatenate
 # (ProvenanceRecord, substrate_id), so \b and exact case both leak.
-    match(p, rev, /(?i)(?<w>provenance|substrate|regime|load.?bearing)/, l, c, ec).
+    match_line(p, rev, /(?i)(?<w>provenance|substrate|regime|load.?bearing)/, l, c, ec).
 
 diag(path: p, line: l, col: c, end_col: ec, severity: "error", code: "banned-word", msg: "banned identifier `${w}` (use source/base/mode)") <-
     banned_hit(p, l, c, ec, w), changed(p).

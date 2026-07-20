@@ -38,7 +38,7 @@ rel latest_touch(path: file).
 rel cc_turn(idx: int).
 cc_turn(l) <-
     scan("WORK", "*.jsonl", p, rev),
-    match(p, rev, /"type":\s*"assistant"/, l).
+    match_line(p, rev, /"type":\s*"assistant"/, l).
 
 rel cc_last(idx: int).
 cc_last(max(l)) <- cc_turn(l).
@@ -46,7 +46,7 @@ cc_last(max(l)) <- cc_turn(l).
 rel cc_edit(idx: int, path: file).
 cc_edit(l, path) <-
     scan("WORK", "*.jsonl", p, rev),
-    match(p, rev, /"file_path":\s*"(?<path>[^"]+)"/, l).
+    match_line(p, rev, /"file_path":\s*"(?<path>[^"]+)"/, l).
 
 rel cc_touch(path: file).
 cc_touch(path) <- cc_edit(l, path), cc_turn(l), cc_last(l).
@@ -72,7 +72,7 @@ cc_touch(path) <- cc_edit(l, path), cc_turn(l), cc_last(l).
 rel oc_touch(path: file).
 oc_touch(path) <-
     scan("WORK", ".oc-latest-touch.txt", p, rev),
-    match(p, rev, /(?<path>\S.*)/, l).
+    match_line(p, rev, /(?<path>\S.*)/, l).
 
 # ---- union the adapters into the trait (derived-only, one rel one kind) ------
 latest_touch(path) <- cc_touch(path).

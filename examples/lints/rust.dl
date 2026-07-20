@@ -16,21 +16,21 @@
 # error: a debug macro left in committed code (blocks commit)
 diag(path, line, col, end_line: el, end_col: ec, severity: "error", code: "no-dbg", msg: "dbg!() left in code: `dbg!(${X})`", hint: "remove the debug macro before committing") <-
   scan("*", "WORK", "**/*.rs", path, rev),
-  sg(path, rev, :rust, "dbg!($X)", line, col, el, ec).
+  match_ast(path, rev, :rust, "dbg!($X)", line, col, el, ec).
 
 # warn: .unwrap() — prefer ? or .expect("reason")
 diag(path, line, col, end_line: el, end_col: ec, severity: "warn", code: "no-unwrap", msg: "unwrap() on `${X}`", hint: "use ? to propagate, or .expect(\"why this can't fail\")") <-
   scan("*", "WORK", "**/*.rs", path, rev),
-  sg(path, rev, :rust, "$X.unwrap()", line, col, el, ec).
+  match_ast(path, rev, :rust, "$X.unwrap()", line, col, el, ec).
 
 # warn: bare panic!/todo!/unimplemented! in code
 diag(path, line, col, end_line: el, end_col: ec, severity: "warn", code: "no-panic", msg: "panic!() — return a Result instead", hint: "") <-
   scan("*", "WORK", "**/*.rs", path, rev),
-  sg(path, rev, :rust, "panic!($$$A)", line, col, el, ec).
+  match_ast(path, rev, :rust, "panic!($$$A)", line, col, el, ec).
 
 diag(path, line, col, end_line: el, end_col: ec, severity: "warn", code: "no-todo", msg: "todo!() left in code", hint: "finish or open a ticket") <-
   scan("*", "WORK", "**/*.rs", path, rev),
-  sg(path, rev, :rust, "todo!($$$A)", line, col, el, ec).
+  match_ast(path, rev, :rust, "todo!($$$A)", line, col, el, ec).
 
 # Plain-run view (ignored under --lsp/--check, shown by `dl rust.dl`)
 ? diag(path, line, col, end_line, end_col, severity, code, msg, hint).

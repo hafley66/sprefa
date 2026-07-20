@@ -8,7 +8,7 @@
 # wanted pair — the data-driven latency contract, so run twice / serve).
 #
 # Bespoke lockfiles are first-class: head `pin` with another rule per format
-# (a json() rule over package-lock.json, a match() over anything). Built-ins
+# (a json() rule over package-lock.json, a match_line() over anything). Built-ins
 # never assumed complete.
 #
 # Honest limits: a go.mod pseudo-version (v0.0.0-<date>-<12hex>) is used as a
@@ -20,12 +20,12 @@
 # each repo's own module path (go.mod `module` line)
 rel module_id(repo: text, module: text).
 module_id(r, mod) <- repo(r, _, _), scan(r, "HEAD", "go.mod", p, rev),
-                     match(p, rev, /^module\s+(?<mod>\S+)/, l).
+                     match_line(p, rev, /^module\s+(?<mod>\S+)/, l).
 
 # each repo's pinned requires: "<module> v<version>"
 rel gomod_pin(repo: text, module: text, ver: text).
 gomod_pin(r, mod, ver) <- repo(r, _, _), scan(r, "HEAD", "go.mod", p, rev),
-                          match(p, rev, /(?<mod>\S+\/\S+)\s+(?<ver>v[0-9]\S*)/, l).
+                          match_line(p, rev, /(?<mod>\S+\/\S+)\s+(?<ver>v[0-9]\S*)/, l).
 
 # internal pin edge: the required module is another config repo's declared id
 rel pin(consumer: text, dep: text, ref: text).

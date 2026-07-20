@@ -52,8 +52,15 @@ fi
 rm -f "$fmt_check_log"
 
 echo "[verify] cargo test"
+# --no-fail-fast is REQUIRED, not a nicety: `cargo test` runs targets in
+# sequence and aborts the run at the first failing target. A single flaky
+# `--lib` test therefore skipped the whole `it` binary (978 tests) while the
+# flake-check below still declared the run clean and stamped the tree — a
+# green verify that never executed the integration suite. Observed 2026-07-20
+# (activity::tests::lifecycle_round_trips flaked; extract_cache's real failure
+# went unrun). Every target must run before any flake adjudication happens.
 suite_log=$(mktemp)
-cargo test 2>&1 | tee "$suite_log"
+cargo test --no-fail-fast 2>&1 | tee "$suite_log"
 suite_rc=${PIPESTATUS[0]}
 
 if [ "$suite_rc" -ne 0 ]; then

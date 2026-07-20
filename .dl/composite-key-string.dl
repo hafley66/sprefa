@@ -1,0 +1,208 @@
+# Rail: composite key minted by string concatenation, then stored as an id
+#
+# Incident (2026-07-19/20): `salt_rev` (src/engine/extract/mod.rs:978-980,
+# `format!("{rev}\u{1}{id}")`) folded a (rev, raw id) pair into one TEXT
+# column instead of a composite PRIMARY KEY. Measured damage: 314,892 of
+# 939,845 `_strings` rows (33.5%, 15MB) existed only to hold that one folded
+# form, and `rel_df_node` / `rel_df_node_rev` had ZERO joinable rows on `id`
+# despite describing the same nodes. The fix landing concurrently in
+# decls.rs replaces the fold with a real `key(id, rev)` composite PK — this
+# rail exists so the next contributor gets caught before that fix is needed
+# a second time.
+#
+# The rail catches the SHAPE (concatenation minting a key-shaped value), not
+# this one function. `df_lit`/`df_edge` cannot see it (checked against the
+# live root db: Rust `format!` is not lifted into `df_lit` — 13,438 `lit`
+# rows, 40 `template`, 22 `concat`, all from TS; 0 rows contain `{`/`}`), so
+# this is structural (`match_ast`) matching over the Rust AST, not a dataflow rule.
+#
+# Own bare scan per rel (S6 sharp edge: a source-op body cannot join other
+# rels), so this program works loaded alone or merged with anything else.
+# Severity is WARNING, never error (the 2026-07-11 outage law: an
+# error-severity rail exiting non-zero from a PostToolUse hook blocks every
+# write repo-wide). A legitimate instance is admitted via `composite_key_ok`
+# below, same shape as `file-size.dl`'s `big_file_ok`.
+#
+# Run: dl .dl/composite-key-string.dl --no-daemon
+# Gate: dl .dl/composite-key-string.dl --check
+
+# ── Shared extraction: every `format!` call site with its literal/template
+# argument bound as text, single-arg (`format!("...")`, the all-captured-
+# identifier style `salt_rev` uses) and multi-arg (`format!("...", a, b)`)
+# forms unioned into one `FORMAT_STR`-per-line rel three rules down.
+rel format_call_single(source_file: file, line: int, FORMAT_STR: text).
+format_call_single(source_file, line, FORMAT_STR) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    match_ast(source_file, source_rev, :rust, "format!($FORMAT_STR)", line).
+
+rel format_call_multi(source_file: file, line: int, FORMAT_STR: text).
+format_call_multi(source_file, line, FORMAT_STR) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    match_ast(source_file, source_rev, :rust, "format!($FORMAT_STR, $$$FORMAT_REST)", line).
+
+rel format_call(source_file: file, line: int, FORMAT_STR: text).
+format_call(source_file, line, FORMAT_STR) <- format_call_single(source_file, line, FORMAT_STR).
+format_call(source_file, line, FORMAT_STR) <- format_call_multi(source_file, line, FORMAT_STR).
+
+# Two or more interpolation holes (named `{ident}` or positional `{}`/`{0}`)
+# anywhere in the literal — one hole is a rendering, two is a COMPOSITE.
+rel two_or_more_holes(source_file: file, line: int, FORMAT_STR: text).
+two_or_more_holes(source_file, line, FORMAT_STR) <-
+    format_call(source_file, line, FORMAT_STR),
+    FORMAT_STR =~ /\{[A-Za-z0-9_]*\}.*\{[A-Za-z0-9_]*\}/.
+
+# ── Arm 1: concatenation minting an id ───────────────────────────────────
+# Sub-shape (a): `let $NAME = format!(...)` where NAME reads as an id/key.
+rel let_bound_format_single(source_file: file, line: int, ID_LIKE_NAME: text, FORMAT_STR: text).
+let_bound_format_single(source_file, line, ID_LIKE_NAME, FORMAT_STR) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    match_ast(source_file, source_rev, :rust, "let $ID_LIKE_NAME = format!($FORMAT_STR);", line).
+
+rel let_bound_format_multi(source_file: file, line: int, ID_LIKE_NAME: text, FORMAT_STR: text).
+let_bound_format_multi(source_file, line, ID_LIKE_NAME, FORMAT_STR) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    match_ast(source_file, source_rev, :rust, "let $ID_LIKE_NAME = format!($FORMAT_STR, $$$FORMAT_REST);", line).
+
+rel let_bound_format(source_file: file, line: int, ID_LIKE_NAME: text, FORMAT_STR: text).
+let_bound_format(source_file, line, ID_LIKE_NAME, FORMAT_STR) <- let_bound_format_single(source_file, line, ID_LIKE_NAME, FORMAT_STR).
+let_bound_format(source_file, line, ID_LIKE_NAME, FORMAT_STR) <- let_bound_format_multi(source_file, line, ID_LIKE_NAME, FORMAT_STR).
+
+rel arm1_let_bound_id(source_file: file, line: int, detail: text).
+arm1_let_bound_id(source_file, line, "let ${ID_LIKE_NAME} = format!(...) with 2+ holes") <-
+    let_bound_format(source_file, line, ID_LIKE_NAME, FORMAT_STR),
+    ID_LIKE_NAME =~ /(?i)\b(id|key|sym|handle|slug)\b/,
+    FORMAT_STR =~ /\{[A-Za-z0-9_]*\}.*\{[A-Za-z0-9_]*\}/.
+
+# Sub-shape (b): the `format!` sits inside a fn whose NAME reads as an
+# id/key mint (`build_id`, `mint_sym`, `extract_digest_key`, ...) — join
+# format_call's line against call_def's span to find the enclosing fn, then
+# check the LAST `::`-segment of its repo-qualified sym (never the file-path
+# segments, which would false-positive on a directory named e.g. `handle/`).
+# The regex requires the id-ish word to be its OWN underscore-delimited
+# segment (`(word_)*TOKEN(_word)*$`), not a bare substring — `\b` alone does
+# NOT do this job in snake_case, since `_` is a word character and `\bid\b`
+# would not fire inside `user_id`. Measured without this guard:
+# `validate_brands` and `install_busy_verdict_handler` false-matched on the
+# substrings "id" (inside "valid") and "handle" (inside "handler").
+rel format_in_fn(source_file: file, line: int, fn_sym: text, FORMAT_STR: text).
+format_in_fn(source_file, line, fn_sym, FORMAT_STR) <-
+    format_call(source_file, line, FORMAT_STR),
+    call_def(_, fn_sym, _, source_file, def_line, def_end),
+    line >= def_line, line <= def_end.
+
+rel arm1_id_named_fn(source_file: file, line: int, detail: text).
+arm1_id_named_fn(source_file, line, "format!(...) with 2+ holes inside fn `${fn_sym}`") <-
+    format_in_fn(source_file, line, fn_sym, FORMAT_STR),
+    fn_sym =~ /::([A-Za-z0-9]+_)*(?i:id|key|sym|handle|slug)(_[A-Za-z0-9]+)*$/,
+    FORMAT_STR =~ /\{[A-Za-z0-9_]*\}.*\{[A-Za-z0-9_]*\}/.
+
+# ── Arm 2: a separator constant that only makes sense as a field delimiter ─
+# `\u{0}`/`\u{1}`/`\x1f` (NUL, SOH, unit separator — control characters with
+# no other reason to appear in a Rust format string) alongside 2+ holes.
+# `::` was measured and DROPPED from this arm: at full-repo scale it produced
+# 39 hits, 37 of them the repo's own accepted `sym` convention
+# (`{repo}::{file}::{kind}::{name}`-style joins that `call_def`/`type_entity`
+# already treat as ONE text column by design — flagging those would tell a
+# contributor to un-fix the engine's own idiom). The two real control-
+# character hits (`salt_rev`, and effect.rs's digest-key builders) survive;
+# `::` is not the incident's shape, an unusual control character is.
+rel arm2_separator_key(source_file: file, line: int, detail: text).
+arm2_separator_key(source_file, line, "format!(...) mixes a control-character separator with 2+ holes") <-
+    format_call(source_file, line, FORMAT_STR),
+    FORMAT_STR =~ /\\u\{0\}|\\u\{1\}|\\x1f/,
+    FORMAT_STR =~ /\{[A-Za-z0-9_]*\}.*\{[A-Za-z0-9_]*\}/.
+
+# ── Arm 3: the declared-column half — NOT expressible, stated plainly ─────
+# A `RelDecl` column named `id`/`*_id` fed by an arm-1/arm-2 value is the
+# strongest signal, but two facts this engine does not have block it:
+#   1. RelDecl schemas (src/engine/decls.rs) are STATIC (name, type) pairs;
+#      the Rust expression that fills column N at a write site is a
+#      `Vec<Value>` built by POSITION somewhere else entirely (often a
+#      different file), with no structural rel linking "column name" to
+#      "the expression that produced this position's value". Building that
+#      link would require per-call-site dataflow attribution dl does not
+#      extract for Rust struct/vec literal writers — the same kind of
+#      analysis this rail exists to approximate, circularly.
+#   2. Even the weak fallback (does a RelDecl's doc string TEXT mention the
+#      arm-1/2 hit's enclosing fn name, as `decls.rs`'s own
+#      "id is salt_rev(raw id, rev)" comments do by hand) has no operator:
+#      dl's regex constraint (`=~`) takes a LITERAL pattern, not one built
+#      from a second bound text column, so there is no `contains(text,
+#      text)` predicate to test two dl variables against each other this
+#      way. Arm 3 is not implemented; a faked join would misreport
+#      confidence rather than name the gap.
+
+# ── Union + waiver ─────────────────────────────────────────────────────────
+rel composite_key_candidate(source_file: file, line: int, detail: text).
+composite_key_candidate(source_file, line, detail) <- arm1_let_bound_id(source_file, line, detail).
+composite_key_candidate(source_file, line, detail) <- arm1_id_named_fn(source_file, line, detail).
+composite_key_candidate(source_file, line, detail) <- arm2_separator_key(source_file, line, detail).
+
+# Waiver: a legitimate instance, admitted with a written reason (same shape
+# as `file-size.dl`'s `big_file_ok`).
+rel composite_key_ok(path: text, line: int, reason: text).
+
+rel composite_key_finding(source_file: file, line: int, detail: text).
+composite_key_finding(source_file, line, detail) <-
+    composite_key_candidate(source_file, line, detail),
+    !composite_key_ok(source_file, line, _).
+
+# ── Ratchet baseline (mirrors no-new-eprintln.dl): every file with a finding
+# today is grandfathered at its measured count. A file OVER its baseline
+# warns at file-head; a file with NO baseline row warns per hit line (a
+# brand-new site). Lower a row when a commit shrinks the count; delete rows
+# that reach 0.
+rel composite_key_count(source_file: file, hits: int).
+composite_key_count(source_file, count(line)) <- composite_key_finding(source_file, line, _).
+
+rel composite_key_baseline(source_file: file, allowed: int).
+# Measured 2026-07-20 on WORK (14 findings total, one row per affected
+# file): src/engine/extract/mod.rs holds `extract_digest_key` only —
+# `salt_rev` itself was deleted from this file by a concurrent edit mid-
+# session (the composite-key-as-id anti-pattern it caused; see the incident
+# receipt above), confirmed the rail fires on it via a HEAD-rev run (see
+# docs/failure-modes.md). src/engine/family/mod.rs:233 WAS a new instance
+# (`format!("{rel}\u{1}{col_list}")` cache key) that landed in this same
+# session, on a file this rail's author does not own — proof the shape
+# detector fires on a live contributor site, not just the motivating one.
+# That site is now FIXED (2026-07-20, mint_sym arc): the cache key is a
+# two-level `HashMap<&'static str, HashMap<String, ...>>` (`ScanCache`,
+# family/mod.rs) instead of a folded `rel\u{1}col_list` string — a live
+# `dl .dl/composite-key-string.dl` run confirms zero findings for this file,
+# so its row is DELETED per this rail's own ratchet law ("delete rows that
+# reach 0"), not left stale at 1.
+composite_key_baseline("src/daemon/mod.rs", 1).
+composite_key_baseline("src/effect.rs", 4).
+composite_key_baseline("src/engine/extract/mod.rs", 1).
+composite_key_baseline("src/engine/repo.rs", 1).
+composite_key_baseline("src/graph/typegraph/mod.rs", 4).
+composite_key_baseline("src/graph/typegraph/ts/flow.rs", 1).
+composite_key_baseline("src/lsp.rs", 1).
+
+diag(
+    path: source_file,
+    line: 1,
+    severity: "warning",
+    code: "composite-key-exceeded",
+    msg: "composite-key-as-string sites grew past this file's grandfathered baseline — split the folded value into two columns with a composite PRIMARY KEY (see docs/failure-modes.md), or waive the line with composite_key_ok"
+) <-
+    composite_key_count(source_file, hits),
+    composite_key_baseline(source_file, allowed),
+    hits > allowed.
+
+diag(
+    path: source_file,
+    line: line,
+    severity: "warning",
+    code: "composite-key-as-string",
+    msg: "composite key minted by string concatenation then stored as an id (${detail}) — a composite key belongs in two columns with a composite PRIMARY KEY, not one folded TEXT column"
+) <-
+    composite_key_finding(source_file, line, detail),
+    !composite_key_baseline(source_file, _).
+
+diag_stage("composite-key-as-string", "agent-turn").
+diag_stage("composite-key-as-string", "commit").
+diag_stage("composite-key-exceeded", "commit").
+
+? composite_key_finding(source_file, line, detail).
+? diag(path, line, severity, code, msg).

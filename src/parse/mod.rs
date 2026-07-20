@@ -513,12 +513,17 @@ impl Parser {
             self.next()?;
             return Ok(BodyItem::Neg(self.atom()?));
         }
-        // scan / match / ast / json builtins
+        // scan / match_line / ast / match_ast / json builtins. `match` and `sg`
+        // are the pre-rename spellings (2026-07-20): kept working as deprecated
+        // aliases (`legacy_name: true`) so existing programs never hard-break;
+        // `typecheck::normalize_body_item` warns on them, naming the new spelling.
         if let Some(Tok::Ident(s)) = self.peek() {
             if s == "scan" { return self.scan(); }
-            if s == "match" { return self.match_(); }
+            if s == "match_line" { return self.match_(false); }
+            if s == "match" { return self.match_(true); }
             if s == "ast" { return self.ast(); }
-            if s == "sg" { return self.sg(); }
+            if s == "match_ast" { return self.sg(false); }
+            if s == "sg" { return self.sg(true); }
             if s == "ast_yaml" { return self.ast_yaml(); }
             if s == "jsonp" { return self.jsonp(); }
             if s == "json" { return self.json(); }

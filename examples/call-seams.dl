@@ -20,7 +20,7 @@ m(f, n, l) <- type_entity(_, _, n, k, _, f, l), k =~ /function|method/.
 
 rel csite(file: file, line: int, callee: text).
 csite(f, l, C) <- scan("WORK", "src/engine.rs", f, rev),
-    sg(f, rev, :rust, "self.$C($$$A)", l).
+    match_ast(f, rev, :rust, "self.$C($$$A)", l).
 
 # attribute each call to its enclosing method (nearest decl at/above, per file)
 rel cabove(file: file, mline: int, mname: text, cline: int, callee: text).

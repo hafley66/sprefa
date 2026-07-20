@@ -35,7 +35,7 @@
 rel chapter_h1(chapter_path: file, number: int, title: text, heading_line: int).
 chapter_h1(chapter_path, int(num), title, heading_line) <-
     scan("WORK", "book/*.md", chapter_path, rev),
-    match(chapter_path, rev, /^# (?<num>\d+)\. (?<title>.+)$/, heading_line).
+    match_line(chapter_path, rev, /^# (?<num>\d+)\. (?<title>.+)$/, heading_line).
 
 # Keep only files DIRECTLY under book/. The glob `*` in "book/*.md" crosses `/`,
 # so book/math/NN-*.md, book/tutorial/NN-*.md, etc. also carry a numbered H1 and
@@ -49,7 +49,7 @@ chapter_dir(chapter_path, split(chapter_path, "/", -2)) <- chapter_h1(chapter_pa
 rel chapter_blurb_raw(chapter_path: file, blurb: text, blurb_line: int).
 chapter_blurb_raw(chapter_path, blurb, blurb_line) <-
     scan("WORK", "book/*.md", chapter_path, rev),
-    match(chapter_path, rev, /^> (?<blurb>.+)$/, blurb_line).
+    match_line(chapter_path, rev, /^> (?<blurb>.+)$/, blurb_line).
 
 # The subtitle = the FIRST blockquote (argmin over line): pick the min line,
 # then read the blurb at it.
@@ -76,7 +76,7 @@ chapter_num(number) <- chapter(number, _, _, _, _, _).
 rel lesson_h1(lesson_path: file, number: int, title: text, heading_line: int).
 lesson_h1(lesson_path, int(num), title, heading_line) <-
     scan("WORK", "book/tutorial/*.md", lesson_path, rev),
-    match(lesson_path, rev, /^# (?<num>\d+)\. (?<title>.+)$/, heading_line).
+    match_line(lesson_path, rev, /^# (?<num>\d+)\. (?<title>.+)$/, heading_line).
 
 # Parent-dir filter, same shape as chapter_dir (guards a future book/tutorial/
 # subdir from colliding on `number`).
@@ -86,7 +86,7 @@ lesson_dir(lesson_path, split(lesson_path, "/", -2)) <- lesson_h1(lesson_path, _
 rel lesson_blurb_raw(lesson_path: file, blurb: text, blurb_line: int).
 lesson_blurb_raw(lesson_path, blurb, blurb_line) <-
     scan("WORK", "book/tutorial/*.md", lesson_path, rev),
-    match(lesson_path, rev, /^> (?<blurb>.+)$/, blurb_line).
+    match_line(lesson_path, rev, /^> (?<blurb>.+)$/, blurb_line).
 
 rel lesson_blurb_line(lesson_path: file, blurb_line: int).
 lesson_blurb_line(lesson_path, min(blurb_line)) <- lesson_blurb_raw(lesson_path, _, blurb_line).
@@ -126,7 +126,7 @@ gen(readme, l0, l1, "{number}. [{title}]({slug}.md) — {blurb}") <-
 rel side_page_h1(page_path: file, number: int, title: text).
 side_page_h1(page_path, int(num), title) <-
     scan("WORK", "book/*/*.md", page_path, rev),
-    match(page_path, rev, /^# (?<num>\d+)\. (?<title>.+)$/, heading_line).
+    match_line(page_path, rev, /^# (?<num>\d+)\. (?<title>.+)$/, heading_line).
 rel side_page(parent_dir: text, number: int, slug: text, title: text).
 side_page(split(page_path, "/", -2), number, replace(split(page_path, "/", -1), ".md", ""), title) <-
     side_page_h1(page_path, number, title).
@@ -192,12 +192,12 @@ gen(dc, l0, l1, "    ({number}, \"{blurb}\", LESSON_{const_num}),") <-
 # gen is suppressed under --check/--lsp, so the on-disk zones stay as committed;
 # a chapter file added without a regen+commit is missing from every zone and
 # fires here. The zone-membership rels read the numbers ACTUALLY present between
-# each marker pair on disk (match over the whole file, scoped to the zone).
+# each marker pair on disk (match_line over the whole file, scoped to the zone).
 
 # book/README.md list-row numbers, scoped to the book-index zone.
 rel book_index_row(readme: file, number: int, line: int).
 book_index_row(readme, int(num), line) <- scan("WORK", "book/README.md", readme, rev),
-    match(readme, rev, /^(?<num>\d+)\. \[/, line).
+    match_line(readme, rev, /^(?<num>\d+)\. \[/, line).
 rel book_index_has(number: int).
 book_index_has(number) <- book_index_row(readme, number, line),
     book_index_zone(readme, l0, l1), line > l0, line < l1.
@@ -205,7 +205,7 @@ book_index_has(number) <- book_index_row(readme, number, line),
 # book/tutorial/README.md list-row numbers, scoped to the tutorial-index zone.
 rel tutorial_index_row(readme: file, number: int, line: int).
 tutorial_index_row(readme, int(num), line) <- scan("WORK", "book/tutorial/README.md", readme, rev),
-    match(readme, rev, /^(?<num>\d+)\. \[/, line).
+    match_line(readme, rev, /^(?<num>\d+)\. \[/, line).
 rel tutorial_index_has(number: int).
 tutorial_index_has(number) <- tutorial_index_row(readme, number, line),
     tutorial_index_zone(readme, l0, l1), line > l0, line < l1.
@@ -213,7 +213,7 @@ tutorial_index_has(number) <- tutorial_index_row(readme, number, line),
 # docs_cmd table-row numbers, scoped to each table's zone.
 rel docs_table_row(dc: file, number: int, line: int).
 docs_table_row(dc, int(num), line) <- scan("WORK", "src/docs_cmd.rs", dc, rev),
-    match(dc, rev, /^    \((?<num>\d+), /, line).
+    match_line(dc, rev, /^    \((?<num>\d+), /, line).
 rel chapters_table_has(number: int).
 chapters_table_has(number) <- docs_table_row(dc, number, line),
     chapters_table_zone(dc, l0, l1), line > l0, line < l1.
@@ -238,7 +238,7 @@ diag(path: lesson_path, line: 1, severity: "error", code: "docs-lessons-drift",
 # book/SUMMARY.md list-row numbers, scoped per zone (indented GitBook rows).
 rel summary_row(summary: file, number: int, line: int).
 summary_row(summary, int(num), line) <- scan("WORK", "book/SUMMARY.md", summary, rev),
-    match(summary, rev, /^  - \[(?<num>\d+)\. /, line).
+    match_line(summary, rev, /^  - \[(?<num>\d+)\. /, line).
 rel summary_lessons_has(number: int).
 summary_lessons_has(number) <- summary_row(summary, number, line),
     summary_lessons_zone(summary, l0, l1), line > l0, line < l1.

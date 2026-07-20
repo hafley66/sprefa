@@ -6,7 +6,7 @@
 # .agents/skills/sprf-add-language/SKILL.md between the lang-junctions
 # comment markers. comment_node joins each match, so the marker text inside a
 # string literal (or this file's own regex) can never mint a junction row —
-# only a real comment counts. Both match() and comment_node are 1-based lines.
+# only a real comment counts. Both match_line() and comment_node are 1-based lines.
 #
 #   Run:    dl examples/gen-lang-skill.dl
 #   Check:  dl examples/gen-lang-skill.dl --check   (drift rail: the slug set in
@@ -14,12 +14,12 @@
 # Rerun converges (gen writes only when bytes differ).
 
 # Raw text matches (source-extract rule; one rel = one rule kind, so the
-# comment_node join lives in the DERIVED rel below — a match rule body cannot
-# also join a rel). A marker inside a string literal CAN land here.
+# comment_node join lives in the DERIVED rel below — a match_line rule body
+# cannot also join a rel). A marker inside a string literal CAN land here.
 rel junction_text(src_path: file, marker_line: int, slug: text, what: text).
 junction_text(src_path, marker_line, slug, what) <-
     scan("WORK", "src/**/*.rs", src_path, rev),
-    match(src_path, rev, /LANG-JUNCTION\((?<slug>[a-z0-9-]+)\): (?<what>.+)$/, marker_line).
+    match_line(src_path, rev, /LANG-JUNCTION\((?<slug>[a-z0-9-]+)\): (?<what>.+)$/, marker_line).
 
 # A junction = a text match the grammar lexed as a comment.
 rel junction(src_path: file, marker_line: int, slug: text, what: text).
@@ -40,7 +40,7 @@ gen(skill_path, zone_start, zone_end, "- `{src_path}:{marker_line}` {slug}: {wha
 rel skill_row(skill_path: file, slug: text, row_line: int).
 skill_row(skill_path, slug, row_line) <-
     scan("WORK", ".agents/skills/sprf-add-language/SKILL.md", skill_path, rev),
-    match(skill_path, rev, /^- `[^`]+` (?<slug>[a-z0-9-]+): /, row_line).
+    match_line(skill_path, rev, /^- `[^`]+` (?<slug>[a-z0-9-]+): /, row_line).
 rel skill_has(slug: text).
 skill_has(slug) <- skill_row(skill_path, slug, row_line),
     skill_zone(skill_path, zone_start, zone_end),

@@ -37,6 +37,21 @@
 //!   - the sweep only ever touches the `idx_<rel>_<col>` naming convention
 //!     (`hand_authored_index_survives_the_sweep`);
 //!   - pruning reclaims real bytes (`pruning_reclaims_measurable_index_bytes`).
+//!
+//! Reverse-traversal residual (2026-07-20): raw co-occurrence never proposes
+//! the REVERSE column of an edge relation read by a closure or a
+//! self-referential recursive rule (`head(seed, to) <- head(seed, from),
+//! edge(from, to).` binds `to` exactly once per rule body) — measured on the
+//! live root's `rel_map_edge` at ~4,000x for a reverse walk with no index
+//! (`tests/it/reverse_traversal_plan.rs` pins the query-plan evidence
+//! deterministically; the ratio itself is reported there as advisory, not
+//! asserted, per the noise caveat in that file's header).
+//!   - a self-referential recursive rule's edge atom gets its reverse
+//!     column indexed (`reverse_column_of_a_recursive_walk_is_indexed`);
+//!   - a PK-prefix duplicate is swept even if it predates the policy —
+//!     i.e. was hand-inserted, standing in for a legacy index —
+//!     confirming the sweep has no "grandfather" exception
+//!     (`stale_pk_prefix_duplicate_index_is_swept_even_when_hand_inserted`).
 
 use rusqlite::Connection;
 use sprefa_v5::spine::StringId;
@@ -69,6 +84,19 @@ fn struct_src(n: usize) -> String {
     for i in 0..n {
         src.push_str(&format!("struct Struct{i:05};\n"));
     }
+    src
+}
+
+/// A chain of `n` distinct edges `nNNNNN -> nNNNNN+1`: `n` rows, `n` distinct
+/// `from` values, `n` distinct `to` values (all disjoint from each other),
+/// enough to clear both the tiny-rel floor and the low-selectivity cutoff on
+/// EITHER column. Trailing `seed n00000` line feeds the walk's base case.
+fn edge_chain_src(n: usize) -> String {
+    let mut src = String::new();
+    for i in 0..n {
+        src.push_str(&format!("edge n{i:05} n{:05}\n", i + 1));
+    }
+    src.push_str("seed n00000\n");
     src
 }
 
@@ -501,4 +529,91 @@ fn pruning_reclaims_measurable_index_bytes() {
     );
     assert!(index_delta > 0, "pruning must reclaim index bytes");
     assert!(db_delta > 0, "pruning must reclaim measurable db bytes on VACUUM");
+}
+
+// `edge` is read by a SELF-REFERENTIAL recursive rule in its canonical
+// shape: `walk(to) <- walk(from), edge(from, to).` binds `from` twice
+// (walk's own recursive atom, position 1; edge's position 0) but `to` only
+// once (edge's position 1) — raw co-occurrence alone proposes at most
+// idx_edge_from, never idx_edge_to, no matter how the fixture is sized.
+const REVERSE_TRAVERSAL_WALK: &str = r#"
+rel edge(from: text, to: text).
+edge(from, to) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /edge (?<from>\w+) (?<to>\w+)/, line).
+rel seed_of(node: text).
+seed_of(node) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /seed (?<node>\w+)/, line).
+rel walk(node: text).
+walk(node) <- seed_of(node).
+walk(to) <- walk(from), edge(from, to).
+? walk(node).
+"#;
+
+#[test]
+fn reverse_column_of_a_recursive_walk_is_indexed() {
+    let d = sandbox("rev_walk");
+    fs::write(d.join("src/a.rs"), edge_chain_src(BIG_FIXTURE_ROWS)).unwrap();
+    let db = d.join("db");
+    run(&d, &db, REVERSE_TRAVERSAL_WALK); // cold: index created before extraction fills rows
+    run(&d, &db, REVERSE_TRAVERSAL_WALK); // warm: stats probe runs against the filled rel
+
+    let conn = Connection::open(&db).unwrap();
+    let edge_idx = index_names(&conn, "rel_edge");
+    assert!(
+        edge_idx.iter().any(|n| n == "idx_edge_to"),
+        "a self-referential recursive rule's edge atom must get its REVERSE \
+         column indexed too — a graph walk is queried from either endpoint, \
+         but raw co-occurrence only ever sees the forward `from` variable in \
+         this canonical recursive shape: {edge_idx:?}"
+    );
+    assert!(
+        !edge_idx.iter().any(|n| n == "idx_edge_from"),
+        "`from` is the PK's leading column on this ROWID table (no key() \
+         narrowing, full-row PK) — the PK autoindex already covers it, so \
+         adding the reverse column as a candidate must not smuggle the \
+         forward one past the existing PK-prefix filter: {edge_idx:?}"
+    );
+    assert!(
+        object_bytes(&conn, "idx_edge_to") > 0,
+        "the created reverse index must carry real bytes, not an empty shell"
+    );
+}
+
+#[test]
+fn stale_pk_prefix_duplicate_index_is_swept_even_when_hand_inserted() {
+    // Task-3 finding: `create_auto_indexes`'s reconcile computes
+    // `wanted_names` fresh every tick from the CURRENT program and stats —
+    // it never trusts what already exists on disk — so a PK-prefix
+    // duplicate that predates today's filter (declare.rs filter #1, or any
+    // future policy) is swept exactly like every other stale idx_ entry,
+    // regardless of how it got there. This is a receipt for that existing
+    // behavior, not a fix: `idx_first_key_name` was ALREADY correctly
+    // absent under `covered_prefix_join_key_is_never_demanded` (this file);
+    // this test additionally proves the sweep removes one even when it is
+    // hand-inserted (standing in for a legacy index minted before the
+    // filter existed), which the "never demanded" test alone cannot show.
+    let d = sandbox("stale_prefix");
+    fs::write(d.join("src/a.rs"), struct_src(8)).unwrap();
+    let db = d.join("db");
+    run(&d, &db, COVERED_PREFIX_JOIN);
+    {
+        let conn = Connection::open(&db).unwrap();
+        conn.execute("CREATE INDEX idx_first_key_name ON rel_first_key(name)", [])
+            .unwrap();
+        assert!(
+            index_names(&conn, "rel_first_key").iter().any(|n| n == "idx_first_key_name"),
+            "setup: the hand-inserted index must exist before the next tick"
+        );
+    }
+
+    // Re-tick the SAME program: the reconcile sweep runs again regardless
+    // of whether anything in the program changed.
+    run(&d, &db, COVERED_PREFIX_JOIN);
+
+    let conn = Connection::open(&db).unwrap();
+    let first_key_idx = index_names(&conn, "rel_first_key");
+    assert!(
+        !first_key_idx.iter().any(|n| n == "idx_first_key_name"),
+        "a hand-inserted PK-prefix duplicate must be swept on the next \
+         reconcile, the same as any other idx_ entry the current demand \
+         set no longer wants: {first_key_idx:?}"
+    );
 }

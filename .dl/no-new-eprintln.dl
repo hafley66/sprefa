@@ -22,7 +22,7 @@
 rel eprintln_hit(source_file: file, line_number: int).
 eprintln_hit(source_file, line_number) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    match(source_file, source_rev, /eprintln!/, line_number).
+    match_line(source_file, source_rev, /eprintln!/, line_number).
 
 # Waiver comment lines (source rel; the range join lives in the derived rule
 # below — a source-op body cannot join other rels, the S6 sharp edge).
@@ -35,11 +35,11 @@ eprintln_waiver_line(source_file, waiver_line) <-
 # src/comment.rs keys on a line-leading marker), so a trailing
 # `eprintln!(...); // @eprintln-ok: reason` never registered — the axum-arc
 # gap, where two daemon_cmd sites needed whole-line conversion to take
-# effect. This match rule sees the tag anywhere after a `//` on the line,
+# effect. This match_line rule sees the tag anywhere after a `//` on the line,
 # trailing or whole-line; the two rules union into one waiver rel.
 eprintln_waiver_line(source_file, waiver_line) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    match(source_file, source_rev, /\/\/.*@eprintln-ok:/, waiver_line).
+    match_line(source_file, source_rev, /\/\/.*@eprintln-ok:/, waiver_line).
 
 # Waivered hits: @eprintln-ok: comment on the hit line or the line above.
 rel eprintln_waived(source_file: file, line_number: int).

@@ -41,18 +41,18 @@ rel route_scan(side: text, origin: text, route: text).
 # Express:  app.get("/users/:id", ...) — $M covers any verb method.
 route_scan("server", p, T) <-
     scan("WORK", "**/*.{ts,js}", p, rev),
-    sg(p, rev, :ts, "app.$M($T, $$$REST)").
+    match_ast(p, rev, :ts, "app.$M($T, $$$REST)").
 # Flask:    @app.route("/users/<id>")
 route_scan("server", p, T) <-
     scan("WORK", "**/*.py", p, rev),
-    sg(p, rev, :py, "@$APP.route($T, $$$REST)").
+    match_ast(p, rev, :py, "@$APP.route($T, $$$REST)").
 # fetch-style clients: fetch("/users/..."), axios.get('/users/...')
 route_scan("client", p, T) <-
     scan("WORK", "**/*.{ts,js,tsx}", p, rev),
-    sg(p, rev, :tsx, "fetch($T, $$$REST)").
+    match_ast(p, rev, :tsx, "fetch($T, $$$REST)").
 route_scan("client", p, T) <-
     scan("WORK", "**/*.{ts,js,tsx}", p, rev),
-    sg(p, rev, :tsx, "axios.$M($T, $$$REST)").
+    match_ast(p, rev, :tsx, "axios.$M($T, $$$REST)").
 
 # ---- the verdicts -----------------------------------------------------------
 # A client path whose normalized form matches a declared server route.

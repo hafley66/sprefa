@@ -9,7 +9,7 @@ at types (traits), not at file cuts.**
 
 ## 0. The reusable extraction idioms (dl, self-contained)
 
-Everything below is built from `match` over the target file — no SCIP, no index.
+Everything below is built from `match_line` over the target file — no SCIP, no index.
 Two idioms do all the work.
 
 **Decls + call sites + nearest-decl attribution.** A call/marker on line `cl`
@@ -19,10 +19,10 @@ is the same shape the `recompute-guard` rail uses.
 ```
 rel m(name, line).
 m(n, l) <- scan("WORK","src/engine.rs",f,rev),
-  match(f,rev,/(?m)^\s*(?:pub(?:\([a-z_]+\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(?P<n>[A-Za-z_]\w*)/, l).
+  match_line(f,rev,/(?m)^\s*(?:pub(?:\([a-z_]+\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(?P<n>[A-Za-z_]\w*)/, l).
 
 rel csite(line, callee).
-csite(l,c) <- scan("WORK","src/engine.rs",f,rev), match(f,rev,/self\.(?P<c>[a-z_]\w*)\s*\(/, l).
+csite(l,c) <- scan("WORK","src/engine.rs",f,rev), match_line(f,rev,/self\.(?P<c>[a-z_]\w*)\s*\(/, l).
 
 # enclosing method = nearest decl above, expressed as above-minus-has-closer
 rel above(mline, mname, cline, callee).
@@ -53,7 +53,7 @@ node2vec: `SPREFA_N2V_DIM=64 SPREFA_N2V_SEED=1 SPREFA_NODE_SIM_K=6`.
 | you want to know | signal | how | verdict from the engine.rs run |
 |---|---|---|---|
 | who orchestrates / who's a shared leaf | call-graph fan-in/out | `count` over `cedge` | useful (found tick/tick_paths hubs, refresh_rel leaf) |
-| which methods own which state | **field coupling (LCOM)** | `match self\.(field names)` → method↔field graph | **useful** — clean sub-struct candidates (repos, closure_cache, gen_journal) |
+| which methods own which state | **field coupling (LCOM)** | `match_line self\.(field names)` → method↔field graph | **useful** — clean sub-struct candidates (repos, closure_cache, gen_journal) |
 | soft "these belong together" | node2vec on `cedge` | components of `node_sim` ≥ 0.90 | recovers families, but groups by *role* (all call refresh_rel) |
 | hard mutual-recursion knots | `scc(cedge)` | multi-member SCCs | **0 here** — the self-call graph is a DAG (cuts won't break cycles) |
 | near-duplicate code | data coupling | method↔table/rel-name graph, node2vec | found the `*_rels_used` ×20, `*_rel_decls` ×21 dup families |
@@ -112,7 +112,7 @@ pointing at `RelKind` from the start; the wrong frame (file-splitting) hid it.
 - Throwaway exploration programs + python harnesses (scatter-vs-random,
   call-distance, signature-shape buckets, the cross-file god-file survey) lived in
   the session scratchpad; reconstruct from the snippets above — they are all
-  `match`-extract + a short aggregation.
+  `match_line`-extract + a short aggregation.
 
 ## 5. Cross-file calibration (so the numbers mean something)
 

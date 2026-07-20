@@ -22,13 +22,13 @@ arg_attr(line) <- scan("WORK", "src/cli/mod.rs", p, rev),
 # back-compat alias, excluded from the public table.
 rel hidden_attr(line: int).
 hidden_attr(line) <- scan("WORK", "src/cli/mod.rs", p, rev),
-  match(p, rev, /#\[arg\([^)]*hide = true/, line).
+  match_line(p, rev, /#\[arg\([^)]*hide = true/, line).
 
 # A struct field decl: `    fieldname: Type`. Trailing `_` (raw-ident workaround,
 # e.g. `move_`) is dropped so the kebab name matches clap's derived long flag.
 rel field_decl(line: int, fname: text).
 field_decl(line, fname) <- scan("WORK", "src/cli/mod.rs", p, rev),
-  match(p, rev, /^    (?<fname>[a-z0-9]+(?:_[a-z0-9]+)*)_*: /, line).
+  match_line(p, rev, /^    (?<fname>[a-z0-9]+(?:_[a-z0-9]+)*)_*: /, line).
 
 # A flag = a field whose immediately-preceding line is a NON-hidden
 # `#[arg(long...)]`. That adjacency excludes the bare `programs` positional (no
@@ -39,10 +39,10 @@ flag(name) <- arg_attr(la), field_decl(lf, fname), lf = la + 1,
   !hidden_attr(la),
   name = replace(fname, "_", "-").
 
-# Every README flag row, with its `--flag` name (SOURCE rule: scan+match only).
+# Every README flag row, with its `--flag` name (SOURCE rule: scan+match_line only).
 rel readme_row_raw(p: file, line: int, flag: text, row: text).
 readme_row_raw(p, line, flag, row) <- scan("WORK", "README.md", p, rev),
-  match(p, rev, /(?<row>\| `--(?<flag>[a-z][a-z0-9-]*)[^|]*\| .+)/, line).
+  match_line(p, rev, /(?<row>\| `--(?<flag>[a-z][a-z0-9-]*)[^|]*\| .+)/, line).
 
 # Scope the rows to the block. Joining on the flag name keeps only rows whose
 # flag still exists in the struct, so a removed flag drops out of the table.

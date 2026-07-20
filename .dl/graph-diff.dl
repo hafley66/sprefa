@@ -27,9 +27,12 @@
 # WORK, for symmetric resolution) is DEFERRED, not built -- run committed-vs-
 # committed for a clean diff, or accept WORK's scip advantage.
 #
-# df member edges are NAME-joined, never raw-id-joined: df_node ids are
-# rev-salted (`{rev}\u{1}{raw}`), so base and head ids are disjoint by
-# construction and a raw-id diff is meaningless. The fill edge below resolves
+# df member edges are NAME-joined, not raw-id-joined. This predates the
+# composite-key fix: ids USED to be rev-salted (`{rev}\u{1}{raw}`), making base
+# and head ids disjoint by construction so a raw-id diff was meaningless. Ids
+# are now shared across revs with `rev` as its own column, so an id-join is
+# expressible here — the name-join is retained but no longer forced, and
+# whether to switch is an open call. The fill edge below resolves
 # the constructed type's NAME to its owner sym within the SAME (repo, rev), the
 # same shape flow-panel.dl's member edges use.
 #

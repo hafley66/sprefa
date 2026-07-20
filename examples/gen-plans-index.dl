@@ -108,7 +108,7 @@ code_index_zone(index_path, zone_l0, zone_l1) <-
 rel plans_index_row(index_path: file, row_ref: text, row_line: int).
 plans_index_row(index_path, row_ref, row_line) <-
     scan("WORK", "PLANS.md", index_path, rev),
-    match(index_path, rev, /^- `[a-z-]+` (?<row_ref>plans\/[^:]+:\d+) — /, row_line).
+    match_line(index_path, rev, /^- `[a-z-]+` (?<row_ref>plans\/[^:]+:\d+) — /, row_line).
 rel plans_index_has(row_ref: text).
 plans_index_has(row_ref) <- plans_index_row(index_path, row_ref, row_line),
     plans_index_zone(index_path, zone_l0, zone_l1), row_line > zone_l0, row_line < zone_l1.
@@ -134,7 +134,7 @@ diag(path: index_path, line: row_line, severity: "error", code: "plans-index-orp
 rel code_index_row(index_path: file, row_ref: text, row_line: int).
 code_index_row(index_path, row_ref, row_line) <-
     scan("WORK", "PLANS.md", index_path, rev),
-    match(index_path, rev, /^- [a-z-]+ (?<row_ref>src\/[^:]+:\d+) — /, row_line).
+    match_line(index_path, rev, /^- [a-z-]+ (?<row_ref>src\/[^:]+:\d+) — /, row_line).
 rel code_index_has(row_ref: text).
 code_index_has(row_ref) <- code_index_row(index_path, row_ref, row_line),
     code_index_zone(index_path, zone_l0, zone_l1), row_line > zone_l0, row_line < zone_l1.

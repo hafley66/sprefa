@@ -11,7 +11,7 @@ const DL: &str = env!("CARGO_BIN_EXE_dl");
 
 const BAN_DL: &str = r#"
 diag(path, line, severity: "error", code: "no-dbg", msg: "dbg!() left in code", hint: "remove it") <-
-  scan("WORK", "src/**/*.rs", path, rev), sg(path, rev, :rust, "dbg!($X)", line).
+  scan("WORK", "src/**/*.rs", path, rev), match_ast(path, rev, :rust, "dbg!($X)", line).
 "#;
 
 /// Fresh sandbox dir under the system temp dir, unique per test.

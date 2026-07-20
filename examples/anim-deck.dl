@@ -7,7 +7,7 @@
 
 rel seen(path: file).
 seen(path) <- scan("WORK", "sprefa/src/**/*.rs", path, rev),
-  match(path, rev, /./, line).
+  match_line(path, rev, /./, line).
 
 # Non-variant edges between plain-ident type names (variant nodes like
 # `Tok::Ident` are leaf noise and collide with d2 label syntax).

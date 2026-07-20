@@ -790,6 +790,74 @@ sites but not against new code. **missing** = nothing.
   not after), never a global static across roots, and never skip the
   within-batch collision guard by filtering before it runs.
 
+## 26. Composite key minted by string concatenation, stored as an id
+
+- WHAT IT LOOKS LIKE: two logically separate values (a raw id and a
+  disambiguator like a rev, or two other fields that together identify a
+  row) folded into ONE string via `format!`, then that string persisted as
+  an `id`/`key`/`sym` column — instead of a composite PRIMARY KEY over two
+  real columns. The fold is invisible at the call site (it typechecks, it
+  round-trips, nothing crashes) and only shows up as damage downstream: rows
+  that should join on identity can't, and the `_strings` interning table
+  carries a full extra copy of every value for each folded variant.
+- HOW IT BIT US (2026-07-19/20): `salt_rev` (src/engine/extract/mod.rs:978,
+  `fn salt_rev(id: &str, rev: &str) -> String { format!("{rev}\u{1}{id}") }`)
+  folded a (rev, raw id) pair into one TEXT column instead of a composite
+  PRIMARY KEY, written into `rel_df_node_rev.id` and four sibling `_rev`
+  twins (`df_node_repo_rev`, `df_arg_rev`, `df_field_rev`, `df_lit_rev`).
+  Measured damage: 314,892 of 939,845 `_strings` rows (33.5%, 15MB) existed
+  only to hold that one folded form, and `rel_df_node`/`rel_df_node_rev` had
+  ZERO joinable rows on `id` despite describing the same nodes. A dataflow
+  rail (`df_lit`/`df_edge`) cannot see this: checked against the live root db
+  before writing the rail, `df_lit` holds 13,438 `lit` rows, 40 `template`,
+  22 `concat`, and 0 rows whose text contains `{`/`}` — Rust `format!` is not
+  lifted into `df_lit` at all (the 62 template/concat rows are TS-only), so
+  the detector had to be structural (`sg` over the Rust AST), not a
+  dataflow query.
+- THE LAW: a value that identifies a row by combining two or more distinct
+  fields belongs in a composite PRIMARY KEY over separate columns, never in
+  one TEXT column built by string concatenation — the fold is unrecoverable
+  to a query planner even when it is "recoverable by eye."
+- THE RAIL: half (warn-tier, advisory, tunable). `.dl/composite-key-string.dl`,
+  three arms unioned: (1) a `format!` bound via `let $NAME = format!(...)`
+  where `$NAME` reads as `(?i)\b(id|key|sym|handle|slug)\b`, or sitting
+  inside a fn whose OWN last `::`-segment reads the same way (anchored so
+  `_id`/`_key`/... must be a whole underscore-delimited segment, not a bare
+  substring — unanchored, `validate_brands` and
+  `install_busy_verdict_handler` false-matched on "id" inside "valid" and
+  "handle" inside "handler"), with the format string interpolating 2+
+  holes; (2) a control-character separator (`\u{0}`/`\u{1}`/`\x1f`) mixed
+  with 2+ holes in one format string — `salt_rev` fires here, at
+  src/engine/extract/mod.rs:979 (the `format!` line itself, one below the fn
+  signature cited above), confirmed via a HEAD-scoped run after the fn was
+  deleted from WORK by an unrelated concurrent edit mid-session. `::` was
+  measured and dropped from arm 2: at full-repo scale it produced 39 hits,
+  37 of them the repo's own accepted `sym` convention
+  (`{repo}::{file}::{kind}::{name}`), which would have told a contributor to
+  un-fix the engine's own idiom. Arm 3 (join a `RelDecl` column literally
+  named `id`/`*_id` to the writer expression that fills it) is NOT
+  implemented: `RelDecl` schemas are static name/type pairs with no
+  structural link to the `Vec<Value>`-by-position code that fills them
+  elsewhere, and dl's regex constraint takes a literal pattern, not a second
+  bound text column, so there is no `contains(text, text)` operator to fall
+  back on even for the weak textual-mention case. Baseline ratchet (mirrors
+  `.dl/no-new-eprintln.dl`): 14 live findings on WORK, one per file, at zero
+  drift. One of the 14 (src/engine/family/mod.rs:233,
+  `format!("{rel}\u{1}{col_list}")` as a cache key) is a genuine NEW instance
+  of the same shape that landed in a file this rail's author does not own,
+  in the SAME session the rail was written — the detector fired on a live
+  contributor site, not only the motivating one. Three of `src/effect.rs`'s
+  hits (lines 527/612/644) are the one FALSE-POSITIVE class found: their
+  folded string feeds `blake3::hash(...)` immediately, never reads back as
+  a raw id, so the fold produces an opaque content digest, not an
+  unsplittable composite key — a genuinely different, accepted pattern the
+  message wording does not yet distinguish.
+- SAY THIS TO AN AGENT: never fold two identifying fields into one string
+  with `format!` and store the result as an id/key column — declare a
+  composite PRIMARY KEY over the separate columns instead; a control
+  character or delimiter chosen specifically so it "never occurs" in either
+  field is the loudest possible tell that this is happening.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
@@ -818,6 +886,7 @@ sites but not against new code. **missing** = nothing.
 | 22 | effect-free root frozen unsettled | enforced | — (settle-aware poll gate + `effect_free_root_settles_after_boot`, failed pre-fix) |
 | 23 | one-shot positional swallowed by daemon program set | missing | erase-no-daemon-split arc: carry the positional through the daemon RPC, or fall through to in-process (with a loud line) when the positional is not the root's watched set; fail-pre-fix it-test = one-shot a file whose rels are disjoint from `.dl/*.dl` under a live daemon and assert its own query rels come back |
 | 24 | TLS-parked span guard dropped in thread-local destruction | enforced | — (ManuallyDrop park + explicit exit paths, 9ddf1280; abnormal-death coverage in src/jobq/tests_cancel.rs) |
+| 26 | composite key minted by string concatenation, stored as an id | half | promote `.dl/composite-key-string.dl` to error severity once the 14-row baseline is waiver-audited; arm 3 (declared-column join) not implemented — no fact links a `RelDecl` column to its writer expression; distinguish the hash-digest false-positive class (src/effect.rs:527/612/644) from a true raw-id fold in the message wording |
 
 ## How a new rail gets born here
 

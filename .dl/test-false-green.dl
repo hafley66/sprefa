@@ -1,0 +1,249 @@
+# Rail: a test that CAN report pass without testing anything.
+#
+# Incident (2026-07-20). Three "green" results in one session meant nothing:
+#   1. `verify.sh` stamped the tree verified having never run the 978-test `it`
+#      binary — `cargo test` aborts remaining targets at the first failing one,
+#      so one flaky `--lib` test hid the whole integration suite. Fixed with
+#      --no-fail-fast; not this rail's job (that one is a harness bug).
+#   2. `propose::tests::symbol_ranges_subset_of_ast_on_engine_rs` reported PASS
+#      in 0.00s. It read `{CARGO_MANIFEST_DIR}/../index.scip`, a path that
+#      stopped existing at the v5 lift (2026-07-01) when the crate became the
+#      repo root, and on a load miss did `Err(_) => { warn; return; }`. It had
+#      been asserting nothing for weeks while reporting success.
+#   3. `extract_cache::df_twins_salt_ids_by_rev_and_join_within_a_rev` asserted
+#      the PRE-change design after that design was inverted.
+#
+# Clippy cannot see any of this. Its only adjacent lint is
+# `assertions_on_constants` (assert!(true)); there is no rustc/clippy lint for
+# "no assertion in a #[test]", "early return past the asserts", or "#[ignore]
+# parking a known bug". Hence a rail.
+#
+# The law: a #[test] must assert on EVERY path through its body, and an
+# #[ignore] must name an ENVIRONMENTAL need, never an unfixed defect.
+
+# SCOPE: tests/** AND src/**. The earlier call_def-based draft could not reach
+# src/ at all —
+# `call_def` does not emit functions inside `#[cfg(test)] mod tests` — verified
+# 2026-07-20: between src/ast.rs:548 (`#[cfg(test)] mod tests`) and :650 the
+# only call_def row is `SpliceMode.tag` at :643, so every unit test in that
+# module is invisible to the call graph. Including src/** here does not extend
+# coverage; it manufactures false positives, because a `#[test]` attribute then
+# binds to the nearest VISIBLE fn, which is some unrelated method far below.
+# Consequence worth knowing beyond this rail: the 617-test unit layer cannot be
+# reached by ANY rail built on call_def. Covering it needs either cfg(test)
+# extraction in the engine or a span model that does not depend on call_def.
+rel src_scanned(file: file).
+src_scanned(f) <- scan("WORK", "tests/**/*.rs", f, rev).
+
+# --- fn spans from the resolved def graph -------------------------------------
+# call_def carries (repo, sym, kind, file, line, end) — a REAL end line, so span
+# containment is exact and needs none of the "nearest decl above" hackery that
+# the recompute-guard rail had to use (and that closures defeated there).
+# Closures are still excluded: a closure inside a test body is not the test.
+rel fn_span(file: file, start: int, end: int).
+fn_span(f, s, e) <- scan("WORK", "tests/**/*.rs", f, rev),
+    match_ast(f, rev, :rust, "fn $NAME($$$PARAMS) { $$$BODY }", line: s, end_line: e).
+fn_span(f, s, e) <- scan("WORK", "src/**/*.rs", f, rev),
+    match_ast(f, rev, :rust, "fn $NAME($$$PARAMS) { $$$BODY }", line: s, end_line: e).
+
+# --- which fns are tests ------------------------------------------------------
+# `#[test]` sits above the fn, possibly with #[ignore]/#[should_panic] between.
+# Bind the attribute to the NEAREST fn below it, the mirror of the recompute
+# rail's nearest-above, and exclude closures so an inner closure cannot steal
+# the attribute from the test that owns it.
+rel test_attr(file: file, line: int).
+test_attr(f, l) <- scan("WORK", "tests/**/*.rs", f, rev), match_ast(f, rev, :rust, "#[test]", line: l).
+test_attr(f, l) <- scan("WORK", "src/**/*.rs", f, rev), match_ast(f, rev, :rust, "#[test]", line: l).
+rel attr_fn_below(file: file, attrline: int, start: int).
+attr_fn_below(f, al, s) <- test_attr(f, al), fn_span(f, s, _), al < s.
+rel attr_fn_closer(file: file, attrline: int, start: int).
+attr_fn_closer(f, al, s) <- attr_fn_below(f, al, s), fn_span(f, mid, _), al < mid, mid < s.
+rel test_fn(file: file, start: int, end: int).
+test_fn(f, s, e) <- attr_fn_below(f, al, s), !attr_fn_closer(f, al, s), fn_span(f, s, e).
+
+# --- evidence that a body actually checks something ---------------------------
+# `.unwrap()`/`.expect()` count: they panic on failure, so they ARE assertions
+# about the value they unwrap. A test made only of unwraps is weak but not a
+# false green, and this rail is about false greens.
+rel assert_site(file: file, line: int).
+assert_site(f, l) <- scan("WORK", "tests/**/*.rs", f, rev), match_ast(f, rev, :rust, "assert!($$$A)", line: l).
+assert_site(f, l) <- scan("WORK", "src/**/*.rs", f, rev), match_ast(f, rev, :rust, "assert!($$$A)", line: l).
+assert_site(f, l) <- scan("WORK", "tests/**/*.rs", f, rev), match_ast(f, rev, :rust, "assert_eq!($$$A)", line: l).
+assert_site(f, l) <- scan("WORK", "src/**/*.rs", f, rev), match_ast(f, rev, :rust, "assert_eq!($$$A)", line: l).
+assert_site(f, l) <- scan("WORK", "tests/**/*.rs", f, rev), match_ast(f, rev, :rust, "assert_ne!($$$A)", line: l).
+assert_site(f, l) <- scan("WORK", "src/**/*.rs", f, rev), match_ast(f, rev, :rust, "assert_ne!($$$A)", line: l).
+assert_site(f, l) <- scan("WORK", "tests/**/*.rs", f, rev), match_ast(f, rev, :rust, "panic!($$$A)", line: l).
+assert_site(f, l) <- scan("WORK", "src/**/*.rs", f, rev), match_ast(f, rev, :rust, "panic!($$$A)", line: l).
+assert_site(f, l) <- scan("WORK", "tests/**/*.rs", f, rev), match_ast(f, rev, :rust, "unreachable!($$$A)", line: l).
+assert_site(f, l) <- scan("WORK", "src/**/*.rs", f, rev), match_ast(f, rev, :rust, "unreachable!($$$A)", line: l).
+assert_site(f, l) <- scan("WORK", "tests/**/*.rs", f, rev), match_ast(f, rev, :rust, "prop_assert!($$$A)", line: l).
+assert_site(f, l) <- scan("WORK", "src/**/*.rs", f, rev), match_ast(f, rev, :rust, "prop_assert!($$$A)", line: l).
+assert_site(f, l) <- scan("WORK", "tests/**/*.rs", f, rev), match_ast(f, rev, :rust, "proptest!($$$A)", line: l).
+assert_site(f, l) <- scan("WORK", "src/**/*.rs", f, rev), match_ast(f, rev, :rust, "proptest!($$$A)", line: l).
+assert_site(f, l) <- scan("WORK", "tests/**/*.rs", f, rev), match_ast(f, rev, :rust, "$X.unwrap()", line: l).
+assert_site(f, l) <- scan("WORK", "src/**/*.rs", f, rev), match_ast(f, rev, :rust, "$X.unwrap()", line: l).
+assert_site(f, l) <- scan("WORK", "tests/**/*.rs", f, rev), match_ast(f, rev, :rust, "$X.expect($$$A)", line: l).
+assert_site(f, l) <- scan("WORK", "src/**/*.rs", f, rev), match_ast(f, rev, :rust, "$X.expect($$$A)", line: l).
+
+rel should_panic_attr(file: file, line: int).
+should_panic_attr(f, l) <- scan("WORK", "tests/**/*.rs", f, rev), match_ast(f, rev, :rust, "#[should_panic]", line: l).
+should_panic_attr(f, l) <- scan("WORK", "src/**/*.rs", f, rev), match_ast(f, rev, :rust, "#[should_panic]", line: l).
+
+
+rel sp_fn_below(file: file, attrline: int, start: int).
+sp_fn_below(f, al, s) <- should_panic_attr(f, al), fn_span(f, s, _), al < s.
+rel sp_fn_closer(file: file, attrline: int, start: int).
+sp_fn_closer(f, al, s) <- sp_fn_below(f, al, s), fn_span(f, mid, _), al < mid, mid < s.
+
+rel test_asserts(file: file, start: int).
+test_asserts(f, s) <- test_fn(f, s, e), assert_site(f, l), s <= l, l <= e.
+# #[should_panic] tests assert by their attribute; the panic IS the assertion.
+# Bound to the nearest fn below, same nearest-below shape as test_attr, so no
+# arithmetic line-distance guess is needed.
+test_asserts(f, s) <- sp_fn_below(f, al, s), !sp_fn_closer(f, al, s).
+
+# --- arm 1: a #[test] whose body never checks anything ------------------------
+rel asserts_nothing_finding(file: file, line: int).
+asserts_nothing_finding(f, s) <- test_fn(f, s, _), !test_asserts(f, s).
+
+# --- arm 2: a skip path that returns success ----------------------------------
+# Matches a BARE `return;`, not a specific skip idiom. The first draft keyed on
+# `Err(_) => ... return;` on one line and caught NOTHING — not even the SCIP
+# incident that motivated the rail, whose arm spans three lines, and not the two
+# the group-4 audit found independently:
+#   tests/it/scip_name.rs:80   `let Some(ra) = find_ra() else { eprintln!(..); return; };`
+#   tests/it/seam_bench.rs:162 `if !root.exists() { eprintln!(..); return; }`
+# Neither is an `Err` arm. The invariant that actually generalizes is that a
+# test should run to its end; every early exit is a path that reports PASS
+# having skipped the assertions below it. A genuinely environmental precondition
+# belongs behind #[ignore] with the need NAMED, so the run reports it as
+# excluded rather than counting it as coverage.
+rel bare_return_line(file: file, line: int).
+bare_return_line(f, l) <- scan("WORK", "tests/**/*.rs", f, rev), match_ast(f, rev, :rust, "return;", line: l).
+bare_return_line(f, l) <- scan("WORK", "src/**/*.rs", f, rev), match_ast(f, rev, :rust, "return;", line: l).
+rel silent_skip_finding(file: file, line: int).
+silent_skip_finding(f, l) <- test_fn(f, s, e), bare_return_line(f, l), s <= l, l <= e.
+
+# --- arm 3: an #[ignore] parking a known defect -------------------------------
+# ENV-GATED is legitimate (network, rust-analyzer, a specific OS, a corpus).
+# Parking an unfixed BUG behind #[ignore] is how a real defect goes quiet: see
+# `retraction_props::equivalence_and_memo_hold_at_every_step_high_volume`,
+# ignored as "blocked on router empty-input footprint bug" with the reproducing
+# seed sitting inside the attribute string.
+# THE ONE `match_line` IN THIS FILE, and it marks a real engine gap rather than
+# laziness. The predicate is on the ignore reason's TEXT CONTENT. match_ast
+# matches the shape `#[ignore = $REASON]` and yields its line, but
+# metavariables are not exportable as output args (match_ast outputs are
+# line/col/end_line/end_col/id only), so a bound $REASON cannot be
+# regex-filtered downstream. Until match_ast can export a metavar's text, a
+# content predicate over a matched string has no structural spelling. THIS is
+# the shape of the remaining legitimate `match_line` use.
+rel ignore_hiding_bug(file: file, line: int).
+ignore_hiding_bug(f, l) <- scan("WORK", "tests/**/*.rs", f, rev),
+    match_line(f, rev, /#\[ignore[^\]]*(bug|blocked|broken|fails until|unfixed|FIXME|TODO)/, l).
+ignore_hiding_bug(f, l) <- scan("WORK", "src/**/*.rs", f, rev),
+    match_line(f, rev, /#\[ignore[^\]]*(bug|blocked|broken|fails until|unfixed|FIXME|TODO)/, l).
+
+# ── Ratchet baselines (mirrors no-new-eprintln.dl and composite-key-string.dl) ─
+# Measured 2026-07-20 on WORK, the day this rail was written: 50 findings over
+# the tree the audit covered (39 silent skips, 8 assert-nothing tests, 3
+# #[ignore]s parking a defect). Every one is PRE-EXISTING — this rail landed
+# after them and none was introduced by the session that built it.
+#
+# They are grandfathered per file, NOT waived. Each row is a debt with a name.
+# A file over its baseline errors at file-head; a file with NO baseline row
+# errors per hit line, so a brand-new false green still blocks a commit on day
+# one. Lower a row when a commit shrinks the count; delete rows that reach 0.
+# Rows only ever go down. Raising one is the defect this rail exists to stop.
+#
+# The 39 silent skips are one shape: an early exit on a missing external tool
+# (rust-analyzer, a language toolchain, a vendored corpus) with no #[ignore].
+# `oracle_go.rs`/`oracle_ts.rs` module docs call this INTENTIONAL; the
+# documented rationale IS the anti-pattern, because a run that skips them
+# counts them as coverage. The fix is `#[ignore = "<the tool it needs>"]`,
+# which reports them as excluded instead. Tracked in plans/2026-07-20-test-audit.md.
+
+rel silent_skip_count(file: file, hits: int).
+silent_skip_count(f, count(line)) <- silent_skip_finding(f, line).
+
+rel silent_skip_baseline(file: file, allowed: int).
+silent_skip_baseline("src/parse/mod.rs", 2).
+silent_skip_baseline("src/propose/mod.rs", 1).
+silent_skip_baseline("tests/it/budget_cpu.rs", 1).
+silent_skip_baseline("tests/it/daemon.rs", 1).
+silent_skip_baseline("tests/it/flow_go_dispatch.rs", 2).
+silent_skip_baseline("tests/it/flow_py_dispatch.rs", 2).
+silent_skip_baseline("tests/it/flow_xlang_scip_real.rs", 1).
+silent_skip_baseline("tests/it/oracle_corpus.rs", 10).
+silent_skip_baseline("tests/it/oracle_go.rs", 2).
+silent_skip_baseline("tests/it/oracle_kotlin.rs", 2).
+silent_skip_baseline("tests/it/oracle_kotlin_parity.rs", 2).
+silent_skip_baseline("tests/it/oracle_madge.rs", 1).
+silent_skip_baseline("tests/it/oracle_python.rs", 3).
+silent_skip_baseline("tests/it/oracle_rust.rs", 3).
+silent_skip_baseline("tests/it/oracle_ts.rs", 2).
+silent_skip_baseline("tests/it/perf_stress.rs", 1).
+silent_skip_baseline("tests/it/perf_stress_c.rs", 1).
+silent_skip_baseline("tests/it/scip_name.rs", 1).
+silent_skip_baseline("tests/it/seam_bench.rs", 1).
+
+rel asserts_nothing_count(file: file, hits: int).
+asserts_nothing_count(f, count(line)) <- asserts_nothing_finding(f, line).
+
+rel asserts_nothing_baseline(file: file, allowed: int).
+asserts_nothing_baseline("src/daemon/mod.rs", 1).
+asserts_nothing_baseline("src/engine/ownership.rs", 1).
+asserts_nothing_baseline("src/engine/pipeline/stage.rs", 1).
+asserts_nothing_baseline("src/graph/typegraph/go.rs", 1).
+asserts_nothing_baseline("src/graph/typegraph/ts/flow.rs", 1).
+asserts_nothing_baseline("src/trace.rs", 1).
+asserts_nothing_baseline("tests/it/call_golden.rs", 1).
+asserts_nothing_baseline("tests/it/family_scaling_probe.rs", 1).
+
+rel ignore_bug_count(file: file, hits: int).
+ignore_bug_count(f, count(line)) <- ignore_hiding_bug(f, line).
+
+rel ignore_bug_baseline(file: file, allowed: int).
+ignore_bug_baseline("src/propose/mod.rs", 1).
+ignore_bug_baseline("tests/it/daemon.rs", 1).
+# The router stale-rel bug: an empty call-family input rel on the tick that
+# first populates the router memo leaves that rel out of the memo footprint, so
+# later inserts never rerun the rule and the public rel stays stale. The
+# reproducing seed sits in the #[ignore] string and in
+# tests/proptest-regressions/retraction_props.txt. This is the one baseline row
+# that parks a KNOWN CORRECTNESS DEFECT rather than a missing tool.
+ignore_bug_baseline("tests/it/retraction_props.rs", 1).
+
+# --- diagnostics: over baseline, or no baseline at all ------------------------
+diag(path: f, line: 1, severity: "error", code: "test-silent-skip-exceeded",
+     msg: "bare `return;` skip paths inside #[test] bodies grew past this file's grandfathered baseline — a test must assert on every path. Assert the precondition, or move the test behind #[ignore] with the environmental need named") <-
+    silent_skip_count(f, hits), silent_skip_baseline(f, allowed), hits > allowed.
+
+diag(path: f, line: l, severity: "error", code: "test-silent-skip",
+     msg: "bare `return;` inside a #[test] body — a path that exits reporting PASS without reaching the assertions. Assert the precondition instead, or move the test behind #[ignore] with the environmental need named") <-
+    silent_skip_finding(f, l), !silent_skip_baseline(f, _).
+
+diag(path: f, line: 1, severity: "error", code: "test-asserts-nothing-exceeded",
+     msg: "#[test] bodies with no assertion grew past this file's grandfathered baseline — a test that cannot fail is not a test") <-
+    asserts_nothing_count(f, hits), asserts_nothing_baseline(f, allowed), hits > allowed.
+
+diag(path: f, line: s, severity: "error", code: "test-asserts-nothing",
+     msg: "#[test] body contains no assert!/assert_eq!/panic!/unwrap/expect and is not #[should_panic] — it cannot fail, so it is not a test") <-
+    asserts_nothing_finding(f, s), !asserts_nothing_baseline(f, _).
+
+diag(path: f, line: 1, severity: "error", code: "ignore-parks-a-bug-exceeded",
+     msg: "#[ignore]s naming an unfixed defect grew past this file's grandfathered baseline — fix the bug, or file it and cite the issue in the reason") <-
+    ignore_bug_count(f, hits), ignore_bug_baseline(f, allowed), hits > allowed.
+
+diag(path: f, line: l, severity: "error", code: "ignore-parks-a-bug",
+     msg: "#[ignore] reason names an unfixed defect rather than an environmental need — the bug went quiet instead of getting fixed. Fix it, or file it and cite the issue in the reason") <-
+    ignore_hiding_bug(f, l), !ignore_bug_baseline(f, _).
+
+diag_stage("test-silent-skip", "commit").
+diag_stage("test-silent-skip-exceeded", "commit").
+diag_stage("test-asserts-nothing", "commit").
+diag_stage("test-asserts-nothing-exceeded", "commit").
+diag_stage("ignore-parks-a-bug", "commit").
+diag_stage("ignore-parks-a-bug-exceeded", "commit").
+
+? diag(path, line, severity, code, msg).

@@ -16,7 +16,7 @@ rel dedup_insert_gate(source_file: file, line_number: int).
 # the receiver identifier; the gate body is ignored.
 dedup_insert_gate(source_file, line_number) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    sg(source_file, source_rev, :rust, "if $SET.insert($$$K) { $$$B }", line: line_number).
+    match_ast(source_file, source_rev, :rust, "if $SET.insert($$$K) { $$$B }", line: line_number).
 
 # Waiver: @dedup-key-complete: in a comment within the three lines above the
 # insert gate. Split into a pure-scan rel + a derived join (S6 — a source

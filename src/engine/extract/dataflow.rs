@@ -87,11 +87,13 @@ impl Engine {
         let i = |n: u32| Value::Int(n as i64);
         // Opaque id-handle columns (df_node.id and every column that carries one:
         // df_edge.from/to, df_arg.call/arg, df_field.id/value, df_param.id,
-        // df_lit.id, df_node_repo.id, and the rev-salted twins) intern through
-        // one `SymSink` so joins on them are int compares. The text these ids
-        // are BUILT from (fn_sym, var, kind, file, ...) stays plain text — only
-        // the opaque handle itself interns. `Db::flush_syms` drains the sink
-        // into ONE batched `_strings` insert below, so `sym(id)` decodes.
+        // df_lit.id, df_node_repo.id, and their `_rev` twins — the twin id
+        // columns carry the SAME raw id, never a rev-folded string) intern
+        // through one `SymSink` so joins on them are int compares. The text
+        // these ids are BUILT from (fn_sym, var, kind, file, ...) stays plain
+        // text — only the opaque handle itself interns. `Db::flush_syms` drains
+        // the sink into ONE batched `_strings` insert below, so `sym(id)`
+        // decodes.
         let mut sink = spine::SymSink::new();
         let mut sym = |s: &str| Value::Int(sink.sym(s).cell());
         let mut node_rows: Vec<Vec<Value>> = Vec::new();
@@ -104,11 +106,13 @@ impl Engine {
         let mut arg_rows: Vec<Vec<Value>> = Vec::new();
         let mut field_rows: Vec<Vec<Value>> = Vec::new();
         let mut lit_rows: Vec<Vec<Value>> = Vec::new();
-        // Rev-carrying twins (D5.4). Every id-valued column is salted by rev so a
-        // file byte-identical at two revs emits DISJOINT ids per rev (the raw ids
-        // collide and would cross-wire base into head). Legacy rows above keep raw
-        // ids. Twin dedup keys carry rev, so one file at two revs emits its twin
-        // rows once PER rev.
+        // Rev-carrying twins (D5.4). `rev` is a plain trailing column and every
+        // id-valued column carries the SAME raw id `df_node`/`df_arg`/... use
+        // (never salted) — a downstream cross-rel join (`df_arg_rev.call =
+        // df_node_rev.id`) matches the legacy join shape exactly, it just needs
+        // `AND rev = rev` to stay rev-scoped. Twin dedup keys carry rev, so one
+        // file at two revs emits its twin rows once PER rev (the `(id, rev)`
+        // primary key on `df_node_rev` is exactly this dedup key).
         let mut node_rev_rows: Vec<Vec<Value>> = Vec::new();
         let mut node_repo_rev_rows: Vec<Vec<Value>> = Vec::new();
         let mut arg_rev_rows: Vec<Vec<Value>> = Vec::new();
@@ -141,9 +145,8 @@ impl Engine {
                     ]);
                 }
                 if seen_node_rev.insert((n.id.as_str(), rev.as_str())) {
-                    let salted = Self::salt_rev(&n.id, rev);
                     node_rev_rows.push(vec![
-                        sym(&salted),
+                        sym(&n.id),
                         t(&n.kind),
                         t(&n.var),
                         t(&n.fn_sym),
@@ -167,8 +170,7 @@ impl Engine {
                     node_repo_rows.push(vec![sym(&n.id), t(repo)]);
                 }
                 if seen_node_repo_rev.insert((n.id.as_str(), repo.as_str(), rev.as_str())) {
-                    let salted = Self::salt_rev(&n.id, rev);
-                    node_repo_rev_rows.push(vec![sym(&salted), t(repo), t(rev)]);
+                    node_repo_rev_rows.push(vec![sym(&n.id), t(repo), t(rev)]);
                 }
             }
             for e in &f.edges {
@@ -210,46 +212,46 @@ impl Engine {
                 if seen_arg.insert((call.as_str(), *pos, arg.as_str())) {
                     arg_rows.push(vec![sym(call), Value::Int(*pos), sym(arg)]);
                 }
-                // both id columns salted so the arg->node join stays intra-rev
+                // call/arg carry the raw df_node ids (matching df_node_rev.id);
+                // rev is its own trailing column, part of the row's dedup key.
                 if seen_arg_rev.insert((call.as_str(), *pos, arg.as_str(), rev.as_str())) {
-                    let scall = Self::salt_rev(call, rev);
-                    let sarg = Self::salt_rev(arg, rev);
-                    arg_rev_rows.push(vec![sym(&scall), Value::Int(*pos), sym(&sarg), t(rev)]);
+                    arg_rev_rows.push(vec![sym(call), Value::Int(*pos), sym(arg), t(rev)]);
                 }
             }
             for (id, field, value) in &f.fields {
                 if seen_field.insert((id.as_str(), field.as_str(), value.as_str())) {
                     field_rows.push(vec![sym(id), t(field), sym(value)]);
                 }
-                // value is always a value df_node id (never a literal), so it
-                // salts like id; the field name is a plain string, unsalted
+                // id/value carry the raw df_node ids (matching df_node_rev.id);
+                // value is always a value df_node id (never a literal); field
+                // is a plain string, never interned as a node id.
                 if seen_field_rev.insert((
                     id.as_str(),
                     field.as_str(),
                     value.as_str(),
                     rev.as_str(),
                 )) {
-                    let sid = Self::salt_rev(id, rev);
-                    let svalue = Self::salt_rev(value, rev);
-                    field_rev_rows.push(vec![sym(&sid), t(field), sym(&svalue), t(rev)]);
+                    field_rev_rows.push(vec![sym(id), t(field), sym(value), t(rev)]);
                 }
             }
             for (id, text, kind) in &f.lits {
                 if seen_lit.insert(id.as_str()) {
                     lit_rows.push(vec![sym(id), t(text), t(kind)]);
                 }
-                // id salted like df_node_rev.id (D5 pattern, same shape as df_field_rev).
+                // id is the raw df_node id, matching df_node_rev.id (D5 pattern,
+                // same shape as df_field_rev); rev is a plain trailing column.
                 if seen_lit_rev.insert((id.as_str(), rev.as_str())) {
-                    let sid = Self::salt_rev(id, rev);
-                    lit_rev_rows.push(vec![sym(&sid), t(text), t(kind), t(rev)]);
+                    lit_rev_rows.push(vec![sym(id), t(text), t(kind), t(rev)]);
                 }
             }
         }
 
-        // One batched `_strings` flush for every df id-handle hashed above (raw
-        // AND rev-salted), so `sym(df_node.id)` decodes back to the id text in
-        // any text context (hover, panel, hand queries). Collect-then-flush —
-        // the N+1 law applies to this intern just like any other.
+        // One batched `_strings` flush for every df id-handle hashed above (the
+        // legacy rels and their `_rev` twins alike — twin ids are the SAME raw
+        // strings, so this is one intern per distinct id, not one per twin), so
+        // `sym(df_node.id)` decodes back to the id text in any text context
+        // (hover, panel, hand queries). Collect-then-flush — the N+1 law
+        // applies to this intern just like any other.
         self.db.flush_syms(&mut sink)?;
 
         Ok(DataflowRowSet {
@@ -272,7 +274,7 @@ impl Engine {
     }
 
     /// Whole-corpus write: `refresh_rel` (delete + reinsert) for the raw rels and
-    /// `refresh_rel_for_revs` (rev-scoped delete + reinsert) for the salted twins.
+    /// `refresh_rel_for_revs` (rev-scoped delete + reinsert) for the `_rev` twins.
     fn write_dataflow_wholesale(
         &self,
         files: &[ExtractFile],
@@ -302,10 +304,11 @@ impl Engine {
         rows_changed |= self.refresh_rel("df_field", &["id", "field", "value"], &rows.field)?;
         rows_changed |= self.refresh_rel("df_lit", &["id", "text", "kind"], &rows.lit)?;
         // Rev-carrying twins: same delete scope as type/call — wipe every corpus
-        // rev and reinsert the whole-corpus salted rows (the emit above is
-        // whole-corpus; a rev absent from the corpus is D5.5's retraction sweep,
-        // not this path). Legacy df rels above stay raw-id, no rebuild needed
-        // (the salt is not cleanly reversible in SQL and the raw rows are in hand).
+        // rev and reinsert the whole-corpus rows (the emit above is whole-corpus;
+        // a rev absent from the corpus is D5.5's retraction sweep, not this
+        // path). Legacy df rels above stay a separate raw-id write (deduped
+        // across ALL revs by id alone, first-seen wins) rather than being
+        // derived from the twins, so this is not a rebuild-from-twin path.
         let all_revs = Self::corpus_revs(files);
         let all_rev_refs: Vec<&str> = all_revs.iter().map(|s| s.as_str()).collect();
         rows_changed |= self.refresh_rel_for_revs(
@@ -342,7 +345,7 @@ impl Engine {
     }
 
     /// Cold-chunk write: `append_rel` (`INSERT OR IGNORE`, no delete) for every
-    /// rel, raw and salted twin alike. The rel starts empty at cold start and the
+    /// rel, raw and `_rev` twin alike. The rel starts empty at cold start and the
     /// slices are disjoint by file, so an append is equivalent to the wholesale
     /// reinsert; `INSERT OR IGNORE` covers a crash-resumed slice and the rare
     /// content-addressed id shared across two slices.

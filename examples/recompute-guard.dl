@@ -34,8 +34,20 @@ rel src_scanned(f: file).
 src_scanned(f) <- scan("WORK", "src/**/*.rs", f, rev).
 
 # --- fn declarations (from the resolved def graph) -----------------------------
+# Closures are EXCLUDED. `call_def` emits one row per closure as well as per
+# named fn (sym `...::closure::<line>_<col>`), and the enclosing-fn model below
+# is "nearest decl at or above the marker" — a flat line comparison with no
+# nesting. With closures in the set, a guard and its recompute inside the same
+# fn resolve to DIFFERENT enclosing decls whenever a closure sits between them,
+# and the rail reports a guarded fn as unguarded. That is exactly what happened
+# to `Engine::eval_node2vec_rule` (derive.rs:127): the `load_rel_digest` guard
+# at :186 resolved to the closure at :181, the `embed_graph` call at :252 to the
+# closure at :239, so the two never met and the rail fired on guarded code. The
+# law is about the named function, so the named function is the unit.
+rel closure_decl(file: file, line: int).
+closure_decl(f, l) <- src_scanned(f), call_def(_, n, _, f, l, _), n =~ /::closure::/.
 rel fn_decl(file: file, line: int, name: text).
-fn_decl(f, l, n) <- src_scanned(f), call_def(_, n, _, f, l, _).
+fn_decl(f, l, n) <- src_scanned(f), call_def(_, n, _, f, l, _), !closure_decl(f, l).
 
 # --- recompute call sites: embed_graph(...) calls ------------------------------
 rel embed_call(file: file, line: int).

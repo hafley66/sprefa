@@ -232,7 +232,17 @@ fn normalize_body_item(b: &mut BodyItem, dl_path: &str, diags: &mut Vec<TypeDiag
         BodyItem::Scan { repo, rev, glob, path, rev_out } => {
             for t in [repo, rev, glob, path, rev_out] { normalize_term(t, dl_path, diags); }
         }
-        BodyItem::Match { path, rev, line, id, col, end_col, .. } => {
+        BodyItem::Match { path, rev, line, id, col, end_col, legacy_name, .. } => {
+            if *legacy_name {
+                diags.push(TypeDiag {
+                    path: dl_path.to_string(), span: (0, 0),
+                    severity: Severity::Warn, code: "deprecated-op-name".into(),
+                    msg: "`match(...)` is deprecated; use `match_line(...)` instead. \
+                          match_line is a LINE REGEX — correct only for flat text (ini/env/log/csv), \
+                          never for structured source code. For source, use `match_ast(...)` \
+                          (ast-grep structural matching) instead.".into(),
+                });
+            }
             for t in [path, rev, line] { normalize_term(t, dl_path, diags); }
             for t in [id, col, end_col].into_iter().flatten() { normalize_term(t, dl_path, diags); }
         }
@@ -241,7 +251,17 @@ fn normalize_body_item(b: &mut BodyItem, dl_path: &str, diags: &mut Vec<TypeDiag
             if let Some(e) = end { normalize_term(e, dl_path, diags); }
             if let Some(t) = id { normalize_term(t, dl_path, diags); }
         }
-        BodyItem::Sg { src, rev, line, col, end_line, end_col, id, .. } => {
+        BodyItem::Sg { src, rev, line, col, end_line, end_col, id, legacy_name, .. } => {
+            if *legacy_name {
+                diags.push(TypeDiag {
+                    path: dl_path.to_string(), span: (0, 0),
+                    severity: Severity::Warn, code: "deprecated-op-name".into(),
+                    msg: "`sg(...)` is deprecated; use `match_ast(...)` instead. \
+                          match_ast is ast-grep structural matching — the correct tool for \
+                          source code (it sees multi-line and AST-shaped constructs that a \
+                          line regex like `match_line` cannot).".into(),
+                });
+            }
             for t in [src, line, col, end_line, end_col] { normalize_term(t, dl_path, diags); }
             if let Some(t) = rev { normalize_term(t, dl_path, diags); }
             if let Some(t) = id { normalize_term(t, dl_path, diags); }

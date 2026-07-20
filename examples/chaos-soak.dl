@@ -2,10 +2,12 @@
 #
 # THREE JOBS, in one file:
 #   (a) exercise EVERY body-item op the engine supports (source ops, derived
-#       constructs, sinks, effects). The op inventory is op_catalog (26 ops:
-#       scan match ast ast_yaml sg json jsonp comment cmd  |  atom comparison
-#       negation glob regex arith strfn aggregation closure scc node2vec  |
-#       diag gen graph_node graph_edge hover_note query), plus the effect
+#       constructs, sinks, effects). The op inventory is op_catalog (28 ops:
+#       scan match_line match ast ast_yaml match_ast sg json jsonp comment cmd
+#       (`match`/`sg` are deprecated aliases for `match_line`/`match_ast`,
+#       kept as their own op_catalog rows — see the 2026-07-20 rename)  |
+#       atom comparison negation glob regex arith strfn aggregation closure
+#       scc node2vec  |  diag gen graph_node graph_edge hover_note query), plus the effect
 #       runtime surface that is not an op_catalog row but is real body syntax:
 #       @async effects + effect_cmd templates, @next carry, clock, every, and
 #       the key(...) merge(MinBy/MaxBy) lattice qualifier.
@@ -14,7 +16,7 @@
 #       in a rule body / query / head. The big `? ...` block at the bottom does
 #       the bulk; op rules cover the rest.
 #   (c) VALIDATE ITS OWN COMPLETENESS: this file scans ITSELF, tokenizes it with
-#       `match`, joins the token set against the live rel_catalog, and heads a
+#       `match_line`, joins the token set against the live rel_catalog, and heads a
 #       `diag(... severity: "error", code: "chaos-coverage")` for any registered
 #       relation whose name never appears here. So `dl examples/chaos-soak.dl
 #       --check` exits 2 the moment someone adds a builtin rel and forgets to
@@ -32,15 +34,15 @@
 #
 # CORPUS (two tiers) — heavy AST/dataflow/type/call families key on file
 # EXTENSION (AST_LANG_TABLE: rust/kotlin/python/go/ts... — `.c` has tree-sitter
-# support for explicit `ast(:c)`/`sg(:c)` but NO extension alias, so the auto
+# support for explicit `ast(:c)`/`match_ast(:c)` but NO extension alias, so the auto
 # call/type/df graph stays empty on a pure-C corpus). So:
-#   * heavy tier  -> in-repo Rust (`src/rels/*.rs`): full ast/sg/df/type/call.
+#   * heavy tier  -> in-repo Rust (`src/rels/*.rs`): full ast/match_ast/df/type/call.
 #   * scan tier   -> in-repo text (this file, Cargo.toml, README.md) for
-#     scan/match/comment/cmd/json. This tier is the one you repoint at a BIG
-#     corpus: clone a scan/match target and swap the CORPUS_* globs, e.g.
+#     scan/match_line/comment/cmd/json. This tier is the one you repoint at a BIG
+#     corpus: clone a scan/match_line target and swap the CORPUS_* globs, e.g.
 #       git clone --depth 1 https://github.com/torvalds/linux /tmp/linux
-#     then scan "/tmp/linux/**/*.c" for the scan/match/comment/cmd rules (the C
-#     graph families stay empty by the alias note above; scan/match/cmd run).
+#     then scan "/tmp/linux/**/*.c" for the scan/match_line/comment/cmd rules (the C
+#     graph families stay empty by the alias note above; scan/match_line/cmd run).
 # Default corpus = THIS repo, so the file runs out of the box:
 #   SPREFA_CONFIG=<hermetic.toml> dl --no-daemon --db /tmp/x.db \
 #     examples/chaos-soak.dl --check
@@ -53,11 +55,11 @@
 rel rust_src(path: file, rev: text).
 rust_src(path, rev) <- scan("WORK", "src/rels/*.rs", path, rev).
 
-# --- match: regex over content, named captures bind dl vars ------------------
+# --- match_line: regex over content, named captures bind dl vars -------------
 rel pub_fn(path: file, line: int, name: text).
 pub_fn(path, line, name) <-
   scan("WORK", "src/rels/*.rs", path, rev),
-  match(path, rev, /pub fn (?<name>[a-z_][a-z0-9_]+)/, line).
+  match_line(path, rev, /pub fn (?<name>[a-z_][a-z0-9_]+)/, line).
 
 # --- ast: tree-sitter query; @cap captures bind same-named vars --------------
 rel ast_fn(path: file, line: int, name: text).
@@ -65,11 +67,11 @@ ast_fn(path, line, name) <-
   scan("WORK", "src/rels/*.rs", path, rev),
   ast(path, rev, :rust, "(function_item name: (identifier) @name)", line).
 
-# --- sg: ast-grep pattern; metavar $X binds dl var X -------------------------
+# --- match_ast: ast-grep pattern; metavar $X binds dl var X ------------------
 rel sg_hit(path: file, line: int).
 sg_hit(path, line) <-
   scan("WORK", "src/rels/*.rs", path, rev),
-  sg(path, rev, :rust, "$X.to_string()", line).
+  match_ast(path, rev, :rust, "$X.to_string()", line).
 
 # --- ast_yaml: ast-grep RuleCore YAML body (relational rule) -----------------
 rel ay_hit(path: file, line: int, col: int, end_col: int).
@@ -226,7 +228,7 @@ self_file(path, rev) <- scan("WORK", "examples/chaos-soak.dl", path, rev).
 rel tok(name: text).
 tok(name) <-
   scan("WORK", "examples/chaos-soak.dl", path, rev),
-  match(path, rev, /(?<name>[a-z][a-z0-9_]+)/, line).
+  match_line(path, rev, /(?<name>[a-z][a-z0-9_]+)/, line).
 rel covered(name: text).
 covered(name) <- rel_catalog(name, _, _, _), tok(name).
 rel coverage_count(n: int).
@@ -240,7 +242,7 @@ diag(path: path, line: 1, severity: "error", code: "chaos-coverage",
 # Grouped `? rel(firstcol: probe).` reads; empty results are fine, the point
 # is that every catalog name appears here so the self-check stays green.
 # Ops/heads above already cover: file file_lines call_edge rel_catalog scan
-# match clock every diag graph_node graph_edge hover_note effect_cmd.
+# match_line clock every diag graph_node graph_edge hover_note effect_cmd.
 # ============================================================================
 ? true().
 ? agent_edit(harness: probe).

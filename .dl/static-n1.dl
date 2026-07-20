@@ -18,13 +18,13 @@ rel per_row_execute(source_file: file, line_number: int).
 # same line as the .execute opening.
 per_row_execute(source_file, line_number) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    match(source_file, source_rev, /\.execute\(\s*"(?i)(INSERT|UPDATE)\b/, line_number).
+    match_line(source_file, source_rev, /\.execute\(\s*"(?i)(INSERT|UPDATE)\b/, line_number).
 
 # `for` loop lines.
 rel for_loop_line(source_file: file, line_number: int).
 for_loop_line(source_file, line_number) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    match(source_file, source_rev, /\bfor\s+/, line_number).
+    match_line(source_file, source_rev, /\bfor\s+/, line_number).
 
 # A per-row write: for within five lines above the execute.
 rel static_n1_pair(source_file: file, for_line: int, execute_line: int).
@@ -43,7 +43,7 @@ test_only_file(source_file) <- scan("WORK", "src/**/tests.rs", source_file, _).
 rel test_cfg_gate(source_file: file, line_number: int).
 test_cfg_gate(source_file, line_number) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    match(source_file, source_rev, /#!?\[cfg\(test\)\]/, line_number).
+    match_line(source_file, source_rev, /#!?\[cfg\(test\)\]/, line_number).
 
 rel static_n1_test_hit(source_file: file, execute_line: int).
 static_n1_test_hit(source_file, execute_line) <-

@@ -33,7 +33,7 @@ agreeing on `repo`:
 lock_pin(dep, repo, pinned_rev) <-
     internal_dep(dep, repo),
     scan(repo, "HEAD", "**/package-lock.json", lock_path, lock_rev),
-    match(lock_path, lock_rev, /${dep}.*resolved.*#(?<pinned_rev>\w+)/, line).
+    match_line(lock_path, lock_rev, /${dep}.*resolved.*#(?<pinned_rev>\w+)/, line).
 ```
 
 The trade bought the whole engine. Flat rules have a uniform algebra, so
@@ -47,7 +47,7 @@ containment, and implicit context flow.
 
 The pipe half came back without anyone calling it that. Term-form extraction
 ops run *inside* a rule body on a *bound string*: `jsonp(body, "stargazers_count",
-n)` dissects a value an effect fetched two atoms earlier; `sg(:css, css_text,
+n)` dissects a value an effect fetched two atoms earlier; `match_ast(:css, css_text,
 "$PROP: $VAL")` parses a string with another grammar mid-rule
 (`examples/styled-components.dl`, `examples/md-fences.dl`). That is `fs >
 json > line` reborn, with the pipe spelled as a join variable. The embedded-

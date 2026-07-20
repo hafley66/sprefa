@@ -1,36 +1,36 @@
 # 2. First extraction
 
-> `match` with a regex capture, then the same thing with `ast`/`sg`; when to use which; metavars and `$$$`.
+> `match_line` with a regex capture, then the same thing with `ast`/`match_ast`; when to use which; metavars and `$$$`.
 
 **Goal:** pull structured facts out of file content two ways, regex and syntax
 tree, and learn which one to reach for.
 
 A `scan` gives you files. To get facts *about the code inside* a file you extract
-them. There are two families of extractor: regex (`match`) and syntax tree
-(`ast`, `sg`). The lesson is the contrast between them.
+them. There are two families of extractor: regex (`match_line`) and syntax tree
+(`ast`, `match_ast`). The lesson is the contrast between them.
 
 ## Extract with a regex
 
-Save as `02-match.dl`:
+Save as `02-match-line.dl`:
 
 ```dl
 rel fn_def(name: text, path: file, line: int).
 fn_def(name, path, line) <-
     scan("src/**/*.rs", path, rev),
-    match(path, rev, /fn (?<name>\w+)/, line).
+    match_line(path, rev, /fn (?<name>\w+)/, line).
 
 ? fn_def(name, path, line).
 ```
 
-`match(path, rev, /regex/, line)` runs a regex over each scanned file and emits
+`match_line(path, rev, /regex/, line)` runs a regex over each scanned file and emits
 one row per matching line. A named group `(?<name>\w+)` binds a dl variable of
 the same name. The trailing `line` binds the 1-based line number of the match.
 
-The `scan` now takes a third argument, `rev`. `match` needs the revision to know
-which version of the file to read, so the scan binds it and passes it along.
+The `scan` now takes a third argument, `rev`. `match_line` needs the revision to
+know which version of the file to read, so the scan binds it and passes it along.
 
 ```sh
-dl 02-match.dl --no-daemon
+dl 02-match-line.dl --no-daemon
 ```
 
 ```
@@ -59,7 +59,7 @@ Now ask a harder question: what does each function *call*? Try the naive regex
 rel call_by_regex(callee: text, path: file, line: int).
 call_by_regex(callee, path, line) <-
     scan("src/**/*.rs", path, rev),
-    match(path, rev, /(?<callee>\w+)\(/, line).
+    match_line(path, rev, /(?<callee>\w+)\(/, line).
 
 ? call_by_regex(callee, line).
 ```
@@ -131,16 +131,16 @@ Four rows, all real calls (`drop`, `log_note`, `parse`, `save`). The regex found
 sixteen. The twelve it added were definitions, method calls, and associated-
 function calls. The tree knows what the regex could only guess at.
 
-## Metavars: sg and `$$$`
+## Metavars: match_ast and `$$$`
 
-`ast` uses tree-sitter S-expressions. `sg` uses ast-grep patterns, which read
-like the code with holes punched in. Save as `02-sg.dl`:
+`ast` uses tree-sitter S-expressions. `match_ast` uses ast-grep patterns, which
+read like the code with holes punched in. Save as `02-match-ast.dl`:
 
 ```dl
 rel to_string_call(receiver: text, path: file, line: int).
 to_string_call(RECEIVER, path, line) <-
     scan("src/**/*.rs", path, rev),
-    sg(path, rev, :rust, "$RECEIVER.to_string()", line).
+    match_ast(path, rev, :rust, "$RECEIVER.to_string()", line).
 
 ? to_string_call(receiver, line).
 ```
@@ -157,7 +157,7 @@ worth burning in:
   alike. Reach for `$$$` when you want "the whole argument list."
 
 ```sh
-dl 02-sg.dl --no-daemon
+dl 02-match-ast.dl --no-daemon
 ```
 
 ```
@@ -170,14 +170,20 @@ One hit: `text.to_string()` on line 8 of `note.rs`, with `text` as the receiver.
 
 ## The rule
 
-Reach for `match` when the target has no parse tree to stand on: comment markers,
-log lines, free text. Reach for `ast` or `sg` for anything the language's parser
-understands. The tree cannot be fooled by a paren in a string or a keyword in a
-comment.
+Reach for `match_line` when the target has no parse tree to stand on: comment
+markers, log lines, free text — never for structured source code (a construct
+spanning more than one line silently never matches). Reach for `ast` or
+`match_ast` for anything the language's parser understands. The tree cannot be
+fooled by a paren in a string or a keyword in a comment.
+
+`match`/`sg` are the pre-rename names for `match_line`/`match_ast`: both still
+parse and run (never a hard break), but each emits a `deprecated-op-name`
+warning naming its replacement. New code should reach straight for
+`match_line`/`match_ast`.
 
 ## Exercise
 
-Write an `sg` rule that finds every `Vec::new()` call and binds the line. Then
-write the `ast` form of the same query. (Hint: `dl docs syntax` shows the exact
-argument list for both, and `Vec::new()` has no metavar to bind, so pick a
-capture that gives you the line.)
+Write a `match_ast` rule that finds every `Vec::new()` call and binds the line.
+Then write the `ast` form of the same query. (Hint: `dl docs syntax` shows the
+exact argument list for both, and `Vec::new()` has no metavar to bind, so pick
+a capture that gives you the line.)

@@ -53,6 +53,35 @@ big_file_ok("src/scip_import.rs", "grandfathered (scripts/filesize-allow.txt)").
 big_file_ok("src/scip_setup.rs", "grandfathered (scripts/filesize-allow.txt)").
 big_file_ok("src/typecheck.rs", "grandfathered (scripts/filesize-allow.txt)").
 big_file_ok("src/typegraph.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/cli/mod.rs", "grandfathered 2026-07-20 (568 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/engine/cold_stage.rs", "grandfathered 2026-07-20 (503 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/engine/declare.rs", "grandfathered 2026-07-20 (1167 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/engine/deltaflow.rs", "grandfathered 2026-07-20 (662 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/engine/desugar.rs", "grandfathered 2026-07-20 (511 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/engine/eval.rs", "grandfathered 2026-07-20 (1116 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/engine/extract/call_render_tests.rs", "grandfathered 2026-07-20 (669 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/engine/extract/mod.rs", "grandfathered 2026-07-20 (1327 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/engine/family/mod.rs", "grandfathered 2026-07-20 (989 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/engine/pipeline/source_stage.rs", "grandfathered 2026-07-20 (756 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/engine/rpc.rs", "grandfathered 2026-07-20 (501 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/engine/source_prepare.rs", "grandfathered 2026-07-20 (1127 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/engine/strata.rs", "grandfathered 2026-07-20 (593 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/engine/symbols.rs", "grandfathered 2026-07-20 (665 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/engine/typed_plan.rs", "grandfathered 2026-07-20 (1103 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/graph/modgraph/mod.rs", "grandfathered 2026-07-20 (1211 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/graph/modgraph/rust.rs", "grandfathered 2026-07-20 (505 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/graph/typegraph/go.rs", "grandfathered 2026-07-20 (1217 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/graph/typegraph/kotlin.rs", "grandfathered 2026-07-20 (1042 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/graph/typegraph/mod.rs", "grandfathered 2026-07-20 (761 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/graph/typegraph/python.rs", "grandfathered 2026-07-20 (1384 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/graph/typegraph/rust/mod.rs", "grandfathered 2026-07-20 (1332 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/graph/typegraph/ts/flow.rs", "grandfathered 2026-07-20 (964 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/graph/typegraph/ts/mod.rs", "grandfathered 2026-07-20 (1467 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/hook.rs", "grandfathered 2026-07-20 (758 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/jobq/mod.rs", "grandfathered 2026-07-20 (737 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/jobq/tests.rs", "grandfathered 2026-07-20 (577 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/rspath.rs", "grandfathered 2026-07-20 (510 lines), plans/2026-07-20-filesize-grandfather.md").
+big_file_ok("src/storage/call.rs", "grandfathered 2026-07-20 (1938 lines), plans/2026-07-20-filesize-grandfather.md").
 
 # 300-500: needs a written reason to stay this size, or a split.
 diag(path, line: 1, severity: "warning", code: "file-over-soft-budget",

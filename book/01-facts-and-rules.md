@@ -103,7 +103,7 @@ File-reading body = source rule. Relations-only body = derived rule.
 
 ## In your engine
 
-In `dl`, `rel def(...)` / `rel call(...)` with a `scan(...) ... sg(...)` body are
+In `dl`, `rel def(...)` / `rel call(...)` with a `scan(...) ... match_ast(...)` body are
 **source rules** (they read files). `calls(caller,callee) <- def(...), call(...)`
 and `unused(name) <- def(...), !call(...)` are **derived rules** (relations
 only). Your `_prov(rel, path)` table records the file each source fact came from,

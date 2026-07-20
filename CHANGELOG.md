@@ -6,6 +6,66 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+### Added
+- `dl daemon events [--kind K] [--root R] [--limit N]` reads `events.jsonl`, a
+  trail beside `why.jsonl` that records the ARGUMENTS of each discrete IO event
+  at the moment it happens, where `why` samples cost every 2s and renders detail
+  to a string. Instrumented kinds: `file_changed` (full path list),
+  `tick_start`/`tick_end`, `digest_moved`, `cold_extract_node`,
+  `cold_staged_enqueued`, `git_ref_advanced`, `path_change_verdict` (hash_differs
+  vs no_prior_row, old/new hash), `gen_write` (wrote vs skipped-identical),
+  `effect_call`/`effect_result` (filled template args, credentials redacted),
+  `db_write` (per batch, offered vs affected rows). Emission rides `tracing` on
+  the `dl::event` target; the writer is a subscriber Layer installed in the
+  daemon only, so one-shot runs and tests no-op. File-only, so it answers with
+  the daemon down.
+- `dl daemon health`: dbstat buckets, per-table rows/data/index bytes,
+  identical-rowset duplicate probe, static copy-rule scan, orphan `roots/`
+  directories against `roots.json`, and the db/corpus ratio. Read-only opens
+  inside one read transaction, so it answers with the daemon live or down.
+- Daemon HTTP/JSON transport: one axum 0.8 router serves both the UDS socket
+  and TCP, `/watch` upgrades to Server-Sent Events (replacing the old framed
+  subscribe pump), and `dl daemon url` prints the HTTP base URL from
+  `http.json`.
+- `dl daemon install`/`uninstall` wire the daemon into the OS-native service
+  manager (launchd on macOS, a systemd unit on Linux) instead of hand-rolled
+  daemonization; re-running `install` re-points a stale binary reference at
+  the current launchd job.
+- `dl daemon why` reads a durable self-diagnosis trail (`why.jsonl`):
+  tick/phase/detail plus cumulative CPU and disk I/O, sampled every ~2s with
+  no RPC and no engine lock, so it answers even after a SIGKILL or a
+  mid-rebuild wedge.
+- The daemon keeps a global invocation log independent of any one root: every
+  `dl` invocation records pid, arguments, and exit outcome, so a killed
+  process is still visible even if its root's own state is gone.
+- `diag_stage(code, stage)` builtin sink routes diagnostics by presentation
+  stage; `--check`/`--diag-json` gain `--stage
+  <live|commit|agent-turn|agent-session>` (default `commit`) to filter which
+  codes surface where. The database still keeps every diag row regardless of
+  routing.
+- `dl query --format json` prints one JSON array of `{col: val}` row-objects
+  per query, additive to the existing `--query-json` NDJSON envelope form.
+- `dl daemon jobs` lists queued, running, and completed tick jobs.
+- Datapath extraction (`data`/`pattern` matchers) gains JSONL/NDJSON support:
+  each line parses as its own JSON document.
+- Daemon logging rides the `tracing` crate: rolling `<home>/log/dl.log`
+  (level from `DL_LOG`, default info) and `<home>/log/error.log` (always
+  warn-and-up), an stderr layer via `RUST_LOG`/`DL_TRACE`, and an optional
+  `DL_TRACE_CHROME=<path>` chrome-trace export that finalizes cleanly even on
+  a kill.
+- `stale-binary` and `db-ratio` diagnostic rails: a warning when the running
+  daemon's binary is older than the one on disk, and a verdict on the
+  db-to-corpus size ratio.
+- Callable coverage extended: `EntityKind::Lambda` plus
+  lambda/constructor/nested-function/trait `call_def` emitters, TS/JS nested
+  named function declarations included, backed by a fixture corpus, a
+  reactive coverage rail, and a two-tier AST/SCIP proof stratum.
+- `std/measures.dl`: a keep-all verdict plus rank-based top-K views.
+- `examples/doc-marks.dl`: an `@@doc` marker routes chat/commit content into
+  docs via `gen`.
+- A static N+1 hunter example flags nested-loop paths that write per-row
+  instead of batching.
+
 ### Changed
 - `DL_RAYON_THREADS` now defaults to 2, bounding extraction and hashing CPU by
   default while preserving an explicit override for larger worker pools.
@@ -19,6 +79,149 @@ tags consumed by cargo-dist.
   `DL_CONNECTION_CACHE_MB` controls one connection, `DL_MMAP_MB` explicitly
   enables a process-wide mmap budget, exhausted connections receive no
   unaccounted page-cache grant, and temporary work is file-backed.
+- **BREAKING:** implicit daemon autostart is off by default. `dl file.dl`,
+  `--check`, `--mcp`, and `--lsp` now attach to a daemon only if one is
+  already running, falling back to their in-process path otherwise, instead
+  of silently spawning one. `DL_AUTOSTART=1` restores the old
+  spawn-on-attach behavior (test harnesses use it); explicit verbs
+  (`dl daemon start`, `dl watch`) still spawn.
+- `--no-daemon` is no longer a documented flag: the public no-daemon split is
+  erased in favor of one server code path. The flag still parses
+  (`DL_NO_DAEMON=1` is the same escape hatch) but is hidden from `--help` and
+  the docs.
+- The daemon's job queue moved onto `apalis-sqlite` (workers, storage, and
+  crash recovery bought instead of hand-rolled); a job carries the request id
+  that caused it, so a running tick can be cancelled mid-flight at its next
+  component boundary, and `ColdExtract` jobs root-serialize so concurrent
+  roots no longer cold-rebuild at the same time.
+- The daemon runs under a background CPU budget by default: QoS plus `nice`
+  plus a capped thread pool, and a duty-cycle governor that caps rather than
+  merely advises (it also recognizes an existing `XPC_SERVICE_NAME`/launchd
+  management context and skips its own redundant nice/IOPOL calls). A
+  one-shot `dl` run inherits the same budget, plus a wall-clock watchdog and
+  a bounded daemon-attach wait.
+- The daemon enforces single-instance via an `fd-lock` file; its serving
+  shell runs on tokio while the engine itself still executes synchronously
+  behind `spawn_blocking`.
+- Cadence-driven roots (`@async clock`/`every`) now tick only on a bucket
+  flip instead of every poll cycle, and an effect-free root gets one
+  settle-confirmation tick instead of polling forever.
+
+### Fixed
+- `Db::flush_syms` gained a connection-scoped `persisted_strings` cache, so
+  already-durable `StringId`s are no longer re-offered to `_strings`. Ids are
+  cached only when the flush ran outside a caller-owned transaction, so a
+  rollback cannot leave the cache claiming a string is durable. The
+  within-batch collision guard still runs over the full pending set before
+  cache filtering.
+- A linked git worktree with no warm database and no `roots.json` entry now
+  skips a `--check` run instead of cold-building a root database that orphans
+  when the worktree is deleted. `DL_ALLOW_WORKTREE_COLD=1` opts out.
+- Extraction is deterministic and hermetic: every file-set query carries
+  `ORDER BY` so cached facts emit in input order, a non-UTF-8 source file is
+  skipped instead of aborting the whole tick, and a daemon-served engine no
+  longer inherits ambient config-repo state.
+- Fixed the exe-swap write storm: a rebuilt `dl` binary used to force a full
+  re-derivation on every tick regardless of whether the corpus changed. The
+  identity check now runs per-engine per-tick (not per-process), a re-derive
+  of an unchanged corpus flips zero call rows and cascades nothing, and a
+  lint rail with a prev-rev oracle bans the four code forms that caused it.
+- Identical re-derivations write nothing: a digest-before-write check on
+  derived rebuilds, unchanged rel-view DDL (a quiet tick's WAL went from
+  2.48MB to 217KB), and settle bookkeeping all skip the write when content
+  has not changed.
+- `rebuild_derived` deletes and marks completion per component instead of one
+  upfront whole-database `DELETE`, so a crash mid-rebuild only re-derives the
+  interrupted component on restart.
+- Fixed a daemon poll storm: a cadence root used to run a full tick (corpus
+  walk plus dirty derived rebuilds, one rule measured at 9.7s) every 2
+  seconds forever regardless of whether anything changed. An idle check now
+  skips the cycle when nothing is pending, poll errors back off
+  exponentially (capped near 60s) per root, and a registered root whose
+  directory no longer exists is evicted instead of retried forever. A no-op
+  tick also no longer broadcasts `diag_changed`, which had been amplifying
+  into client render storms.
+- Dynamically declared effect templates were invisible to the executor (an
+  interned-id column was read as text and always returned none), parking
+  their effects orphaned at boot; effects now re-queue on their own once a
+  template appears, and a real execution failure is marked terminal instead
+  of retried forever.
+- Dataflow coverage: TS/JS class methods now reach the dataflow walker, a
+  loop's break value and a value-position `if`/`match`/block branch tail
+  into their expression node instead of dropping the edge, and nested named
+  function declarations become `call_def`s.
+- SCIP reindex now fires on incremental ticks with the newest index winning;
+  `.dl/.state/index.scip` is preferred over a stale root index, and
+  qualified call paths plus struct constructors are captured.
+- Query output: text format no longer indents data rows, `query_log` is
+  queryable on a fresh database, and graph-op edge columns are quoted.
+- The `why.jsonl` trail appends as a single write with `shutdown_cleanup`
+  running exactly once, samples and `perf.jsonl` records carry the served
+  root, and root attribution survives the sink-drain half of a daemon job.
+- `dl update`'s argument parser scans every argument instead of bailing at
+  the first unknown flag.
+- Fixed a `df_node` sym-prefix mismatch that zeroed blast-radius results for
+  any rule joining `call_def` spans the same way the rusqlite-coupling rail
+  does.
+- A render/derive failure no longer drops the tick's memo (T2 failpoint
+  findings).
+- The daemon's own state writes (`perf.jsonl`, `why.jsonl`, `cache.db*`)
+  never schedule a tick, closing a recursive self-tick loop.
+
+### Performance
+- Auto-index demand is now planner-honest: PK-prefix on rowid tables, a
+  tiny-relation floor, and a constant-column check replace the old broad
+  index-everything policy, cutting 771 indexes to 262 (-117.7MB on the
+  measured corpus).
+- `WITHOUT ROWID` applied to vouched builtin junction relations drops their
+  redundant primary-key autoindex twin.
+- `_strings.norm` column and its index are dropped; normalized comparison now
+  happens via the query-time `norm()` scalar instead of a stored column.
+- Call-graph relations (`call_def`, `call_edge`, `call_name`, `call_kind`,
+  and their `_rev` twins) now derive from a self-registering family router
+  with row-level incremental reconcile: an edit retracts and re-inserts only
+  the changed rows instead of rebuilding the whole relation, and every
+  family/op file passes a no-raw-SQL audit rail.
+- Cold-start extraction (a blank database's first tick) is staged in
+  MB-bounded chunks across ticks instead of one blocking pass, extended from
+  dataflow to comment/template/unresolved relations; the longest cold-start
+  job measured cut 3.2x (2468ms to 766ms).
+- The `_source_stage_owner` per-call `INSERT` (a 386x-per-tick runtime N+1)
+  now batches at flush, and deltaflow per-change writes batch per loop
+  instead of per row.
+- Several slow rules (`port_of_reach`, `call_node`, `loop_entry_fn`, the
+  `flow_edge` lambda-hop, `named_call_site`) are factored through
+  intermediate relations and brought under the tick budget.
+- Cache-database I/O relaxes (`synchronous=OFF`, no autocheckpoint) around a
+  full rebuild.
+- A program edit rebuilds only the moved derived subgraph instead of the
+  whole derived layer.
+- Read-only daemon RPCs (query, status) now route through a WAL read-only
+  connection and a read snapshot instead of the engine mutex, so a query no
+  longer blocks behind a running tick.
+
+### Internal
+- `Db` became the single SQL authority across the engine (the db-seam
+  migration): every direct `rusqlite` call in `src/` and the test suite goes
+  through the seam API, enforced by a containment ratchet
+  (`no-new-rusqlite.dl`) with a `@rusqlite-ok` waiver for the rare exception;
+  a sibling rail warns on a discarded `let _ =` over a SQLite call.
+- Every `eprintln!` in `src/` converted to `tracing` macros;
+  `.dl/no-new-eprintln.dl` ratchets the count to zero with `@eprintln-ok`
+  waivers for the rare CLI-UX line that must bypass tracing.
+- Large module splits for maintainability: `daemon.rs` became
+  `src/daemon/{mod,root,home,budget,dispatch,client,read,http,shell}`, the
+  CLI's `daemon.rs` renamed to `daemon_cmd.rs`, and the `reconcile`, `query`,
+  `extract`, `modgraph`, and `typegraph` modules split into per-concern
+  files.
+- `verify.sh` now runs `cargo clippy` and `fmt --check` as part of the
+  standard gate, following a mechanical clippy burn-down across the tree.
+- `docs/failure-modes.md` catalogs every incident class with its rail and
+  status, established as the standing incident ledger.
+- Test infrastructure: an every-op every-rel soak program that validates its
+  own coverage, T1-T4 reconcile/render-flip/edit-script/property test
+  suites, and a crate-wide lock for the perf-log globals (a stray env race
+  caused solo-run panics).
 
 ## [0.9.0] - 2026-07-11
 

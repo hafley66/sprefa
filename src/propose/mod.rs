@@ -852,7 +852,14 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/engine/mod.rs"),
         )
         .unwrap();
-        let repo_root = format!("{}/..", env!("CARGO_MANIFEST_DIR"));
+        // The crate IS the repo root since the v5 lift (2026-07-01). This read
+        // `{CARGO_MANIFEST_DIR}/..` from before the lift, when the crate sat in
+        // a subdirectory and `..` meant the repo root; afterwards it pointed
+        // one level ABOVE the repo, so it could never find the `index.scip`
+        // that `just oracle-index` writes into the repo root. Combined with the
+        // silent `return` on a load miss below, that made this test report PASS
+        // in 0.00s having asserted nothing, for however long the lift has been in.
+        let repo_root = env!("CARGO_MANIFEST_DIR").to_string();
         let idx = std::path::PathBuf::from(format!("{repo_root}/index.scip"));
         let occ_owned: Vec<(i32, i32, String)>;
         let spans: Vec<(i32, i32, &str)>;

@@ -142,8 +142,15 @@ ext-reload:
 
 # ── dev loops (deterministic ceremony → scripts, not agents) ─────────────────
 
+# EVERY test: the full suite, the load-sensitive ones run serially, the rails,
+# and a named inventory of what is excluded and why. This is the one to run.
+# Exit 0 = nothing in this repo is untested-and-unmentioned.
+all-tests:
+    bash scripts/all-tests.sh
+
 # full suite with the FSEvents flake re-run policy, then the repo rails
 # (magic-rel audit, recompute guard). Exit 0 = verified green.
+# Prefer `just all-tests` — this tier alone leaves 28 `#[ignore]`d tests unrun.
 verify:
     bash scripts/verify.sh
 
@@ -164,7 +171,10 @@ cut version:
 perf-reactivity-build:
     CARGO_BUILD_JOBS=2 DL_RAYON_THREADS=2 cargo build --release --example reactivity_probe
 
-# run only the prebuilt probe against generated repo-local fixtures; never builds
-perf-reactivity out="target/reactivity/probe":
+# run only the prebuilt probe against generated repo-local fixtures; never
+# builds. `repeats`/`warmup` control the measured-vs-discarded iteration
+# count per size (default 5 measured + 1 warmup) — the probe reports
+# mean/stdev/min/max per phase over the measured repeats, not a single run.
+perf-reactivity out="target/reactivity/probe" repeats="5" warmup="1":
     @test -x "{{repo}}/target/release/examples/reactivity_probe" || { echo "missing release probe: run 'just perf-reactivity-build' explicitly"; exit 2; }
-    CARGO_BUILD_JOBS=2 DL_RAYON_THREADS=2 python3 "{{repo}}/bench/reactivity/probe.py" --harness "{{repo}}/target/release/examples/reactivity_probe" --output "{{repo}}/{{out}}"
+    CARGO_BUILD_JOBS=2 DL_RAYON_THREADS=2 python3 "{{repo}}/bench/reactivity/probe.py" --harness "{{repo}}/target/release/examples/reactivity_probe" --output "{{repo}}/{{out}}" --repeats {{repeats}} --warmup {{warmup}}

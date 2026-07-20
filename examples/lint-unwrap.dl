@@ -5,7 +5,7 @@
 #
 # Two ast-grep ops, small and side by side:
 #
-#   sg(path, rev, :lang, "$X.unwrap()", line, col, end_line, end_col[, id])
+#   match_ast(path, rev, :lang, "$X.unwrap()", line, col, end_line, end_col[, id])
 #     A bare PATTERN. `$X` captures the receiver into dl var X (uppercase, same
 #     name). Trailing positionals bind the match span (1-based line, 0-based byte
 #     col). A pattern alone cannot say "but not inside a test".

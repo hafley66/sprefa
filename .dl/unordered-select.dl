@@ -18,13 +18,13 @@ rel unordered_select(source_file: file, line_number: int, sql_text: text).
 # ones that carry ORDER BY / LIMIT 1 / etc. on the following lines.
 unordered_select(source_file, line_number, sql_text) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    match(source_file, source_rev, /"(?<sql_text>(?i)select\b[^{"]*\bfrom\b[^{"]*)/, line_number).
+    match_line(source_file, source_rev, /"(?<sql_text>(?i)select\b[^{"]*\bfrom\b[^{"]*)/, line_number).
 
 # Raw source facts used for exclusions.
 rel select_scalar_line(source_file: file, line_number: int).
 select_scalar_line(source_file, line_number) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    match(source_file, source_rev, /(?i)(order\s+by|count\s*\(|exists|limit\s+1|max\s*\(|min\s*\(|sqlite_master|pragma)/, line_number).
+    match_line(source_file, source_rev, /(?i)(order\s+by|count\s*\(|exists|limit\s+1|max\s*\(|min\s*\(|sqlite_master|pragma)/, line_number).
 
 # Exclusion: scalar / single-row / meta probes within the literal's first few
 # lines (the common case is ORDER BY or LIMIT 1 on the next line).
@@ -43,7 +43,7 @@ test_only_file(source_file) <- scan("WORK", "src/**/*_tests.rs", source_file, _)
 rel test_cfg_gate(source_file: file, line_number: int).
 test_cfg_gate(source_file, line_number) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    match(source_file, source_rev, /#!?\[cfg\(test\)\]/, line_number).
+    match_line(source_file, source_rev, /#!?\[cfg\(test\)\]/, line_number).
 
 rel unordered_select_test_hit(source_file: file, line_number: int).
 unordered_select_test_hit(source_file, line_number) <-

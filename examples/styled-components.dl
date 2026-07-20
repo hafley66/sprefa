@@ -2,8 +2,8 @@
 # css declarations, all in one program, no external tool.
 #
 # A styled-components component (`styled.div` + a tagged template literal) carries
-# a css declaration block INSIDE that template. FILE-form `sg(:tsx)` captures the
-# template body per component; TERM-form `sg(:css)` then re-parses that bound
+# a css declaration block INSIDE that template. FILE-form `match_ast(:tsx)` captures the
+# template body per component; TERM-form `match_ast(:css)` then re-parses that bound
 # string with the css grammar into one row per declaration. This is the embedded-
 # language pattern: one language's source is another language's text value.
 #
@@ -15,7 +15,7 @@
 #
 #   dl examples/styled-components.dl --no-daemon
 
-# --- capture: one row per styled component (FILE-form sg over .tsx) -----------
+# --- capture: one row per styled component (FILE-form match_ast over .tsx) ----
 # `$TAG_NAME` = the html element/component it extends (div/section/button);
 # `$CSS_BODY` = the WHOLE template-literal body (a single metavar captures the
 # template string; `$$$` would match the structure but bind no text). Metavar
@@ -23,11 +23,11 @@
 rel styled_component(path: file, tag: text, css_body: text, component_line: int).
 styled_component(path, TAG_NAME, CSS_BODY, component_line) <-
   scan("WORK", "**/*.tsx", path, rev),
-  sg(path, rev, :tsx, "styled.$TAG_NAME`$CSS_BODY`", component_line).
+  match_ast(path, rev, :tsx, "styled.$TAG_NAME`$CSS_BODY`", component_line).
 
-# --- extract: css declarations out of each captured body (TERM-form sg) -------
+# --- extract: css declarations out of each captured body (TERM-form match_ast) -
 # The join binds `css_body` (a str value held in a relation); term-form
-# `sg(:css)` parses it with the css grammar. `$CSS_PROP: $CSS_VALUE;` picks out
+# `match_ast(:css)` parses it with the css grammar. `$CSS_PROP: $CSS_VALUE;` picks out
 # each declaration (the trailing `;` is required for css to parse a declaration
 # node). `decl_line` is the declaration's line WITHIN the css body (relative).
 # This term-extract rel is headed only here (co-heading it with a derived
@@ -36,7 +36,7 @@ styled_component(path, TAG_NAME, CSS_BODY, component_line) <-
 rel css_declaration(path: file, tag: text, css_prop: text, css_value: text, decl_line: int).
 css_declaration(path, tag, CSS_PROP, CSS_VALUE, decl_line) <-
   styled_component(path, tag, css_body, _),
-  sg(:css, css_body, "$CSS_PROP: $CSS_VALUE;", decl_line).
+  match_ast(:css, css_body, "$CSS_PROP: $CSS_VALUE;", decl_line).
 
 # --- query: which components pin themselves with `position: fixed` ------------
 rel fixed_component(path: file, tag: text, component_line: int).

@@ -27,7 +27,7 @@ rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
 
 Only `path`, `line`, `msg` are needed for a working squiggle. Without `col`/`end_col`
 the whole line is underlined. For a tight squiggle, bind the span off the match:
-`sg(path, rev, :lang, "pat", line, col, end_line, end_col)` returns 1-based lines
+`match_ast(path, rev, :lang, "pat", line, col, end_line, end_col)` returns 1-based lines
 and 0-based byte columns (== char/UTF-16 for ASCII source), which the `diag` rule
 forwards to the `col`/`end_col` columns. See `examples/lint-unwrap.dl`.
 

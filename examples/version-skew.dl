@@ -9,7 +9,7 @@
 #   SPREFA_CONFIG=~/orgs/all.config.toml dl examples/version-skew.dl
 #
 # Bespoke lockfiles union in: head `dep_pin` with another rule per format (a
-# json() rule over package-lock.json, a match() over anything). Honest limit:
+# json() rule over package-lock.json, a match_line() over anything). Honest limit:
 # min/max compare LEXICOGRAPHICALLY, so `lo`/`hi` labels can be wrong across
 # a digit-width boundary (v1.10.0 sorts below v1.9.0) — the skew TEST
 # (lo != hi, i.e. more than one distinct version) is order-independent and
@@ -18,7 +18,7 @@
 # every repo's pinned requires: "<module> v<version>"
 rel dep_pin(repo: text, module: text, ver: text).
 dep_pin(r, m, v) <- repo(r, _, _), scan(r, "HEAD", "go.mod", p, rev),
-                    match(p, rev, /(?<m>\S+\/\S+)\s+(?<v>v[0-9]\S*)/, l).
+                    match_line(p, rev, /(?<m>\S+\/\S+)\s+(?<v>v[0-9]\S*)/, l).
 
 # per module: two witness versions; differing witnesses = skew
 rel dep_ver(module: text, lo: text, hi: text).

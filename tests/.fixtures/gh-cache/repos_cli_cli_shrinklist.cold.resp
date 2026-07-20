@@ -1,0 +1,3 @@
+200
+etagA
+[{"number": 1, "title": "keep one", "state": "open", "user": {"login": "alice"}}, {"number": 2, "title": "will vanish", "state": "open", "user": {"login": "bob"}}, {"number": 3, "title": "keep three", "state": "open", "user": {"login": "carol"}}]

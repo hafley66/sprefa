@@ -18,39 +18,39 @@ rel result_bool_fn(source_file: file, fn_line: int, fn_end_line: int, NAME: text
 # The return type is required to be Result<bool> or Result<bool, E>.
 result_bool_fn(source_file, fn_line, fn_end_line, NAME) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    sg(source_file, source_rev, :rust, "fn $NAME($$$P) -> Result<bool> { $$$B }", line: fn_line, end_line: fn_end_line).
+    match_ast(source_file, source_rev, :rust, "fn $NAME($$$P) -> Result<bool> { $$$B }", line: fn_line, end_line: fn_end_line).
 
 result_bool_fn(source_file, fn_line, fn_end_line, NAME) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    sg(source_file, source_rev, :rust, "pub fn $NAME($$$P) -> Result<bool> { $$$B }", line: fn_line, end_line: fn_end_line).
+    match_ast(source_file, source_rev, :rust, "pub fn $NAME($$$P) -> Result<bool> { $$$B }", line: fn_line, end_line: fn_end_line).
 
 result_bool_fn(source_file, fn_line, fn_end_line, NAME) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    sg(source_file, source_rev, :rust, "pub(crate) fn $NAME($$$P) -> Result<bool> { $$$B }", line: fn_line, end_line: fn_end_line).
+    match_ast(source_file, source_rev, :rust, "pub(crate) fn $NAME($$$P) -> Result<bool> { $$$B }", line: fn_line, end_line: fn_end_line).
 
 result_bool_fn(source_file, fn_line, fn_end_line, NAME) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    sg(source_file, source_rev, :rust, "fn $NAME($$$P) -> Result<bool, $E> { $$$B }", line: fn_line, end_line: fn_end_line).
+    match_ast(source_file, source_rev, :rust, "fn $NAME($$$P) -> Result<bool, $E> { $$$B }", line: fn_line, end_line: fn_end_line).
 
 result_bool_fn(source_file, fn_line, fn_end_line, NAME) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    sg(source_file, source_rev, :rust, "pub fn $NAME($$$P) -> Result<bool, $E> { $$$B }", line: fn_line, end_line: fn_end_line).
+    match_ast(source_file, source_rev, :rust, "pub fn $NAME($$$P) -> Result<bool, $E> { $$$B }", line: fn_line, end_line: fn_end_line).
 
 result_bool_fn(source_file, fn_line, fn_end_line, NAME) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    sg(source_file, source_rev, :rust, "pub(crate) fn $NAME($$$P) -> Result<bool, $E> { $$$B }", line: fn_line, end_line: fn_end_line).
+    match_ast(source_file, source_rev, :rust, "pub(crate) fn $NAME($$$P) -> Result<bool, $E> { $$$B }", line: fn_line, end_line: fn_end_line).
 
 result_bool_fn(source_file, fn_line, fn_end_line, NAME) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    sg(source_file, source_rev, :rust, "async fn $NAME($$$P) -> Result<bool> { $$$B }", line: fn_line, end_line: fn_end_line).
+    match_ast(source_file, source_rev, :rust, "async fn $NAME($$$P) -> Result<bool> { $$$B }", line: fn_line, end_line: fn_end_line).
 
 result_bool_fn(source_file, fn_line, fn_end_line, NAME) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    sg(source_file, source_rev, :rust, "pub async fn $NAME($$$P) -> Result<bool> { $$$B }", line: fn_line, end_line: fn_end_line).
+    match_ast(source_file, source_rev, :rust, "pub async fn $NAME($$$P) -> Result<bool> { $$$B }", line: fn_line, end_line: fn_end_line).
 
 result_bool_fn(source_file, fn_line, fn_end_line, NAME) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    sg(source_file, source_rev, :rust, "pub(crate) async fn $NAME($$$P) -> Result<bool> { $$$B }", line: fn_line, end_line: fn_end_line).
+    match_ast(source_file, source_rev, :rust, "pub(crate) async fn $NAME($$$P) -> Result<bool> { $$$B }", line: fn_line, end_line: fn_end_line).
 
 rel refresh_or_flip_fn(source_file: file, fn_line: int, fn_end_line: int, NAME: text).
 refresh_or_flip_fn(source_file, fn_line, fn_end_line, NAME) <-
@@ -61,7 +61,7 @@ refresh_or_flip_fn(source_file, fn_line, fn_end_line, NAME) <-
 rel ok_true_line(source_file: file, line_number: int).
 ok_true_line(source_file, line_number) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    match(source_file, source_rev, /Ok\(true\)/, line_number).
+    match_line(source_file, source_rev, /Ok\(true\)/, line_number).
 
 # Honest change signal: a local `rows_changed` accumulator that is returned
 # instead of a literal Ok(true). `moved` and `.get()` are intentionally NOT
@@ -70,7 +70,7 @@ ok_true_line(source_file, line_number) <-
 rel honest_signal_line(source_file: file, line_number: int).
 honest_signal_line(source_file, line_number) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    match(source_file, source_rev, /(?i)rows_changed/, line_number).
+    match_line(source_file, source_rev, /(?i)rows_changed/, line_number).
 
 # A flagged function contains Ok(true) somewhere in its body and no honest
 # signal anywhere in its body.

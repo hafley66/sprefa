@@ -34,3 +34,68 @@ src/scip_import.rs
 src/scip_setup.rs
 src/typecheck.rs
 src/typegraph.rs
+
+# --- grandfathered 2026-07-20 (v0.11.0 release gate) ---
+# All 29 files below were ALREADY over the 500-line hard budget at pushed main
+# a3c09e3f; none crossed the budget in the arcs that produced 0.11.0. They are
+# admitted under the shrink-only law: this list may lose entries, never gain
+# them, and a file that drops under 500 must be removed from it.
+# Plan pointer: plans/2026-07-20-filesize-grandfather.md
+src/cli/mod.rs
+# src/cli/mod.rs: 568 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/engine/cold_stage.rs
+# src/engine/cold_stage.rs: 503 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/engine/declare.rs
+# src/engine/declare.rs: 1167 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/engine/deltaflow.rs
+# src/engine/deltaflow.rs: 662 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/engine/desugar.rs
+# src/engine/desugar.rs: 511 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/engine/eval.rs
+# src/engine/eval.rs: 1116 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/engine/extract/call_render_tests.rs
+# src/engine/extract/call_render_tests.rs: 669 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/engine/extract/mod.rs
+# src/engine/extract/mod.rs: 1327 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/engine/family/mod.rs
+# src/engine/family/mod.rs: 989 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/engine/pipeline/source_stage.rs
+# src/engine/pipeline/source_stage.rs: 756 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/engine/rpc.rs
+# src/engine/rpc.rs: 501 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/engine/source_prepare.rs
+# src/engine/source_prepare.rs: 1127 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/engine/strata.rs
+# src/engine/strata.rs: 593 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/engine/symbols.rs
+# src/engine/symbols.rs: 665 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/engine/typed_plan.rs
+# src/engine/typed_plan.rs: 1103 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/graph/modgraph/mod.rs
+# src/graph/modgraph/mod.rs: 1211 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/graph/modgraph/rust.rs
+# src/graph/modgraph/rust.rs: 505 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/graph/typegraph/go.rs
+# src/graph/typegraph/go.rs: 1217 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/graph/typegraph/kotlin.rs
+# src/graph/typegraph/kotlin.rs: 1042 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/graph/typegraph/mod.rs
+# src/graph/typegraph/mod.rs: 761 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/graph/typegraph/python.rs
+# src/graph/typegraph/python.rs: 1384 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/graph/typegraph/rust/mod.rs
+# src/graph/typegraph/rust/mod.rs: 1332 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/graph/typegraph/ts/flow.rs
+# src/graph/typegraph/ts/flow.rs: 964 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/graph/typegraph/ts/mod.rs
+# src/graph/typegraph/ts/mod.rs: 1467 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/hook.rs
+# src/hook.rs: 758 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/jobq/mod.rs
+# src/jobq/mod.rs: 737 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/jobq/tests.rs
+# src/jobq/tests.rs: 577 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/rspath.rs
+# src/rspath.rs: 510 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)
+src/storage/call.rs
+# src/storage/call.rs: 1938 lines at grandfathering (plans/2026-07-20-filesize-grandfather.md)

@@ -5,11 +5,20 @@ description: Use the `dl` engine (sprefa v5) to query a codebase as datalog-over
 
 # sprefa `dl` — datalog over code
 
-`dl` extracts facts from source (`scan` + `ast`/`sg`/`json`), lets you
+`dl` extracts facts from source (`scan` + `ast`/`match_ast`/`json`), lets you
 write recursive datalog rules, and lowers them to a SQLite fixpoint. Output is a
 `?` query, an LSP/`--check` diagnostic, an MCP response, or a generated/spliced
 file (`gen`). Every fact is keyed on `(repo, path, rev)`; matched values carry
 byte spans, so a match is a coordinate you can squiggle or rewrite.
+
+`match_line`/`match_ast` are the current names (2026-07-20 rename); `match`/
+`sg` are their pre-rename spellings, kept working forever as deprecated
+aliases (never a hard break) but each emits a `deprecated-op-name` warning
+naming its replacement. Both directions matter equally: `match_line` is a
+LINE REGEX, correct only for flat text (ini/env/log/csv); `match_ast` is
+ast-grep structural matching, correct for source code. Reach for `match_ast`
+on anything the language's parser understands — a line regex silently misses
+any construct spanning more than one line.
 
 ## Before you write a rule (the constraints that bite)
 
@@ -17,7 +26,7 @@ Read these first; each one is a silent zero-match or a confusing error otherwise
 Run `dl prog.dl --parse-only` to parse + typecheck with NO scan (sub-second fast
 fail) before a full run.
 
-- **Captures are UPPERCASE.** In `sg`/`ast_yaml` patterns a metavar is `$NAME`
+- **Captures are UPPERCASE.** In `match_ast`/`ast_yaml` patterns a metavar is `$NAME`
   or `$$$ARGS`; a lowercase `$name` is matched as LITERAL text, not a capture
   (a warn fires). Descriptive-but-uppercase: `$CALLEE`, `$$$CALL_ARGS`.
 - **`$$$NAME` is structure only.** A `$$$` multi-metavar matches a node LIST; it
@@ -61,18 +70,21 @@ fail) before a full run.
 - **`scan` has two optional leading args** — copy-paste one of these two forms:
   - with repo: `scan(config_repo, rev, "src/**/*.rs", scan_path, rev_out)`
   - without:   `scan("src/**/*.rs", scan_path, rev_out)`
-- **Pick the op by whether a grammar exists.** `sg`/`ast`/`ast_yaml` when the
-  language has a grammar (below); `match` for substrings or a language with no
-  grammar handle. Do not reach for `match` on a structural pattern.
-- **Embedded languages: TERM-form `sg`.** `sg(:lang, str_var, "pat"[, line, col,
+- **Pick the op by whether a grammar exists.** `match_ast`/`ast`/`ast_yaml`
+  when the language has a grammar (below); `match_line` for substrings or a
+  language with no grammar handle. Do not reach for `match_line` on a
+  structural pattern — this is the whole reason for the 2026-07-20 rename
+  (`sg`/`match` read as "cryptic op" vs. "the default", so authors reached for
+  the line regex and wrote bad regex against structured languages).
+- **Embedded languages: TERM-form `match_ast`.** `match_ast(:lang, str_var, "pat"[, line, col,
   end_line, end_col])` runs the ast-grep grammar over a STRING bound earlier in
   the rule instead of a file — a styled-components css body captured by an outer
-  `sg(:tsx)`, a markdown code fence, a response column. Spans are RELATIVE to the
+  `match_ast(:tsx)`, a markdown code fence, a response column. Spans are RELATIVE to the
   bound string (byte 0 = its start; carry the region's own line to reach file
   coordinates). Runs in the join+extract pass like term-form `json`/`jsonp`. See
   `examples/styled-components.dl` and `examples/md-fences.dl`.
 - **Mixed source/derived heads auto-desugar.** Heading a rel with BOTH a
-  source rule (`scan`/`match`/`ast`/`sg`/`ast_yaml`/`json`/`cmd`/`comment`) and
+  source rule (`scan`/`match_line`/`ast`/`match_ast`/`ast_yaml`/`json`/`cmd`/`comment`) and
   a derived rule used to bail; the engine now splits it into hidden
   `<rel>__src`/`<rel>__drv` twins plus a synthesized union automatically —
   every other rule/`?`/the panel keeps reading the original name. Two
@@ -85,13 +97,14 @@ fail) before a full run.
 
 ### Per-op language matrix
 
-A `:lang` used outside its op's list bails at scan time — `sg`/`ast_yaml` share
-the ast-grep grammars (they have `tsx`/`typescript`/`cpp`), while `ast` runs
-tree-sitter (it has `bash`/`hcl`/`gotmpl`/`dockerfile` but NO `tsx`). The real
-tables live in `src/sg.rs` (`SG_LANG_TABLE`) and `src/engine/mod.rs`
-(`AST_LANG_TABLE`); a test keeps this block set-equal to them:
+A `:lang` used outside its op's list bails at scan time — `match_ast`/
+`ast_yaml` share the ast-grep grammars (they have `tsx`/`typescript`/`cpp`),
+while `ast` runs tree-sitter (it has `bash`/`hcl`/`gotmpl`/`dockerfile` but NO
+`tsx`). The real tables live in `src/sg.rs` (`SG_LANG_TABLE`) and
+`src/engine/mod.rs` (`AST_LANG_TABLE`); a test keeps this block set-equal to
+them:
 
-    sg, ast_yaml: rust typescript tsx javascript python go json c cpp kotlin css html bash csharp java scala swift ruby php lua elixir haskell yaml
+    match_ast, ast_yaml: rust typescript tsx javascript python go json c cpp kotlin css html bash csharp java scala swift ruby php lua elixir haskell yaml
     ast: rust c kotlin python bash go hcl starlark jsonnet gotmpl dockerfile dl yaml toml json css
 
 ## Install
@@ -246,8 +259,8 @@ all(scan_path) <- scan("*", "WORK", "**/*.ts", scan_path, rev).  # every config 
 ```
 
 A BARE `scan` rule is enough: it populates `_file` AND triggers AST/SCIP/type/
-call/dataflow extraction for the matched files. You never need a dummy `match` to
-"force" a scan. Reuse library rules with `use "std/callgraph.dl".` (resolves from
+call/dataflow extraction for the matched files. You never need a dummy
+`match_line` to "force" a scan. Reuse library rules with `use "std/callgraph.dl".` (resolves from
 disk or the embedded copy). Push a program into a running daemon with
 `dl daemon load prog.dl` (watched, hot-reloads) or `dl daemon load-once prog.dl`
 (eval once).
@@ -268,23 +281,37 @@ disk or the embedded copy). Push a program into a running daemon with
   sink: clone-missing + fetch + fast-forward). Confirm it fired with
   `dl daemon rows checkout_done`.
 
-## Which extractor (NEVER default to `match`)
+## Which extractor (NEVER default to `match_line`)
 
-`match` is a regex over raw text — the LAST resort, for a language with no grammar
-and no index. Prefer, in order:
+`match_line` is a regex over raw text — the LAST resort, for flat text
+(ini/env/log/csv) or a language with no grammar and no index. It is never the
+right tool for structured source code: a construct spanning more than one
+line silently never matches (the incident that forced the 2026-07-20 rename —
+`match(...)` used to find `Err(_) => ... return;` in Rust found ZERO results
+because the arm spans three lines; one `match_ast(...)` pattern `"return;"`
+found 39, including every one a five-agent human audit found independently).
+Prefer, in order:
 
 1. **SCIP** (`scip_def`/`scip_ref`/`call_edge`/`type_link`) — compiler-accurate
    resolution. Turn it on with `dl index --install` (writes `.dl/index.scip`), or
    demand it per repo by heading `scip_want(repo)` from a rule, or point
    `$SPREFA_SCIP_INDEX` at an existing index. `dl doctor` says what's missing.
-2. **`ast` / `sg` / `ast_yaml`** — structural patterns when the language has a
-   grammar (see the matrix above). `$UPPERCASE` metavars capture with byte spans.
+2. **`ast` / `match_ast` / `ast_yaml`** — structural patterns when the language
+   has a grammar (see the matrix above). `$UPPERCASE` metavars capture with
+   byte spans.
 3. **built-in graph rels from a bare `scan`** — `call_edge`, `type_entity`,
    `df_edge`, `module_edge`, `comment_node`, `doc_comment` are already extracted;
    query them directly instead of re-parsing with regex.
-4. **`match`** — only for substrings / a grammar-less file. Never `match(/./)` to
-   force a scan (a bare `scan` already extracts). If you catch yourself regexing a
-   call or an import, stop and use the graph rel or SCIP.
+4. **`match_line`** — only for substrings / a grammar-less file. Never
+   `match_line(/./)` to force a scan (a bare `scan` already extracts). If you
+   catch yourself regexing a call or an import, stop and use the graph rel or
+   SCIP.
+
+`match_line`/`match_ast` are the current names; `match`/`sg` are their
+pre-rename spellings (2026-07-20), kept as deprecated aliases — both still
+parse and run, but each warns (`deprecated-op-name`) naming its replacement.
+Neither old name is "the good one that just got a longer name": both are
+equally deprecated. Reach for the new names in anything you write.
 
 **SCIP without the token-burn:** `dl index --install` (detects languages, installs
 + runs the right indexer, merges to `.dl/index.scip`) then run your program — the
@@ -442,14 +469,16 @@ inject_skill("testing") <-
 | `hover_note` | sink | `hover_note(path: hit_path, line: hit_line, end_line: hit_line, end_col: hit_end_col, md: note_text[, col: ]) <- ...` |
 | `json` | source | `json(path, rev, q:{ $k: $v })` |
 | `jsonp` | source | `jsonp(path, rev, "a.*.b", out)` |
-| `match` | source | `match(path, rev, /re/, line[, id][, col, end_col])` |
+| `match` | source | `match(...) — DEPRECATED alias for match_line(...)` |
+| `match_ast` | source | `match_ast(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col][, id])` |
+| `match_line` | source | `match_line(path, rev, /re/, line[, id][, col, end_col])` |
 | `negation` | body | `!edge(from, _)` |
 | `node2vec` | body | `head(node_a, node_b, score) <- node2vec(edge)` |
 | `query` | sink | `? rel(from, to). / ? rel(col: value). / ? rel(key, count(n)).` |
 | `regex` | body | `name =~ /^[A-Za-z]+$/` |
 | `scan` | source | `scan([repo,][rev,] glob, path[, rev_out])` |
 | `scc` | body | `head(rep, member) <- scc(edge)` |
-| `sg` | source | `sg(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col][, id])` |
+| `sg` | source | `sg(...) — DEPRECATED alias for match_ast(...)` |
 | `strfn` | body | `split(text, sep, idx) / replace(text, from, to)` |
 <!-- END: op-quickref -->
 
@@ -484,7 +513,7 @@ directory (the cwd) — no git, the file need not be tracked or committed. Only
   matches lowercase), so uppercase-boundary checks need case-exact branches.
 - **N+1**: never a per-row write. Collect the set, one `insert_rows`/`refresh_rel`.
 - **Mixed source/derived heads auto-desugar**: a rel headed by both a source
-  rule (`scan`/`match`/`ast`/`sg`/`json`/`cmd`/`comment`) and a derived rule
+  rule (`scan`/`match_line`/`ast`/`match_ast`/`json`/`cmd`/`comment`) and a derived rule
   splits automatically into hidden `__src`/`__drv` twins plus a synthesized
   union; the visible name still reads as one relation. Still refused: a
   `key(...)`/`merge(...)` lattice rel mixed this way, and an `@in`/`@out` port

@@ -1,6 +1,6 @@
 # rusqlite-coupling.dl — turbo dogfood: trace the rusqlite dependency through
 # dl's OWN module graph + call shapes, STRUCTURALLY (tree-sitter / ast-grep, no
-# `match`/regex). Answers, from dl's own facts:
+# `match_line`/regex). Answers, from dl's own facts:
 #   (1) which files bind a rusqlite symbol (import graph, not a text search),
 #   (2) where they hand-roll SQL (prepare/execute/query_* — ast-grep byte spans),
 #   (3) whether that access routes through the TYPED rel helpers or is bespoke,
@@ -32,32 +32,32 @@ rusqlite_binding(file, local, imported) <-
 
 # ── Layer 3: SQL access call sites, ast-grep with precise byte spans ─────────
 # One rule per rusqlite method that takes a SQL string. `$R` is any receiver
-# expression, `$$$A` the argument list; sg yields the whole-match span
+# expression, `$$$A` the argument list; match_ast yields the whole-match span
 # (line,col,end_line,end_col) so overlapping matches dedupe by identical span.
 rel raw_sql_site(file: file, line: int, col: int, end_line: int, end_col: int, verb: text).
 raw_sql_site(file, line, col, end_line, end_col, "prepare") <- scan("src/**/*.rs", file, rev),
-    sg(file, rev, :rust, "$R.prepare($$$A)", line, col, end_line, end_col).
+    match_ast(file, rev, :rust, "$R.prepare($$$A)", line, col, end_line, end_col).
 raw_sql_site(file, line, col, end_line, end_col, "prepare_cached") <- scan("src/**/*.rs", file, rev),
-    sg(file, rev, :rust, "$R.prepare_cached($$$A)", line, col, end_line, end_col).
+    match_ast(file, rev, :rust, "$R.prepare_cached($$$A)", line, col, end_line, end_col).
 raw_sql_site(file, line, col, end_line, end_col, "execute") <- scan("src/**/*.rs", file, rev),
-    sg(file, rev, :rust, "$R.execute($$$A)", line, col, end_line, end_col).
+    match_ast(file, rev, :rust, "$R.execute($$$A)", line, col, end_line, end_col).
 raw_sql_site(file, line, col, end_line, end_col, "execute_batch") <- scan("src/**/*.rs", file, rev),
-    sg(file, rev, :rust, "$R.execute_batch($$$A)", line, col, end_line, end_col).
+    match_ast(file, rev, :rust, "$R.execute_batch($$$A)", line, col, end_line, end_col).
 raw_sql_site(file, line, col, end_line, end_col, "query_row") <- scan("src/**/*.rs", file, rev),
-    sg(file, rev, :rust, "$R.query_row($$$A)", line, col, end_line, end_col).
+    match_ast(file, rev, :rust, "$R.query_row($$$A)", line, col, end_line, end_col).
 raw_sql_site(file, line, col, end_line, end_col, "query_map") <- scan("src/**/*.rs", file, rev),
-    sg(file, rev, :rust, "$R.query_map($$$A)", line, col, end_line, end_col).
+    match_ast(file, rev, :rust, "$R.query_map($$$A)", line, col, end_line, end_col).
 
 # The TYPED rel-access helpers: the layer bespoke SQL should route through.
 rel typed_sql_site(file: file, line: int, col: int, end_line: int, end_col: int, verb: text).
 typed_sql_site(file, line, col, end_line, end_col, "insert_rows") <- scan("src/**/*.rs", file, rev),
-    sg(file, rev, :rust, "$R.insert_rows($$$A)", line, col, end_line, end_col).
+    match_ast(file, rev, :rust, "$R.insert_rows($$$A)", line, col, end_line, end_col).
 typed_sql_site(file, line, col, end_line, end_col, "encode_rel_rows") <- scan("src/**/*.rs", file, rev),
-    sg(file, rev, :rust, "$R.encode_rel_rows($$$A)", line, col, end_line, end_col).
+    match_ast(file, rev, :rust, "$R.encode_rel_rows($$$A)", line, col, end_line, end_col).
 typed_sql_site(file, line, col, end_line, end_col, "refresh_rel") <- scan("src/**/*.rs", file, rev),
-    sg(file, rev, :rust, "$R.refresh_rel($$$A)", line, col, end_line, end_col).
+    match_ast(file, rev, :rust, "$R.refresh_rel($$$A)", line, col, end_line, end_col).
 typed_sql_site(file, line, col, end_line, end_col, "reload_rel") <- scan("src/**/*.rs", file, rev),
-    sg(file, rev, :rust, "$R.reload_rel($$$A)", line, col, end_line, end_col).
+    match_ast(file, rev, :rust, "$R.reload_rel($$$A)", line, col, end_line, end_col).
 
 # ── Layer 4: combine — bespoke SQL concentrated in rusqlite-binding files ────
 rel raw_in_bound_file(file: file, line: int, verb: text).
@@ -173,7 +173,7 @@ family_format_sql(file, line) <-
     scan("src/engine/family/*.rs", file, rev),
     file != "src/engine/family/mod.rs",
     file != "src/engine/family/router.rs",
-    match(file, rev, /format!\(\s*"[^"]*\b(SELECT|INSERT|DELETE|UPDATE|CREATE)\b/, line).
+    match_line(file, rev, /format!\(\s*"[^"]*\b(SELECT|INSERT|DELETE|UPDATE|CREATE)\b/, line).
 
 # Candidate 3: a bare `rusqlite` reference — binding the crate directly
 # instead of going through `Ctx`/`Db`.
@@ -182,7 +182,7 @@ family_rusqlite_ref(file, line) <-
     scan("src/engine/family/*.rs", file, rev),
     file != "src/engine/family/mod.rs",
     file != "src/engine/family/router.rs",
-    match(file, rev, /rusqlite/, line).
+    match_line(file, rev, /rusqlite/, line).
 
 # Unify the three candidate shapes, then drop anything inside the file's own
 # test-module span (a legitimate fixture, not the authoring surface).

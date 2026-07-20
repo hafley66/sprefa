@@ -24,12 +24,12 @@
 # also matches the root file.
 rel module_id(repo: text, module: text).
 module_id(r, m) <- repo(r, _, _), scan(r, "HEAD", "**/go.mod", p, rev),
-                   match(p, rev, /^module\s+(?<m>\S+)/, l).
+                   match_line(p, rev, /^module\s+(?<m>\S+)/, l).
 
 # declared requires, from every go.mod in the repo
 rel gomod_pin(repo: text, module: text, ver: text).
 gomod_pin(r, m, v) <- repo(r, _, _), scan(r, "HEAD", "**/go.mod", p, rev),
-                      match(p, rev, /(?<m>\S+\/\S+)\s+(?<v>v[0-9]\S*)/, l).
+                      match_line(p, rev, /(?<m>\S+\/\S+)\s+(?<v>v[0-9]\S*)/, l).
 
 # external imports: a gofmt import line — optional alias, a quoted domain
 # path, and NOTHING after the closing quote but an optional comment. The end
@@ -39,7 +39,7 @@ gomod_pin(r, m, v) <- repo(r, _, _), scan(r, "HEAD", "**/go.mod", p, rev),
 rel ext_import(repo: text, file: file, imp: text).
 ext_import(r, p, imp) <-
     repo(r, _, _), scan(r, "HEAD", "**/*.go", p, rev),
-    match(p, rev, /^\s*(?:[A-Za-z_.][A-Za-z0-9_]*\s+)?"(?<imp>[a-z0-9.\-]+\.[a-z]{2,}\/[^"]+)"\s*(?:\/\/.*)?$/, l).
+    match_line(p, rev, /^\s*(?:[A-Za-z_.][A-Za-z0-9_]*\s+)?"(?<imp>[a-z0-9.\-]+\.[a-z]{2,}\/[^"]+)"\s*(?:\/\/.*)?$/, l).
 
 # covered: the import path IS a declared module, or extends one at a `/`
 # boundary (strip the module prefix; what remains must be empty or start

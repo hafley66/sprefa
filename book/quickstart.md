@@ -41,7 +41,7 @@ their contents into more rows, and rules join rows into answers. Save this as
 rel todo_comment(source_path: file, source_line: int, todo_text: text).
 todo_comment(source_path, source_line, todo_text) <-
     scan("src/**/*.{rs,ts}", source_path, source_rev),
-    match(source_path, source_rev, /TODO: (?<todo_text>.+)/, source_line).
+    match_line(source_path, source_rev, /TODO: (?<todo_text>.+)/, source_line).
 
 rel todo_count(source_path: file, total: int).
 todo_count(source_path, count(source_line)) <-
@@ -53,7 +53,7 @@ todo_count(source_path, count(source_line)) <-
 
 Read it bottom-up: `?` prints a relation, `todo_count` aggregates, and
 `todo_comment` is filled by two chained operators. `scan` selects files by
-glob (against the repo at the current directory), and `match` runs a regex over
+glob (against the repo at the current directory), and `match_line` runs a regex over
 each one; the named capture group
 `(?<todo_text>...)` binds the variable of the same name.
 

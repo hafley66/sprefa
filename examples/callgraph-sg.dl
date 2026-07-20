@@ -16,20 +16,20 @@ rel unused(name: text).
 
 def(NAME, path, line) <-
   scan("WORK", "src/**/*.rs", path, rev),
-  sg(path, rev, :rust, "fn $NAME($$$P) -> $R { $$$B }", line).
+  match_ast(path, rev, :rust, "fn $NAME($$$P) -> $R { $$$B }", line).
 def(NAME, path, line) <-
   scan("WORK", "src/**/*.rs", path, rev),
-  sg(path, rev, :rust, "fn $NAME($$$P) { $$$B }", line).
+  match_ast(path, rev, :rust, "fn $NAME($$$P) { $$$B }", line).
 def(NAME, path, line) <-
   scan("WORK", "src/**/*.rs", path, rev),
-  sg(path, rev, :rust, "pub fn $NAME($$$P) -> $R { $$$B }", line).
+  match_ast(path, rev, :rust, "pub fn $NAME($$$P) -> $R { $$$B }", line).
 def(NAME, path, line) <-
   scan("WORK", "src/**/*.rs", path, rev),
-  sg(path, rev, :rust, "pub fn $NAME($$$P) { $$$B }", line).
+  match_ast(path, rev, :rust, "pub fn $NAME($$$P) { $$$B }", line).
 
 call(CALLEE, path, line) <-
   scan("WORK", "src/**/*.rs", path, rev),
-  sg(path, rev, :rust, "$CALLEE($$$A)", line).
+  match_ast(path, rev, :rust, "$CALLEE($$$A)", line).
 
 calls(caller, callee) <-
   def(caller, p, _),

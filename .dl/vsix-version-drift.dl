@@ -16,14 +16,14 @@
 rel crate_version(version: text).
 crate_version(version) <-
     scan("WORK", "Cargo.toml", cargo_path, rev),
-    match(cargo_path, rev, /^version = "(?<version>\d+\.\d+\.\d+)"/, line).
+    match_line(cargo_path, rev, /^version = "(?<version>\d+\.\d+\.\d+)"/, line).
 
 # The extension's own declared version (top-level "version" key; dependency
 # ranges are keyed by package name, so only this one line matches).
 rel ext_version(version: text).
 ext_version(version) <-
     scan("WORK", "editors/vscode-dl/package.json", manifest_path, rev),
-    match(manifest_path, rev, /"version"\s*:\s*"(?<version>\d+\.\d+\.\d+)"/, line).
+    match_line(manifest_path, rev, /"version"\s*:\s*"(?<version>\d+\.\d+\.\d+)"/, line).
 
 # Drift: the extension's package.json version and the crate version disagree.
 diag(path: "editors/vscode-dl/package.json", line: 1, severity: "error",

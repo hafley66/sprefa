@@ -10,7 +10,8 @@
 //! (`call_edge` / support) is step 2.
 
 use anyhow::Result;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use crate::ast::Value;
 use crate::db::{Db, SqlVal};
@@ -141,18 +142,65 @@ pub(crate) fn reconcile(old: &[OutRow], new: Vec<OutRow>) -> RowDelta {
     RowDelta { retracted, inserted }
 }
 
+/// Cross-family scan cache for one `react_deltas` flip. Multiple families in
+/// the registry can issue the byte-identical `(rel, pk_col, cols)` read in
+/// the same tick — `CallEdge` and `CallEdgeRev` (`call_edge.rs`,
+/// `call_edge_rev.rs`) both scan `_call_owner`, `_call_raw_site`, and
+/// `_call_resolution` with IDENTICAL column lists, because they reconstruct
+/// the same support keys and differ only in whether `rev` survives into the
+/// output. Without this cache, every tick that touches those three owned
+/// tables (i.e. essentially any edit that adds, moves, or removes a call
+/// site) re-runs that full-table SQL scan twice — once per family — even
+/// though the second run can only ever reproduce the first's rows. Keyed by
+/// the exact request (`rel` + `pk_col` + `cols`, joined); scoped to one
+/// `react_deltas` call via `FamilyRouter::react_deltas` and dropped at its
+/// end, since a later tick's rows may differ and nothing here may outlive one
+/// flip.
+///
+/// Keyed two levels deep, `rel` then column list, rather than by one
+/// concatenated string: a composite key belongs in two positions, not folded
+/// into one text field with a separator (`.dl/composite-key-string.dl`).
+#[derive(Default)]
+pub(crate) struct ScanCache {
+    entries: HashMap<&'static str, HashMap<String, Vec<(i64, OutRow)>>>,
+}
+
+impl ScanCache {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+}
+
 /// Tracked read context. Every `scan` records a `DepKey` per row read, so the
 /// engine learns a family's inputs by intercepting reads (the MobX/SolidJS
 /// `computed` model), not from a declared dep array (the React `useMemo`
 /// model, which undercaptures — the alias-bug class).
+///
+/// `scan_ns` accumulates the wall time spent inside `scan`'s SQL round trip
+/// across every call a `derive` makes (cache hits excluded — see below);
+/// `cache_hits` counts how many of those calls were instead served from a
+/// shared [`ScanCache`]. The corpus-scaling profiling harness
+/// (`tests/it/family_scaling_probe.rs`) reads both back through
+/// [`derive_family_timed`]'s `DeriveTiming` to attribute a family's cost
+/// between "reading the owned table", "in-process joins/grouping over the
+/// rows", and "reused another family's read this tick".
 pub(crate) struct Ctx<'a> {
     db: &'a Db,
     deps: HashSet<DepKey>,
+    scan_ns: u128,
+    cache_hits: usize,
+    cache: Option<&'a mut ScanCache>,
 }
 
 impl<'a> Ctx<'a> {
     pub(crate) fn new(db: &'a Db) -> Self {
-        Self { db, deps: HashSet::new() }
+        Self { db, deps: HashSet::new(), scan_ns: 0, cache_hits: 0, cache: None }
+    }
+
+    /// Same as `new`, but shares `cache` with every other family derived in
+    /// the same `react_deltas` flip — see [`ScanCache`].
+    pub(crate) fn new_cached(db: &'a Db, cache: &'a mut ScanCache) -> Self {
+        Self { db, deps: HashSet::new(), scan_ns: 0, cache_hits: 0, cache: Some(cache) }
     }
 
     /// Scan an internal table: return each row's integer PK plus the requested
@@ -160,6 +208,17 @@ impl<'a> Ctx<'a> {
     /// returned. Columns are read as `Option<i64>`; NULL becomes `Value::Null`
     /// (the `_call_*` schema is `NOT NULL` on the PK and most sid columns, but
     /// `classification_sid` and `unique_sym_sid` are nullable).
+    ///
+    /// Unconditional `SELECT {cols} FROM {rel}` on a cache miss — every call
+    /// reads the WHOLE owned table, not just the rows a triggering delta
+    /// touched. This is the corpus-proportional cost the scaling probe
+    /// measures: a family whose footprint intersects one changed relation
+    /// re-scans that relation's full row count on every affected tick,
+    /// regardless of how many rows actually moved. A shared [`ScanCache`]
+    /// (when present) collapses a byte-identical repeat request within the
+    /// same flip to a clone of the first family's rows instead of a second
+    /// full-table read; it does not change the per-flip cost's dependence on
+    /// total corpus size, only how many times that cost is paid.
     pub(crate) fn scan(
         &mut self,
         rel: &'static str,
@@ -172,7 +231,23 @@ impl<'a> Ctx<'a> {
             col_list.push(',');
             col_list.push_str(c);
         }
+        // The cache key is (`rel`, `col_list`) — `col_list` alone collides
+        // across tables that happen to share a column name set (e.g. two owned
+        // tables both scanned by their `site_id` PK).
+        if let Some(cache) = &self.cache {
+            if let Some(cached_rows) =
+                cache.entries.get(rel).and_then(|by_cols| by_cols.get(col_list.as_str()))
+            {
+                let cached_rows = cached_rows.clone();
+                for (pk, _) in &cached_rows {
+                    self.deps.insert(DepKey { rel, pk: *pk });
+                }
+                self.cache_hits += 1;
+                return Ok(cached_rows);
+            }
+        }
         let sql = format!("SELECT {col_list} FROM {rel}");
+        let started = Instant::now();
         let rows: Vec<(i64, OutRow)> = self.db.query_rows(rel, &sql, &[], |row| {
             let pk: i64 = row.get(0)?;
             let mut out = Vec::with_capacity(cols.len());
@@ -182,8 +257,12 @@ impl<'a> Ctx<'a> {
             }
             Ok((pk, out))
         })?;
+        self.scan_ns += started.elapsed().as_nanos();
         for (pk, _) in &rows {
             self.deps.insert(DepKey { rel, pk: *pk });
+        }
+        if let Some(cache) = &mut self.cache {
+            cache.entries.entry(rel).or_default().insert(col_list, rows.clone());
         }
         Ok(rows)
     }
@@ -227,14 +306,56 @@ macro_rules! register_family {
 }
 pub(crate) use register_family;
 
+/// Wall-time breakdown of one `derive_family` call: `total_ns` is the whole
+/// `Family::derive` invocation, `scan_ns` is the portion of it spent inside
+/// `Ctx::scan`'s SQL round trips that actually hit the database (cache hits
+/// excluded). `total_ns - scan_ns` is the family's in-process compute
+/// (building HashMaps, joining, grouping) over the rows `scan` already
+/// returned, PLUS any cache-hit clone cost. `cache_hits` counts how many of
+/// this derive's `scan` calls were served from the flip's shared
+/// [`ScanCache`] instead of running SQL. Test-only surface, read through
+/// `FamilyRouter::react_deltas` and `Engine::call_router_last_timings`
+/// (`router.rs`) by the corpus-scaling profiling harness.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct DeriveTiming {
+    pub total_ns: u128,
+    pub scan_ns: u128,
+    pub cache_hits: usize,
+}
+
 /// Run one family's derive against `db`, returning its output rows and the
 /// input dependencies it captured. Cold-load and rederive use the same path;
-/// the difference is only which inputs are present.
+/// the difference is only which inputs are present. Existing call sites
+/// (`storage/call.rs`'s unit tests, `router.rs`'s `cold`/`react`) keep this
+/// exact 2-tuple contract; [`derive_family_timed_cached`] is the
+/// timing-and-cache-carrying twin used only where the extra breakdown is
+/// read.
 pub(crate) fn derive_family(db: &Db, family: &dyn Family) -> Result<(Vec<OutRow>, HashSet<DepKey>)> {
     let mut ctx = Ctx::new(db);
     let mut sink = RowSink { rows: Vec::new() };
     family.derive(&mut ctx, &mut sink)?;
     Ok((sink.rows, ctx.deps))
+}
+
+/// [`derive_family`] plus a [`DeriveTiming`] breakdown, and every `Ctx::scan`
+/// call checks `cache` first: a byte-identical `(rel, pk_col, cols)` request
+/// already served earlier in the same `react_deltas` flip is cloned from
+/// `cache` instead of re-running SQL. Used by `FamilyRouter::react_deltas`,
+/// which owns one `ScanCache` per flip and lends it to every family it
+/// reruns, in registry (sorted-name) order — see [`ScanCache`] for why
+/// `CallEdge`/`CallEdgeRev` are the pair this actually collapses.
+pub(crate) fn derive_family_timed_cached(
+    db: &Db,
+    family: &dyn Family,
+    cache: &mut ScanCache,
+) -> Result<(Vec<OutRow>, HashSet<DepKey>, DeriveTiming)> {
+    let mut ctx = Ctx::new_cached(db, cache);
+    let mut sink = RowSink { rows: Vec::new() };
+    let started = Instant::now();
+    family.derive(&mut ctx, &mut sink)?;
+    let timing =
+        DeriveTiming { total_ns: started.elapsed().as_nanos(), scan_ns: ctx.scan_ns, cache_hits: ctx.cache_hits };
+    Ok((sink.rows, ctx.deps, timing))
 }
 
 // --- Extraction-family rel-name inventories -----------------------------
@@ -312,13 +433,15 @@ pub(crate) const CALL_RELS: [&str; 7] = [
 /// value flow into a composite (struct-literal field, object-literal property,
 /// Kotlin named argument). See `typegraph::DataflowFacts`.
 /// `df_node`/`df_node_repo`/`df_arg`/`df_field` gain `_rev` twins (D5.4): the
-/// diff-consumed df rels carry rev, with node ids salted by rev (`salt_rev`) so
-/// two revs' `file:line:col` ids stay disjoint in one table. The legacy rels
+/// diff-consumed df rels carry `rev` as a real trailing column, with the node
+/// id reusing the same interned id as the legacy rel; `df_node_rev` keys on
+/// `(id, rev)` so two revs stay disjoint without folding both into one string.
+/// The legacy rels
 /// keep raw ids (single-rev daemon sees today's behavior). `df_edge`/`loop_over`/
 /// `allocates`/`nest`/`df_param` stay WORK-only (flow/perf inputs, deferred).
 /// `df_lit`/`df_lit_rev` (string-values arc, item 1): one row per STRING-
 /// carrying `df_node` (kind lit/template/concat) with its cooked/raw text;
-/// same rev-salted-id shape as `df_field`/`df_field_rev`. See
+/// same `rev`-as-a-column shape as `df_field`/`df_field_rev`. See
 /// `typegraph::DataflowFacts::lits`.
 pub(crate) const DATAFLOW_RELS: [&str; 15] = [
     "df_node",

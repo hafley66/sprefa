@@ -81,7 +81,7 @@ fn_arity(s, count(p)) <- call_def(_, s, _, _, _, _), type_sig(s, "param", p, _).
 # Every non-empty line in any scanned Rust file. Acts as a spine so we can mark
 # which lines are doc lines and which aren't.
 rel file_line(file: file, line: int).
-file_line(p, l) <- scan("WORK", "src/**/*.rs", p, rev), match(p, rev, /./, l).
+file_line(p, l) <- scan("WORK", "src/**/*.rs", p, rev), match_line(p, rev, /./, l).
 
 # One row per /// line in any scanned Rust file. `^\/\s?(?<x>.*)` matches the
 # "/ ..." text the comment op sees after stripping "//" from "///"; `.*` (not

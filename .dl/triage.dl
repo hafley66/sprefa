@@ -19,10 +19,10 @@
 rel type_span(name: text, f: file, l: int).
 type_span(name, f, l) <-
     scan("WORK", "src/**/*.rs", f, rev),
-    match(f, rev, /\b(struct|enum|trait|type|impl)\s+(?<name>[A-Z][A-Za-z0-9_]*)/, l).
+    match_line(f, rev, /\b(struct|enum|trait|type|impl)\s+(?<name>[A-Z][A-Za-z0-9_]*)/, l).
 type_span(name, f, l) <-
     scan("WORK", "src/**/*.rs", f, rev),
-    match(f, rev, /\b(struct|enum|trait|type|impl)\s+(?<name>[A-Z][A-Za-z0-9_]*)/, l).
+    match_line(f, rev, /\b(struct|enum|trait|type|impl)\s+(?<name>[A-Z][A-Za-z0-9_]*)/, l).
 
 rel te(name: text).
 te(name) <- type_entity(_, _, name, _, _, _, _).

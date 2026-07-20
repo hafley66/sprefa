@@ -219,10 +219,12 @@ pub fn op_docs() -> &'static [(&'static str, &'static str, &'static str, &'stati
     &[
         // source ops: body position, extract facts from files. Cannot join derived rels.
         ("scan", "source", "scan([repo,][rev,] glob, path[, rev_out])", "select files; 2-ary omits rev_out, 5-ary names a repo coordinate; outputs path/rev_out take the _ or name: form (rev_out _ or omitted = rev not bound); repo defaults \".\", rev \"WORK\" (WORK/HEAD/any git rev)"),
-        ("match", "source", "match(path, rev, /re/, line[, id][, col, end_col])", "regex over file content, one row per match line; (?<name>..) named groups bind captured text as dl vars; $cap is sugar for a lazy named group; trailing id is a match ID for the whole-match span, not captured text; trailing col/end_col are its coordinates"),
+        ("match_line", "source", "match_line(path, rev, /re/, line[, id][, col, end_col])", "LINE REGEX over file content — for FLAT TEXT (ini/env/log/csv) only, never structured source code (a construct spanning more than one line will not match; use match_ast for source). one row per match line; (?<name>..) named groups bind captured text as dl vars; $cap is sugar for a lazy named group; trailing id is a match ID for the whole-match span, not captured text; trailing col/end_col are its coordinates"),
+        ("match", "source", "match(...) — DEPRECATED alias for match_line(...)", "deprecated pre-rename spelling; parses identically to match_line and still runs, but emits a deprecated-op-name warning naming match_line (and match_ast for source code) — see match_line"),
         ("ast", "source", "ast(path, rev, :lang, \"(query) @cap\", line[, end])", "tree-sitter query; @cap captures bind same-named vars; :lang ∈ rust/c/kotlin/..."),
-        ("sg", "source", "sg(path, rev, :lang, \"$X.unwrap()\", line[, col, end_line, end_col][, id])", "ast-grep pattern; metavar $X binds dl var X (matched text); trailing id binds the whole-match span for structural rewrite via gen(:replace). TERM form sg(:lang, str, \"pat\"[, line, col, end_line, end_col]) parses a STRING bound earlier in the rule (an embedded language body — styled-components css, a code fence) with the ast-grep grammar; spans are RELATIVE to that string, no file, no id (the string form of sg, runs in the join+extract pass like term-form json/jsonp)"),
-        ("ast_yaml", "source", "ast_yaml(path, rev, :lang, \"rule yaml\", line, ...)", "ast-grep RuleCore YAML body (inside:/has: relational rule) instead of a pattern string; inside: matches the immediate parent only; there is no field: selector — use kind + inside; span outputs share the sg form"),
+        ("match_ast", "source", "match_ast(path, rev, :lang, \"$X.unwrap()\", line[, col, end_line, end_col][, id])", "ast-grep structural pattern — the correct tool for SOURCE CODE (sees multi-line and AST-shaped constructs a line regex cannot); metavar $X binds dl var X (matched text); trailing id binds the whole-match span for structural rewrite via gen(:replace). TERM form match_ast(:lang, str, \"pat\"[, line, col, end_line, end_col]) parses a STRING bound earlier in the rule (an embedded language body — styled-components css, a code fence) with the ast-grep grammar; spans are RELATIVE to that string, no file, no id (the string form of match_ast, runs in the join+extract pass like term-form json/jsonp)"),
+        ("sg", "source", "sg(...) — DEPRECATED alias for match_ast(...)", "deprecated pre-rename spelling; parses identically to match_ast (file and term form alike) and still runs, but emits a deprecated-op-name warning naming match_ast — see match_ast"),
+        ("ast_yaml", "source", "ast_yaml(path, rev, :lang, \"rule yaml\", line, ...)", "ast-grep RuleCore YAML body (inside:/has: relational rule) instead of a pattern string; inside: matches the immediate parent only; there is no field: selector — use kind + inside; span outputs share the match_ast form"),
         ("json", "source", "json(path, rev, q:{ $k: $v })", "declarative brace pattern over json/yaml/toml; each match binds named key AND value captures as dl vars; supports **: recursion, [...$x] spread, re:/glob keys"),
         ("jsonp", "source", "jsonp(path, rev, \"a.*.b\", out)", "dotted path over json/yaml/toml (* = any key/element); the value is located; the string form of json"),
         ("cmd", "source", "cmd(path, rev, \"tool {file}\", line, out)", "shell out per matched file, one row per stdout line; cached by (file hash, rule text); nonzero exit + stdout = findings, nonzero + empty = error"),
@@ -604,15 +606,23 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
             c("id", Type::Text), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
             c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int)], group: "dataflow",
             doc: "intra-procedural dataflow node (call_res/let_bind/param/ret/new/member/...); id is an interned StringId over file::line::kind (sym — BREAKING as of the intern-key arc) — the full kind vocabulary is rel_col's variants for this column; line: 1-based", ..Default::default() },
-        // rev-aware df_node: id is salt_rev(raw id, rev) so two revs' file:line:col
-        // ids stay disjoint in one table (unlike syms, a df id embeds a line so
-        // the same point is different code across revs). legacy df_node keeps the
-        // raw id; a diff reads df_node_rev where the salt makes base/head ids
-        // disjoint and the member-edge diff is name-joined, never raw-id-joined.
+        // rev-aware df_node: id is the SAME interned id df_node uses (never
+        // folded with rev) — rev is a real trailing column and `(id, rev)` is
+        // the primary key, so two revs' `file:line:col` ids stay disjoint AS
+        // ROWS (a byte-identical node at two revs gets two rows, one per rev)
+        // while the id itself joins cleanly against legacy df_node and every
+        // other df_*_rev twin. legacy df_node keeps one row per raw id, deduped
+        // across the whole corpus (first-seen wins, no rev column); the
+        // member-edge diff is name-joined, never raw-id-joined.
+        // pk_never_null is NOT set here: the explicit `key(id, rev)` already
+        // narrows the PRIMARY KEY off the full 7-column row, and 7 columns is
+        // outside `wants_without_rowid`'s 2..=4 range regardless — no WITHOUT
+        // ROWID vouch is needed or possible for this shape.
         RelDecl { name: "df_node_rev".into(), cols: vec![
             c("id", Type::Text), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
-            c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Text)], group: "dataflow",
-            doc: "rev-aware df_node; id is salt_rev(raw id, rev) so revs stay disjoint; legacy df_node keeps the raw id; line: 1-based", ..Default::default() },
+            c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Text)],
+            key: Some(vec!["id".into(), "rev".into()]), group: "dataflow",
+            doc: "rev-aware df_node; id is the SAME interned id as df_node.id (never rev-folded); PRIMARY KEY (id, rev) keeps two revs' rows disjoint; legacy df_node keeps one deduped row per raw id; line: 1-based", ..Default::default() },
         // (df_node id, repo) — the repo (nearest `.git` basename) the node's file
         // was read from. df_node ids are path-keyed (file:line:col, no repo), so
         // this side table is the repo handle a cross-repo query needs to scope a
@@ -624,13 +634,16 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // fields, never Option, so no row can carry a NULL id/repo.
         RelDecl { name: "df_node_repo".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text)], group: "dataflow",
             doc: "(df_node id, repo) — the repo (nearest .git basename) each node's file was read from; scopes df joins per-repo (df_node ids are path-keyed)", pk_never_null: true, ..Default::default() },
-        // rev-aware df_node_repo: id salted by rev (matches df_node_rev.id), rev
-        // as a column. Repo attribution stays orthogonal to rev — a multi-repo PR
-        // diff wants both axes.
-        // pk_never_null: same push site as df_node_repo, `vec![sym(&salted),
+        // rev-aware df_node_repo: id is the SAME raw id as df_node_rev.id (never
+        // salted), rev as its own column. Repo attribution stays orthogonal to
+        // rev — a multi-repo PR diff wants both axes. The full 3-column row
+        // (id, repo, rev) is already the natural dedup key (seen_node_repo_rev),
+        // so the default full-row PRIMARY KEY needs no explicit `key(...)`
+        // narrowing here.
+        // pk_never_null: same push site as df_node_repo, `vec![sym(&n.id),
         // t(repo), t(rev)]` — fixed 3-element literal, never Option.
         RelDecl { name: "df_node_repo_rev".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text), c("rev", Type::Text)], group: "dataflow",
-            doc: "rev-aware df_node_repo; id is salt_rev(raw id, rev), matching df_node_rev.id; legacy df_node_repo keeps the raw id", pk_never_null: true, ..Default::default() },
+            doc: "rev-aware df_node_repo; id is the SAME interned id as df_node_rev.id (never rev-folded); legacy df_node_repo keeps the raw id", pk_never_null: true, ..Default::default() },
         // pk_never_null: `edge_rows.push(vec![sym(&e.from), sym(&e.to)])`
         // (extract/dataflow.rs) — both from a `TypeFacts` edge struct's plain
         // String fields, never Option; no row can carry a NULL endpoint.
@@ -681,15 +694,18 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "df_arg".into(), cols: vec![
             c("call", Type::Text), c("pos", Type::Int), c("arg", Type::Text)], group: "dataflow",
             doc: "(call/new df_node id, slot, arg df_node id); 0-based, receiver at -1; aligns with df_param.pos for the positional arg->param hop", pk_never_null: true, ..Default::default() },
-        // rev-aware df_arg: both id columns (call, arg) salted by rev to match
-        // df_node_rev.id, so the arg->node join stays within one rev. legacy
-        // df_arg keeps raw ids.
+        // rev-aware df_arg: both id columns (call, arg) are the SAME raw ids
+        // df_node_rev.id uses (never salted) — a join against df_node_rev needs
+        // an explicit `AND rev = rev` to stay scoped to one rev now that the id
+        // alone no longer encodes it. legacy df_arg keeps raw ids, no rev
+        // column. The full 4-column row (call, pos, arg, rev) is already the
+        // natural dedup key (seen_arg_rev), so no explicit `key(...)` needed.
         // pk_never_null: same loop as df_arg, `arg_rev_rows.push(vec![
-        // sym(&scall), Value::Int(*pos), sym(&sarg), t(rev)])` — fixed
-        // 4-element literal, never Option.
+        // sym(call), Value::Int(*pos), sym(arg), t(rev)])` — fixed 4-element
+        // literal, never Option.
         RelDecl { name: "df_arg_rev".into(), cols: vec![
             c("call", Type::Text), c("pos", Type::Int), c("arg", Type::Text), c("rev", Type::Text)], group: "dataflow",
-            doc: "rev-aware df_arg; call and arg are salt_rev(raw id, rev), matching df_node_rev.id; legacy df_arg keeps raw ids", pk_never_null: true, ..Default::default() },
+            doc: "rev-aware df_arg; call and arg are the SAME interned ids as df_node_rev.id (never rev-folded); legacy df_arg keeps raw ids", pk_never_null: true, ..Default::default() },
         // (new/call node id, field name, value node id) — named value flow
         // into a composite: Rust struct-literal fields (`..base` under the
         // pseudo-field ".."), TS object-literal properties (spread likewise),
@@ -702,15 +718,18 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "df_field".into(), cols: vec![
             c("id", Type::Text), c("field", Type::Text), c("value", Type::Text)], group: "dataflow",
             doc: "(new/call df_node id, field name, value df_node id); struct-literal fields, object-literal properties, Kotlin named args; \"..\" for spread/functional-update bases", pk_never_null: true, ..Default::default() },
-        // rev-aware df_field: both id columns (id, value) salted by rev — value is
-        // always a value df_node id (never a literal), so it salts like id. legacy
-        // df_field keeps raw ids.
+        // rev-aware df_field: both id columns (id, value) are the SAME raw ids
+        // df_node_rev.id uses — value is always a value df_node id (never a
+        // literal), so it matches df_node_rev.id the same way id does. legacy
+        // df_field keeps raw ids, no rev column. The full 4-column row (id,
+        // field, value, rev) is already the natural dedup key
+        // (seen_field_rev), so no explicit `key(...)` needed.
         // pk_never_null: same loop as df_field, `field_rev_rows.push(vec![
-        // sym(&sid), t(field), sym(&svalue), t(rev)])` — fixed 4-element
-        // literal, never Option.
+        // sym(id), t(field), sym(value), t(rev)])` — fixed 4-element literal,
+        // never Option.
         RelDecl { name: "df_field_rev".into(), cols: vec![
             c("id", Type::Text), c("field", Type::Text), c("value", Type::Text), c("rev", Type::Text)], group: "dataflow",
-            doc: "rev-aware df_field; id and value are salt_rev(raw id, rev), matching df_node_rev.id; legacy df_field keeps raw ids", pk_never_null: true, ..Default::default() },
+            doc: "rev-aware df_field; id and value are the SAME interned ids as df_node_rev.id (never rev-folded); legacy df_field keeps raw ids", pk_never_null: true, ..Default::default() },
         // (df_node id, text, kind) — one row per STRING-carrying value node
         // (string-values arc item 1). `kind` is lit/template/concat: `lit` is
         // the cooked string literal value; `template`/`concat` carry the RAW
@@ -720,11 +739,15 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "df_lit".into(), cols: vec![
             c("id", Type::Text), Col::raw("text", Type::Text), Col::branded("kind", "const_value_kind")], group: "dataflow",
             doc: "(df_node id, text, kind); lit=cooked string literal, template/concat=raw source slice with holes intact; TS/TSX/JS + Rust lit today", ..Default::default() },
-        // rev-aware df_lit: id salted by rev, matching df_node_rev.id — same
-        // shape as df_field_rev (D5 pattern).
+        // rev-aware df_lit: id is the SAME raw id df_node_rev.id uses (never
+        // rev-folded) — same shape as df_field_rev (D5 pattern). The dedup key
+        // (seen_lit_rev) is only (id, rev); text/kind are functionally
+        // determined by (id, rev) (deterministic parse), so the wider full-row
+        // default PRIMARY KEY is still exactly as unique, no explicit
+        // `key(...)` needed.
         RelDecl { name: "df_lit_rev".into(), cols: vec![
             c("id", Type::Text), Col::raw("text", Type::Text), Col::branded("kind", "const_value_kind"), c("rev", Type::Text)], group: "dataflow",
-            doc: "rev-aware df_lit; id is salt_rev(raw id, rev), matching df_node_rev.id; legacy df_lit keeps the raw id", ..Default::default() },
+            doc: "rev-aware df_lit; id is the SAME interned id as df_node_rev.id (never rev-folded); legacy df_lit keeps the raw id", ..Default::default() },
     ]
 }
 

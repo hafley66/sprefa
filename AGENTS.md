@@ -1,5 +1,14 @@
 # Agent Instructions
 
+## V6 Status
+
+V6 planning is underway — start at `v6/README.md`, plans in `v6/plans/`. V5
+remains the shipping version. V6 exists because the same problems (storage
+seam, daemon wire, build-vs-buy, repo/rev identity) kept being re-solved
+inside V5's single crate; the V6 arc extracts crate and trait boundaries
+instead of rewriting. Current phase: plans only, then hollow traits reviewed
+by a human — no behavioral rewrites, no call-site migrations yet.
+
 ## Non-Interactive Shell Commands
 
 **ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.

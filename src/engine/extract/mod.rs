@@ -970,15 +970,6 @@ impl Engine {
         self.exe_identity_changed.set(None);
     }
 
-    /// Fold a rev into a df node id so two revs' `file:line:col` ids stay
-    /// disjoint in one `_rev` table. Readable composition (not a hash) so the raw
-    /// id is recoverable by eye and queries stay debuggable; the U+0001 separator
-    /// never occurs in a rev or a df id. Deterministic, so any two df columns that
-    /// join on node identity within one rev salt identically and still line up.
-    fn salt_rev(id: &str, rev: &str) -> String {
-        format!("{rev}\u{1}{id}")
-    }
-
     /// Distinct revs present in the extraction corpus (the delete scope for a
     /// whole-corpus twin refresh — see `refresh_rel_for_revs` call sites).
     fn corpus_revs(files: &[ExtractFile]) -> Vec<String> {

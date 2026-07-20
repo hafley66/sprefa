@@ -52,7 +52,7 @@ gallery_zone(path, l0, l1) <- scan("WORK", "README.md", path, rev),
 
 rel gallery_row(path: file, line: int, text: text).
 gallery_row(path, line, text) <- scan("WORK", "README.md", path, rev),
-    match(path, rev, /^- (?<text>.+)$/, line).
+    match_line(path, rev, /^- (?<text>.+)$/, line).
 rel gallery_has(text: text).
 gallery_has(text) <- gallery_row(path, line, text), gallery_zone(path, l0, l1),
     line > l0, line < l1.

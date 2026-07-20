@@ -64,9 +64,9 @@ card_about("about.today", "RelRows").
 # unioned downstream in span_of (which has no scan atom).
 rel pin(name: text, path: file, line: int).
 pin(NAME, path, line) <- scan("WORK", "bin/*.mjs", path, rev),
-  sg(path, rev, :javascript, "function $NAME($$$P) { $$$B }", line).
+  match_ast(path, rev, :javascript, "function $NAME($$$P) { $$$B }", line).
 pin(NAME, path, line) <- scan("WORK", "bin/*.mjs", path, rev),
-  sg(path, rev, :javascript, "export function $NAME($$$P) { $$$B }", line).
+  match_ast(path, rev, :javascript, "export function $NAME($$$P) { $$$B }", line).
 pin("tokenize", path, line) <- scan("WORK", "src/CodeSpotlight.tsx", path, rev),
   comment(path, rev, /tokenize per file/, line).
 

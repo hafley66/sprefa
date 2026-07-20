@@ -308,16 +308,17 @@ seen(p) <- scan("HEAD", "src/**/*.rs", p, rev), match(p, rev, /fn/, line).
 ? df_field_rev(id, field, value, rev).
 "#;
 
-/// D5.4: the df twins fold rev INTO the id (`salt_rev` = `{rev}\u{1}{raw}`),
-/// unlike type/call syms which keep rev as a plain column. A byte-identical file
-/// at two revs collides its raw `file:line:col` ids, so the salt is the table-
-/// integrity guard: `df_node_rev` ids are DISJOINT across revs while legacy
-/// `df_node` holds the rev-deduped raw ids. Stripping the salt recovers the raw
-/// id (readable, not hashed). And every id-valued twin column
-/// (df_node_repo_rev.id, df_arg_rev.call, df_field_rev.id) joins df_node_rev.id
-/// within its own rev — the salt is consistent across the columns that join.
+/// D5.4, as amended by the composite-key arc: the df twins keep `rev` as a
+/// plain trailing COLUMN, like type/call syms, and no longer fold it into the
+/// id via a string salt. A byte-identical file at two revs therefore yields the
+/// SAME interned `file:line:col` id at both, and table integrity comes from
+/// `df_node_rev`'s `PRIMARY KEY (id, rev)` rather than from making the ids
+/// disjoint. Legacy `df_node` holds that same id set, rev-deduped. And every
+/// id-valued twin column (df_node_repo_rev.id, df_arg_rev.call,
+/// df_field_rev.id) joins df_node_rev.id within its own rev — unchanged by the
+/// desalting, since those columns always carried whatever id df_node_rev did.
 #[test]
-fn df_twins_salt_ids_by_rev_and_join_within_a_rev() {
+fn df_twins_key_on_id_rev_and_join_within_a_rev() {
     let d = sandbox("dftwin");
     fs::write(d.join("src/a.rs"),
         "pub struct Gadget { pub n: i64 }\n\
@@ -335,38 +336,31 @@ fn df_twins_salt_ids_by_rev_and_join_within_a_rev() {
     let mut eng = Engine::new(conn, d.clone());
     eng.tick(&prog, true).unwrap();
 
-    // (a) salted df_node ids are DISJOINT across the two revs, both non-empty.
+    // (a) df_node ids are SHARED across the two revs, both non-empty. The file
+    // is byte-identical at WORK and HEAD, so every id must appear at both —
+    // this is the exact assertion the old salt inverted, and reading it as a
+    // join is the point: an id-join across revs is now meaningful.
     let work_ids = col_set(&eng, "SELECT id FROM rel_df_node_rev_txt WHERE rev = 'WORK'");
     let head_ids = col_set(&eng, "SELECT id FROM rel_df_node_rev_txt WHERE rev <> 'WORK'");
     assert!(!work_ids.is_empty(), "df_node_rev has WORK ids");
     assert!(!head_ids.is_empty(), "df_node_rev has committed-rev ids");
-    assert!(work_ids.is_disjoint(&head_ids),
-        "the rev salt makes base/head df_node ids disjoint even for identical content");
+    assert_eq!(work_ids, head_ids,
+        "byte-identical content at two revs interns to the SAME df_node ids (no rev salt)");
 
-    // Byte-identical content at both revs must salt to the SAME raw id set,
-    // recovered by joining each twin id back through legacy `df_node` (whose
-    // id IS the raw, unsalted id) via `(kind, var, fn, file, line)` — the
-    // fields the salt is a pure function of. Pre-intern-key, this was a
-    // literal `substr(id, length(rev)+2)` string-strip (the salt was a
-    // readable text prefix); post-intern-key `id` is an opaque StringId hash
-    // of the salted text, so recovery must go through the unsalted twin
-    // instead of decoding the hash.
-    let raw_work = col_set(&eng,
-        "SELECT n.id FROM rel_df_node_txt n \
-         JOIN rel_df_node_rev_txt r ON r.kind = n.kind AND r.var = n.var \
-             AND r.fn = n.fn AND r.file = n.file AND r.line = n.line \
-         WHERE r.rev = 'WORK'");
-    let raw_head = col_set(&eng,
-        "SELECT n.id FROM rel_df_node_txt n \
-         JOIN rel_df_node_rev_txt r ON r.kind = n.kind AND r.var = n.var \
-             AND r.fn = n.fn AND r.file = n.file AND r.line = n.line \
-         WHERE r.rev <> 'WORK'");
-    assert_eq!(raw_work, raw_head, "both revs' twin rows resolve back to the identical raw id set");
+    // Disjointness now lives in the composite PRIMARY KEY (id, rev), not in the
+    // id: each rev keeps its OWN row for a shared id, so the twin's row count
+    // is the sum of the per-rev counts even though the id sets are equal.
+    let total_rows = count(&eng, "SELECT COUNT(*) FROM rel_df_node_rev_txt");
+    let work_rows = count(&eng, "SELECT COUNT(*) FROM rel_df_node_rev_txt WHERE rev = 'WORK'");
+    let head_rows = count(&eng, "SELECT COUNT(*) FROM rel_df_node_rev_txt WHERE rev <> 'WORK'");
+    assert_eq!(total_rows, work_rows + head_rows,
+        "PRIMARY KEY (id, rev) keeps one row per rev for a shared id");
 
-    // legacy df_node keeps the RAW ids, rev-deduped (one row per raw id despite
-    // two identical revs) — the single-rev daemon sees today's behavior.
+    // legacy df_node keeps the same ids, rev-deduped (one row per id despite
+    // two identical revs) — the single-rev daemon sees today's behavior. No
+    // recovery join is needed any more: the twin id IS the legacy id.
     let legacy = col_set(&eng, "SELECT id FROM rel_df_node_txt");
-    assert_eq!(legacy, raw_work, "legacy df_node = the rev-deduped raw ids the twin salts");
+    assert_eq!(legacy, work_ids, "legacy df_node = the same ids, rev-deduped");
 
     // (b) each id-valued twin column joins df_node_rev.id WITHIN its rev (the salt
     // is applied identically to every column that joins on node identity).

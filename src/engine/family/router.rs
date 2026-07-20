@@ -24,8 +24,9 @@
 
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
-use super::{derive_family, reconcile, DepKey, Family, OutRow, RowDelta};
+use super::{derive_family, derive_family_timed_cached, reconcile, DepKey, Family, OutRow, RowDelta, ScanCache};
 use crate::db::Db;
 
 /// Memoized state for one family: the rows it last emitted and the set of input
@@ -35,16 +36,36 @@ struct FamilyMemo {
     rels: HashSet<&'static str>,
 }
 
+/// Per-family cost of the last `react_deltas` flip: `derive_ns`/`scan_ns`/
+/// `cache_hits` come straight off `DeriveTiming`, `reconcile_ns` times the
+/// `reconcile` call, and `rows_out` is the fresh derivation's row count (the
+/// corpus-side term — `derive_ns` and `reconcile_ns` are both expected to
+/// track this, not the delta's `retracted.len() + inserted.len()`, which is
+/// the scaling bug the profiling harness pins down). Read through
+/// `Engine::call_router_last_timings`. Test-only.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct FamilyTiming {
+    pub name: &'static str,
+    pub derive_ns: u128,
+    pub scan_ns: u128,
+    pub reconcile_ns: u128,
+    pub rows_out: usize,
+    pub cache_hits: usize,
+}
+
 /// Holds one memo per family; reruns only families whose rel footprint
 /// intersects a delta's changed relations.
 pub(crate) struct FamilyRouter<'f> {
     families: Vec<&'f dyn Family>,
     memo: HashMap<&'static str, FamilyMemo>,
+    /// Timings from the most recent `react_deltas` call. Test-only; empty
+    /// after `cold`/`react`, which don't reconcile.
+    last_timings: Vec<FamilyTiming>,
 }
 
 impl<'f> FamilyRouter<'f> {
     pub(crate) fn new(families: Vec<&'f dyn Family>) -> Self {
-        Self { families, memo: HashMap::new() }
+        Self { families, memo: HashMap::new(), last_timings: Vec::new() }
     }
 
     /// Cold load: derive every family and populate the memo. Returns the names
@@ -102,12 +123,25 @@ impl<'f> FamilyRouter<'f> {
     /// overwriting the relation, so a retracted input row surfaces as a
     /// retracted output row. A never-derived family reconciles against an
     /// empty base (delta = all inserts).
+    ///
+    /// Also records `last_timings` (derive/scan/reconcile wall time per rerun
+    /// family) for the corpus-scaling profiling harness — the reason this is
+    /// the sole `react*` variant that instruments `reconcile` itself.
+    ///
+    /// Shares ONE [`ScanCache`] across every family this flip reruns:
+    /// `CallEdge` and `CallEdgeRev` issue byte-identical `_call_owner`/
+    /// `_call_raw_site`/`_call_resolution` scans, and without the cache both
+    /// pay that full-table read separately on every tick that touches those
+    /// tables (`tests/it/family_scaling_probe.rs` measures the resulting
+    /// `cache_hits` and the scan-time delta this collapses).
     pub(crate) fn react_deltas(
         &mut self,
         db: &Db,
         changed: &HashSet<&'static str>,
     ) -> Result<Vec<(&'static str, RowDelta)>> {
         let mut deltas = Vec::new();
+        let mut timings = Vec::new();
+        let mut cache = ScanCache::new();
         // Stage memo updates until every family derives successfully. A
         // mid-loop derive failure must not leave self.memo partially updated,
         // or later flips would reconcile against a memo that never matched the
@@ -123,14 +157,26 @@ impl<'f> FamilyRouter<'f> {
                 continue;
             }
             let prev = self.memo.get(name).map(|memo| memo.rows.clone()).unwrap_or_default();
-            let (rows, deps) = derive_family(db, *family)?;
+            let (rows, deps, timing) = derive_family_timed_cached(db, *family, &mut cache)?;
+            let rows_out = rows.len();
+            let reconcile_started = Instant::now();
             let delta = reconcile(&prev, rows.clone());
+            let reconcile_ns = reconcile_started.elapsed().as_nanos();
+            timings.push(FamilyTiming {
+                name,
+                derive_ns: timing.total_ns,
+                scan_ns: timing.scan_ns,
+                reconcile_ns,
+                rows_out,
+                cache_hits: timing.cache_hits,
+            });
             staged.push((name, FamilyMemo { rows, rels: rel_footprint(*family, &deps) }));
             deltas.push((name, delta));
         }
         for (name, memo) in staged {
             self.memo.insert(name, memo);
         }
+        self.last_timings = timings;
         Ok(deltas)
     }
 
@@ -231,5 +277,37 @@ impl crate::engine::Engine {
         changed: &std::collections::HashSet<&'static str>,
     ) -> anyhow::Result<Vec<&'static str>> {
         self.flip_call_rels_via_router(changed)
+    }
+
+    /// Per-family (name, derive_ns, scan_ns, reconcile_ns, rows_out,
+    /// cache_hits) timing from the most recent `react_deltas` flip — empty if
+    /// the router has never reconciled (cold-only, or no memo yet). The
+    /// corpus-scaling profiling harness (`tests/it/family_scaling_probe.rs`)
+    /// reads this right after a tick to attribute wall time to `Ctx::scan`'s
+    /// full-table reads vs `reconcile`'s full-set diff, and to confirm the
+    /// per-flip `ScanCache` is actually serving `CallEdge`/`CallEdgeRev`'s
+    /// duplicate scans. Test-only.
+    #[doc(hidden)]
+    pub fn call_router_last_timings(&self) -> Vec<(&'static str, u128, u128, u128, usize, usize)> {
+        self.call_router
+            .borrow()
+            .as_ref()
+            .map(|router| {
+                router
+                    .last_timings
+                    .iter()
+                    .map(|timing| {
+                        (
+                            timing.name,
+                            timing.derive_ns,
+                            timing.scan_ns,
+                            timing.reconcile_ns,
+                            timing.rows_out,
+                            timing.cache_hits,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }

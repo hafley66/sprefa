@@ -16,6 +16,7 @@
 # - md  --move: refactor by query, not by grep  (deck/sprefa.md)
 # - md  0. A calmer frame (read this when you are in the pit)  (book/00-a-calmer-frame.md)
 # - md  0. Setup  (book/tutorial/00-setup.md)
+# - md  0.10.0 — text columns intern by default; delete `Type::Sym`  (plans/2026-07-12-0.10.0-text-is-sym.md)
 # - md  1. Facts, rules, and queries  (book/01-facts-and-rules.md)
 # - md  1. First facts  (book/tutorial/01-first-facts.md)
 # - md  1. Order and lattices  (book/math/01-order-and-lattices.md)
@@ -64,6 +65,8 @@
 # - md  8. Argmax and friends  (book/08-argmax-and-friends.md)
 # - md  8. One winner per key  (book/tutorial/08-one-winner-per-key.md)
 # - md  9. Follow the value  (book/tutorial/09-follow-the-value.md)
+# - md  A note to my future self: comments as architectural space  (research/2026-07-15-comments-as-architectural-space.md)
+# - md  Addendum 2026-07-18: MB-bounded chunking (replacing the wholesale-family node)  (plans/2026-07-17-cold-start-staging.md)
 # - md  Adding a language to dl  (.agents/skills/sprf-add-language/SKILL.md)
 # - md  Adding a new built-in lazy relation to v5  (assets/sprefa-v5-new-builtin-rel.skill.md)
 # - md  Adding a new extraction op to v5  (assets/sprefa-v5-new-extraction-op.skill.md)
@@ -77,67 +80,80 @@
 # - md  Agent eval harness — v2-ctf-pilot.2 (CTF: dataflow capture-the-flag)  (bench/agent-eval/results/20260710-185659-c56d744-v2-ctf-pilot.2.md)
 # - md  Agent eval harness: a falsifiable, scriptable measurement of dl's effect  (plans/2026-07-10-agent-eval-harness.md)
 # - md  Agent rails: dl as a guardrail loop for coding agents  (docs/rails.md)
-# - md  Agent resume ledger — 2026-07-11 hook-deadlock stoppage  (plans/2026-07-11-agent-resume-ledger.md)
 # - md  Agent sharp edges (field report, 2026-07-04)  (docs/agent-sharp-edges.md)
+# - md  Agent threads — 2026-07-18 (the handheld)  (docs/agent-threads-2026-07-18.md)
 # - md  Agent-session feedback: smashy condom-metrics dogfood (2026-07-11)  (plans/2026-07-11-agent-feedback-smashy-condom.md)
-# - md  Anim in the repo: dl relations → animated graphs → node-editor ports  (plans/2026-06-11-anim-and-ports.md)
+# - md  Agent-session feedback: smashy guard-match + property-registry rails (2026-07-11)  (plans/2026-07-11-agent-feedback-smashy-guard-rails.md)
+# - md  Ambient-config hermeticity design  (plans/2026-07-11-ambient-config-hermeticity-design.md)
+# - md  Appendix  (v6/plans/2026-07-19-reactive-style-port.md)
 # - md  Appendix A: Schema diff  (chat_log/20260515.2.runtime-graph-audit-and-canonical-shape.md)
 # - md  Appendix B: Operator expressibility check  (chat_log/20260515.2.runtime-graph-audit-and-canonical-shape.md)
+# - md  Architectural measures — round 1+2 review  (docs/arch-measures-review.md)
+# - md  Architecture now in the tree  (CHECKPOINT.md)
+# - md  Architecture-as-Document saga — arch space riding the retraction line  (plans/2026-07-16-arch-doc-saga.md)
+# - md  Archived 2026-07-18 PM pare (verbatim ledger snapshot before the handoff rewrite)  (.agent/memories/sprefa-task-ledger.md)
+# - md  Auto-architect: the vision doc  (docs/vision-auto-architect.md)
 # - md  Auto-refactor track (parallel, OFF the critical path)  (plans/2026-06-01-programmable-lsp-ops-frontend-arc.md)
 # - md  Auto-refactor: `use`-path rewrite via byte-span edits  (plans/2026-05-31-auto-refactor-use-path-rewrite.md)
-# - md  Beads - AI-Native Issue Tracking  (.beads/README.md)
+# - md  Auto-session log — 2026-07-17  (plans/2026-07-17-auto-session-log.md)
+# - md  Bespoke-SQL de-coupling: a typed rel-access layer  (plans/2026-07-12-bespoke-sql-decoupling.md)
 # - md  Beyond Manual Paging  (book/beyond-manual-paging/README.md)
 # - md  Beyond code: dl as a personal datalog/sqlite/rust monster  (plans/2026-06-11-beyond-code-domains.md)
+# - md  Book TOC restructure (sol brief, written 2026-07-11)  (plans/2026-07-11-book-toc.md)
+# - md  Bounded single-sweep runtime  (plans/2026-07-14-bounded-single-sweep-runtime.md)
 # - md  Budgeted Runtime UX Map  (chat_log/20260514.2.armored-runtime-ux-map.md)
-# - md  Built-in agent-turn relation + per-harness plug (ACP-primary)  (plans/2026-06-28-agent-turn-builtin-and-harness-plug.md)
 # - md  Built-in relations  (docs/reference/relations.md)
 # - md  C4 go/no-go: 3D isometric BOM structure view  (docs/design/2026-07-10-c4-3d-iso-sketch.md)
 # - md  CST stack: rowan + tree-sitter + injections  (.agents/skills/sprf-lsp-cst-stack/SKILL.md)
-# - md  CST-as-relation: `node`/`child` + whole-match located id + scope intervals  (plans/2026-06-26-cst-as-relation.md)
-# - md  Callable as a Value — application IS a Pipe  (plans/2026-05-18-callable-value.md)
+# - md  Call-family owner-scoped delta refresh  (plans/2026-07-15-call-family-delta-refresh.md)
+# - md  Capstone cutover — families as sole writer + live react_deltas render  (plans/2026-07-16-capstone-cutover.md)
 # - md  Change-cost friction inventory (agent-sourced, 2026-07-10)  (plans/2026-07-10-change-cost-friction-inventory.md)
 # - md  Changelog  (CHANGELOG.md)
 # - md  Chat-marks: @@mark as a section header  (deck/sprefa.md)
 # - md  Chrome-Style Budgeted Runtime Plan  (chat_log/20260514.1.chrome-style-budgeted-runtime-plan.md)
-# - md  Clock/seam invariants fix plan — 2026-05-19  (plans/2026-05-19-clock-seam-invariants-plan.md)
 # - md  Codex queue after the engine split: agent-feedback fixes  (plans/2026-07-11-codex-feedback-queue.md)
+# - md  Cold-start staging: extract one family-shard per tick, not the whole corpus at once  (plans/2026-07-17-cold-start-staging.md)
 # - md  CompactSourceGraph Audit  (chat_log/20260515.10.compact-sources-audit.md)
-# - md  Cons / calling unification — one primitive for list + kwarg; root = implicit `{}`  (plans/2026-05-19-cons-calling-unification.md)
 # - md  Control flow as ops, not keywords  (.agents/skills/sprf-control-flow-as-ops/SKILL.md)
 # - md  Conversation concept graph (live)  (chat_log/concept-graph.md)
 # - md  CozoDB storage-backend abstraction (for sprefa `RelStore`)  (docs/ext-cozo-storage-trait.md)
 # - md  Cross-codebase validation — rust-analyzer fixture  (research/refactor-reward/cross_codebase_validation.md)
 # - md  Cross-harness agent tooling: .agents/ once, every CLI (Claude Code / Codex / opencode)  (plans/2026-07-11-cross-harness-agent-tooling.md)
-# - md  Cross-language goto / refs / impls driven by dl codegen-rhythm pages  (plans/2026-06-28-cross-lang-goto-via-dl.md)
-# - md  Cross-language module-graph extraction plan — 2026-05-20  (plans/2026-05-20-cross-language-module-graph-plan.md)
 # - md  Cycles  (anim/src/deck/02-cycles.md)
 # - md  D5 — rev-aware type/call/dataflow/doc extraction  (plans/2026-07-04-d5-rev-aware-extraction.md)
 # - md  DBSP (Feldera) as a reuse target for sprefa v5's incremental-retraction layer  (docs/ext-dbsp-incremental.md)
 # - md  DD as state backbone for sprefa  (.agents/skills/sprf-dd-substrate-shape/SKILL.md)
 # - md  DD memory at 500-repo scale  (.agents/skills/sprf-dd-memory-tiering-500/SKILL.md)
 # - md  DD purity contract for sprefa  (.agents/skills/sprf-dd-purity-and-durability/SKILL.md)
+# - md  DL_TRACE_CHROME: Perfetto timeline export  (docs/tracing-chrome.md)
 # - md  DSL hole grammar audit — `${NAME?}` and `$$${NAME}`  (chat_log/20260515.5.dsl-hole-grammar-audit.md)
-# - md  Daemon live activity in `status` — plan  (plans/2026-07-09-daemon-activity-status.md)
-# - md  Daemon mode + menu bar (cross-platform)  (plans/2026-06-21-daemon-and-menu-bar.md)
 # - md  Daemon mode + the full CLI  (docs/daemon.md)
-# - md  Data-model migration — plan (2026-05-30)  (plans/2026-05-30-data-model-migration-plan.md)
-# - md  Declarative `json` pattern (recover the v4 brace walker); keep string form as `jsonp`  (plans/2026-06-25-json-declarative-syntax.md)
-# - md  Decode and dispatch hardening plan — effect_runtime — 2026-05-19  (plans/2026-05-19-decode-dispatch-plan.md)
+# - md  Dataflow × SCIP research program (final-hamon brain dump, 2026-07-11)  (plans/2026-07-11-dataflow-research-program.md)
+# - md  Db seam migration: every SQL statement behind named methods on Db  (plans/2026-07-18-db-seam-migration.md)
 # - md  Decomposition objectives and cross-domain techniques  (research/2026-06-26-cross-domain-decomposition-techniques.md)
+# - md  Delta reactivity and fact ownership  (plans/2026-07-14-delta-reactivity-and-fact-ownership.md)
 # - md  Demand & overlay sink relations  (docs/reference/magic-rels.md)
+# - md  Depth-lattice native walk + the two daemon-win fixes (A, B)  (plans/2026-07-12-depth-walk-AB-fixes.md)
 # - md  Diag rails and --check  (deck/sprefa.md)
 # - md  Diet SCIP + usage/dead-code rails (bug + improvement)  (plans/2026-07-07-diet-scip-usage-rails.md)
 # - md  Docs and the book  (deck/sprefa.md)
+# - md  Docs story + dogfood coverage audit (2026-07-11 final hamon)  (plans/2026-07-11-docs-and-dogfood-audit.md)
 # - md  Dot-Access Audit: v4 Hole Syntax  (chat_log/20260515.7.dot-access-audit.md)
+# - md  Drawing the change: graph differential visualization  (book/graph-diff-drawing.md)
 # - md  Dynamic reaching  (docs/dynamic-reaching.md)
-# - md  Dynamic repo gathering — eval sheet  (plans/2026-06-25-dynamic-repo-gathering-eval.md)
+# - md  Effect / Lock / Channel / Crate-Usage Inventory  (docs/effect-inventory.md)
 # - md  Engine god-object diagnosis: coupling scores + field-coverage decomposition  (research/2026-06-26-engine-god-object-decomposition.md)
+# - md  Engine loops inventory  (docs/engine-loops.md)
 # - md  Engine refactor v2 — finish the trait extraction, split mod.rs by seam  (plans/2026-07-02-engine-trait-refactor-v2.md)
-# - md  Enum brands + named shapes (type-system prototype)  (plans/2026-07-09-enum-brands-named-shapes.md)
+# - md  Evidence actually executed  (CHECKPOINT.md)
 # - md  Examples  (docs/reference/examples.md)
 # - md  Fable possibility-mining session: what can dl do that nothing else can  (plans/2026-07-10-fable-possibility-mining.md)
 # - md  Facts from a scan  (deck/sprefa.md)
+# - md  Failure modes: the classes that bit us, their rails, and the gaps  (docs/failure-modes.md)
+# - md  Family-derive reactive engine for extraction families  (plans/2026-07-15-family-derive-reactive-engine.md)
+# - md  Filesize rail: grandfathering 29 files (2026-07-20)  (plans/2026-07-20-filesize-grandfather.md)
 # - md  Filesystem  (anim/src/deck/04-filesystem.md)
+# - md  Flow map  (CHECKPOINT.md)
 # - md  Flow marks + goto recorder: named dataflows from editor navigation  (plans/2026-07-10-flow-marks-goto-recorder.md)
 # - md  Flow panel schema-driven layer discovery  (assets/sprefa-flow-panel-layers.skill.md)
 # - md  Further study  (book/further-study.md)
@@ -148,20 +164,21 @@
 # - md  High-fidelity call/dataflow from entry points — problem breakdown  (plans/2026-06-28-entry-point-dataflow-fidelity.md)
 # - md  Higher-order via rules with value params  (.agents/skills/sprf-higher-order-via-rules/SKILL.md)
 # - md  History  (anim/src/deck/05-history.md)
-# - md  Host-language LSP trait architecture (sprefa v4)  (plans/2026-05-19-host-lsp-trait-architecture.md)
 # - md  How the runs partitioned new types  (refactor-suggestions-archive/RESEARCH-type-partitioning.md)
 # - md  Incremental / Reactive Datalog + SQL: prior-art landscape  (research/2026-05-21-incremental-reactive-datalog-landscape.md)
-# - md  Instance leak and memory-control plan — 2026-05-20  (plans/2026-05-20-instance-leak-and-memory-control.md)
-# - md  Intern hot join keys: TEXT columns -> StringId ints via `_strings`  (plans/2026-07-11-intern-string-keys.md)
+# - md  Incremental dataflow for humans: weights, deltas, and the non-resident shape  (docs/article-incremental-dataflow-for-humans.md)
+# - md  Infra library adoption: queue/scheduling, HTTP/RPC, daemon supervision  (plans/2026-07-18-infra-library-adoption.md)
+# - md  Intern df_node.fn and df_node.file to sym (i64)  (plans/2026-07-12-df-node-fn-file-interning.md)
 # - md  Invariants via DD antijoin  (.agents/skills/sprf-invariants-via-antijoin/SKILL.md)
 # - md  JSON `$$$` Nested-Path Audit  (chat_log/20260515.8.json-triple-dollar-nested-path-audit.md)
-# - md  Kill `where`; make nesting the one way to filter (incl. seeded closures)  (plans/2026-06-02-kill-where-seed-closures-by-nesting.md)
+# - md  Job queue — decompose the tick, stop the everything-lock  (plans/2026-07-16-job-queue.md)
+# - md  Known blockers  (CHECKPOINT.md)
 # - md  Kotlin Import Resolution Hazards: Tool Assessment Matrix  (kotlin-import-hazards-research.md)
 # - md  LO / HI / `_where_bytes` Audit — v4  (chat_log/20260515.6.lo-hi-where-bytes-audit.md)
-# - md  LSP architecture fix plan — sprefa v4 — 2026-05-19  (plans/2026-05-19-lsp-architecture-plan.md)
 # - md  LSP mode: declarative diagnostics  (docs/lsp.md)
 # - md  LSP server libs + position math  (.agents/skills/sprf-lsp-server-libs/SKILL.md)
 # - md  LSP-via-state: the reactive/redux model as the LSP implementation mechanism  (plans/2026-06-02-lsp-via-state-research-plan.md)
+# - md  Lazy rel tier + amplification budget (2026-07-19)  (plans/2026-07-19-lazy-rel-tier.md)
 # - md  Logic Language Survey  (book/logic-language-survey/README.md)
 # - md  Lowered Pipe Compile-Time Lifting Notes  (chat_log/20260514.5.lowered-pipe-compile-time-lifting-agent-notes.md)
 # - md  Lowering traits across many DSLs  (.agents/skills/sprf-lsp-lower-traits/SKILL.md)
@@ -170,24 +187,26 @@
 # - md  Mapping-session feedback: import bindings, template parts, shallow def-use (2026-07-10)  (plans/2026-07-10-mapping-feedback-import-binding.md)
 # - md  Memory Index  (.agents/memory/MEMORY.md)
 # - md  Mixed source+derived rels: desugar the split instead of bailing  (plans/2026-07-10-mixed-rel-desugar.md)
-# - md  Module-resolver trait: cross-language file dependency graph  (plans/2026-05-30-module-resolver-trait-plan.md)
+# - md  Move engine runtime files into `.dl/.state/`  (plans/2026-07-12-dl-state-subdir.md)
 # - md  Multi-DSL semantic features  (.agents/skills/sprf-lsp-multi-dsl-patterns/SKILL.md)
-# - md  Multi-repo + off-disk rev coordinate scan  (plans/2026-06-01-multi-repo-rev-coordinate-scan.md)
-# - md  Namespace + duplicate-registry plan — 2026-05-19  (plans/2026-05-19-namespace-registry-plan.md)
+# - md  Native graph-walk executor for recursive reachability rules  (plans/2026-07-12-native-graph-walk-executor.md)
 # - md  No magic rels  (assets/sprefa-v5-no-magic-rels.skill.md)
 # - md  North star: types, modules, parsers, and the LSP/info channel  (plans/2026-06-18-north-star-types-modules-parsers.md)
+# - md  Observability arc: invocation log, leveled logging, request-id access log  (plans/2026-07-18-observability.md)
 # - md  Off-disk sources: polling-as-push + interruptible/storable activation state  (plans/2026-06-28-polling-push-sources-activation-state.md)
+# - md  Op-authoring surface — completion map  (plans/2026-07-16-family-cutover-completion-map.md)
 # - md  Open questions (resolve before coding each phase)  (plans/2026-06-01-programmable-lsp-ops-frontend-arc.md)
 # - md  OpenAPI `SpecLang` + flow participation overlay  (plans/2026-06-28-openapi-speclang-flows.md)
 # - md  PLANS.md — open todos across plans/*.md  (PLANS.md)
 # - md  PR causal-map animation (filtration -> animated D2 notebook)  (plans/2026-05-18-pr-causal-map-animation.md)
 # - md  PR causal-map animation idea (design notes, NO impl)  (chat_log/20260518.4.pr-causal-map-animation-idea.md)
-# - md  PR graph-diff (dataflow differential vs main)  (plans/2026-07-03-pr-diff-graph.md)
+# - md  Paired comment markers as a living closure ledger — 2026-07-17  (plans/2026-07-17-paired-comment-marker-closure.md)
 # - md  Panel perf baseline  (editors/vscode-dl/tests/perf/baseline.md)
 # - md  Parity corpus: OpenTelemetry SDKs, pinned  (bench/corpus/README.md)
 # - md  PaymentClient  (bench/seams/corpus/docs/payments.md)
+# - md  Per-language callable-kind coverage for `call_def`  (docs/callable-coverage.md)
+# - md  Per-language dataflow coverage  (docs/df-coverage.md)
 # - md  Perf variant analysis: overfitting a rule to a bug  (docs/perf-variant-analysis.md)
-# - md  Ph7 — Constant-RSS Proof + Perf Regression Guard + DD Removal  (plans/2026-05-17-ph7-constant-rss-proof.md)
 # - md  Phase 0 — Lowering contract (1 doc, no code)  (plans/2026-06-01-programmable-lsp-ops-frontend-arc.md)
 # - md  Phase 1: Inventory  (chat_log/20260515.2.runtime-graph-audit-and-canonical-shape.md)
 # - md  Phase 2: Visual  (chat_log/20260515.2.runtime-graph-audit-and-canonical-shape.md)
@@ -206,10 +225,8 @@
 # - md  Phase F - Full SCIP descriptor unpack (deferred, on demand)  (plans/2026-06-18-north-star-types-modules-parsers.md)
 # - md  Phase G - CSS/XPath selector op + `rs:` symbol scheme (candidates)  (plans/2026-06-18-north-star-types-modules-parsers.md)
 # - md  Piloting haiku from dl: the model as a cached per-file UDF  (plans/2026-06-11-haiku-blade.md)
-# - md  Plan: Effect BOM + JSX/effect taint + string builtins (zoom 2)  (plans/2026-06-29-effect-bom-jsx-taint.md)
-# - md  Plan: SCIP oracle — daemon bypass + DAG layering (A), fn-level ingestion (B)  (plans/2026-06-26-scip-oracle-fn-level-and-dag-layering.md)
 # - md  Plan: `sh` template decls + the effect runtime increments  (plans/2026-06-29-sh-template-effect-runtime.md)
-# - md  Plan: json aggregation heads + json scalar fns  (plans/2026-07-10-json-agg.md)
+# - md  Planning-morning notes — 2026-07-18 (verbatim)  (docs/notes-2026-07-18-planning-morning.md)
 # - md  Portable reactive/retraction core — does v5 have one, what would it cost  (docs/research-portable-reactive-core.md)
 # - md  Ports and the lattice  (deck/sprefa.md)
 # - md  Prior-Art Survey: sprefa — Datalog refactor recipes calibrated against git history  (research/2026-06-26-prior-art-temporal-refactor-validation.md)
@@ -220,30 +237,36 @@
 # - md  Pushing Haiku to the Opus partition — deterministically  (refactor-suggestions-archive/RESEARCH-haiku-opus-convergence.md)
 # - md  Query memoization ramifications — identical `r?()` reuse  (chat_log/20260517.query-memoization-ramifications.md)
 # - md  Quickstart  (book/quickstart.md)
+# - md  R7: diag stage routing — per-repo harness with staged severity surfaces  (plans/2026-07-17-diag-stage-routing.md)
+# - md  RCA: the exe-swap write storm  (docs/rca-exe-swap-write-storm.md)
+# - md  RCA: the phantom extract diff (2026-07-18, the day-long haunting)  (docs/rca-phantom-extract-diff.md)
 # - md  REIFY MACRO SHIPPED on branch (3 stones GREEN, gate 503/0/1)  (.agents/memory/project_cross_file_entity_graph.md)
 # - md  Reachability  (anim/src/deck/01-reachability.md)
 # - md  Reactive / effectful datalog — what it takes to usurp ghcacher  (docs/research-reactive-effectful-datalog.md)
 # - md  Reactive Facts  (book/README.md)
+# - md  Reactive style port — design doc  (v6/plans/2026-07-19-reactive-style-port.md)
+# - md  Reactivity micro-probe  (bench/reactivity/README.md)
 # - md  Recall Ratchet: diet vs rust-analyzer oracle at FILE granularity  (research/recall-ratchet.md)
 # - md  Recursion: blast radius  (deck/sprefa.md)
-# - md  Refactor audit plan — 2026-05-20  (plans/2026-05-20-refactor-audit-plan.md)
 # - md  Refactor candidate-type stats (12-run aggregate)  (refactor-suggestions-archive/STATS-refactor-candidate-types.md)
 # - md  Refactor exploration with dl — a formula  (docs/refactor-exploration.md)
 # - md  Refactor log — manual Q-learning table  (research/refactor-reward/refactor_log.md)
 # - md  Refactor reward: raw LOC vs structural metrics  (research/2026-06-26-refactor-reward-loc-vs-structural.md)
 # - md  Refactor-suggestion convergence study  (refactor-suggestions-archive/RESEARCH-refactor-convergence.md)
-# - md  Relation input-digest skip — plan (2026-05-30)  (plans/2026-05-30-relation-digest-skip-plan.md)
+# - md  Relational storage-key audit  (plans/2026-07-15-relational-storage-key-audit.md)
 # - md  Relations  (anim/src/deck/03-relations.md)
+# - md  Repo-wide decomposition + normalization (2026-07-18)  (plans/2026-07-18-decomposition-normalization.md)
+# - md  Reproducible reactivity evidence  (plans/2026-07-15-reproducible-reactivity-evidence.md)
 # - md  Research plan: code-graph geometries of refactor candidates  (refactor-suggestions-archive/RESEARCH-PLAN-graph-geometries.md)
+# - md  Resource-aware scheduler: schedule from declared read/write sets, not kind priorities  (plans/2026-07-18-resource-aware-scheduler.md)
+# - md  Resume order  (CHECKPOINT.md)
 # - md  Retractable effects via collections  (.agents/skills/sprf-dd-retractable-effects/SKILL.md)
-# - md  Retraction + Fixed-Point via DRed (no DD, capped RSS)  (plans/2026-05-17-retraction-fixpoint-dred-no-dd.md)
 # - md  Round 2 deep dives (2026-05-21)  (research/2026-05-21-incremental-reactive-datalog-landscape.md)
 # - md  Rules  (.agents/agents/builtin-rel-implementer.md)
 # - md  Rules  (.agents/agents/extraction-op-implementer.md)
 # - md  Runtime-graph next steps — reconciled  (chat_log/20260515.4.runtime-graph-next-steps-reconciled.md)
 # - md  S3 body-level binds + S4 text concat  (plans/2026-07-09-body-binds-text-concat.md)
-# - md  SCC-condensed `reaches` wired into the v5 engine  (plans/2026-05-21-scc-wiring-plan.md)
-# - md  SCIP occurrences + local binding names (S1 / S2)  (plans/2026-07-09-scip-occurrences-local-names.md)
+# - md  SCIP atlas: where dl is in diet-scip vs real-scip, and what's next  (plans/2026-07-11-scip-atlas.md)
 # - md  SCIP perf — measured on v5, 2026-06-30  (bench/scip_perf_results.md)
 # - md  SQLite × Graph / Datalog / Reactive Query Engines — Landscape for sprefa v5  (docs/research-sqlite-graph-landscape.md)
 # - md  Salsa: real cost, narrow benefit  (.agents/skills/sprf-incr-salsa-cost/SKILL.md)
@@ -262,7 +285,11 @@
 # - md  Session: app-host-generic-provider-and-daemon-transport  (chat_log/20260505.2.app-host-generic-provider-and-daemon-transport.md)
 # - md  Session: auto-refactor-plan-p0-p1-interning-panel  (chat_log/20260531.9.auto-refactor-plan-p0-p1-interning-panel.md)
 # - md  Session: auto-refactor-suggestions-and-name-signal  (chat_log/20260626.4.auto-refactor-suggestions-and-name-signal.md)
+# - md  Session: auto-session-instant-fix-rails-ledger  (chat_log/20260717.1.auto-session-instant-fix-rails-ledger.md)
 # - md  Session: autorefactor-f1-refspan-ref-id-graph-research  (chat_log/20260531.10.autorefactor-f1-refspan-ref-id-graph-research.md)
+# - md  Session: big-wins-13-14-15-arch-expr-lab-freeze-rca  (chat_log/20260717.3.big-wins-13-14-15-arch-expr-lab-freeze-rca.md)
+# - md  Session: capstone-p3-goldens-and-daemon-stale-roots  (chat_log/20260716.1.capstone-p3-goldens-and-daemon-stale-roots.md)
+# - md  Session: capstone-retraction-cpu-hog-kimi-delegation  (chat_log/20260716.2.capstone-retraction-cpu-hog-kimi-delegation.md)
 # - md  Session: changed_line + match id + doc_node, and the rectified CST architecture  (chat_log/20260619.4.changed-line-match-id-doc-node-and-rectified-cst-architecture.md)
 # - md  Session: collapse-5-sessions-to-1  (chat_log/20260516.3.collapse-5-sessions-to-1.md)
 # - md  Session: cst-merged-dogfood-cutover-ancestry-experiment  (chat_log/20260625.3.cst-merged-dogfood-cutover-ancestry-experiment.md)
@@ -274,7 +301,9 @@
 # - md  Session: daemon UX (tray, grammar, dynamic discovery, LSP)  (chat_log/20260622.1.daemon-ux-tray-grammar-lsp.md)
 # - md  Session: daemon phase 1 + targeted publish + light items  (chat_log/20260621.2.daemon-phase-1-targeted-publish.md)
 # - md  Session: daemon-load-rpc-op-table-autogen  (chat_log/20260625.4.daemon-load-rpc-op-table-autogen.md)
+# - md  Session: daemon-sla-blitz-http-jobq-tokio  (chat_log/20260716.3.daemon-sla-blitz-http-jobq-tokio.md)
 # - md  Session: daemon-stateful-revs-phase0-complete-json-declarative-plan  (chat_log/20260625.0.daemon-stateful-revs-phase0-complete-json-declarative-plan.md)
+# - md  Session: daemon-why-trail-write-storm-rootcause  (chat_log/20260716.4.daemon-why-trail-write-storm-rootcause.md)
 # - md  Session: dd-adoption-effects-control-flow-types-perf  (chat_log/20260501.0.dd-adoption-effects-control-flow-types-perf.md)
 # - md  Session: dl MCP lattice + @yield channel projection  (chat_log/20260630.5.dl-mcp-lattice-channel-yield-projection.md)
 # - md  Session: dl productionization — resp latest-wins, root workspace, macOS CI, cargo-dist  (chat_log/20260630.4.dl-productionize-workspace-ci-dist.md)
@@ -299,19 +328,27 @@
 # - md  Session: docs examples gap, lexer UTF-8 fix, daemon+menu-bar+dashboard plan  (chat_log/20260621.1.examples-lex-fix-daemon-menu-bar-plan.md)
 # - md  Session: docs refresh + perf fixture + comment kwargs + syntax grammar  (chat_log/20260619.5.docs-refresh-perf-fixture-comment-kwargs-syntax-grammar.md)
 # - md  Session: engine-relkind-stage2-scip-propose-embed  (chat_log/20260630.0.engine-relkind-stage2-scip-propose-embed.md)
+# - md  Session: exe-storm-cracked-rails-and-measures  (chat_log/20260717.0.exe-storm-cracked-rails-and-measures.md)
 # - md  Session: f1b-bracehead-config-watch-perf-verify  (chat_log/20260531.11.f1b-bracehead-config-watch-perf-verify.md)
 # - md  Session: fable-babysit-opus-0623-release-type-shapes-scip-typedeclrow  (chat_log/20260709.1.fable-babysit-opus-0623-release-type-shapes-scip-typedeclrow.md)
 # - md  Session: fact wide-tables + fine-grain invalidation (cascade + Memoize source-row + B2 reconcile)  (chat_log/20260504.10.fact-wide-tables-and-fine-grain-invalidation.md)
+# - md  Session: family-derive-call-projection-flag  (chat_log/20260715.1.family-derive-call-projection-flag.md)
+# - md  Session: family-router-incremental-reconcile-cutover-debt  (chat_log/20260716.0.family-router-incremental-reconcile-cutover-debt.md)
+# - md  Session: fleet-seam-instant-revival  (chat_log/20260718.3.fleet-seam-instant-revival.md)
+# - md  Session: fleet-seam-instant-revival (updated pre-compact 2026-07-18 ~15:30)  (chat_log/20260718.4.fleet-seam-instant-revival.md)
 # - md  Session: flow-panel-arclist-match-sweep-field-flow  (chat_log/20260703.1.flow-panel-arclist-match-sweep-field-flow.md)
 # - md  Session: flow-panel-tracemode-portgraph-prdiff-resolver-bug  (chat_log/20260703.2.flow-panel-tracemode-portgraph-prdiff-resolver-bug.md)
 # - md  Session: frame-anim-animated-explainer-build  (chat_log/20260531.0.frame-anim-animated-explainer-build.md)
+# - md  Session: freeze-forensics-loop-fix-chaos-soak  (chat_log/20260717.2.freeze-forensics-loop-fix-chaos-soak.md)
 # - md  Session: from-clone-kernels-to-type-intelligence  (chat_log/20260627.1.from-clone-kernels-to-type-intelligence.md)
 # - md  Session: ghcacher-in-dl — effect logging + pending_effect retention GC  (chat_log/20260630.3.ghcacher-dl-effect-logging-retention-gc.md)
 # - md  Session: graph-audit-pipey-rx-reconcile  (chat_log/20260515.3.graph-audit-pipey-rx-reconcile.md)
+# - md  Session: graph-lib-adversarial-rounds-v6-decision  (chat_log/20260720.1.graph-lib-adversarial-rounds-v6-decision.md)
 # - md  Session: hafley-sprefa-inner-graph-audit-dot-path-resolve  (chat_log/20260516.2.hafley-sprefa-inner-graph-audit-dot-path-resolve.md)
 # - md  Session: hafley-v4-coord-space-and-generator-topology  (chat_log/20260507.0.hafley-v4-coord-space-and-generator-topology.md)
 # - md  Session: hafley-v4-rule-unification-and-glob-purification  (chat_log/20260507.1.hafley-v4-rule-unification-and-glob-purification.md)
 # - md  Session: instant-plugin-system  (chat_log/20260622.3.instant-plugin-system.md)
+# - md  Session: integrator-wave-clock-efficiency-main-push (2026-07-18 late night, follows 20260718.6)  (chat_log/20260718.7.integrator-wave-clock-efficiency-main-push.md)
 # - md  Session: json-declarative-brace-pattern-merged  (chat_log/20260625.2.json-declarative-brace-pattern-merged.md)
 # - md  Session: kernel-space-6-detectors-validation  (chat_log/20260627.0.kernel-space-6-detectors-validation.md)
 # - md  Session: lint-spans-edit-algebra  (chat_log/20260628.0.lint-spans-edit-algebra.md)
@@ -321,14 +358,22 @@
 # - md  Session: local-ext-claude-usage-scraper  (chat_log/20260521.1.local-ext-claude-usage-scraper.md)
 # - md  Session: local-ext-claude-usage-scraper  (chat_log/20260521.2.local-ext-claude-usage-scraper.md)
 # - md  Session: magic-rel-ban-eliminate-builtin-sinks  (chat_log/20260706.0.magic-rel-ban-eliminate-builtin-sinks.md)
+# - md  Session: merge-chain-render-storm-arcs (2026-07-18 evening, follows 20260718.4)  (chat_log/20260718.5.merge-chain-render-storm-arcs.md)
 # - md  Session: multi-repo-phase23-fanout-move-repoaware  (chat_log/20260601.1.multi-repo-phase23-fanout-move-repoaware.md)
 # - md  Session: n-plus-1-rule-factwrite-budget-test  (chat_log/20260520.0.n-plus-1-rule-factwrite-budget-test.md)
 # - md  Session: net-lab-solid-engine-design  (chat_log/20260531.3.net-lab-solid-engine-design.md)
+# - md  Session: obs-governor-parse-amplification  (chat_log/20260718.2.obs-governor-parse-amplification.md)
+# - md  Session: observability-trail-intern-fix-v6-research (2026-07-19 AM/PM, follows 20260719.1)  (chat_log/20260719.3.observability-trail-intern-fix-v6-research.md)
 # - md  Session: openapi-flows-crosslang-nav-dl-guardrails  (chat_log/20260628.2.openapi-flows-crosslang-nav-dl-guardrails.md)
+# - md  Session: overnight-integrator-todos-diet5-class18-fleet (2026-07-19 early AM, follows 20260718.7)  (chat_log/20260719.0.overnight-integrator-todos-diet5-class18-fleet.md)
 # - md  Session: overnight-scope-fixes-d5b-parents-lattice-d5plan  (chat_log/20260704.0.overnight-scope-fixes-d5b-parents-lattice-d5plan.md)
 # - md  Session: parse-engine-christmas-list-and-daemon-stateful-revs  (chat_log/20260624.0.parse-engine-christmas-list-and-daemon-stateful-revs.md)
+# - md  Session: path-analysis-rails-scip-freshness-loop-np1  (chat_log/20260718.0.path-analysis-rails-scip-freshness-loop-np1.md)
+# - md  Session: phantom-diff-freeze-rca-storage-endgame (2026-07-18 night, follows 20260718.5)  (chat_log/20260718.6.phantom-diff-freeze-rca-storage-endgame.md)
+# - md  Session: planning-morning-delegation-wave-vision  (chat_log/20260718.1.planning-morning-delegation-wave-vision.md)
 # - md  Session: pr-diff-d2-d5a-d4-shipped  (chat_log/20260703.3.pr-diff-d2-d5a-d4-shipped.md)
 # - md  Session: precision cuts, LSP hover+def_target, split/replace, perf fix, regex unification  (chat_log/20260621.0.precision-cuts-lsp-strings-perf-regex-unify.md)
+# - md  Session: queue-manager-mapping-batch-desugar-perf  (chat_log/20260710.1.queue-manager-mapping-batch-desugar-perf.md)
 # - md  Session: rail conn-loop false positive + precision-tier grounding  (chat_log/20260619.8.rail-conn-precision-and-db-prepare-fix.md)
 # - md  Session: refactor-proposer-clone-kernels  (chat_log/20260626.6.refactor-proposer-clone-kernels.md)
 # - md  Session: refactor-reward-loop-engine-split  (chat_log/20260626.5.refactor-reward-loop-engine-split.md)
@@ -357,6 +402,7 @@
 # - md  Session: sprefa-v5-kotlin-done-move-residuals  (chat_log/20260612.1.sprefa-v5-kotlin-done-move-residuals.md)
 # - md  Session: sprefa-v5-kotlin-perf-arith  (chat_log/20260612.0.sprefa-v5-kotlin-perf-arith.md)
 # - md  Session: sprefa-v5-typed-paths-lang-plan  (chat_log/20260611.0.sprefa-v5-typed-paths-lang-plan.md)
+# - md  Session: sprefa-v6-planning  (chat_log/20260719.2.sprefa-v6-planning.md)
 # - md  Session: sprf-block-cons-container-op-application-design  (chat_log/20260516.1.sprf-block-cons-container-op-application-design.md)
 # - md  Session: sprf-callable-merge-and-4-small-wins  (chat_log/20260519.4.sprf-callable-merge-and-4-small-wins.md)
 # - md  Session: sprf-callable-value-and-tsimport-scrap  (chat_log/20260518.5.sprf-callable-value-and-tsimport-scrap.md)
@@ -370,8 +416,10 @@
 # - md  Session: sprf-type-ir-plan-and-host-lsp-feedback  (chat_log/20260519.2.sprf-type-ir-plan-and-host-lsp-feedback.md)
 # - md  Session: sprf-v4-lsp-lowering-substrate-research  (chat_log/20260501.1.sprf-v4-lsp-lowering-substrate-research.md)
 # - md  Session: sqlite-graph-edges-research  (chat_log/20260516.0.sqlite-graph-edges-research.md)
+# - md  Session: sqlite-health-command-storage-diet-eager-lazy (2026-07-19 AM, follows 20260719.0 overnight)  (chat_log/20260719.1.sqlite-health-command-storage-diet-eager-lazy.md)
 # - md  Session: string-builtins-render-template-design  (chat_log/20260629.7.string-builtins-render-template-design.md)
 # - md  Session: v041-daemon-hotreload-madge-preset-test-hygiene  (chat_log/20260703.0.v041-daemon-hotreload-madge-preset-test-hygiene.md)
+# - md  Session: v11-cut-salt-rev-composite-key-deterministic-measurement  (chat_log/20260720.2.v11-cut-salt-rev-composite-key-deterministic-measurement.md)
 # - md  Session: v3-clearing-cursor-collapse-design-vector  (chat_log/20260429.0.v3-clearing-cursor-collapse-design-vector.md)
 # - md  Session: v4 cursor port + loop-reachability rails + CST-port plan  (chat_log/20260619.3.v4-cursor-and-loop-reachability-rails.md)
 # - md  Session: v4-cold-start-juicing-ts-query  (chat_log/20260503.1.v4-cold-start-juicing-ts-query.md)
@@ -407,22 +455,27 @@
 # - md  Session: v5-true-singleton-tick-audit  (chat_log/20260618.0.v5-true-singleton-tick-audit.md)
 # - md  Session: v5-type-graph-rev-explorer-d2-thrash-spine-audit  (chat_log/20260531.6.v5-type-graph-rev-explorer-d2-thrash-spine-audit.md)
 # - md  Session: v5-types-modules-parsers-design  (chat_log/20260618.1.sprefa-v5-types-modules-parsers-design.md)
+# - md  Session: v6-schema-design-graph-lib-empirical-labs  (chat_log/20260720.0.v6-schema-design-graph-lib-empirical-labs.md)
 # - md  Session: vscode-flow-panel-madge-refactor-r1  (chat_log/20260702.3.vscode-flow-panel-madge-refactor-r1.md)
 # - md  Session: where-strictly-via-sql-where-dsl-and-perf-wrapup  (chat_log/20260514.10.where-strictly-via-sql-where-dsl-and-perf-wrapup.md)
-# - md  Settle / quiescence detection  (plans/2026-07-06-settle-quiescence.md)
 # - md  Singleton daemon + registered roots (de-root C)  (plans/2026-07-10-singleton-daemon-registered-roots.md)
 # - md  Small-model surfaces: the build plan for "dl as a steroid for Haiku"  (plans/2026-07-10-small-model-surfaces.md)
 # - md  Source-rule body-join auto-desugar  (plans/2026-07-02-source-rule-body-join-desugar.md)
 # - md  Split src/engine/mod.rs (9,005 lines) into engine/ submodules  (plans/2026-07-11-engine-mod-split.md)
 # - md  Staged writes + LSP rendering tiers  (.agents/skills/sprf-lsp-staged-writes/SKILL.md)
 # - md  Starter lint pack — ast-grep → LSP  (examples/lints/README.md)
+# - md  Storage diet for the per-root SQLite db (2026-07-18)  (plans/2026-07-18-storage-diet.md)
+# - md  Storage endgame (2026-07-19)  (plans/2026-07-19-storage-endgame.md)
+# - md  String ergonomics design: body binds and concatenation  (plans/2026-07-11-string-ergonomics-design.md)
 # - md  String values: df_lit + const_value + occurrence-level scip (2026-07-10)  (plans/2026-07-10-string-values-const-value.md)
 # - md  StringId ↔ String Boundary Minimization Audit  (chat_log/20260515.9.string-id-boundary-min-audit.md)
+# - md  Structural parsing: widen coverage across markup, template, and data formats  (plans/2026-07-15-structural-parsing-coverage.md)
 # - md  Sugar reform + light lattice types  (.agents/skills/sprf-sugar-and-types/SKILL.md)
 # - md  Summary  (book/SUMMARY.md)
 # - md  Syntax & semantics  (docs/reference/syntax.md)
 # - md  Tags via tree-sitter — first-class ctags-like surface in sprf  (plans/2026-05-20-tags-via-tree-sitter.md)
 # - md  Task #4 design — PARKED 2026-05-18 (approved-as-design, not coded)  (.agents/memory/project_dots_types_tsimport.md)
+# - md  Test plan — reactive retraction pipeline (post-P5)  (plans/2026-07-16-capstone-retraction-test-plan.md)
 # - md  The argmax bookmark trick  (deck/sprefa.md)
 # - md  The data model (the contract)  (docs/data-model.md)
 # - md  The flow panel / PR diff story  (deck/sprefa.md)
@@ -432,58 +485,73 @@
 # - md  This session  (anim/src/deck/06-this-session.md)
 # - md  Three substrates, three jobs  (.agents/skills/sprf-incr-substrate-map/SKILL.md)
 # - md  Turnkey query surface: `dl what` / `dl q <verb>` / `dl find`  (plans/2026-07-10-turnkey-query-surface.md)
-# - md  Typed path literals + agg + LSP routing — implementation contract  (plans/2026-06-11-typed-paths-impl.md)
+# - md  Type values and internal deltaflow  (plans/2026-07-14-type-values-and-internal-deltaflow.md)
 # - md  Types as data: the comptime roadmap  (docs/type-comptime-roadmap.md)
 # - md  U1 SHIPPED (GREEN, branch `feat/rs-entity-graph`, NOT merged)  (.agents/memory/project_cross_file_entity_graph.md)
 # - md  V4 Lazy Semantic Graph Frontier Plan  (chat_log/20260514.0.v4-lazy-semantic-graph-frontier-plan.md)
+# - md  V6  (v6/README.md)
+# - md  V6 crate map — boundaries, the math, and the size budget  (v6/plans/2026-07-19-v6-crate-map.md)
+# - md  V6 daemon — one process, every protocol, library-first  (v6/plans/2026-07-19-v6-daemon.md)
+# - md  V6 delivery — vertical slices, and what crosses each boundary  (v6/plans/2026-07-19-v6-delivery.md)
+# - md  V6 demand — cold by default, Observable + subscribe  (v6/plans/2026-07-19-v6-demand.md)
+# - md  V6 dependency dossier (researched 2026-07-19)  (v6/.agents/skills/v6-deps/SKILL.md)
+# - md  V6 language interfaces — pluggable protocols in dl, MVP ghcacher  (v6/plans/2026-07-19-v6-language-interfaces.md)
+# - md  V6 primed context  (v6/.agents/skills/v6-plan/SKILL.md)
+# - md  V6 storage crate — backend-neutral storage API, repo/rev everywhere  (v6/plans/2026-07-19-v6-storage-crate.md)
+# - md  V6 table design — surrogate spine, one graph shape, sized for 500 repos  (v6/plans/2026-07-19-v6-table-design.md)
 # - md  Variable-name signal extraction  (research/2026-06-26-variable-name-signal-extraction.md)
 # - md  What if  (book/what-if/README.md)
 # - md  What is dl  (deck/sprefa.md)
+# - md  Where this started  (CHECKPOINT.md)
 # - md  Working in this repository — tooling guide  (bench/agent-eval/fixtures/ctf-permissions/skills/baseline.SKILL.md)
 # - md  Working in this repository — tooling guide  (bench/agent-eval/fixtures/ctf-permissions/skills/dl.SKILL.md)
 # - md  Writing a plan doc  (.agents/skills/sprf-write-plan/SKILL.md)
+# - md  `dl --check` time accounting — 2026-07-10 (ext-wave3 worktree)  (docs/perf/2026-07-10-check-time-accounting.md)
 # - md  datafrog as a `MemStore` backend behind a `RelStore` seam  (docs/ext-datafrog-memstore.md)
 # - md  dl --lsp as a daemon thin client (the Gradle model)  (plans/2026-07-10-lsp-thin-client-daemon.md)
 # - md  dl LSP  (editors/vscode-dl/README.md)
 # - md  dl feedback — codegen paths spike (2026-07-06)  (feedback/2026-07-06-dl-codegen-paths-spike.md)
 # - md  dl flow panel graph viewer  (.agents/skills/sprf-flow-panel-graph-viewer/SKILL.md)
 # - md  dl flow panel test harness  (editors/vscode-dl/tests/README.md)
+# - md  dl — ask your codebase questions  (README.md)
 # - md  dl-rails — Claude Code plugin  (editors/claude-plugin/README.md)
-# - md  engine.rs breakdown — proposal  (plans/2026-06-30-engine-breakdown-proposal.md)
-# - md  file_lines builtin + dl-native file-size rail (handoff brief: codex)  (plans/2026-07-11-file-lines-builtin.md)
-# - md  flow panel: arc-list view (fs-snippet with gutter edges)  (plans/2026-07-03-flow-panel-arc-list-view.md)
 # - md  flow-marks dogfood: recorded on sprefa itself (2026-07-10)  (docs/dogfood/2026-07-10-flow-marks.md)
 # - md  frame-anim  (anim/README.md)
-# - md  match() sweep — audit of shipped .dl programs  (plans/2026-07-03-match-sweep-audit.md)
 # - md  module_binding: alias-aware imports at the syntactic tier  (plans/2026-07-10-module-binding-alias.md)
-# - md  node2vec reactive perf — keep the embed off the hot path + guard the anti-pattern  (plans/2026-06-29-node2vec-reactive-perf.md)
 # - md  parse-engine christmas list  (plans/2026-06-24-parse-engine-christmas-list.md)
 # - md  petgraph swap for scc.rs  (docs/ext-petgraph-scc-swap.md)
+# - md  port_reach perf re-attack (2026-07-12)  (plans/2026-07-12-port-reach-perf.md)
 # - md  runtime_graph.rs audit + canonical shape  (chat_log/20260515.2.runtime-graph-audit-and-canonical-shape.md)
+# - md  sprefa  (.agent/memories/sprefa-task-ledger.md)
 # - md  sprefa  (CLAUDE.md)
 # - md  sprefa Evolution Log — v1 → v2 → v3 → v4  (chat_log/20260505.3.evolution-log-v1-v2-v3-v4.md)
 # - md  sprefa `dl` — datalog over code  (assets/sprefa-dl.skill.md)
 # - md  sprefa `dl` — datalog over code  (editors/claude-plugin/skills/sprefa-dl/SKILL.md)
 # - md  sprefa dl  (deck/sprefa.md)
 # - md  sprefa dl slideshow  (deck/README.md)
-# - md  sprefa v5 (`dl`)  (README.md)
 # - md  sprefa zoom level 2: implementation roadmap  (docs/archive/sprefa-zoom-level-2-roadmap-20260404.md)
 # - md  sprf VS Code extension  (editors/vscode/README.md)
-# - md  type_decl_row — types derived from rels (Phase 5)  (plans/2026-07-09-type-decl-row.md)
+# - md  sqry vs dl — Head-to-Head Experiment on the sprefa Codebase  (experiment-sqry-vs-dl.md)
 # - md  v4 Datalog Slice 4 — Retract-Chain Blocker (2026-05-15)  (chat_log/20260515.1.v4-datalog-slice-4-blocker.md)
 # - md  v4 Determinism Task Status (2026-05-15)  (chat_log/20260515.0.v4-determinism-task-status.md)
-# - md  v4 id newtypes plan — 2026-05-19  (plans/2026-05-19-id-newtypes-plan.md)
-# - md  v4 worst-of audit — 2026-05-19  (plans/2026-05-19-v4-worst-audit.md)
 # - md  v5 Architecture — Glean++ over SQLite  (plans/v5-architecture.md)
 # - md  v5 Engine Refactor Suggestions  (refactor-suggestions-archive/REFACTOR-SUGGESTIONS.md)
 # - md  v5 Working Conventions  (assets/sprefa-v5-working-conventions.skill.md)
+# - md  v5 assimilation: the standing work plan (2026-07-20)  (plans/2026-07-20-v5-assimilation.md)
 # - md  v5 study tracker (`ls -la`)  (research/STUDY.md)
+# - md  v6 architecture notes (2026-07-19)  (plans/2026-07-19-v6-architecture-notes.md)
+# - md  v6 graph layer: measurements  (v6/plans/2026-07-20-graph-layer-measurements.md)
+# - md  v6 graph layer: measurements, and one agent's unreliable reading of them  (v6/plans/2026-07-20-graph-layer-decision.md)
 # - md  vscode-dl review: perf remediation + navigation lens + BOM structure view  (plans/2026-07-10-vscode-ext-review.md)
 # - rs  src/activity.rs:1  Process-global "what is the engine doing right now" slot, read by the
 # - rs  src/agent.rs:1  Agent-harness session readers (the at-rest tier).
 # - rs  src/anchor.rs:1  Query-time anchor resolution + the `what`/`summary` read surface.
+# - rs  src/budget.rs:1  Hard CPU ceiling for background work: a duty-cycle governor.
+# - rs  src/cancel.rs:1  Mid-run cancellation probe: the thread-local seam that lets a RUNNING
 # - rs  src/channel.rs:1  Transport channel for the serving loops (`dl --mcp`): framed JSON-RPC
-# - rs  src/cli/daemon.rs:1  `dl daemon <verb>` — the daemon-control subcommand family, plus the shared
+# - rs  src/cli/check_deadline.rs:1  Bounded `--check` runner. A deadline is advisory: on expiry the process
+# - rs  src/cli/daemon_cmd.rs:1  `dl daemon <verb>` — the daemon-control subcommand family, plus the shared
+# - rs  src/cli/health.rs:1  `dl daemon health` — the storage-health report for every per-root db under
 # - rs  src/cli/inputs.rs:1  Resolving a positional into something the engine can run. A positional is one
 # - rs  src/cli/mod.rs:1  The `dl` command line: the clap `Cli` struct, the pre-clap subcommand
 # - rs  src/cli/query.rs:1  `dl what <anchor>` and `dl summary <path>` — the turnkey query verbs. Both
@@ -492,8 +560,21 @@
 # - rs  src/config.rs:1  Turnkey multi-repo config. A single TOML file lists the checkouts to analyze
 # - rs  src/corpus.rs:1  The embedded `.dl` corpus: examples + std libs baked into the binary by
 # - rs  src/cst.rs:1  CST-as-relation (christmas #3): the whole-tree enumeration that backs the
-# - rs  src/daemon.rs:1  Singleton daemon + registered roots.
+# - rs  src/daemon/budget.rs:1  Background scheduling budget (the nothing-seizes-the-machine law:
+# - rs  src/daemon/client.rs:1  Client half: connection, lifecycle (start/stop/restart/supervise), and
+# - rs  src/daemon/dispatch.rs:1  RPC dispatch: `handle_request`/`dispatch_root` routing, eval paths, and
+# - rs  src/daemon/home.rs:1  Daemon home/socket/pid/roots.json path helpers (relocated from the old
+# - rs  src/daemon/http_discovery.rs:1  HTTP-transport discovery helpers: where the daemon's `http.json` lives and how
+# - rs  src/daemon/mod.rs:1  Singleton daemon + registered roots.
+# - rs  src/daemon/read.rs:1  Lock-free read path for the daemon's row/query RPCs.
+# - rs  src/daemon/root.rs:1  One served root: `ServedRoot` (state, engine locking, per-root db) plus
+# - rs  src/daemon/shell/http.rs:1  The daemon's ONE handler layer (plan 2026-07-18-infra-library-adoption.md
+# - rs  src/daemon/shell/mod.rs:1  The daemon's tokio SHELL: sockets, timers, dispatch — everything that is NOT
+# - rs  src/daemon/shell/timers.rs:1  The poll (`@async` clock) + idle (self-reap) timer tasks. Both are
+# - rs  src/daemon/shell/watch.rs:1  Per-root file/git watcher, as a tokio task. The notify crate stays
+# - rs  src/daemon_client.rs:1  The client half of the daemon's HTTP-over-UDS transport: one hyper HTTP/1
 # - rs  src/datapath.rs:1  Data-file extraction over json/yaml/toml: `jsonp` is the dotted-path
+# - rs  src/db_ratio.rs:1  `db bytes / corpus bytes` verdict (failure-modes class 17,
 # - rs  src/desc.rs:1  Descriptors: the canonical value a typed path literal (`fs:`/`glob:`) resolves
 # - rs  src/docs_cmd.rs:1  `dl docs [topic]` — read the guides baked into the binary, so a bare
 # - rs  src/effect.rs:1  The `@async` / `@stream` / `sh` effect runtime, extracted from engine.rs
@@ -502,19 +583,79 @@
 # - rs  src/embed/mod.rs:1  Embedding backends behind a compile-time feature switch.
 # - rs  src/embed/node2vec.rs:1  Structural node embeddings (DeepWalk / node2vec) — the graph sibling of the
 # - rs  src/embed/stub.rs:1  Deterministic hashed pseudo-embedding. The shipped default: zero deps, no
+# - rs  src/engine/cold_stage.rs:1  Cold-start staging: extract one extract-family node per tick instead of the
+# - rs  src/engine/deltaflow.rs:1  Test-only positive-acyclic Boolean incremental-view fixture.
+# - rs  src/engine/derive.rs:2496  Completion markers are written once per dependency component — a crash
 # - rs  src/engine/desugar.rs:1  Mixed source+derived / extract+derived rel desugar: rewrite a `Program` so
-# - rs  src/engine/extract.rs:1  Built-in graph/CST/spine/daemon extractor methods on `Engine`, lifted out of
+# - rs  src/engine/extract/call_render_tests.rs:1  Tier T2 render-flip tests for `Engine::flip_call_rels_via_router`.
+# - rs  src/engine/extract/mod.rs:1  Built-in graph/CST/spine/daemon extractor methods on `Engine`, lifted out of
+# - rs  src/engine/extract/scip_narrow.rs:1  Win D import-scoped SCIP ambiguity narrowing, relocated from
+# - rs  src/engine/extract/verdict_tests.rs:1  Extraction verdict/reason unit tests, relocated from `extract/mod.rs`
+# - rs  src/engine/family/call_def.rs:1  `CallDef` family — the rev-collapsed twin of `CallDefRev`. Projects the
+# - rs  src/engine/family/call_def_rev.rs:1  `CallDefRev` family — projects the owned `_call_def` def-site store to the
+# - rs  src/engine/family/call_edge.rs:1  `CallEdge` family — the aggregation tier. Reads the owned
+# - rs  src/engine/family/call_edge_rev.rs:1  `CallEdgeRev` family — the rev-carrying twin of `CallEdge`. Reads the owned
+# - rs  src/engine/family/call_kind.rs:1  `CallKind` family — projects the owned `_call_raw_site` table to the public
+# - rs  src/engine/family/call_name.rs:1  `CallName` family — projects the owned `_call_def` table to the public
+# - rs  src/engine/family/call_site.rs:1  `CallSite` family — projects the owned `_call_raw_site` + `_call_owner`
+# - rs  src/engine/family/mod.rs:1  Family-derive reactive engine — host extraction families as pure `derive`
+# - rs  src/engine/family/router.rs:1  Reactive router — the memo layer over `Family` derives (plan
+# - rs  src/engine/generation.rs:1  Isolated proof that one semantic generation can commit atomically.
+# - rs  src/engine/ownership.rs:1  Slice A executable ownership contract.
+# - rs  src/engine/path_reconcile.rs:1  Atomic source portion of a watcher-driven path tick.
+# - rs  src/engine/pipeline/apply.rs:1  Atomic SQLite apply boundary for one semantic generation.
+# - rs  src/engine/pipeline/full_sources.rs:1  Bounded bridge from source extraction into the sealed SQLite stage.
+# - rs  src/engine/pipeline/intent.rs:1  Intent and typestate tokens for one semantic generation.
+# - rs  src/engine/pipeline/mod.rs:1  Production generation-pipeline boundaries.
+# - rs  src/engine/pipeline/post_commit.rs:1  Placeholder boundary for irreversible output after SQLite commit.
+# - rs  src/engine/pipeline/source_stage.rs:1  Bounded, sealed source-row staging on the engine's SQLite connection.
+# - rs  src/engine/pipeline/stage.rs:1  Protocol for moving prepared intent into the transaction-ready state.
+# - rs  src/engine/results.rs:1  Public query-result row shapes returned by the engine's read paths
+# - rs  src/engine/source_prepare.rs:1  Bounded parallel source preparation feeding the single SQLite stage writer.
+# - rs  src/engine/source_rows.rs:1  Source-row lifecycle (split out of `reconcile.rs` in the file-budget
+# - rs  src/engine/staged_delta/mod.rs:1  Test-only SQLite harness for a sealed, bounded staged-set diff.
+# - rs  src/engine/staged_delta/sql.rs:1  [cfg(test)]
+# - rs  src/engine/staged_delta/tests.rs:1  [cfg(test)]
+# - rs  src/engine/term_extract.rs:1  Term-form extraction (split out of `reconcile.rs` in the file-budget
 # - rs  src/engine/tick.rs:1  The reactive tick orchestrator: `tick` (full) and `tick_paths` (incremental),
+# - rs  src/engine/timeutil.rs:1  Small clock/mtime helpers shared by the engine's reconcile/repo/rpc
+# - rs  src/engine/type_arena.rs:1  Content-addressed logical types for a compiled engine plan.
+# - rs  src/engine/typed_plan.rs:1  Read-only, storage-independent rule metadata for the internal deltaflow arc.
+# - rs  src/eventlog.rs:1  Discrete IO event trail: `<daemon_home>/events.jsonl`, one line the moment
 # - rs  src/frontend.rs:1  Module surface: `use` inclusion + canonical-path dedup. The smallest viable
+# - rs  src/graph/mod.rs:1  Pure graph algorithms over the code model, grouped in one place:
+# - rs  src/graph/modgraph/mod.rs:1  Cross-language module dependency graph: "the filesystem from language, as
+# - rs  src/graph/scc.rs:1  SCC-condensed transitive closure. Pure graph: no SQL, no engine types.
+# - rs  src/graph/typegraph/analysis.rs:1  Shared graph analysis fns: type-shape hashing + least-general-
+# - rs  src/graph/typegraph/go.rs:1  Go extractor arm (tree-sitter-go front-end): TypeLang impl, type
+# - rs  src/graph/typegraph/kotlin.rs:1  Kotlin extractor arm (tree-sitter-kotlin front-end): TypeLang impl,
+# - rs  src/graph/typegraph/mod.rs:1  Diet type graph extractors. Intentionally syntax-only: parse a file (`syn`
+# - rs  src/graph/typegraph/python.rs:1  Python extractor arm (tree-sitter-python front-end): TypeLang impl,
+# - rs  src/graph/typegraph/rust/mod.rs:1  Rust extractor arm (syn front-end): TypeLang impl, type edges,
+# - rs  src/graph/typegraph/rust/tests.rs:1  Rust extractor test suite. Split out of rust/mod.rs to keep the
+# - rs  src/graph/typegraph/ts/flow.rs:1  TS/TSX/JS dataflow lift + JSX walkers (oxc front-end). Pure code
+# - rs  src/graph/typegraph/ts/mod.rs:1  TS/TSX/JS extractor arm (oxc front-end): TypeLang impl, type edges,
+# - rs  src/graph/typegraph/ts/text.rs:1  TS/TSX comment/template/unresolved-ref extraction (oxc front-end).
+# - rs  src/graph/walk.rs:1  Multi-source, halt-gated forward BFS. Pure graph: no SQL, no engine types.
 # - rs  src/hook.rs:1  `dl --hook`: dl as a coding-agent harness hook command.
+# - rs  src/identity.rs:1  Canonical, versioned identities for extraction ownership and public facts.
 # - rs  src/ingest/mod.rs:1  Document ingestion: a registry of grammars that emit structural relations
+# - rs  src/invlog.rs:1  Global invocation log: one row per `dl` process, in a machine-global
+# - rs  src/jobq/mod.rs:1  Job queue on **apalis-sqlite** (plan `2026-07-18-infra-library-adoption.md`
+# - rs  src/jobq/tests.rs:1  jobq behavior pins, ported from the bespoke-queue suite onto the
+# - rs  src/jobq/tests_cancel.rs:1  Class-18 residual pins (daemon-side req_id mid-tick cancellation), split
+# - rs  src/jobq/workers.rs:1  The apalis worker set (plan `2026-07-18-infra-library-adoption.md` 5.3
+# - rs  src/jobq/write_budget.rs:1  Cold-extract write-volume budget lever (resource-aware scheduler plan,
 # - rs  src/ktpath.rs:1  Kotlin move-refactor path math. A Kotlin import is `package.Decl` and the
 # - rs  src/lsp.rs:1  LSP server mode: turn a `.dl` program's `diag` relation into live editor
 # - rs  src/main.rs:1  The `dl` binary is a thin shell: all argument parsing and dispatch lives in
 # - rs  src/mcp.rs:1  `dl --mcp`: serve a dl program as a JSON-RPC (MCP stdio) server.
-# - rs  src/modgraph.rs:1  Cross-language module dependency graph: "the filesystem from language, as
+# - rs  src/parse/desugar.rs:1  `$NAME` regex-hole desugaring, relocated from `parse.rs`
+# - rs  src/parse/ops.rs:1  Body-item source/graph op parsers (`scan`/`match`/`ast`/`sg`/`json`/`cmd`/
 # - rs  src/perflog.rs:1  Append-only JSONL performance log, tail-able while the daemon runs. One
-# - rs  src/propose.rs:1  Extract-function proposer (Track 2): over a file's source, find verbatim
+# - rs  src/propose/mod.rs:1  Extract-function proposer (Track 2): over a file's source, find verbatim
+# - rs  src/propose/sequence.rs:1  Sequence-keyed duplicate detectors: symbol-occurrence shapes, call
+# - rs  src/propose/shapes.rs:1  Structure-keyed duplicate detectors: AST shape, statement-tree, CFG
 # - rs  src/refactor.rs:1  The auto-refactor edit sink (Route A). Turns located `use`-path spans into
 # - rs  src/rels/analysis.rs:1  Analysis-derived relations: `agent_edit`/`agent_touch`, `dl_diag`,
 # - rs  src/rels/catalog.rs:1  Self-describing catalog relations: `rel_catalog`, `fn_catalog`, `op_catalog`.
@@ -528,20 +669,29 @@
 # - rs  src/rels/propose.rs:1  Clone-proposer relations: `propose_extract`, `propose_clone`.
 # - rs  src/rels/querylog.rs:1  Server-request history. Every daemon `query`/`query_sql` RPC appends one row
 # - rs  src/rels/scip.rs:1  SCIP-importer relations, loaded from an existing `index.scip` (reload-gated).
+# - rs  src/rels/write_ledger.rs:1  Internal write-ledger bookkeeping. The `_write_ledger` table is created
 # - rs  src/repo.rs:1  Repo-root discovery for `.dl` programs: `nearest_git` walks up from a path
-# - rs  src/rpc.rs:1  JSON-RPC 2.0 over `Content-Length`-framed messages (LSP-style framing).
+# - rs  src/reqid.rs:1  Per-request id: the otel "trace id" concept without an otel dependency.
+# - rs  src/reserved_names.rs:1  Parse-tier guard for engine-owned relation names.
+# - rs  src/rpc.rs:1  JSON-RPC 2.0 envelopes (`Request`/`Response`), plus the legacy
 # - rs  src/rspath.rs:1  Rust `use`-path rewrite arithmetic for the auto-refactor sink (Route A).
-# - rs  src/scc.rs:1  SCC-condensed transitive closure. Pure graph: no SQL, no engine types.
 # - rs  src/scip_setup.rs:1  `dl index` / `dl doctor` — turnkey SCIP generation across languages.
 # - rs  src/setup.rs:1  `dl setup` — wire a (possibly prebuilt) `dl` binary into AI coding agents,
-# - rs  src/trace.rs:1  Structured tracing (`tracing` crate). Off by default; enable with
+# - rs  src/setup/manifest.rs:1  The setup journal is the only door through which setup writes user files.
+# - rs  src/setup/manifest/json_edit.rs:1  Minimal span-preserving JSON array edits for setup-owned nodes.
+# - rs  src/stage.rs:1  R7 diag stage routing: presentation-time filtering of the `diag` sink by
+# - rs  src/stale_binary.rs:1  Stale-binary rail (failure-modes class 13 promotion,
+# - rs  src/storage.rs:1  Counted relational-storage seam.
+# - rs  src/supervise.rs:1  OS service-manager supervision (plans/2026-07-18-infra-library-adoption.md
+# - rs  src/trace.rs:1  Structured tracing (`tracing` crate). Three independent knobs:
 # - rs  src/tray.rs:1  Menu bar tray for the daemon. macOS-only in v1; Windows + Linux are
 # - rs  src/typecheck.rs:1  Lower-time path-literal normalization and rule type checking (spec T2).
-# - rs  src/typegraph.rs:1  Diet type graph extractors. Intentionally syntax-only: parse a file (`syn`
 # - rs  src/update.rs:1  `dl update` — self-update to the latest published release, turnkey.
 # - rs  src/verbs.rs:1  `dl q <verb>` — concept verbs over the code graph.
 # - rs  src/verdict.rs:1  Observability "verdict line" logging: one terse stderr line + one
+# - rs  src/watchdog.rs:1  Wall-clock watchdog for one-shot in-process `dl` runs. Standing law: nothing
 # - rs  src/watchgate.rs:1  Receive-side filter shared by the daemon watcher and the pre-daemon
+# - rs  src/why.rs:1  Durable self-diagnosis trail: the daemon appends one JSON line every few
 # END:
 
 # Scan markdown into _file so refresh_doc_rels runs the IngestLang registry over it.

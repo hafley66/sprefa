@@ -46,6 +46,76 @@ fn rel_digest_fingerprint(
     fold
 }
 
+/// Edge relations reached by a graph traversal: the edge argument of
+/// `closure(edge)` (from `closures`, the head->edge map `closure_map`
+/// already built upstream in `tick.rs`), plus any relation read by a
+/// SELF-REFERENTIAL recursive rule — `head(seed, to) <- head(seed, from),
+/// edge(from, to).`, the hand-rolled walk shape `port_of_reach_rec`,
+/// `port_out_reach`, `mark_reach`, `member_from_new`, and `trace_step_raw`
+/// (`.dl/flow-panel.dl`, `.dl/mark-lens.dl`) all use.
+///
+/// A traversal walks EITHER direction of a 2-ary edge: `closure()` seeds a
+/// blast-radius walk from either endpoint (`ClosureSeed.forward`, strata.rs
+/// — src pinned walks out, dst pinned walks in), and a recursive rule's own
+/// next-hop step is symmetric to a find-refs query walking the same edge
+/// backward. Both are invisible to `auto_indexes()`'s raw co-occurrence:
+/// `BodyItem::Closure`/`Scc`/`Node2vec` atoms carry no `Term::Var`
+/// occurrence at all (that loop's `_ => continue` arm skips them), and the
+/// canonical recursive shape above binds `to` exactly once per rule body
+/// (only `from`, shared with the recursive atom, co-occurs) — so raw
+/// co-occurrence proposes the forward column at best, never the reverse
+/// one. Returns the edge's leading two columns (position 0 = src, position
+/// 1 = dst — the shape `df_edge`/`flow_edge`/`map_edge`/`bom_edge`/
+/// `port_edge` all share) as raw candidates; the caller applies the SAME
+/// PK-prefix/tiny-rel/constant-column filters to them as to every other
+/// candidate.
+///
+/// `node2vec(edge)` (the third walk-family operator, random walks +
+/// skip-gram) is NOT reachable from here: its rules are excluded from
+/// `derived_rules` before `create_auto_indexes` ever runs (tick.rs
+/// `all_derived` filter drops any rule with `node2vec_edge().is_some()`)
+/// and its edge name never reaches `closures` (`closure_map` only reads
+/// `closure_edge()`). Covering it needs `create_auto_indexes` to take an
+/// extra `node2vec_rules` argument threaded from its two tick.rs call
+/// sites — out of scope for a declare.rs-only change; named here so it is
+/// not silently assumed covered.
+fn traversal_edge_cols(
+    derived_rules: &[&Rule],
+    closures: &HashMap<String, String>,
+    rels: &Rels,
+) -> Vec<(String, String)> {
+    let mut edges: HashSet<String> = closures.values().cloned().collect();
+    for rule in derived_rules {
+        let head = rule.head.rel.as_str();
+        let self_referential = rule
+            .body
+            .iter()
+            .any(|item| matches!(item, BodyItem::Pos(a) if a.rel == head));
+        if !self_referential {
+            continue;
+        }
+        for item in &rule.body {
+            let atom = match item {
+                BodyItem::Pos(a) | BodyItem::Neg(a) => a,
+                _ => continue,
+            };
+            if atom.rel != head {
+                edges.insert(atom.rel.clone());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for edge in &edges {
+        if let Some(meta) = rels.get(edge) {
+            if meta.cols.len() >= 2 {
+                out.push((edge.clone(), meta.cols[0].name.clone()));
+                out.push((edge.clone(), meta.cols[1].name.clone()));
+            }
+        }
+    }
+    out
+}
+
 impl Engine {
     pub(crate) fn create_rel_view(&self, rel: &str, meta: &RelMeta) -> Result<()> {
         let view = crate::lower::txt_tbl(rel);
@@ -406,15 +476,35 @@ impl Engine {
     /// distinct-count reasoning — the served shapes probe RARE kinds, so
     /// idx_df_node_kind (23 distinct over 280k rows) degraded 21 shapes by
     /// +5..+110ms and idx_df_arg_pos (13 distinct) one by +80ms when dropped.
+    ///
+    /// Reverse-traversal residual (verified 2026-07-20 against the live
+    /// root's `rel_map_edge`, and independently against `rel_df_edge` by the
+    /// `graph-libs:sqlite-native:opus-redo` research arc): a recursive CTE
+    /// walking an edge relation BACKWARD, with no index on the reverse
+    /// column, makes SQLite build a throwaway `AUTOMATIC COVERING INDEX`
+    /// per query — `tests/it/reverse_traversal_plan.rs` pins the query-plan
+    /// text and reports the timing gap (advisory; see that file for why the
+    /// ratio itself is not asserted in CI). `auto_indexes()`'s raw
+    /// co-occurrence NEVER proposes this reverse column: `BodyItem::
+    /// Closure`/`Scc`/`Node2vec` atoms carry no `Term::Var` occurrences (the
+    /// loop skips them outright), and a hand-rolled recursive rule's
+    /// canonical shape — `head(seed, to) <- head(seed, from), edge(from,
+    /// to).` — binds `to` exactly once per rule body, so only `from`
+    /// (shared with the recursive atom) ever co-occurs. `traversal_edge_cols`
+    /// below adds BOTH of a traversed edge's leading columns as raw
+    /// candidates before the three filters above run, so the SAME PK-prefix/
+    /// tiny-rel/constant-column reasoning decides whether either survives —
+    /// no parallel demand mechanism.
     pub(crate) fn create_auto_indexes(
         &self,
         derived_rules: &[&Rule],
         closures: &HashMap<String, String>,
     ) -> Result<()> {
-        let raw: Vec<(String, String)> = auto_indexes(derived_rules, &self.rels)
-            .into_iter()
-            .filter(|(rel, _)| !closures.contains_key(rel))
-            .collect();
+        let mut raw: Vec<(String, String)> = auto_indexes(derived_rules, &self.rels);
+        raw.extend(traversal_edge_cols(derived_rules, closures, &self.rels));
+        raw.retain(|(rel, _)| !closures.contains_key(rel));
+        raw.sort();
+        raw.dedup();
         // Filter #1. One bulk sqlite_master read for rowid-mode (never a
         // per-candidate point read); `tbl()` names only, so non-rel tables
         // never match a candidate.

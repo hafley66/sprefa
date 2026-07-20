@@ -11,11 +11,13 @@
 # Run:   dl examples/rails.dl --check
 # Hook:  dl examples/rails.dl --db .dl/rails.db --check
 #
-# Source rules (scan + match/sg) extract per file and cannot join relations, so
-# each rail is one extraction rule plus one derived rule joining `changed`.
+# Source rules (scan + match_line/match_ast) extract per file and cannot join
+# relations, so each rail is one extraction rule plus one derived rule joining
+# `changed`.
 
 # `col`/`end_col` are 0-based byte columns of the offending span within `line`
-# (match's +2 trailing args, or sg's `col:`/`end_col:` kwargs, bind the span).
+# (match_line's +2 trailing args, or match_ast's `col:`/`end_col:` kwargs, bind
+# the span).
 # The LSP renders a sub-line squiggle when they are set; --check ignores them.
 # end_line defaults to line, so each diagnostic stays single-line.
 
@@ -23,7 +25,7 @@
 rel banned_hit(p: file, l: int, c: int, ec: int, w: text).
 banned_hit(p, l, c, ec, w) <-
     scan("WORK", "**/*.rs", p, rev),
-    match(p, rev, /\b(?<w>provenance|substrate|regime)\b/, l, c, ec).
+    match_line(p, rev, /\b(?<w>provenance|substrate|regime)\b/, l, c, ec).
 
 diag(path: p, line: l, col: c, end_col: ec, severity: "error", code: "banned-word", msg: "banned identifier `${w}`") <-
     banned_hit(p, l, c, ec, w), changed(p).
@@ -35,7 +37,7 @@ diag(path: p, line: l, col: c, end_col: ec, severity: "error", code: "banned-wor
 rel conn_hit(p: file, l: int, c: int, ec: int).
 conn_hit(p, l, c, ec) <-
     scan("WORK", "src/**/*.rs", p, rev),
-    sg(p, rev, :rust, "$X.conn()", line: l, col: c, end_col: ec).
+    match_ast(p, rev, :rust, "$X.conn()", line: l, col: c, end_col: ec).
 
 diag(path: p, line: l, col: c, end_col: ec, severity: "warn", code: "conn-outside-db", msg: "raw .conn() in a changed file outside the Db seam") <-
     conn_hit(p, l, c, ec), changed(p),
@@ -47,7 +49,7 @@ diag(path: p, line: l, col: c, end_col: ec, severity: "warn", code: "conn-outsid
 rel unwrap_hit(p: file, l: int, c: int, ec: int).
 unwrap_hit(p, l, c, ec) <-
     scan("WORK", "src/**/*.rs", p, rev),
-    sg(p, rev, :rust, "$X.unwrap()", line: l, col: c, end_col: ec).
+    match_ast(p, rev, :rust, "$X.unwrap()", line: l, col: c, end_col: ec).
 
 rel unwrap_count(p: text, n: int).
 unwrap_count(p, count(l)) <- unwrap_hit(p, l, _, _), changed(p).

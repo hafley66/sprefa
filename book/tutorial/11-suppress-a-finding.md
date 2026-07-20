@@ -23,7 +23,7 @@ use "std/suppress.dl".
 rel alloc_hit(path: file, line: int, col: int, end_line: int, end_col: int).
 alloc_hit(path, line, col, end_line, end_col) <-
     scan("src/**/*.rs", path, rev),
-    sg(path, rev, :rust, "$RECEIVER.to_string()", line, col, end_line, end_col).
+    match_ast(path, rev, :rust, "$RECEIVER.to_string()", line, col, end_line, end_col).
 
 lint_candidate(path, line) <- alloc_hit(path, line, _, _, _).
 rail_finding(path, line, "no-alloc") <- alloc_hit(path, line, _, _, _).

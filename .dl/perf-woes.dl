@@ -101,7 +101,7 @@ perf_woes_contract("perf-woes-rel-blowup", "warning").
 rel dl_rule_head(path: file, line: int, rel_name: text).
 dl_rule_head(source_file, line, rel_name) <-
     scan("WORK", "**/*.dl", source_file, rev),
-    match(source_file, rev, /^(?<rel_name>[a-z_][a-z0-9_]*)\(.*<-/, line).
+    match_line(source_file, rev, /^(?<rel_name>[a-z_][a-z0-9_]*)\(.*<-/, line).
 
 # ── 1. per-rule cost, onsite when a rule head is found ─────────────────────
 rel slow_rule_located(rel_name: text, ms: int, path: file, line: int).

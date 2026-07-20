@@ -9,6 +9,13 @@ target/
 .ext-survey
 **/.path_index_cache/
 **/.fixtures/
+# gh-cache e2e fixtures (recorded fake-GitHub responses, small + hand-written)
+# are the reproducibility guarantee for tests/it/gh_cache.rs and ARE committed;
+# every other **/.fixtures/ dir (vendored oracle corpora: redis, rust-analyzer,
+# v3/tests/smoke) stays excluded.
+!tests/.fixtures/
+tests/.fixtures/*
+!tests/.fixtures/gh-cache/
 
 # Beads / Dolt files (added by bd init)
 .dolt/

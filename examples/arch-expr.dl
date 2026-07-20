@@ -57,7 +57,7 @@ ax_show("sprefa", "sprefa").
 rel poll_file(path: file).
 poll_file(path) <-
   scan("WORK", "src/**/*.rs", path, rev),
-  match(path, rev, /fn (poll_loop|serve|run_watch)/, line).
+  match_line(path, rev, /fn (poll_loop|serve|run_watch)/, line).
 
 rel ax_mark(url: text, mark: text).
 ax_mark(url, "*") <- arch_node(path, _, url), loop_over(path, _, _, _, _, _).

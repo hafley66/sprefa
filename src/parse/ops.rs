@@ -91,14 +91,14 @@ impl Parser {
         Ok(BodyItem::Scan { repo, rev, glob, path, rev_out })
     }
 
-    pub(crate) fn match_(&mut self) -> Result<BodyItem> {
-        self.ident()?; // match
+    pub(crate) fn match_(&mut self, legacy_name: bool) -> Result<BodyItem> {
+        self.ident()?; // match / match_line
         self.expect(Tok::LParen)?;
         let path = self.term()?; self.expect(Tok::Comma)?;
         let rev = self.term()?; self.expect(Tok::Comma)?;
         let regex = match self.next()? {
             Tok::Regex(r) => desugar_regex_holes(&r),
-            other => bail!("expected regex literal in match, got {:?}", other),
+            other => bail!("expected regex literal in match_line, got {:?}", other),
         };
         self.expect(Tok::Comma)?;
         let line = self.term()?;
@@ -129,7 +129,7 @@ impl Parser {
                 2 => (None, Some(trailing.remove(0)), Some(trailing.remove(0))),
                 3 => { let id = trailing.remove(0);
                        (Some(id), Some(trailing.remove(0)), Some(trailing.remove(0))) }
-                n => bail!("match expects 4 args (path, rev, /re/, line), +1 (id), \
+                n => bail!("match_line expects 4 args (path, rev, /re/, line), +1 (id), \
                             +2 (col, end_col), or +3 (id, col, end_col), got {} trailing", n),
             }
         } else {
@@ -137,7 +137,7 @@ impl Parser {
             let mut it = outs.into_iter();
             (opt(it.next().unwrap()), opt(it.next().unwrap()), opt(it.next().unwrap()))
         };
-        Ok(BodyItem::Match { path, rev, regex, line, id, col, end_col })
+        Ok(BodyItem::Match { path, rev, regex, line, id, col, end_col, legacy_name })
     }
 
     pub(crate) fn ast(&mut self) -> Result<BodyItem> {
@@ -184,17 +184,19 @@ impl Parser {
         Ok(BodyItem::Ast { path, rev, lang, query, line, end, id })
     }
 
-    /// FILE form `sg(path, rev, :lang, "pat", line, col, end_line, end_col, id)`
-    /// vs TERM form `sg(:lang, src, "pat", line, col, end_line, end_col)`. The
+    /// FILE form `match_ast(path, rev, :lang, "pat", line, col, end_line, end_col, id)`
+    /// vs TERM form `match_ast(:lang, src, "pat", line, col, end_line, end_col)`. The
     /// term form LEADS with `:lang` (a colon right after `(`), so a colon in the
     /// first slot dispatches the term form; anything else is the file form (where
     /// `:lang` sits third). The term form's `src` is a bound `str` value (an
     /// embedded-language body); spans are region-relative and there is no `id`.
-    pub(crate) fn sg(&mut self) -> Result<BodyItem> {
-        self.ident()?; // sg
+    /// `legacy_name` is `true` when the program spelled it `sg` (the pre-rename
+    /// name, kept working as a deprecated alias) — see the `Sg` variant doc.
+    pub(crate) fn sg(&mut self, legacy_name: bool) -> Result<BodyItem> {
+        self.ident()?; // sg / match_ast
         self.expect(Tok::LParen)?;
         if matches!(self.peek(), Some(Tok::Colon)) {
-            return self.sg_term();
+            return self.sg_term(legacy_name);
         }
         let path = self.term()?; self.expect(Tok::Comma)?;
         let rev = self.term()?; self.expect(Tok::Comma)?;
@@ -203,7 +205,7 @@ impl Parser {
         self.expect(Tok::Comma)?;
         let pattern = match self.next()? {
             Tok::Str(s) => s,
-            other => bail!("expected pattern string in sg(), got {:?}", other),
+            other => bail!("expected pattern string in match_ast(), got {:?}", other),
         };
         // Trailing span outputs (line, col, end_line, end_col) accept the
         // kwarg/`_` form: positional, `name: term`, or omitted entirely. Zero
@@ -217,8 +219,9 @@ impl Parser {
         };
         // `id` is the trailing 5th output: the spine id of the WHOLE-match span
         // (captures' min..max byte range), bound through the same located-id path
-        // as `ast`/`match` so a rule joins `ref(id, _, _, lo, hi)` for the codemod
-        // anchor (christmas #9, decision 3 — consistent across ast/sg/json).
+        // as `ast`/`match_line` so a rule joins `ref(id, _, _, lo, hi)` for the
+        // codemod anchor (christmas #9, decision 3 — consistent across ast/
+        // match_ast/json).
         let outs = Self::assign_outputs(&["line", "col", "end_line", "end_col", "id"], pos, named)?;
         let id = match &outs[4] { Term::Wild => None, t => Some(t.clone()) };
         self.expect(Tok::RParen)?;
@@ -226,17 +229,18 @@ impl Parser {
             src: path, rev: Some(rev), lang, pattern,
             line: outs[0].clone(), col: outs[1].clone(),
             end_line: outs[2].clone(), end_col: outs[3].clone(),
-            id,
+            id, legacy_name,
         })
     }
 
-    /// TERM form `sg(:lang, src, "pat", line, col, end_line, end_col)` — the
-    /// embedded-language seam. `src` is a `str` value bound earlier in the rule
-    /// (a styled-components css body, a markdown fence, a response column). Mirrors
-    /// the term form of `jsonp`/`json`: no file, no `rev`, no `id`; the join binds
-    /// `src` and this op extracts over the bound string. Spans are relative to the
-    /// bound string. The colon after `(` was already peeked by `sg`.
-    pub(crate) fn sg_term(&mut self) -> Result<BodyItem> {
+    /// TERM form `match_ast(:lang, src, "pat", line, col, end_line, end_col)` —
+    /// the embedded-language seam. `src` is a `str` value bound earlier in the
+    /// rule (a styled-components css body, a markdown fence, a response column).
+    /// Mirrors the term form of `jsonp`/`json`: no file, no `rev`, no `id`; the
+    /// join binds `src` and this op extracts over the bound string. Spans are
+    /// relative to the bound string. The colon after `(` was already peeked by
+    /// `sg`/`match_ast`.
+    pub(crate) fn sg_term(&mut self, legacy_name: bool) -> Result<BodyItem> {
         self.expect(Tok::Colon)?;
         let lang = self.ident()?;
         self.expect(Tok::Comma)?;
@@ -244,7 +248,7 @@ impl Parser {
         self.expect(Tok::Comma)?;
         let pattern = match self.next()? {
             Tok::Str(s) => s,
-            other => bail!("expected pattern string in sg(:lang, src, \"pat\"), got {:?}", other),
+            other => bail!("expected pattern string in match_ast(:lang, src, \"pat\"), got {:?}", other),
         };
         let (pos, named) = if matches!(self.peek(), Some(Tok::Comma)) {
             self.next()?;
@@ -261,7 +265,7 @@ impl Parser {
             src, rev: None, lang, pattern,
             line: outs[0].clone(), col: outs[1].clone(),
             end_line: outs[2].clone(), end_col: outs[3].clone(),
-            id: None,
+            id: None, legacy_name,
         })
     }
 

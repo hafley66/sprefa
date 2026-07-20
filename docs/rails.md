@@ -66,14 +66,14 @@ The same command works as a CI step unchanged.
 
 ## Writing a rail
 
-Source rules (`scan` + `match`/`ast`/`sg`) extract per file and cannot join
-relations, so a rail is two rules: extract, then join `changed`:
+Source rules (`scan` + `match_line`/`ast`/`match_ast`) extract per file and
+cannot join relations, so a rail is two rules: extract, then join `changed`:
 
 ```
 rel diag(path: text, line: int, severity: text, code: text, msg: text).
 
 rel todo_hit(p: file, l: int).
-todo_hit(p, l) <- scan("WORK", "src/**/*.rs", p, rev), match(p, rev, /TODO/, l).
+todo_hit(p, l) <- scan("WORK", "src/**/*.rs", p, rev), match_line(p, rev, /TODO/, l).
 
 diag(p, l, "error", "no-todo", "TODO in a changed file") <-
     todo_hit(p, l), changed(p).

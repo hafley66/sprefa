@@ -20,6 +20,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use sprefa_v5::{db, engine::Engine, lex, parse};
+
 const DL: &str = env!("CARGO_BIN_EXE_dl");
 
 fn sandbox(tag: &str) -> PathBuf {
@@ -1078,5 +1080,282 @@ fn rust_lift_carries_labeled_loop_break_tails_into_bindings() {
         reaches.contains(&(break_calls[0].clone(), outcome_id.clone())),
         "labeled break-value call_res {} must reach let_bind outcome through the outer loop:\n{out}",
         break_calls[0]
+    );
+}
+
+// ============================================================================
+// D5.4 rev-twin composite key: df_node_rev.id must equal df_node.id.
+//
+// `salt_rev` folded rev into the id via string concat (`format!("{rev}\u{1}{id}")`),
+// minting a SEPARATE `_strings` population per rev twin. Measured against the
+// live root db 2026-07-20: 0 of 283,127 df_node rows share an id with any of
+// the 297,620 df_node_rev rows. The fix makes rev a real trailing column and
+// `(id, rev)` the primary key, so df_node_rev.id is the SAME interned value
+// as df_node.id. These two tests prove: (1) the cross-table join by id now
+// returns rows, and (2) two revs still keep their OWN rows rather than
+// collapsing into one — the property salt_rev existed to provide, now
+// delivered by the composite key instead of string folding.
+// ============================================================================
+
+fn git_rev(dir: &Path, args: &[&str]) {
+    let out = Command::new("git").arg("-C").arg(dir).args(args).output().expect("git");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// `.dl` program scanning both the committed HEAD and the WORK tree,
+/// referencing `df_node_rev` so the whole dataflow family (`rels_used` over
+/// DATAFLOW_RELS, decls.rs:1076) lights up and populates across both revs.
+const REV_TWIN_PROG: &str = r#"
+rel diff_pair(base_rev: text, head_rev: text).
+diff_pair("HEAD", "WORK").
+
+rel seen(path: file).
+seen(path) <- diff_pair(_, head_ref), scan(head_ref, "src/**/*.rs", path, rev).
+seen(path) <- diff_pair(base_ref, _), scan(base_ref, "src/**/*.rs", path, rev).
+
+? df_node_rev(id, kind, var, fn, file, line, rev).
+"#;
+
+/// Commit a shared `alpha`/`greet` pair as HEAD, then append a WORK-only
+/// `beta` fn. `alpha`/`greet` sit on the SAME lines in both revs (byte-
+/// identical), so their `file:line:col` ids are shared across HEAD and WORK;
+/// `beta` is new content only WORK has.
+fn write_rev_twin_fixture(dir: &Path) {
+    fs::create_dir_all(dir.join("src")).unwrap();
+    let common = "pub fn greet(name: &str) -> String { String::new() }\n\
+                  pub fn alpha(name: &str) -> String {\n    \
+                      let s = greet(name);\n    \
+                      s\n\
+                  }\n";
+    fs::write(dir.join("src/a.rs"), common).unwrap();
+    git_rev(dir, &["init", "-q"]);
+    git_rev(dir, &["config", "user.email", "t@example.com"]);
+    git_rev(dir, &["config", "user.name", "T"]);
+    git_rev(dir, &["add", "."]);
+    git_rev(dir, &["commit", "-q", "-m", "base"]);
+    // WORK: common content untouched (same lines, same ids) + a WORK-only fn.
+    let mut work = common.to_string();
+    work.push_str(
+        "pub fn beta(name: &str) -> String {\n    \
+             let t = greet(name);\n    \
+             t\n\
+         }\n",
+    );
+    fs::write(dir.join("src/a.rs"), work).unwrap();
+}
+
+/// THE RED TEST. `rel_df_node JOIN rel_df_node_rev ON id` must return a
+/// non-zero count: `alpha`/`greet` are scanned at both HEAD and WORK with
+/// identical content, so df_node's raw id and df_node_rev's id must be the
+/// SAME interned value for those nodes. Before the fix this join is 0 —
+/// df_node_rev.id is `salt_rev(raw_id, rev)`, a string-concat mint landing in
+/// a `_strings` population disjoint from the raw id.
+#[test]
+fn df_node_rev_id_matches_df_node_raw_id() {
+    let d = sandbox("rev_twin_join");
+    write_rev_twin_fixture(&d);
+
+    let prog = parse::parse(lex::lex(REV_TWIN_PROG).unwrap()).unwrap();
+    let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    for _ in 0..4 {
+        eng.tick(&prog, true).unwrap();
+    }
+
+    // Sanity: both revs actually populated df_node_rev.
+    let revs = eng.query_sql("SELECT DISTINCT rev FROM rel_df_node_rev_txt", &[]).unwrap();
+    assert_eq!(revs.len(), 2, "df_node_rev must span HEAD + WORK: {revs:?}");
+
+    let node_rows = eng.count_rows("df_node").unwrap();
+    let node_rev_rows = eng.count_rows("df_node_rev").unwrap();
+    assert!(node_rows > 0, "df_node must be non-empty");
+    assert!(node_rev_rows > 0, "df_node_rev must be non-empty");
+
+    let joined = eng
+        .query_sql(
+            "SELECT COUNT(*) FROM rel_df_node_txt n JOIN rel_df_node_rev_txt r ON n.id = r.id",
+            &[],
+        )
+        .unwrap();
+    let joined_count = joined[0][0].as_i64().unwrap();
+    assert!(
+        joined_count > 0,
+        "df_node JOIN df_node_rev ON id must be non-empty (df_node={node_rows} rows, \
+         df_node_rev={node_rev_rows} rows, joined=0 means df_node_rev.id is still a \
+         salted, disjoint population)"
+    );
+}
+
+/// THE DISJOINTNESS TEST. `alpha`/`greet` are byte-identical at the same
+/// lines in HEAD and WORK, so their ids are SHARED (the INTERSECT below is
+/// non-empty — the fix's whole point). `beta` exists only in WORK, so its ids
+/// appear under the base rev NEVER. And every shared id still keeps two
+/// SEPARATE rows (one per rev), not one row collapsed by an id-only key: two
+/// revs stay disjoint rows via the `(id, rev)` composite key, the property
+/// `salt_rev` existed to provide, now delivered by rev being a real column
+/// instead of a string fold.
+///
+/// `rev` here is the resolved value the `scan("HEAD", ...)` ref lowers to
+/// (the commit's real SHA, not the literal text "HEAD" — the same thing
+/// `graph_diff_rev.rs`'s `head_rev`/`base_rev` derived rels capture), so the
+/// base side is selected as `rev <> 'WORK'` rather than a literal `'HEAD'`.
+#[test]
+fn df_node_rev_keeps_revs_disjoint_by_rev_column() {
+    let d = sandbox("rev_twin_disjoint");
+    write_rev_twin_fixture(&d);
+
+    let prog = parse::parse(lex::lex(REV_TWIN_PROG).unwrap()).unwrap();
+    let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    for _ in 0..4 {
+        eng.tick(&prog, true).unwrap();
+    }
+
+    let shared = eng
+        .query_sql(
+            "SELECT COUNT(*) FROM (\
+               SELECT id FROM rel_df_node_rev_txt WHERE rev <> 'WORK' \
+               INTERSECT \
+               SELECT id FROM rel_df_node_rev_txt WHERE rev = 'WORK')",
+            &[],
+        )
+        .unwrap()[0][0]
+        .as_i64()
+        .unwrap();
+    assert!(shared > 0, "alpha/greet nodes must be shared ids across the base rev and WORK");
+
+    let work_only = eng
+        .query_sql(
+            "SELECT COUNT(*) FROM (\
+               SELECT id FROM rel_df_node_rev_txt WHERE rev = 'WORK' \
+               EXCEPT \
+               SELECT id FROM rel_df_node_rev_txt WHERE rev <> 'WORK')",
+            &[],
+        )
+        .unwrap()[0][0]
+        .as_i64()
+        .unwrap();
+    assert!(work_only > 0, "beta's nodes are WORK-only and must not leak into the base rev's rows");
+
+    // Every shared id keeps ONE row PER rev: total rows == HEAD rows + WORK
+    // rows. If revs collapsed into one row per id (an (id)-only key instead
+    // of (id, rev)) this equality would fail.
+    let head_rows = eng
+        .query_sql("SELECT COUNT(*) FROM rel_df_node_rev_txt WHERE rev <> 'WORK'", &[])
+        .unwrap()[0][0]
+        .as_i64()
+        .unwrap();
+    let work_rows = eng
+        .query_sql("SELECT COUNT(*) FROM rel_df_node_rev_txt WHERE rev = 'WORK'", &[])
+        .unwrap()[0][0]
+        .as_i64()
+        .unwrap();
+    let total_rows = eng.count_rows("df_node_rev").unwrap();
+    assert_eq!(
+        total_rows,
+        head_rows + work_rows,
+        "shared ids must keep two separate rows (one per rev), not collapse into one"
+    );
+}
+
+/// THE STRINGS RECEIPT. `salt_rev` minted a `format!("{rev}\u{1}{id}")` string
+/// per twin id column, per row — before this arc, this exact fixture (2 revs,
+/// 5 twin id-bearing columns) landed a `_strings` row containing the U+0001
+/// separator for every one of those. The fix removes `salt_rev` entirely, so
+/// this asserts the structural invariant directly against a fixed, checked-in
+/// fixture rather than a hand-run count: zero `_strings` rows may contain the
+/// separator, on any corpus, ever again. This is the deterministic, re-runnable
+/// receipt for the "0 of N rows contain U+0001" measurement.
+#[test]
+fn corpus_strings_never_contain_the_salt_separator() {
+    let d = sandbox("no_salt_strings");
+    write_rev_twin_fixture(&d);
+
+    let prog = parse::parse(lex::lex(REV_TWIN_PROG).unwrap()).unwrap();
+    let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    for _ in 0..4 {
+        eng.tick(&prog, true).unwrap();
+    }
+
+    let total_strings = eng
+        .query_sql("SELECT COUNT(*) FROM _strings", &[])
+        .unwrap()[0][0]
+        .as_i64()
+        .unwrap();
+    assert!(total_strings > 0, "fixture must actually intern strings");
+
+    let salted = eng
+        .query_sql(
+            "SELECT COUNT(*) FROM _strings WHERE content LIKE '%' || char(1) || '%'",
+            &[],
+        )
+        .unwrap()[0][0]
+        .as_i64()
+        .unwrap();
+    assert_eq!(
+        salted, 0,
+        "no _strings row may contain the U+0001 salt separator (salt_rev is gone): \
+         {salted} salted of {total_strings} total"
+    );
+}
+
+/// THE WITHOUT ROWID REGRESSION GUARD, applied to a rel this arc actually
+/// touched. `df_node_repo_rev` (3 columns: id, repo, rev — all interned
+/// INTEGER, no `key(...)`, `pk_never_null: true` in decls.rs) already
+/// qualified for `WITHOUT ROWID` under `wants_without_rowid` BEFORE this arc
+/// (salting only changed the id column's VALUE, never its type/count/key
+/// shape) and must still qualify after desalting. Follows the same
+/// methodology as tests/it/storage_diet_without_rowid.rs
+/// `vouched_builtin_junction_gets_without_rowid_and_no_autoindex`: a real
+/// dataflow lift through the engine, then read `sqlite_master` directly for
+/// the `WITHOUT ROWID` DDL suffix and the absence of a duplicate full-row PK
+/// autoindex.
+#[test]
+fn df_node_repo_rev_keeps_without_rowid_after_desalting() {
+    let d = sandbox("repo_rev_without_rowid");
+    write_rev_twin_fixture(&d);
+
+    let prog = parse::parse(lex::lex(REV_TWIN_PROG).unwrap()).unwrap();
+    let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    for _ in 0..4 {
+        eng.tick(&prog, true).unwrap();
+    }
+
+    let rows = eng.count_rows("df_node_repo_rev").unwrap();
+    assert!(rows > 0, "fixture must actually populate df_node_repo_rev, not just declare it");
+
+    let table_sql = eng
+        .query_sql(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'rel_df_node_repo_rev'",
+            &[],
+        )
+        .unwrap()[0][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        table_sql.to_uppercase().ends_with("WITHOUT ROWID"),
+        "df_node_repo_rev is a vouched Rust-authored 3-col all-integer no-key rel, \
+         expected WITHOUT ROWID after desalting: {table_sql}"
+    );
+
+    let autoindex_count = eng
+        .query_sql(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND tbl_name = 'rel_df_node_repo_rev' \
+             AND name LIKE 'sqlite_autoindex_%'",
+            &[],
+        )
+        .unwrap()[0][0]
+        .as_i64()
+        .unwrap();
+    assert_eq!(
+        autoindex_count, 0,
+        "WITHOUT ROWID table must carry no duplicate full-row PK autoindex"
     );
 }

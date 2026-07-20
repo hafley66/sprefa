@@ -66,10 +66,11 @@ dl todos.dl --check       # exits 2 while TODOs remain — the same rule gates C
 `scan` selects files; `comment_node` is a built-in grammar-backed relation (a
 `TODO` inside a string literal is never a row — this is parsing, not grep);
 `?` prints rows. Facts come from real structure: tree-sitter/ast-grep patterns
-(`ast`, `sg`, `ast_yaml`), JSON documents (`json`, `jsonp`), shell output
+(`ast`, `match_ast`, `ast_yaml`), JSON documents (`json`, `jsonp`), shell output
 (`cmd`/`sh`), and the built-in module/type/call/dataflow graphs — up to
-compiler-backed SCIP indexes. Regex `match` is the last resort for languages
-with no grammar. Rules aggregate (`count`/`sum`/...), build strings with
+compiler-backed SCIP indexes. Regex `match_line` is the last resort for
+languages with no grammar — flat text (ini/env/log/csv), never structured
+source code. Rules aggregate (`count`/`sum`/...), build strings with
 `${var}` interpolation, and feed sinks beyond `?`: `diag` rows become live LSP
 squiggles (`--lsp`) or CI gates (`--check`), and `gen` writes generated file
 zones. The working directory is the repository root; there is no `--root` flag.
@@ -184,7 +185,7 @@ setup or binary removal, see [Uninstall](#uninstall).
   content-addressed (blake3 for the working tree, blob OID for a git rev), so
   the same path at two revs or in two repos never collides. Contract pinned in
   [docs/data-model.md](docs/data-model.md).
-- **Facts.** `scan` selects files; a source op (`match`/`ast`/`sg`/`json`/`jsonp`/
+- **Facts.** `scan` selects files; a source op (`match_line`/`ast`/`match_ast`/`json`/`jsonp`/
   `cmd`/`comment`) extracts rows from each. Source-op rows are cached by
   (file content hash, rule text) — a re-tick only re-runs what moved.
 - **Rules.** `head(..) <- body.` — ordinary datalog, recursion allowed,
@@ -308,15 +309,17 @@ raw column in the body, compute in the head (see `arith` in
 
 | op | signature | what it does |
 |---|---|---|
-| `ast_yaml` | `ast_yaml(path, rev, :lang, "rule yaml", line, ...)` | ast-grep `RuleCore` YAML body (usually backtick/multiline); mirrors `sg()` but the 4th arg is a relational rule (`inside:`/`has:`) instead of a pattern string. Span outputs share the `sg` kwarg/`_` form. See [src/sg.rs](src/sg.rs) |
+| `ast_yaml` | `ast_yaml(path, rev, :lang, "rule yaml", line, ...)` | ast-grep `RuleCore` YAML body (usually backtick/multiline); mirrors `match_ast()` but the 4th arg is a relational rule (`inside:`/`has:`) instead of a pattern string. Span outputs share the `match_ast` kwarg/`_` form. See [src/sg.rs](src/sg.rs) |
 | `ast` | `ast(path, rev, :rust\|:c\|:kotlin, "(query) @cap", line[, end])` | tree-sitter query; `@cap` captures bind same-named vars |
 | `cmd` | `cmd(path, rev, "tool {file}", line, out)` | shell out per matched file, one row per stdout line. Cached by (file hash, rule text). Nonzero exit + stdout = findings; nonzero + empty = error |
 | `comment` | `comment(path, rev, /open/[, /close/], l0, l1, label)` | comment-marker regions in ANY file type (marker detection by line prefix: `//`, `#`, `<!--`, `/*`, `--`, `*`). One regex = sequential dividers; two = paired BEGIN/END with LIFO nesting. `l0`/`l1` are 1-based marker lines; `label` is the open regex's first named group or the trimmed tail. The three outputs accept kwargs / `_`: bind only what you need (`comment(p, rev, /re/, label: name)`, defaulting the rest to `_`) or drop a slot with `_` (`comment(p, rev, /re/, l0, _, name)`). A typo'd name is a parse error. See [src/comment.rs](src/comment.rs) |
-| `json` | `json(path, rev, q:{ $k: $v })` | declarative brace pattern over json/yaml/toml (dispatched by extension). Each match binds N named captures (keys AND values) as dl vars, like match's named groups. The `q:{...}` arg is a structured `q:` literal (highlightable, not a string). `{ name: $n }` descends by exact key; `{ $k: $v }` iterates entries; `{ a: $a, b: $b }` is conjunctive; `{ **: { image: $i } }` recurses at any depth; `[...$x]` spreads arrays; `re:REGEX` / glob (`*id`) keys |
+| `json` | `json(path, rev, q:{ $k: $v })` | declarative brace pattern over json/yaml/toml (dispatched by extension). Each match binds N named captures (keys AND values) as dl vars, like match_line's named groups. The `q:{...}` arg is a structured `q:` literal (highlightable, not a string). `{ name: $n }` descends by exact key; `{ $k: $v }` iterates entries; `{ a: $a, b: $b }` is conjunctive; `{ **: { image: $i } }` recurses at any depth; `[...$x]` spreads arrays; `re:REGEX` / glob (`*id`) keys |
 | `jsonp` | `jsonp(path, rev, "a.*.b", out)` | dotted path over json/yaml/toml (dispatched by extension; `*` = any key/element). Value is located. The dotted-string form; the declarative brace pattern is `json` |
-| `match` | `match(path, rev, /re/, line[, id][, col, end_col])` | regex over file content, one row per match line. `(?<cap>..)` named groups bind dl vars of the same name; `$cap` is sugar for a lazy named group (`/TODO\($who\)/`); bare `$` stays the anchor. Optional trailing args after `line`, by count: 1 ⇒ `id` (the whole-match span's spine id, deterministic from span+source, equals `insert_spine_where_bytes`'s id), so `ref(id, _, _, lo, hi)` resolves to the exact match and feeds `gen(:mode, path, lo, hi, ...)`; 2 ⇒ `col, end_col` (the whole-match span's 0-based byte columns within `line`, for sub-line `diag` spans); 3 ⇒ `id, col, end_col`. When `id` is present the whole-match span is pushed; the 4-arg form pushes named captures only |
+| `match_line` | `match_line(path, rev, /re/, line[, id][, col, end_col])` | LINE REGEX over file content — for FLAT TEXT (ini/env/log/csv) only, never structured source code (a construct spanning more than one line will not match; use `match_ast` for source). One row per match line. `(?<cap>..)` named groups bind dl vars of the same name; `$cap` is sugar for a lazy named group (`/TODO\($who\)/`); bare `$` stays the anchor. Optional trailing args after `line`, by count: 1 ⇒ `id` (the whole-match span's spine id, deterministic from span+source, equals `insert_spine_where_bytes`'s id), so `ref(id, _, _, lo, hi)` resolves to the exact match and feeds `gen(:mode, path, lo, hi, ...)`; 2 ⇒ `col, end_col` (the whole-match span's 0-based byte columns within `line`, for sub-line `diag` spans); 3 ⇒ `id, col, end_col`. When `id` is present the whole-match span is pushed; the 4-arg form pushes named captures only |
+| `match` | `match(...) — DEPRECATED alias for match_line(...)` | deprecated pre-rename spelling; parses identically to match_line and still runs, but emits a `deprecated-op-name` warning naming match_line (and match_ast for source code) |
 | `scan` | `scan(glob, path, rev_out)` or `scan(rev, glob, path, rev_out)` or `scan(repo, rev, glob, path, rev_out)` | select files. 3-ary defaults `repo="."` self and `rev="WORK"` worktree; 4-ary defaults `repo="."`; 5-ary names a repo coordinate. `rev` ∈ `"WORK"` (worktree) \| `"HEAD"` \| any git rev. `repo` ∈ config slug \| `"."` (self) \| `"*"` (fan over every configured repo) |
-| `sg` | `sg(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col][, id])` | ast-grep pattern; metavar `$X` binds dl var `X` (its matched text). Lines 1-based, columns 0-based byte offsets. Optional trailing `id` binds the WHOLE-match span's spine id (literal text included, not just the captures' bbox), so `ref(id, _, _, lo, hi)` + `gen(:replace, p, lo, hi, "{x}…")` is a metavar-templated structural rewrite (full ast-grep codemod). `:lang` ∈ rust, ts, tsx, js, py, go, json, c, cpp, kotlin (see [src/sg.rs](src/sg.rs)) |
+| `match_ast` | `match_ast(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col][, id])` | ast-grep structural pattern — the correct tool for SOURCE CODE (sees multi-line/AST-shaped constructs a line regex cannot); metavar `$X` binds dl var `X` (its matched text). Lines 1-based, columns 0-based byte offsets. Optional trailing `id` binds the WHOLE-match span's spine id (literal text included, not just the captures' bbox), so `ref(id, _, _, lo, hi)` + `gen(:replace, p, lo, hi, "{x}…")` is a metavar-templated structural rewrite (full ast-grep codemod). `:lang` ∈ rust, ts, tsx, js, py, go, json, c, cpp, kotlin (see [src/sg.rs](src/sg.rs)) |
+| `sg` | `sg(...) — DEPRECATED alias for match_ast(...)` | deprecated pre-rename spelling; parses identically to match_ast (file and term form alike) and still runs, but emits a `deprecated-op-name` warning naming match_ast |
 the allowed values via `? rel_col("type_edge", pos, col, ty, variants).` — the
 `variants` column is the JSON vocabulary. A user `type` decl reusing one of the
 engine brand names (`type_edge_kind`, ...) is a load error.
@@ -340,18 +343,22 @@ Type errors surface as diagnostics under `--check` and in `--lsp`
 
 | op | signature | what it does |
 |---|---|---|
-| `ast_yaml` | `ast_yaml(path, rev, :lang, "rule yaml", line, ...)` | ast-grep `RuleCore` YAML body (usually backtick/multiline); mirrors `sg()` but the 4th arg is a relational rule (`inside:`/`has:`) instead of a pattern string. Span outputs share the `sg` kwarg/`_` form. See [src/sg.rs](src/sg.rs) |
+| `ast_yaml` | `ast_yaml(path, rev, :lang, "rule yaml", line, ...)` | ast-grep `RuleCore` YAML body (usually backtick/multiline); mirrors `match_ast()` but the 4th arg is a relational rule (`inside:`/`has:`) instead of a pattern string. Span outputs share the `match_ast` kwarg/`_` form. See [src/sg.rs](src/sg.rs) |
 | `ast` | `ast(path, rev, :rust\|:c\|:kotlin, "(query) @cap", line[, end])` | tree-sitter query; `@cap` captures bind same-named vars |
 | `cmd` | `cmd(path, rev, "tool {file}", line, out)` | shell out per matched file, one row per stdout line. Cached by (file hash, rule text). Nonzero exit + stdout = findings; nonzero + empty = error |
 | `comment` | `comment(path, rev, /open/[, /close/], l0, l1, label)` | comment-marker regions in ANY file type (marker detection by line prefix: `//`, `#`, `<!--`, `/*`, `--`, `*`). One regex = sequential dividers; two = paired BEGIN/END with LIFO nesting. `l0`/`l1` are 1-based marker lines; `label` is the open regex's first named group or the trimmed tail. The three outputs accept kwargs / `_`: bind only what you need (`comment(p, rev, /re/, label: name)`, defaulting the rest to `_`) or drop a slot with `_` (`comment(p, rev, /re/, l0, _, name)`). A typo'd name is a parse error. See [src/comment.rs](src/comment.rs) |
-| `json` | `json(path, rev, q:{ $k: $v })` | declarative brace pattern over json/yaml/toml (dispatched by extension). Each match binds N named captures (keys AND values) as dl vars, like match's named groups. The `q:{...}` arg is a structured `q:` literal (highlightable, not a string). `{ name: $n }` descends by exact key; `{ $k: $v }` iterates entries; `{ a: $a, b: $b }` is conjunctive; `{ **: { image: $i } }` recurses at any depth; `[...$x]` spreads arrays; `re:REGEX` / glob (`*id`) keys |
+| `json` | `json(path, rev, q:{ $k: $v })` | declarative brace pattern over json/yaml/toml (dispatched by extension). Each match binds N named captures (keys AND values) as dl vars, like match_line's named groups. The `q:{...}` arg is a structured `q:` literal (highlightable, not a string). `{ name: $n }` descends by exact key; `{ $k: $v }` iterates entries; `{ a: $a, b: $b }` is conjunctive; `{ **: { image: $i } }` recurses at any depth; `[...$x]` spreads arrays; `re:REGEX` / glob (`*id`) keys |
 | `jsonp` | `jsonp(path, rev, "a.*.b", out)` | dotted path over json/yaml/toml (dispatched by extension; `*` = any key/element). Value is located. The dotted-string form; the declarative brace pattern is `json` |
-| `match` | `match(path, rev, /re/, line[, id][, col, end_col])` | regex over file content, one row per match line. `(?<cap>..)` named groups bind dl vars of the same name; `$cap` is sugar for a lazy named group (`/TODO\($who\)/`); bare `$` stays the anchor. Optional trailing args after `line`, by count: 1 ⇒ `id` (the whole-match span's spine id, deterministic from span+source, equals `insert_spine_where_bytes`'s id), so `ref(id, _, _, lo, hi)` resolves to the exact match and feeds `gen(:mode, path, lo, hi, ...)`; 2 ⇒ `col, end_col` (the whole-match span's 0-based byte columns within `line`, for sub-line `diag` spans); 3 ⇒ `id, col, end_col`. When `id` is present the whole-match span is pushed; the 4-arg form pushes named captures only |
+| `match_line` | `match_line(path, rev, /re/, line[, id][, col, end_col])` | LINE REGEX over file content — for FLAT TEXT (ini/env/log/csv) only, never structured source code (a construct spanning more than one line will not match; use `match_ast` for source). One row per match line. `(?<cap>..)` named groups bind dl vars of the same name; `$cap` is sugar for a lazy named group (`/TODO\($who\)/`); bare `$` stays the anchor. Optional trailing args after `line`, by count: 1 ⇒ `id` (the whole-match span's spine id, deterministic from span+source, equals `insert_spine_where_bytes`'s id), so `ref(id, _, _, lo, hi)` resolves to the exact match and feeds `gen(:mode, path, lo, hi, ...)`; 2 ⇒ `col, end_col` (the whole-match span's 0-based byte columns within `line`, for sub-line `diag` spans); 3 ⇒ `id, col, end_col`. When `id` is present the whole-match span is pushed; the 4-arg form pushes named captures only |
+| `match` | `match(...) — DEPRECATED alias for match_line(...)` | deprecated pre-rename spelling; parses identically to match_line and still runs, but emits a `deprecated-op-name` warning naming match_line (and match_ast for source code) |
 | `scan` | `scan(glob, path, rev_out)` or `scan(rev, glob, path, rev_out)` or `scan(repo, rev, glob, path, rev_out)` | select files. 3-ary defaults `repo="."` self and `rev="WORK"` worktree; 4-ary defaults `repo="."`; 5-ary names a repo coordinate. `rev` ∈ `"WORK"` (worktree) \| `"HEAD"` \| any git rev. `repo` ∈ config slug \| `"."` (self) \| `"*"` (fan over every configured repo) |
-| `sg` | `sg(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col][, id])` | ast-grep pattern; metavar `$X` binds dl var `X` (its matched text). Lines 1-based, columns 0-based byte offsets. Optional trailing `id` binds the WHOLE-match span's spine id (literal text included, not just the captures' bbox), so `ref(id, _, _, lo, hi)` + `gen(:replace, p, lo, hi, "{x}…")` is a metavar-templated structural rewrite (full ast-grep codemod). `:lang` ∈ rust, ts, tsx, js, py, go, json, c, cpp, kotlin (see [src/sg.rs](src/sg.rs)) |
-| `match` | `match(path, rev, /re/, line[, id][, col, end_col])` | regex over file content, one row per match line. `(?<cap>..)` named groups bind dl vars of the same name; `$cap` is sugar for a lazy named group (`/TODO\($who\)/`); bare `$` stays the anchor. Optional trailing args after `line`, by count: 1 ⇒ `id` (the whole-match span's spine id, deterministic from span+source, equals `insert_spine_where_bytes`'s id), so `ref(id, _, _, lo, hi)` resolves to the exact match and feeds `gen(:mode, path, lo, hi, ...)`; 2 ⇒ `col, end_col` (the whole-match span's 0-based byte columns within `line`, for sub-line `diag` spans); 3 ⇒ `id, col, end_col`. When `id` is present the whole-match span is pushed; the 4-arg form pushes named captures only |
+| `match_ast` | `match_ast(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col][, id])` | ast-grep structural pattern — the correct tool for SOURCE CODE (sees multi-line/AST-shaped constructs a line regex cannot); metavar `$X` binds dl var `X` (its matched text). Lines 1-based, columns 0-based byte offsets. Optional trailing `id` binds the WHOLE-match span's spine id (literal text included, not just the captures' bbox), so `ref(id, _, _, lo, hi)` + `gen(:replace, p, lo, hi, "{x}…")` is a metavar-templated structural rewrite (full ast-grep codemod). `:lang` ∈ rust, ts, tsx, js, py, go, json, c, cpp, kotlin (see [src/sg.rs](src/sg.rs)) |
+| `sg` | `sg(...) — DEPRECATED alias for match_ast(...)` | deprecated pre-rename spelling; parses identically to match_ast (file and term form alike) and still runs, but emits a `deprecated-op-name` warning naming match_ast |
+| `match_line` | `match_line(path, rev, /re/, line[, id][, col, end_col])` | LINE REGEX over file content — for FLAT TEXT (ini/env/log/csv) only, never structured source code (a construct spanning more than one line will not match; use `match_ast` for source). One row per match line. `(?<cap>..)` named groups bind dl vars of the same name; `$cap` is sugar for a lazy named group (`/TODO\($who\)/`); bare `$` stays the anchor. Optional trailing args after `line`, by count: 1 ⇒ `id` (the whole-match span's spine id, deterministic from span+source, equals `insert_spine_where_bytes`'s id), so `ref(id, _, _, lo, hi)` resolves to the exact match and feeds `gen(:mode, path, lo, hi, ...)`; 2 ⇒ `col, end_col` (the whole-match span's 0-based byte columns within `line`, for sub-line `diag` spans); 3 ⇒ `id, col, end_col`. When `id` is present the whole-match span is pushed; the 4-arg form pushes named captures only |
+| `match` | `match(...) — DEPRECATED alias for match_line(...)` | deprecated pre-rename spelling; parses identically to match_line and still runs, but emits a `deprecated-op-name` warning naming match_line (and match_ast for source code) |
 | `scan` | `scan(glob, path, rev_out)` or `scan(rev, glob, path, rev_out)` or `scan(repo, rev, glob, path, rev_out)` | select files. 3-ary defaults `repo="."` self and `rev="WORK"` worktree; 4-ary defaults `repo="."`; 5-ary names a repo coordinate. `rev` ∈ `"WORK"` (worktree) \| `"HEAD"` \| any git rev. `repo` ∈ config slug \| `"."` (self) \| `"*"` (fan over every configured repo) |
-| `sg` | `sg(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col][, id])` | ast-grep pattern; metavar `$X` binds dl var `X` (its matched text). Lines 1-based, columns 0-based byte offsets. Optional trailing `id` binds the WHOLE-match span's spine id (literal text included, not just the captures' bbox), so `ref(id, _, _, lo, hi)` + `gen(:replace, p, lo, hi, "{x}…")` is a metavar-templated structural rewrite (full ast-grep codemod). `:lang` ∈ rust, ts, tsx, js, py, go, json, c, cpp, kotlin (see [src/sg.rs](src/sg.rs)) |
+| `match_ast` | `match_ast(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col][, id])` | ast-grep structural pattern — the correct tool for SOURCE CODE (sees multi-line/AST-shaped constructs a line regex cannot); metavar `$X` binds dl var `X` (its matched text). Lines 1-based, columns 0-based byte offsets. Optional trailing `id` binds the WHOLE-match span's spine id (literal text included, not just the captures' bbox), so `ref(id, _, _, lo, hi)` + `gen(:replace, p, lo, hi, "{x}…")` is a metavar-templated structural rewrite (full ast-grep codemod). `:lang` ∈ rust, ts, tsx, js, py, go, json, c, cpp, kotlin (see [src/sg.rs](src/sg.rs)) |
+| `sg` | `sg(...) — DEPRECATED alias for match_ast(...)` | deprecated pre-rename spelling; parses identically to match_ast (file and term form alike) and still runs, but emits a `deprecated-op-name` warning naming match_ast |
 <!-- END: op-table -->
 
 Source rules extract per file and cannot join derived relations — a check that
@@ -364,12 +371,12 @@ needs both is two rules: extract, then join (see [Rails](#git-hook--claude-code-
 | positive atom | `edge(from, to)` |
 | negation / anti-join | `!edge(from, _)` |
 | comparison | `=` `!=` `<` `<=` `>` `>=` — `n >= 4`, `path != fs:src/db.rs` |
-| regex constraint | `name =~ /^[A-Za-z]+$/` (SQLite REGEXP; the `/.../` is the unified regex literal — same form `match`/`comment`/`sg` use) |
+| regex constraint | `name =~ /^[A-Za-z]+$/` (SQLite REGEXP; the `/.../` is the unified regex literal — same form `match_line`/`comment`/`match_ast` use) |
 | glob constraint | `path ~~ "src/*"` (SQLite GLOB) |
 | closure | `closure(edge)` as the entire body — see below |
 | arithmetic | `+ - * / %` in rule heads (derived AND source) and comparison sides: `rank(path, line + 1) <- fns(path, line).`, `line * 2 > 4`. `+` is overloaded: int + int adds, text + text concatenates (`url = "https://" + host + "/v1"`); mixed int/text is a typecheck error (`plus-mismatch` — interpolate `"${count}${name}"` or convert with `int(..)`); `- * / %` stay int-only. Usual precedence, parens OK. Never in a body atom (binding position). `/` after a value is division; elsewhere it opens a `/regex/` |
 | string functions | `split(text, sep, idx)` and `replace(text, from, to)` in rule heads and comparison sides: `seg(path, split(path, "/", -1)) <- file(path).`, `kebab(word, replace(word, "_", "-")) <- name(word).`. `idx` is 0-based; negative counts from the end (`-1` = last segment). Out-of-range `split` drops the row (NULL filter). Unary minus parses (`-1` not `0 - 1`). `replace` is SQLite-native; `split` is the `sprf_split` UDF |
-| body bind | `callee = replace(callee_q, ".", "::")` in a DERIVED body binds the computed value: later join atoms, negations, and the head all see `callee`. The RHS may consume any body-atom var or an earlier bind (`unbound-bind` names the fix otherwise); bare `alias = other` stays an equality filter. Source rules (scan/match/ast/...) keep the head-inline form |
+| body bind | `callee = replace(callee_q, ".", "::")` in a DERIVED body binds the computed value: later join atoms, negations, and the head all see `callee`. The RHS may consume any body-atom var or an earlier bind (`unbound-bind` names the fix otherwise); bare `alias = other` stays an equality filter. Source rules (scan/match_line/ast/...) keep the head-inline form |
 
 **Aggregation** is head-position only: `count` `sum` `min` `max`.
 Non-aggregate head terms are the grouping key. `count`/`sum` produce `int`;
@@ -721,7 +728,7 @@ A rail is two rules (source ops cannot join relations):
 rel diag(path: text, line: int, severity: text, code: text, msg: text).
 
 rel todo_hit(p: file, l: int).
-todo_hit(p, l) <- scan("WORK", "src/**/*.rs", p, rev), match(p, rev, /TODO/, l).
+todo_hit(p, l) <- scan("WORK", "src/**/*.rs", p, rev), match_line(p, rev, /TODO/, l).
 
 diag(p, l, "error", "no-todo", "TODO in a changed file") <- todo_hit(p, l), changed(p).
 ```
@@ -786,7 +793,7 @@ engine ticks that path, rows become squiggles. Save-driven, disk-truth,
 deterministic. Editor glue (VSCode generic-LSP client settings) and the full
 column convention: [docs/lsp.md](docs/lsp.md). Claude Code's IDE bridge
 consumes the published diagnostics with no extra integration. Tight squiggles:
-bind `sg`'s span outputs (`line, col, end_line, end_col`) straight into the
+bind `match_ast`'s span outputs (`line, col, end_line, end_col`) straight into the
 matching `diag` columns — [examples/lint-unwrap.dl](examples/lint-unwrap.dl).
 
 `textDocument/hover` auto-synthesizes a markdown summary from `type_entity` +
@@ -866,7 +873,7 @@ All in [examples/](examples/), runnable as `dl examples/<name>.dl` (root = cwd):
 | [glean.dl](examples/glean.dl) | the 5 canonical questions: definitions, callers, blast radius, type fan-in, broken imports |
 | [callgraph.dl](examples/callgraph.dl) + `callgraph-{ast,sg,c,typed,resolved}.dl` | call graphs at increasing precision |
 | [typegraph.dl](examples/typegraph.dl) | `type_edge` + closure: type blast radius |
-| [lint-unwrap.dl](examples/lint-unwrap.dl) | `sg` spans → tight LSP squiggles |
+| [lint-unwrap.dl](examples/lint-unwrap.dl) | `match_ast` spans → tight LSP squiggles |
 | [lint-imports.dl](examples/lint-imports.dl) | `module_unresolved` as a check |
 | [lint-docs.dl](examples/lint-docs.dl) | doc hygiene as agent rails: `needs-doc` (new + >2 refs + no `doc_ref`) + `chat-comment` (`///` block over an arity-derived budget). Patterns: sum-aggregate over a union, `max` for contiguous-block detection |
 | [rails.dl](examples/rails.dl) | diff-scoped agent rails: banned words, exemptions via `fs:` literals, aggregate budgets |
@@ -1081,7 +1088,7 @@ original coordinate model in `../sprefa-archive-20260428`.
   (`+ - * / %`) works in heads and comparisons; `+` concatenates text.
 - **String manipulation** — `${}` interp or `+` concat; `split(text, sep, idx)`
   and `replace(text, from, to)` in heads/comparisons (see Body constructs above);
-  no substr, no regex capture over an already-bound value (use the `match`
+  no substr, no regex capture over an already-bound value (use the `match_line`
   source op at scan time with `(?<name>...)` groups instead).
 - **Closure in a mixed rule body is literal-seeded only** — dynamic transitive
   closure is a seeded point query, not a fixpoint join. Recursive rules over
@@ -1148,10 +1155,11 @@ Verification tasks for whoever picks these up (observed, not yet confirmed):
   whether the store read is gated on the daemon path (`agent.rs`). Symptom was an
   empty `agent_touch` from a plain in-process run right after edits — points at
   in-process not populating rather than a root-keying mismatch.
-- A/B whether a bare `sg(:rust, "JoyButton")` pattern matches `use …::JoyButton`
-  and `try_cast::<InputEventKey>()` type/use positions. If ast-grep catches those,
-  `sg` beats `match` for any-position symbol fencing (skips comments/strings) and
-  the skill's "use match for any-position" note is wrong.
+- A/B whether a bare `match_ast(:rust, "JoyButton")` pattern matches
+  `use …::JoyButton` and `try_cast::<InputEventKey>()` type/use positions. If
+  ast-grep catches those, `match_ast` beats `match_line` for any-position
+  symbol fencing (skips comments/strings) and the skill's "use match_line for
+  any-position" note is wrong.
 - Confirm `dl examples "<query>"` ranks `ban.dl` high for "ban api" / "restrict
   symbol to file". If the embedded search doesn't, "lead with dl examples" is bad
   advice and the ranking is the real papercut.

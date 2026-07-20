@@ -22,7 +22,7 @@
 rel rusqlite_hit(source_file: file, line_number: int).
 rusqlite_hit(source_file, line_number) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    match(source_file, source_rev, /use\s+rusqlite|rusqlite::/, line_number).
+    match_line(source_file, source_rev, /use\s+rusqlite|rusqlite::/, line_number).
 
 # The seam: the only files allowed to use rusqlite.
 rel rusqlite_seam(source_file: file).
@@ -63,7 +63,7 @@ diag(
 rel conn_hit(source_file: file, line_number: int).
 conn_hit(source_file, line_number) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    match(source_file, source_rev, /\.conn\(\)/, line_number).
+    match_line(source_file, source_rev, /\.conn\(\)/, line_number).
 
 # Waivers must join THIS detection's hit lines: `.conn()` lines don't match
 # the rusqlite regex, so rusqlite_waived can never contain them (rail defect
@@ -97,7 +97,7 @@ diag(
 rel sqlite_swallow_hit(source_file: file, line_number: int).
 sqlite_swallow_hit(source_file, line_number) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
-    match(source_file, source_rev, /let _ = [^;]*(execute|query_row|query\(|prepare)/, line_number).
+    match_line(source_file, source_rev, /let _ = [^;]*(execute|query_row|query\(|prepare)/, line_number).
 
 rel sqlite_swallow_waived(source_file: file, line_number: int).
 sqlite_swallow_waived(source_file, line_number) <-

@@ -29,7 +29,7 @@
 rel ref_get(file: file, line: int, name: text).
 ref_get(source_file, line, mrel) <-
     scan("WORK", "src/**/*.rs", source_file, rev),
-    match(source_file, rev, /rels\.get\("(?<mrel>[a-z][a-z0-9_]*)"\)/, line).
+    match_line(source_file, rev, /rels\.get\("(?<mrel>[a-z][a-z0-9_]*)"\)/, line).
 
 # Every literal `FROM rel_<name>` SQL reference in engine source, with its line.
 # (Table reads built through `tbl(name)` use a format placeholder and are
@@ -37,7 +37,7 @@ ref_get(source_file, line, mrel) <-
 rel ref_from(file: file, line: int, name: text).
 ref_from(source_file, line, mrel) <-
     scan("WORK", "src/**/*.rs", source_file, rev),
-    match(source_file, rev, /FROM rel_(?<mrel>[a-z][a-z0-9_]*)/, line).
+    match_line(source_file, rev, /FROM rel_(?<mrel>[a-z][a-z0-9_]*)/, line).
 
 # Unified magic-name reference set.
 rel magic_ref(file: file, line: int, name: text).
@@ -62,7 +62,7 @@ test_file(source_file) <- scan("WORK", "src/**/*_tests.rs", source_file, _).
 rel test_gate(file: file, line: int).
 test_gate(source_file, line) <-
     scan("WORK", "src/**/*.rs", source_file, rev),
-    match(source_file, rev, /#!?\[cfg\(test\)\]/, line).
+    match_line(source_file, rev, /#!?\[cfg\(test\)\]/, line).
 
 rel test_ref(file: file, line: int, name: text).
 test_ref(source_file, line, rel_name) <-

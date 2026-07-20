@@ -13,15 +13,15 @@
 # group: /(?i)(?<w>nuke|<other>)/.
 
 rel asst(idx: int, file: file).
-asst(l, p) <- scan("WORK", "*.jsonl", p, rev), match(p, rev, /"type":\s*"assistant"/, l).
+asst(l, p) <- scan("WORK", "*.jsonl", p, rev), match_line(p, rev, /"type":\s*"assistant"/, l).
 
 # Plan-tool body: an ExitPlanMode tool_use record (the proposed plan text).
 rel plan_line(idx: int, file: file).
-plan_line(l, p) <- scan("WORK", "*.jsonl", p, rev), match(p, rev, /"name":\s*"ExitPlanMode"/, l).
+plan_line(l, p) <- scan("WORK", "*.jsonl", p, rev), match_line(p, rev, /"name":\s*"ExitPlanMode"/, l).
 
 # Every banned-word occurrence, with its byte span.
 rel word(file: file, l: int, c: int, ec: int, w: text).
-word(p, l, c, ec, w) <- scan("WORK", "*.jsonl", p, rev), match(p, rev, /(?i)(?<w>nuke)/, l, c, ec).
+word(p, l, c, ec, w) <- scan("WORK", "*.jsonl", p, rev), match_line(p, rev, /(?i)(?<w>nuke)/, l, c, ec).
 
 # Latest turn per session file (reactive scope: only the newest record yells, so
 # old turns aren't re-flagged forever). Drop this join to audit the whole history.

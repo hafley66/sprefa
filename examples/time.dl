@@ -8,11 +8,11 @@ rel added(name: text).
 
 work_fn(name) <-
   scan("WORK", "src/**/*.rs", path, rev),
-  match(path, rev, /fn\s+(?<name>[a-z_][a-z0-9_]+)/, line).
+  match_line(path, rev, /fn\s+(?<name>[a-z_][a-z0-9_]+)/, line).
 
 head_fn(name) <-
   scan("HEAD", "src/**/*.rs", path, rev),
-  match(path, rev, /fn\s+(?<name>[a-z_][a-z0-9_]+)/, line).
+  match_line(path, rev, /fn\s+(?<name>[a-z_][a-z0-9_]+)/, line).
 
 added(name) <- work_fn(name), !head_fn(name).
 

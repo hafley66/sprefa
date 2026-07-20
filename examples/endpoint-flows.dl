@@ -31,13 +31,13 @@
 # a function in two flows gets two diagnostics ("in endpoint flows: GET /users"
 # and "in endpoint flows: POST /orders"), which the editor stacks on the line.
 #
-# sg-pattern assumptions (axum): the router calls `.route(PATH, METHOD(HANDLER))`
+# match_ast-pattern assumptions (axum): the router calls `.route(PATH, METHOD(HANDLER))`
 # with a single method+handler per route (the common form). Combined routes
 # (`.route("/x", get(h).post(h2))`) match only their first method; add a rule
 # for that shape if your app uses it. A different framework (actix, rocket,
-# Express) = swap the ONE sg pattern below; everything downstream is generic.
+# Express) = swap the ONE match_ast pattern below; everything downstream is generic.
 
-# Populate _file so the call-graph extractor runs, and feed the sg scan below.
+# Populate _file so the call-graph extractor runs, and feed the match_ast scan below.
 # main.rs lives under src/ in a standard axum layout — widen the glob if not.
 rel src(path: file).
 src(path) <- scan("WORK", "src/**/*.rs", path, rev).
@@ -53,7 +53,7 @@ src(path) <- scan("WORK", "src/**/*.rs", path, rev).
 rel route(url_path: text, http_method: text, handler_name: text, file: file, line: int).
 route(replace(PATH, "\"", ""), METHOD, HANDLER, path, line) <-
     scan("WORK", "src/**/*.rs", path, rev),
-    sg(path, rev, :rust, "$ROUTER.route($PATH, $METHOD($HANDLER))", line).
+    match_ast(path, rev, :rust, "$ROUTER.route($PATH, $METHOD($HANDLER))", line).
 
 # ---- verb table: axum method fn -> HTTP verb label --------------------------
 # Doubles as the verb whitelist (a stray `.route` whose second arg isn't one of

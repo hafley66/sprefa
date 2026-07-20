@@ -6,12 +6,48 @@
 //! boundary that does not expose the raw database connection.
 //!
 use anyhow::Result;
+use std::cell::Cell;
+use std::time::Instant;
 
 use crate::ast::Value;
 use crate::db::Db;
 use crate::spine::SymSink;
 
 pub(crate) mod call;
+
+thread_local! {
+    /// Cumulative (retract_ns, insert_ns) spent inside `Storage::retract_rows`/
+    /// `insert_rows` on the current thread since the last [`take_write_ns`]
+    /// call. Test-only: the corpus-scaling profiling harness
+    /// (`tests/it/family_scaling_probe.rs`) uses this to attribute the
+    /// render-write share of a one-file-edit tick's wall time separately from
+    /// `FamilyRouter`'s derive/reconcile timings (`src/engine/family/
+    /// router.rs`) — the two together cover the family flip's own cost;
+    /// what's left over is extraction (populating `_call_owner`/
+    /// `_call_raw_site`/`_call_resolution`), which lives outside this file's
+    /// ownership and is not instrumented here.
+    static WRITE_NS: Cell<(u128, u128)> = const { Cell::new((0, 0)) };
+}
+
+/// Read and reset the current thread's accumulated `(retract_ns, insert_ns)`.
+/// Test-only.
+pub fn take_write_ns() -> (u128, u128) {
+    WRITE_NS.with(|cell| cell.replace((0, 0)))
+}
+
+fn add_retract_ns(elapsed_ns: u128) {
+    WRITE_NS.with(|cell| {
+        let (retract_ns, insert_ns) = cell.get();
+        cell.set((retract_ns + elapsed_ns, insert_ns));
+    });
+}
+
+fn add_insert_ns(elapsed_ns: u128) {
+    WRITE_NS.with(|cell| {
+        let (retract_ns, insert_ns) = cell.get();
+        cell.set((retract_ns, insert_ns + elapsed_ns));
+    });
+}
 
 pub trait Storage {
     /// Execute one parameterless statement through the counted database seam.
@@ -53,24 +89,13 @@ pub trait Storage {
     fn rollback(&self) -> Result<()>;
 }
 
-impl Storage for Db {
-    fn execute(&self, sql: &str) -> Result<usize> {
-        Db::exec(self, sql)
-    }
-
-    fn execute_batch(&self, sql: &str) -> Result<()> {
-        Db::execute_batch(self, sql)
-    }
-
-    fn insert_rows(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
-        Db::insert_rows(self, table, cols, rows)
-    }
-
-    fn reload_rel(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
-        Db::reload_rel(self, table, cols, rows)
-    }
-
-    fn retract_rows(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
+impl Db {
+    /// The unstinted `retract_rows` body — see [`Storage::retract_rows`] for
+    /// the full doc. Split out so that trait method's timing wrapper (feeding
+    /// [`take_write_ns`], the corpus-scaling profiling harness's render-write
+    /// attribution) can wrap ONE call instead of threading `Instant::now()`
+    /// through every early return.
+    fn retract_rows_uncounted(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
         if rows.is_empty() {
             return Ok(0);
         }
@@ -99,6 +124,34 @@ impl Storage for Db {
             total_deleted += stmt.execute(rusqlite::params_from_iter(params))?;
         }
         Ok(total_deleted)
+    }
+}
+
+impl Storage for Db {
+    fn execute(&self, sql: &str) -> Result<usize> {
+        Db::exec(self, sql)
+    }
+
+    fn execute_batch(&self, sql: &str) -> Result<()> {
+        Db::execute_batch(self, sql)
+    }
+
+    fn insert_rows(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
+        let started = Instant::now();
+        let result = Db::insert_rows(self, table, cols, rows);
+        add_insert_ns(started.elapsed().as_nanos());
+        result
+    }
+
+    fn reload_rel(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
+        Db::reload_rel(self, table, cols, rows)
+    }
+
+    fn retract_rows(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
+        let started = Instant::now();
+        let result = self.retract_rows_uncounted(table, cols, rows);
+        add_retract_ns(started.elapsed().as_nanos());
+        result
     }
 
     fn rel_stats(&self, rel: &str) -> Result<serde_json::Value> {

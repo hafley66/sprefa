@@ -3,23 +3,23 @@
 #   dl examples/lints/ts.dl --lsp
 #   dl examples/lints/ts.dl --check
 #
-# `sg` lang tokens: :ts :tsx :js. Globs pick the files. Same pattern syntax as
+# `match_ast` lang tokens: :ts :tsx :js. Globs pick the files. Same pattern syntax as
 # Rust ($X one node, $$$A variadic).
 
 
 # error: a leftover debugger statement (blocks commit)
 diag(path, line, col, end_line: el, end_col: ec, severity: "error", code: "no-debugger", msg: "debugger statement left in code", hint: "remove before committing") <-
   scan("*", "WORK", "**/*.{ts,tsx}", path, rev),
-  sg(path, rev, :tsx, "debugger", line, col, el, ec).
+  match_ast(path, rev, :tsx, "debugger", line, col, el, ec).
 
 # warn: console.log left in code
 diag(path, line, col, end_line: el, end_col: ec, severity: "warn", code: "no-console", msg: "console.log() left in code", hint: "use a logger or remove") <-
   scan("*", "WORK", "**/*.{ts,tsx}", path, rev),
-  sg(path, rev, :tsx, "console.log($$$A)", line, col, el, ec).
+  match_ast(path, rev, :tsx, "console.log($$$A)", line, col, el, ec).
 
 # warn: `as any` escape hatch
 diag(path, line, col, end_line: el, end_col: ec, severity: "warn", code: "no-any-cast", msg: "`as any` defeats the type checker", hint: "narrow the type or use `unknown` + a guard") <-
   scan("*", "WORK", "**/*.{ts,tsx}", path, rev),
-  sg(path, rev, :tsx, "$X as any", line, col, el, ec).
+  match_ast(path, rev, :tsx, "$X as any", line, col, el, ec).
 
 ? diag(path, line, col, end_line, end_col, severity, code, msg, hint).

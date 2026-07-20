@@ -33,7 +33,7 @@ Two things keep your output matching the lessons:
 <!-- BEGIN: tutorial-index -->
 0. [Setup](00-setup.md) — install `dl`, build the fixture repo, meet `dl docs` and `dl examples`.
 1. [First facts](01-first-facts.md) — a bare `scan`, the `file` relation, the `(repo, path, rev)` coordinate.
-2. [First extraction](02-extraction.md) — `match` with a regex capture, then the same thing with `ast`/`sg`; when to use which; metavars and `$$$`.
+2. [First extraction](02-extraction.md) — `match_line` with a regex capture, then the same thing with `ast`/`match_ast`; when to use which; metavars and `$$$`.
 3. [Join and derive](03-join-and-derived.md) — two source relations joined into a third derived one, and what happens when one relation is headed by both a source rule and a derived rule.
 4. [Graphs for free](04-graphs-for-free.md) — `type_entity` and `call_edge` off the same scan; blast radius with a recursive rule; why you seed a recursive rule instead of reading `closure()` unpinned.
 5. [Negation and argmax](05-negation-and-argmax.md) — newest-per-group with the candidate / beaten / winner shape.
