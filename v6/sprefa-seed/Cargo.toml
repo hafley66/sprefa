@@ -1,0 +1,12 @@
+# SEED crate: ALL v6 types in one place so we can enumerate the type graph and
+# iron out the rough parts BEFORE splitting into real crates. Each top-level
+# module here BECOMES a crate later (key, feldera, lang, store, extract, runtime).
+# Pure types + trait signatures only -> zero heavy deps here; the libraries
+# (sqlite, ast-grep, notify+gix, tokio, chumsky) attach when a module is split out.
+[workspace]
+
+[package]
+name = "sprefa-seed"
+version = "0.0.0"
+edition = "2021"
+publish = false
