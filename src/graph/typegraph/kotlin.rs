@@ -103,7 +103,7 @@ fn kt_flow_fn(fn_node: tree_sitter::Node, src: &[u8], file: &str, out: &mut Data
         .map(|n| n.utf8_text(src).unwrap_or("").to_string())
         .unwrap_or_default();
     let fn_sym = mint_sym(file, EntityKind::Function, &name, None);
-    let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut scope: std::collections::HashMap<String, NodeIdx> = std::collections::HashMap::new();
     if let Some(params) = kt_first_child(fn_node, "function_value_parameters") {
         let mut cur = params.walk();
         for (pos, p) in params.children(&mut cur).filter(|n| n.kind() == "parameter").enumerate() {
@@ -135,9 +135,9 @@ fn flow_kt(
     src: &[u8],
     file: &str,
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
-) -> Option<String> {
+) -> Option<NodeIdx> {
     let pos = node.start_position();
     match node.kind() {
         // a name in expression position is a read; role decided by parent.
@@ -165,7 +165,7 @@ fn flow_kt(
         // UpperCamelCase), minted as a `new` node carrying the type name.
         "call_expression" => {
             let callee = node.child(0);
-            let mut recv: Option<String> = None;
+            let mut recv: Option<NodeIdx> = None;
             let mut callee_name = String::new();
             match callee.map(|c| c.kind()) {
                 Some("simple_identifier") => {
@@ -185,7 +185,7 @@ fn flow_kt(
                 _ => {}
             }
             // (source position, named-arg name if any, value node id)
-            let mut arg_ids: Vec<(Option<String>, String)> = Vec::new();
+            let mut arg_ids: Vec<(Option<String>, NodeIdx)> = Vec::new();
             if let Some(suffix) = kt_first_child(node, "call_suffix") {
                 if let Some(vargs) = kt_first_child(suffix, "value_arguments") {
                     let mut cur = vargs.walk();
@@ -260,8 +260,8 @@ fn flow_kt(
         }
         // val/var x = rhs: mint the binding slot, flow rhs -> slot, register.
         "property_declaration" => {
-            let mut bind: Option<(String, String)> = None;
-            let mut rhs_id: Option<String> = None;
+            let mut bind: Option<(String, NodeIdx)> = None;
+            let mut rhs_id: Option<NodeIdx> = None;
             let mut cur = node.walk();
             for c in node.children(&mut cur) {
                 match c.kind() {
@@ -410,9 +410,9 @@ fn kt_recurse_children(
     src: &[u8],
     file: &str,
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
-) -> Option<String> {
+) -> Option<NodeIdx> {
     let mut last = None;
     let mut cur = node.walk();
     for c in node.children(&mut cur) {

@@ -5,18 +5,17 @@ use oxc_ast::ast as ts_ast;
 
 use super::super::*;
 
-fn ts_push(out: &mut DataflowFacts, file: &str, starts: &[usize], byte_off: u32, kind: &str, var: &str, fn_sym: &str) -> String {
-    // kind suffix disambiguates a parent from its first child where spans share
-    // a start position (see push_node); (line,col) alone is not unique for
-    // `a + 1`. The id is `file:line:col:kind` (uniform with push_node) so the
-    // coordinate text reconstructs from (file, line, col, kind) at display time
-    // — never interned into `_strings`. col is the 0-based BYTE column within
-    // the line (`line_col`); (line,col) is a bijection with byte_off given the
-    // file, so this keeps every id distinct exactly as `byte_off:kind` did.
+fn ts_push(out: &mut DataflowFacts, file: &str, starts: &[usize], byte_off: u32, kind: &str, var: &str, fn_sym: &str) -> NodeIdx {
+    // Node identity is the dense index (`NodeIdx`, uniform with push_node); the
+    // persisted df id is the `_df_node_dict` surrogate the write seam resolves
+    // from (file, line, col, kind). col is the 0-based BYTE column within the
+    // line (`line_col`); (line,col) is a bijection with byte_off given the file,
+    // and the kind column disambiguates a parent from its first child where
+    // spans share a start position (see push_node).
     let (line, col) = line_col(starts, byte_off as usize);
-    let id = format!("{file}:{line}:{col}:{kind}");
+    let id = out.nodes.len() as NodeIdx;
     out.nodes.push(DfNode {
-        id: id.clone(),
+        id,
         kind: kind.into(),
         var: var.into(),
         fn_sym: fn_sym.into(),
@@ -48,7 +47,7 @@ fn ts_seed_params(
     file: &str,
     starts: &[usize],
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
 ) {
     for (pos, p) in params.items.iter().enumerate() {
@@ -108,7 +107,7 @@ fn ts_flow_stmt(stmt: &ts_ast::Statement, file: &str, starts: &[usize], out: &mu
             if let Some(body) = f.body.as_deref() {
                 let name = f.id.as_ref().map(|i| i.name.to_string()).unwrap_or_default();
                 let fn_sym = mint_sym(file, EntityKind::Function, &name, None);
-                let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+                let mut scope: std::collections::HashMap<String, NodeIdx> = std::collections::HashMap::new();
                 ts_seed_params(&f.params, file, starts, &fn_sym, &mut scope, out);
                 ts_flow_body(body, file, starts, &fn_sym, &mut scope, out);
             }
@@ -120,7 +119,7 @@ fn ts_flow_stmt(stmt: &ts_ast::Statement, file: &str, starts: &[usize], out: &mu
         }
         S::ClassDeclaration(c) => ts_flow_class(c, file, starts, out),
         S::VariableDeclaration(_) | S::ExpressionStatement(_) | S::ReturnStatement(_) => {
-            let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+            let mut scope: std::collections::HashMap<String, NodeIdx> = std::collections::HashMap::new();
             let fn_sym = mint_sym(file, EntityKind::Function, "<top>", None);
             ts_flow_body_stmt(stmt, file, starts, &fn_sym, &mut scope, out);
         }
@@ -135,7 +134,7 @@ fn ts_flow_decl(d: &ts_ast::Declaration, file: &str, starts: &[usize], out: &mut
             if let Some(body) = f.body.as_deref() {
                 let name = f.id.as_ref().map(|i| i.name.to_string()).unwrap_or_default();
                 let fn_sym = mint_sym(file, EntityKind::Function, &name, None);
-                let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+                let mut scope: std::collections::HashMap<String, NodeIdx> = std::collections::HashMap::new();
                 ts_seed_params(&f.params, file, starts, &fn_sym, &mut scope, out);
                 ts_flow_body(body, file, starts, &fn_sym, &mut scope, out);
             }
@@ -161,7 +160,7 @@ fn ts_flow_class(c: &ts_ast::Class, file: &str, starts: &[usize], out: &mut Data
         let Some(body) = m.value.body.as_deref() else { continue };
         let method_name = k.name.to_string();
         let fn_sym = mint_sym(file, EntityKind::Method, &method_name, Some(&owner));
-        let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut scope: std::collections::HashMap<String, NodeIdx> = std::collections::HashMap::new();
         ts_seed_params(&m.value.params, file, starts, &fn_sym, &mut scope, out);
         ts_flow_body(body, file, starts, &fn_sym, &mut scope, out);
     }
@@ -172,7 +171,7 @@ fn ts_flow_body(
     file: &str,
     starts: &[usize],
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
 ) {
     for stmt in &body.statements {
@@ -194,7 +193,7 @@ fn ts_lift_fn(
     starts: &[usize],
     out: &mut DataflowFacts,
 ) {
-    let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut scope: std::collections::HashMap<String, NodeIdx> = std::collections::HashMap::new();
     ts_seed_params(params, file, starts, fn_sym, &mut scope, out);
     if expression {
         if let Some(ts_ast::Statement::ExpressionStatement(es)) = body.statements.first() {
@@ -214,7 +213,7 @@ fn ts_flow_body_stmt(
     file: &str,
     starts: &[usize],
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
 ) {
     use ts_ast::Statement as S;
@@ -338,7 +337,7 @@ fn ts_for_in_of(
     file: &str,
     starts: &[usize],
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
 ) {
     let coll = ts_flow_expr(right, file, starts, fn_sym, scope, out);
@@ -371,9 +370,9 @@ fn ts_flow_call(
     file: &str,
     starts: &[usize],
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
-) -> String {
+) -> NodeIdx {
     use ts_ast::Expression as E;
     let recv = match &c.callee {
         E::StaticMemberExpression(m) => Some(ts_flow_expr(&m.object, file, starts, fn_sym, scope, out)),
@@ -409,9 +408,9 @@ fn ts_flow_member(
     file: &str,
     starts: &[usize],
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
-) -> String {
+) -> NodeIdx {
     let obj = ts_flow_expr(object, file, starts, fn_sym, scope, out);
     let id = ts_push(out, file, starts, off, "member", prop, fn_sym);
     out.edges.push(DfEdge { from: obj, to: id.clone() });
@@ -423,9 +422,9 @@ fn ts_flow_expr(
     file: &str,
     starts: &[usize],
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
-) -> String {
+) -> NodeIdx {
     use ts_ast::Expression as E;
     let off = span_off(e);
     match e {
@@ -482,7 +481,7 @@ fn ts_flow_expr(
         // name; a spread flows in under the pseudo-field ".." (mirroring
         // Rust's functional-update base).
         E::ObjectExpression(o) => {
-            let mut filled: Vec<(String, String)> = Vec::new();
+            let mut filled: Vec<(String, NodeIdx)> = Vec::new();
             for prop in &o.properties {
                 match prop {
                     ts_ast::ObjectPropertyKind::ObjectProperty(p) => {
@@ -604,7 +603,7 @@ fn ts_flow_expr(
         // `new` node (spread under ".."), so `items={[first, second]}` carries
         // both elements. Holes in a sparse array carry nothing.
         E::ArrayExpression(arr) => {
-            let mut child_ids: Vec<(String, String)> = Vec::new();
+            let mut child_ids: Vec<(String, NodeIdx)> = Vec::new();
             for el in &arr.elements {
                 match el {
                     ts_ast::ArrayExpressionElement::SpreadElement(sp) => {
@@ -734,11 +733,11 @@ fn ts_flow_jsx_element(
     file: &str,
     starts: &[usize],
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
-) -> String {
+) -> NodeIdx {
     let comp = ts_jsx_name(&el.opening_element.name);
-    let mut filled: Vec<(String, String)> = Vec::new();
+    let mut filled: Vec<(String, NodeIdx)> = Vec::new();
     for attr in &el.opening_element.attributes {
         match attr {
             ts_ast::JSXAttributeItem::Attribute(a) => {
@@ -787,10 +786,10 @@ fn ts_flow_jsx_fragment(
     file: &str,
     starts: &[usize],
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
-) -> String {
-    let mut filled: Vec<(String, String)> = Vec::new();
+) -> NodeIdx {
+    let mut filled: Vec<(String, NodeIdx)> = Vec::new();
     ts_flow_jsx_children(&fr.children, file, starts, fn_sym, scope, out, &mut filled);
     let id = ts_push(out, file, starts, fr.span.start, "new", "", fn_sym);
     for (name, v) in filled {
@@ -807,9 +806,9 @@ fn ts_flow_jsx_children(
     file: &str,
     starts: &[usize],
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
-    filled: &mut Vec<(String, String)>,
+    filled: &mut Vec<(String, NodeIdx)>,
 ) {
     for ch in children {
         match ch {
@@ -881,7 +880,7 @@ mod tests {
         assert!(df.edges.iter().any(|e| e.from == count && e.to == read_of("n")), "{:?}", df.edges);
         assert!(df.edges.iter().any(|e| e.from == plain && e.to == read_of("plain")), "{:?}", df.edges);
         // both destructured pieces share slot 0; plain is slot 1.
-        let pos_of = |id: &str| df.param_pos.iter().find(|(i, _)| i == id).map(|(_, p)| *p);
+        let pos_of = |id: &NodeIdx| df.param_pos.iter().find(|(i, _)| i == id).map(|(_, p)| *p);
         assert_eq!(pos_of(&title), Some(0));
         assert_eq!(pos_of(&count), Some(0));
         assert_eq!(pos_of(&plain), Some(1));

@@ -319,15 +319,15 @@ pub struct DataflowFacts {
     pub loops: Vec<LoopFact>,
     pub allocators: std::collections::HashSet<String>, // fn syms whose body builds a collection
     pub nests: Vec<NestFact>,
-    pub param_pos: Vec<(String, u32)>, // (param node id, positional index) for node-level type joins
-    /// (call/new node id, position, arg node id): which argument slot a value
+    pub param_pos: Vec<(NodeIdx, u32)>, // (param node index, positional index) for node-level type joins
+    /// (call/new node index, position, arg node index): which argument slot a value
     /// feeds. Position is 0-based and aligns with `param_pos`/`type_sig.pos`
     /// (Rust method receivers are pos -1, mirroring the skipped `self` param).
-    pub args: Vec<(String, i64, String)>,
-    /// (new/call node id, field name, value node id): named value flow into a
+    pub args: Vec<(NodeIdx, i64, NodeIdx)>,
+    /// (new/call node index, field name, value node index): named value flow into a
     /// composite — Rust struct-literal fields, TS object-literal properties,
     /// Kotlin named arguments.
-    pub fields: Vec<(String, String, String)>,
+    pub fields: Vec<(NodeIdx, String, NodeIdx)>,
     /// (df_node id, text, kind∈lit|template|concat): the `df_lit` relation's
     /// payload — one row per STRING-carrying value node. `lit` rows carry the
     /// cooked literal value (numbers/bools/regex are never pushed here, only
@@ -336,14 +336,14 @@ pub struct DataflowFacts {
     /// operands for a `+` concat — a syntactic label, not a type judgment, so
     /// a numeric `+` mints a concat row too). TS/TSX/JS populate `template`/
     /// `concat`; Rust populates `lit` only (Kotlin/Go/Python ledgered).
-    pub lits: Vec<(String, String, &'static str)>,
+    pub lits: Vec<(NodeIdx, String, &'static str)>,
     /// Pending (df_node id, byte_start, byte_end, kind) rows for `template`/
     /// `concat` nodes, whose text is a source SLICE the per-node lift doesn't
     /// have handy (`ts_flow_expr` only carries the line-offset table, not the
     /// raw file text). `ts_dataflow_from` drains this into `lits` once, after
     /// the walk — the one place that already holds `content` — so no
     /// recursive function between the two needs it threaded through.
-    pub lit_spans: Vec<(String, u32, u32, &'static str)>,
+    pub lit_spans: Vec<(NodeIdx, u32, u32, &'static str)>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -363,7 +363,7 @@ pub struct LoopFact {
 /// post-pass `compute_nests` from already-extracted `DfNode`/`LoopFact` rows.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NestFact {
-    pub call_id: String,
+    pub call_id: NodeIdx,
     pub loop_id: String,    // "{file}:{start}", joins back to loop_over by (file, start)
     pub depth: u32,         // 1 = outermost enclosing loop
     pub collection: String, // the inner loop's collection text ("" until extractors fill it)
@@ -371,7 +371,12 @@ pub struct NestFact {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DfNode {
-    pub id: String,
+    /// Dense in-memory identity: this node's index in `DataflowFacts.nodes`
+    /// (== `NodeIdx`). The persisted df id is the `_df_node_dict` surrogate the
+    /// write seam resolves from `(file, line, col, kind)`; this index is the
+    /// transient join key that ties the node to its edges/args/fields/lits and
+    /// never leaves extraction. Formerly `format!("{file}:{line}:{col}:{kind}")`.
+    pub id: NodeIdx,
     pub kind: String,   // param | let_bind | var_read | var_write | lit | call_res | new | member | ret | borrow | binop | unop | loop | if | match | block | closure | try | expr
     pub var: String,    // variable name when the node is var-related, else ""
     pub fn_sym: String, // enclosing def sym (file::function::name), joins call_def
@@ -385,11 +390,22 @@ pub struct DfNode {
     pub col: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DfEdge {
-    pub from: String,
-    pub to: String,
+    pub from: NodeIdx,
+    pub to: NodeIdx,
 }
+
+/// Dense in-memory node identity: the node's index in `DataflowFacts.nodes`.
+/// Replaces the former `format!("{file}:{line}:{col}:{kind}")` string id — the
+/// identity is now a surrogate (the position), never a concatenated composite.
+/// The PERSISTED df id is the content-keyed `_df_node_dict` surrogate resolved
+/// at the write seam from each node's `(file, line, col, kind)` columns; this
+/// index is transient per-file plumbing that ties a node to its edges / args /
+/// fields / lits and never leaves extraction. An index is language-agnostic and
+/// stable across the 1-based line bump (positions do not move), so the old
+/// id-rebuild + reference-remap pass is gone.
+pub type NodeIdx = u32;
 
 /// sem-style symbol id: `file::kind::name`, scoped by an optional parent for
 /// methods (`file::method::Class.name`). Stable, index-free, human-readable.
@@ -563,12 +579,12 @@ pub(crate) fn dnode<'a>(df: &'a DataflowFacts, kind: &str, var: &str) -> &'a DfN
 }
 
 #[cfg(test)]
-pub(crate) fn has_arg(df: &DataflowFacts, call: &str, pos: i64, arg: &str) -> bool {
+pub(crate) fn has_arg(df: &DataflowFacts, call: &NodeIdx, pos: i64, arg: &NodeIdx) -> bool {
     df.args.iter().any(|(c, p, a)| c == call && *p == pos && a == arg)
 }
 
 #[cfg(test)]
-pub(crate) fn has_field(df: &DataflowFacts, id: &str, field: &str, value: &str) -> bool {
+pub(crate) fn has_field(df: &DataflowFacts, id: &NodeIdx, field: &str, value: &NodeIdx) -> bool {
     df.fields.iter().any(|(i, f, v)| i == id && f == field && v == value)
 }
 
@@ -719,10 +735,10 @@ fn push_node(
     kind: &str,
     var: &str,
     fn_sym: &str,
-) -> String {
-    let id = format!("{file}:{line}:{col}:{kind}");
+) -> NodeIdx {
+    let id = out.nodes.len() as NodeIdx;
     out.nodes.push(DfNode {
-        id: id.clone(),
+        id,
         kind: kind.into(),
         var: var.into(),
         fn_sym: fn_sym.into(),
@@ -733,49 +749,16 @@ fn push_node(
     id
 }
 
-/// Bump every node's `line` to 1-based AND rebuild its `id` so the id's line
-/// component matches the stored column. A tree-sitter front-end mints ids from
-/// the raw 0-based row, then bumps the line column to 1-based (the df contract);
-/// that left the id's line one behind the column. That was invisible while the
-/// id was interned as opaque text, but the coordinate de-intern reconstructs the
-/// id FROM the columns (`file:line:col:kind`), so the id must equal that. Rebuild
-/// the id and remap every id-referencing fact (edges, args, fields, lits,
-/// param positions, lit spans) to the new id. `nests` are recomputed by the
-/// caller after this, so they pick up the rebuilt ids directly.
+/// Bump every node's `line` to 1-based. A tree-sitter front-end mints nodes from
+/// the raw 0-based row, then bumps the line column to 1-based (the df contract).
+/// Node identity is now the node's INDEX (`NodeIdx`), which does not move when a
+/// column value changes, so no id rebuild and no reference remap is needed: the
+/// coordinate the write seam resolves through `_df_node_dict` reads the bumped
+/// `(file, line, col, kind)` columns directly. `nests` are recomputed by the
+/// caller after this.
 pub(crate) fn bump_node_lines_1based(out: &mut DataflowFacts) {
-    use std::collections::HashMap;
-    let mut remap: HashMap<String, String> = HashMap::new();
     for n in &mut out.nodes {
-        let old = std::mem::take(&mut n.id);
         n.line += 1;
-        n.id = format!("{}:{}:{}:{}", n.file, n.line, n.col, n.kind);
-        remap.insert(old, n.id.clone());
-    }
-    let remap_one = |s: &mut String| {
-        if let Some(v) = remap.get(s) {
-            *s = v.clone();
-        }
-    };
-    for edge in &mut out.edges {
-        remap_one(&mut edge.from);
-        remap_one(&mut edge.to);
-    }
-    for arg in &mut out.args {
-        remap_one(&mut arg.0);
-        remap_one(&mut arg.2);
-    }
-    for field in &mut out.fields {
-        remap_one(&mut field.0);
-        remap_one(&mut field.2);
-    }
-    for lit in &mut out.lits {
-        remap_one(&mut lit.0);
-    }
-    for pp in &mut out.param_pos {
-        remap_one(&mut pp.0);
-    }
-    for span in &mut out.lit_spans {
-        remap_one(&mut span.0);
     }
 }
 
@@ -807,7 +790,7 @@ fn compute_nests(nodes: &[DfNode], loops: &[LoopFact]) -> Vec<NestFact> {
         enclosing.sort_by_key(|l| l.start);
         for (i, l) in enclosing.iter().enumerate() {
             out.push(NestFact {
-                call_id: n.id.clone(),
+                call_id: n.id,
                 loop_id: format!("{}:{}", l.file, l.start),
                 depth: (i + 1) as u32,
                 collection: l.collection.clone(),

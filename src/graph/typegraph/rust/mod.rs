@@ -781,7 +781,7 @@ fn flow_fn_body(
     file: &str,
     out: &mut DataflowFacts,
 ) {
-    let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut scope: std::collections::HashMap<String, NodeIdx> = std::collections::HashMap::new();
     // Position counts only typed params (the receiver `self` is skipped), so the
     // index aligns with `type_sig`, which also drops self.
     let mut pos: u32 = 0;
@@ -806,7 +806,7 @@ fn flow_fn_body(
     // (label, collected break-value tail ids) — threaded through every recursive
     // flow_block/flow_expr call so `Expr::Break` can find the loop it targets and
     // `Expr::Loop` can drain the tails it collected. Starts empty at the fn body.
-    let mut loop_breaks: Vec<(Option<String>, Vec<String>)> = Vec::new();
+    let mut loop_breaks: Vec<(Option<String>, Vec<NodeIdx>)> = Vec::new();
     if let Some((tail, l, c)) = flow_block(block, file, fn_sym, &mut scope, out, &mut loop_breaks) {
         let ret = push_node(out, file, l, c, "ret", "", fn_sym);
         out.edges.push(DfEdge { from: tail, to: ret });
@@ -820,10 +820,10 @@ fn flow_block(
     b: &syn::Block,
     file: &str,
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
-    loop_breaks: &mut Vec<(Option<String>, Vec<String>)>,
-) -> Option<(String, u32, u32)> {
+    loop_breaks: &mut Vec<(Option<String>, Vec<NodeIdx>)>,
+) -> Option<(NodeIdx, u32, u32)> {
     let mut tail = None;
     let n = b.stmts.len();
     for (idx, stmt) in b.stmts.iter().enumerate() {
@@ -906,10 +906,10 @@ fn flow_expr(
     e: &syn::Expr,
     file: &str,
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
-    loop_breaks: &mut Vec<(Option<String>, Vec<String>)>,
-) -> String {
+    loop_breaks: &mut Vec<(Option<String>, Vec<NodeIdx>)>,
+) -> NodeIdx {
     let start = e.span().start();
     let (line, col) = (start.line as u32, start.column as u32);
     match e {
@@ -983,7 +983,7 @@ fn flow_expr(
         // update base flows in under the pseudo-field "..".
         syn::Expr::Struct(s) => {
             let ty = s.path.segments.last().map(|sg| sg.ident.to_string()).unwrap_or_default();
-            let mut filled: Vec<(String, String)> = Vec::new();
+            let mut filled: Vec<(String, NodeIdx)> = Vec::new();
             for f in &s.fields {
                 let v = flow_expr(&f.expr, file, fn_sym, scope, out, loop_breaks);
                 let name = match &f.member {
@@ -1226,7 +1226,7 @@ fn flow_expr(
             // compile error), so the closure body gets its own fresh, empty
             // `loop_breaks` stack rather than inheriting the enclosing fn's —
             // a `loop` written inside the closure pushes/pops onto this one.
-            let mut closure_loop_breaks: Vec<(Option<String>, Vec<String>)> = Vec::new();
+            let mut closure_loop_breaks: Vec<(Option<String>, Vec<NodeIdx>)> = Vec::new();
             let body_val = match c.body.as_ref() {
                 syn::Expr::Block(b) => flow_block(&b.block, file, &lam_sym, scope, out, &mut closure_loop_breaks),
                 other => {
@@ -1260,9 +1260,9 @@ fn bind_pat(
     pat: &syn::Pat,
     file: &str,
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
-) -> Vec<(String, String)> {
+) -> Vec<(String, NodeIdx)> {
     let mut acc = Vec::new();
     bind_pat_rec(pat, file, fn_sym, scope, out, &mut acc);
     acc
@@ -1272,9 +1272,9 @@ fn bind_pat_rec(
     pat: &syn::Pat,
     file: &str,
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
-    acc: &mut Vec<(String, String)>,
+    acc: &mut Vec<(String, NodeIdx)>,
 ) {
     match pat {
         syn::Pat::Ident(pi) => {
@@ -1311,10 +1311,10 @@ fn assign_flow(
     line: u32,
     col: u32,
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
-    loop_breaks: &mut Vec<(Option<String>, Vec<String>)>,
-) -> String {
+    loop_breaks: &mut Vec<(Option<String>, Vec<NodeIdx>)>,
+) -> NodeIdx {
     let r = flow_expr(rhs, file, fn_sym, scope, out, loop_breaks);
     if let syn::Expr::Path(p) = lhs {
         if let Some(name) = p.path.segments.last().map(|s| s.ident.to_string()) {
