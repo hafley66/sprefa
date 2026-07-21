@@ -68,21 +68,21 @@ async fn incremental_cascade_equals_from_scratch_recompute() {
 
     // ---- Method B: from-scratch reachability from surviving roots -----------
     // surviving roots = original roots (never a child) minus the retracted r0.
+    // cx_dep is now single-key (parent_key,child_key); r0 = (0,0) encodes to key 0.
     exec(
         &db,
         "CREATE TABLE lab_alive AS
-         WITH RECURSIVE alive(tag, id) AS (
-            SELECT DISTINCT d.parent_tag, d.parent_id
+         WITH RECURSIVE alive(key) AS (
+            SELECT DISTINCT d.parent_key
               FROM lab_orig_dep d
-             WHERE (d.parent_tag, d.parent_id) NOT IN
-                   (SELECT child_tag, child_id FROM lab_orig_dep)
-               AND NOT (d.parent_tag = 0 AND d.parent_id = 0)
+             WHERE d.parent_key NOT IN (SELECT child_key FROM lab_orig_dep)
+               AND d.parent_key <> 0
             UNION
-            SELECT d.child_tag, d.child_id
+            SELECT d.child_key
               FROM lab_orig_dep d JOIN alive a
-                ON d.parent_tag = a.tag AND d.parent_id = a.id
+                ON d.parent_key = a.key
          )
-         SELECT tag, id FROM alive",
+         SELECT key FROM alive",
     )
     .await;
 
@@ -91,12 +91,12 @@ async fn incremental_cascade_equals_from_scratch_recompute() {
     let b_count = scalar(&db, "SELECT count(*) FROM lab_alive").await;
     let a_not_b = scalar(
         &db,
-        "SELECT count(*) FROM (SELECT tag,id FROM cx_row WHERE weight > 0 EXCEPT SELECT tag,id FROM lab_alive)",
+        "SELECT count(*) FROM (SELECT key FROM cx_row WHERE weight > 0 EXCEPT SELECT key FROM lab_alive)",
     )
     .await;
     let b_not_a = scalar(
         &db,
-        "SELECT count(*) FROM (SELECT tag,id FROM lab_alive EXCEPT SELECT tag,id FROM cx_row WHERE weight > 0)",
+        "SELECT count(*) FROM (SELECT key FROM lab_alive EXCEPT SELECT key FROM cx_row WHERE weight > 0)",
     )
     .await;
 

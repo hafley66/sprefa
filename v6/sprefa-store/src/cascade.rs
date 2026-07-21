@@ -35,6 +35,18 @@ use crate::stmt_counter;
 /// only limit is SQL length, so we use a big chunk to cut statement count.
 const CHUNK: usize = 4000;
 
+/// E1 single-key encoding: `(tag, id)` -> one dense i64 so `cx_row` can be a
+/// rowid table clustered on an INTEGER PRIMARY KEY (the rowid itself, zero PK
+/// storage, fastest possible SQLite lookup) and `cx_dep` a 2-column key instead
+/// of a 4-column composite. `tag`/`id` stay as plain output columns on cx_row.
+/// Stride must exceed any local id (local ids are per-relation, < a few million).
+const KEY_STRIDE: i64 = 1_000_000_000;
+
+#[inline]
+fn key(tag: i64, id: i64) -> i64 {
+    tag * KEY_STRIDE + id
+}
+
 // Helpers take `&impl ConnectionTrait` so they run on either the pooled
 // connection OR a single-connection transaction. The transaction path is the
 // point: it pins every statement to ONE connection (correctness under pooling)
@@ -61,23 +73,26 @@ async fn scalar(db: &impl ConnectionTrait, sql: &str) -> Result<i64, DbErr> {
 /// are regular tables (not TEMP) so they are visible regardless of which pooled
 /// connection runs a statement.
 pub async fn create_schema(db: &DatabaseConnection) -> Result<(), DbErr> {
+    // cx_row is a ROWID table clustered on `key` (INTEGER PRIMARY KEY = the
+    // rowid alias): the key costs zero extra bytes and every lookup is a native
+    // rowid search. tag/id ride along as plain output columns. cx_dep collapses
+    // from a 4-column composite to a 2-column (parent_key, child_key) WITHOUT
+    // ROWID, still parent-prefix-ordered for the delta traversal.
     db.execute_unprepared(
         "CREATE TABLE cx_row (
+            key    INTEGER PRIMARY KEY,
             tag    INTEGER NOT NULL,
             id     INTEGER NOT NULL,
-            weight INTEGER NOT NULL DEFAULT 1,
-            PRIMARY KEY (tag, id)
-         ) WITHOUT ROWID;
+            weight INTEGER NOT NULL DEFAULT 1
+         );
          CREATE TABLE cx_dep (
-            parent_tag INTEGER NOT NULL,
-            parent_id  INTEGER NOT NULL,
-            child_tag  INTEGER NOT NULL,
-            child_id   INTEGER NOT NULL,
-            PRIMARY KEY (parent_tag, parent_id, child_tag, child_id)
+            parent_key INTEGER NOT NULL,
+            child_key  INTEGER NOT NULL,
+            PRIMARY KEY (parent_key, child_key)
          ) WITHOUT ROWID;
-         CREATE TABLE cx_frontier (tag INTEGER NOT NULL, id INTEGER NOT NULL, PRIMARY KEY(tag,id)) WITHOUT ROWID;
-         CREATE TABLE cx_next     (tag INTEGER NOT NULL, id INTEGER NOT NULL, PRIMARY KEY(tag,id)) WITHOUT ROWID;
-         CREATE TABLE cx_hits (tag INTEGER NOT NULL, id INTEGER NOT NULL, dec INTEGER NOT NULL, PRIMARY KEY(tag,id)) WITHOUT ROWID;",
+         CREATE TABLE cx_frontier (key INTEGER PRIMARY KEY);
+         CREATE TABLE cx_next     (key INTEGER PRIMARY KEY);
+         CREATE TABLE cx_hits (key INTEGER PRIMARY KEY, dec INTEGER NOT NULL);",
     )
     .await?;
     Ok(())
@@ -88,8 +103,11 @@ pub async fn create_schema(db: &DatabaseConnection) -> Result<(), DbErr> {
 pub async fn insert_rows(db: &DatabaseConnection, rows: &[(i64, i64, i64)]) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     for chunk in rows.chunks(CHUNK) {
-        let vals: Vec<String> = chunk.iter().map(|(t, i, w)| format!("({t},{i},{w})")).collect();
-        exec(&txn, &format!("INSERT INTO cx_row(tag,id,weight) VALUES {}", vals.join(","))).await?;
+        let vals: Vec<String> = chunk
+            .iter()
+            .map(|(t, i, w)| format!("({},{t},{i},{w})", key(*t, *i)))
+            .collect();
+        exec(&txn, &format!("INSERT INTO cx_row(key,tag,id,weight) VALUES {}", vals.join(","))).await?;
     }
     txn.commit().await?;
     Ok(())
@@ -104,14 +122,11 @@ pub async fn insert_deps(
     for chunk in edges.chunks(CHUNK) {
         let vals: Vec<String> = chunk
             .iter()
-            .map(|(pt, pi, ct, ci)| format!("({pt},{pi},{ct},{ci})"))
+            .map(|(pt, pi, ct, ci)| format!("({},{})", key(*pt, *pi), key(*ct, *ci)))
             .collect();
         exec(
             &txn,
-            &format!(
-                "INSERT INTO cx_dep(parent_tag,parent_id,child_tag,child_id) VALUES {}",
-                vals.join(",")
-            ),
+            &format!("INSERT INTO cx_dep(parent_key,child_key) VALUES {}", vals.join(",")),
         )
         .await?;
     }
@@ -133,17 +148,17 @@ pub async fn retract(db: &DatabaseConnection, seeds: &[(i64, i64)]) -> Result<u6
     exec(&txn, "DELETE FROM cx_next").await?;
 
     // Apply the -1 to each seed, then the frontier is the seeds that hit <= 0.
-    let seed_vals: Vec<String> = seeds.iter().map(|(t, i)| format!("({t},{i})")).collect();
-    let seed_in = format!("(VALUES {})", seed_vals.join(","));
+    let seed_vals: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
+    let seed_in = format!("({})", seed_vals.join(","));
     exec(
         &txn,
-        &format!("UPDATE cx_row SET weight = weight - 1 WHERE (tag,id) IN {seed_in}"),
+        &format!("UPDATE cx_row SET weight = weight - 1 WHERE key IN {seed_in}"),
     )
     .await?;
     exec(
         &txn,
         &format!(
-            "INSERT INTO cx_frontier SELECT tag,id FROM cx_row WHERE (tag,id) IN {seed_in} AND weight <= 0"
+            "INSERT INTO cx_frontier SELECT key FROM cx_row WHERE key IN {seed_in} AND weight <= 0"
         ),
     )
     .await?;
@@ -164,19 +179,19 @@ pub async fn retract(db: &DatabaseConnection, seeds: &[(i64, i64)]) -> Result<u6
         // 1. hits = the frontier's children + how many supports each loses now.
         exec(&txn, "DELETE FROM cx_hits").await?;
         exec(&txn,
-            "INSERT INTO cx_hits(tag,id,dec) \
-             SELECT d.child_tag, d.child_id, count(*) \
+            "INSERT INTO cx_hits(key,dec) \
+             SELECT d.child_key, count(*) \
              FROM cx_frontier f CROSS JOIN cx_dep d \
-               ON d.parent_tag = f.tag AND d.parent_id = f.id \
-             GROUP BY d.child_tag, d.child_id",
+               ON d.parent_key = f.key \
+             GROUP BY d.child_key",
         )
         .await?;
 
-        // 2. decrement each hit child by its lost-support count (indexed by PK).
+        // 2. decrement each hit child by its lost-support count (indexed by rowid).
         exec(&txn,
             "UPDATE cx_row SET weight = weight - \
-                (SELECT dec FROM cx_hits h WHERE h.tag = cx_row.tag AND h.id = cx_row.id) \
-             WHERE (tag,id) IN (SELECT tag,id FROM cx_hits)",
+                (SELECT dec FROM cx_hits h WHERE h.key = cx_row.key) \
+             WHERE key IN (SELECT key FROM cx_hits)",
         )
         .await?;
 
@@ -190,9 +205,9 @@ pub async fn retract(db: &DatabaseConnection, seeds: &[(i64, i64)]) -> Result<u6
         //    cost, so this is the main speedup.
         exec(&txn, "DELETE FROM cx_next").await?;
         exec(&txn,
-            "INSERT INTO cx_next(tag,id) \
-             SELECT h.tag, h.id FROM cx_hits h CROSS JOIN cx_row r \
-               ON r.tag = h.tag AND r.id = h.id \
+            "INSERT INTO cx_next(key) \
+             SELECT h.key FROM cx_hits h CROSS JOIN cx_row r \
+               ON r.key = h.key \
              WHERE r.weight <= 0 AND r.weight + h.dec > 0",
         )
         .await?;
@@ -200,7 +215,7 @@ pub async fn retract(db: &DatabaseConnection, seeds: &[(i64, i64)]) -> Result<u6
         // 4. frontier <- next. Dead rows STAY in cx_row (weight <= 0); the
         //    survivor query filters on weight > 0.
         exec(&txn, "DELETE FROM cx_frontier").await?;
-        exec(&txn, "INSERT INTO cx_frontier SELECT tag,id FROM cx_next").await?;
+        exec(&txn, "INSERT INTO cx_frontier SELECT key FROM cx_next").await?;
     }
     txn.commit().await?;
     Ok(rounds)

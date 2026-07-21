@@ -12,3 +12,17 @@ but ABORT past the memory wall where sqlite completes.
 - Schema: `cx_row(tag,id,weight) PK(tag,id) WITHOUT ROWID`; `cx_dep` 4-tuple PK WITHOUT ROWID.
 - 3 runs: retract 2.579 / 2.564 / 2.579 s. Setup ~8.0s. peak_rss ~1.35-1.46 GB.
 - 29 stmts, 3 rounds. **This is the number every experiment below is measured against.**
+- db on disk (WAL folded): 224.7 MB.
+
+## E1 — single dense-int key (rowid table) — KEEP
+- Hypothesis: `(tag,id)` composite WITHOUT ROWID pays full-key bytes in every
+  b-tree node + comparison. Encode to one dense i64; make `cx_row` a ROWID table
+  clustered on `key INTEGER PRIMARY KEY` (rowid = free, native fastest lookup) and
+  `cx_dep` a 2-column `(parent_key,child_key)` instead of a 4-column composite.
+- Change: src/cascade.rs schema + all retract SQL to single-key; tag/id kept as
+  plain output columns on cx_row; equivalence oracle rewritten to key space.
+- Measure (3 runs): retract **1.505 / 1.516 / 1.494 s** (was 2.57) — **−42%**.
+  Setup 8.0 -> 7.5s. peak_rss ~1.48 GB (flat). db **230.8 MB** (was 224.7, **+2.7%**).
+- Verdict: KEEP. Time −42% is the axis we chase (dd/dbsp ~291ms; ~9x -> ~5x gap).
+  Space +6MB is the redundant tag/id on cx_row (key already encodes them) — E2 target.
+- Guard: full suite green incl. head_to_head 4-engine byte-identical.

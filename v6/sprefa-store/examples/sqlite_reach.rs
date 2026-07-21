@@ -131,6 +131,18 @@ async fn main() {
     }
     print!("{buf}");
 
+    // On-disk footprint AFTER the retract (WAL folded via checkpoint). The space
+    // axis: how many bytes the corpus occupies on disk, independent of RSS.
+    let mut db_mb = 0.0f64;
+    if disk {
+        db.execute_unprepared("PRAGMA wal_checkpoint(TRUNCATE);").await.ok();
+        let db_bytes = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
+        let wal_bytes = std::fs::metadata(format!("{}-wal", db_path.display()))
+            .map(|m| m.len())
+            .unwrap_or(0);
+        db_mb = (db_bytes + wal_bytes) as f64 / (1024.0 * 1024.0);
+    }
+
     let rss = peak_rss_mb();
     eprintln!(
         "[{engine}] SETUP  nodes={n} edges={n_edges} | {:?} | {} stmts (build the corpus once)",
@@ -138,16 +150,17 @@ async fn main() {
     );
     eprintln!(
         "[{engine}] RETRACT  killed={killed} survivors={survivors} | {:?} | {} stmts, {} rounds \
-         | peak_rss {:.1} MB",
-        retract, retract_stmts, rounds, rss
+         | peak_rss {:.1} MB | db {:.1} MB",
+        retract, retract_stmts, rounds, rss, db_mb
     );
-    // Machine-parseable: engine,nodes,edges,killed,setup_ms,retract_ms,ops,rss_mb
+    // Machine-parseable: engine,nodes,edges,killed,setup_ms,retract_ms,ops,rss_mb,db_mb
     eprintln!(
-        "CSV,{engine},{n},{n_edges},{killed},{:.3},{:.3},{},{:.1}",
+        "CSV,{engine},{n},{n_edges},{killed},{:.3},{:.3},{},{:.1},{:.1}",
         setup.as_secs_f64() * 1e3,
         retract.as_secs_f64() * 1e3,
         retract_stmts,
-        rss
+        rss,
+        db_mb
     );
 
     drop(db);
