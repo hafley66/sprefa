@@ -1,0 +1,47 @@
+# Standalone crate: its own [workspace] table decouples it from the v5 root
+# workspace so `cargo test` here is fully isolated (the whole point — prove the
+# v6 data model in isolation, no v5 tree in the build graph).
+[workspace]
+
+[package]
+name = "sprefa-store"
+version = "0.1.0"
+edition = "2021"
+description = "v6 storage spine: the closed data model (6 dimensions + unified node/edge), SeaORM bindings, and an open sea-query rel builder. Single source of truth for the schema."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# The ORM (owner decision 2026-07-21). Async, sits on sea-query (v6 rule 3).
+sea-orm = { version = "2.0", default-features = false, features = [
+    "sqlx-sqlite",
+    "runtime-tokio-rustls",
+    "macros",
+] }
+blake3 = "1"
+# Resident string interning (owner decision 2026-07-21). Replaces v5's bespoke
+# SymAlloc + persisted_strings/inflight_strings HashSets. Dense u32 Spur keys =
+# the DB string_id; arena-backed; RodeoReader = the frozen resident reader.
+lasso = "0.7"
+# Only for the OS-protective self-cap (memcap): setrlimit/getrusage. Leaf crate,
+# no build-graph weight. Guards the example binaries from driving the OS to swap.
+libc = "0.2"
+# The Feldera engine: the third Z-set/IVM implementation. OPTIONAL + feature-gated
+# because dbsp 0.323 triggers a rustc ICE on the repo's default nightly (its heavy
+# generics crash the next-trait-solver). Gating it keeps `cargo test` working on
+# nightly; the dbsp head-to-head is built explicitly on stable:
+#   RUSTFLAGS="-C link-arg=-fuse-ld=lld" cargo +stable build --features with-dbsp --example dbsp_reach
+dbsp = { version = "0.323", optional = true }
+
+[features]
+with-dbsp = ["dep:dbsp"]
+
+[[example]]
+name = "dbsp_reach"
+required-features = ["with-dbsp"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# Head-to-head baseline: the resident incremental engine we are NOT adopting for
+# the corpus, run byte-for-byte against our on-disk weight cascade.
+differential-dataflow = "0.25"
+timely = "0.31"
