@@ -125,6 +125,7 @@ mod client;
 mod dispatch;
 mod home;
 pub mod http_discovery;
+pub(crate) mod logcap;
 pub mod read;
 mod root;
 pub mod shell;
@@ -351,18 +352,29 @@ impl Daemon {
 
 /// Install the daemon's `tracing` subscriber: an stderr `fmt` layer so every log
 /// line carries a timestamp, level, and the emitting thread's name (`dl-poll`,
-/// `dl-watch-<key>`, `dl-http-N`, `dl-accept`, …). Writer is stderr — the detached
-/// daemon's stderr is redirected into `daemon.log` by `spawn_detached`, so this
-/// keeps that plumbing intact. The filter reads `DL_LOG` (default `info`);
-/// `with_target(false)` drops the module path since call sites already carry a
-/// `[daemon]`/`[<root>]` bracket, and `compact()` keeps each line short.
-///
-/// Also composes in the two rolling FILE layers (`dl.log`/`error.log` under
-/// `<home>/log/`, see `crate::trace::file_layers`) so a foreground/background
+/// `dl-watch-<key>`, `dl-http-N`, `dl-accept`, …), plus the two rolling FILE
+/// layers (`dl.log`/`error.log` under `<home>/log/`, see
+/// `crate::trace::dl_log_layer`/`error_log_layer`) so a foreground/background
 /// daemon writes the same apache-style access/error log every other `dl`
 /// invocation does — this is the one process where `crate::trace::init`
 /// deliberately defers (see its doc comment) specifically so THIS init wins
 /// the race and installs both the stderr layer and the file layers together.
+/// `with_target(false)` drops the module path since call sites already carry a
+/// `[daemon]`/`[<root>]` bracket, and `compact()` keeps each line short.
+///
+/// Under a plain, un-configured daemon (`DL_LOG` unset — the default under
+/// launchd supervision, since nobody sets env vars in a plist) the stderr
+/// layer defaults to `warn` (`stderr_filter_spec(None)`), NOT `DL_LOG`'s
+/// own `info` default. Root cause of failure-modes class 28
+/// (docs/failure-modes.md): at `info`, this layer mirrored the SAME lines
+/// `dl_log_layer` already writes to the size-capped `dl.log` — pure
+/// duplication — and under launchd that duplicate stream lands in
+/// `launchd-stderr.log`, a file this process never opens and therefore
+/// cannot rotate (see `daemon::logcap`'s module doc for why no in-process
+/// crate can). Nothing is lost at the default: `warn`-and-up already lands in
+/// the size-capped `error.log` too. Setting `DL_LOG` explicitly (most often
+/// `--foreground` debugging) still widens stderr to match, exactly as before
+/// this fix — `stderr_filter_spec` is the pure decision, unit-tested below.
 ///
 /// Idempotent by design: `try_init` returns `Err` (ignored) when a global
 /// subscriber is already installed, so a foreground daemon started inside a
@@ -370,8 +382,10 @@ impl Daemon {
 /// does not panic.
 fn init_daemon_tracing() {
     use tracing_subscriber::prelude::*;
-    let filter = tracing_subscriber::EnvFilter::try_from_env("DL_LOG")
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let dl_log_env = std::env::var("DL_LOG").ok();
+    let spec = stderr_filter_spec(dl_log_env.as_deref());
+    let filter = tracing_subscriber::EnvFilter::try_new(&spec)
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
     let stderr_layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
         .with_thread_names(true)
@@ -389,6 +403,16 @@ fn init_daemon_tracing() {
         .with(crate::trace::error_log_layer(&home))
         .with(crate::trace::chrome_layer())
         .try_init();
+}
+
+/// Pure decision behind `init_daemon_tracing`'s stderr filter: `DL_LOG` unset
+/// -> `"warn"` (the class-28 fix — see that fn's doc); `DL_LOG` set to
+/// anything -> that literal value, so an explicit ask for more terminal
+/// verbosity keeps working unchanged. Extracted as a pure fn (rather than
+/// inlined) so the decision itself is unit-testable without constructing a
+/// `tracing_subscriber::EnvFilter`, which has no `PartialEq`.
+fn stderr_filter_spec(dl_log: Option<&str>) -> String {
+    dl_log.map(str::to_string).unwrap_or_else(|| "warn".to_string())
 }
 
 // ---------- daemon entry ----------
@@ -412,6 +436,12 @@ pub fn run_daemon(
 
     let home = daemon_home();
     let _ = std::fs::create_dir_all(&home);
+    // Class-28 rail: cap any externally-redirected log left oversized by a
+    // PRIOR run (a daemon down for a while, or one that just adopted this
+    // fix) immediately at boot, rather than waiting out the idle-task's 30s
+    // cadence (`daemon_shell::timers::idle_task`, which re-sweeps for the
+    // rest of this run's lifetime).
+    logcap::sweep(&home);
     let launch_exe_stamp = current_exe_stamp();
 
     // Single-instance witness (plan section 3.3): acquired BEFORE any other
@@ -836,6 +866,18 @@ mod tests {
     fn daemon_tracing_init_is_idempotent() {
         init_daemon_tracing();
         init_daemon_tracing();
+    }
+
+    /// Class-28 fix: unset `DL_LOG` must default the daemon's stderr layer to
+    /// `warn` (the duplication that filled `launchd-stderr.log` was `info`),
+    /// while an EXPLICIT `DL_LOG` value keeps widening stderr exactly as
+    /// before this fix.
+    #[test]
+    fn stderr_filter_defaults_warn_but_honors_explicit_dl_log() {
+        assert_eq!(stderr_filter_spec(None), "warn");
+        assert_eq!(stderr_filter_spec(Some("info")), "info");
+        assert_eq!(stderr_filter_spec(Some("debug")), "debug");
+        assert_eq!(stderr_filter_spec(Some("dl=trace")), "dl=trace");
     }
 
     #[test]

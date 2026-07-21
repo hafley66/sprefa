@@ -116,6 +116,7 @@ mod go;
 mod kotlin;
 mod lattice;
 mod lex_utf8;
+mod log_cap_sweep;
 mod mcp;
 mod mcp_daemon;
 mod mcp_lifecycle;

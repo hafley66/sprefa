@@ -63,6 +63,37 @@ pub fn pid_path() -> PathBuf {
     daemon_home().join("daemon.pid")
 }
 
+/// `<home>/daemon.log` — the un-supervised fallback's own redirect target
+/// (`daemon::client::spawn_detached` opens this file itself via
+/// `std::process::Stdio::from`, so it is a real in-process writer, unlike the
+/// two paths below). One named function so `spawn_detached` and the log-cap
+/// sweep (`daemon::logcap`) always agree on the path, the same reason
+/// `root_db_path` exists instead of every caller inlining `.join(...)`.
+pub fn daemon_log_path(home: &Path) -> PathBuf {
+    home.join("daemon.log")
+}
+
+/// `<home>/launchd-stdout.log` — launchd's `StandardOutPath` redirect target
+/// for the supervised daemon (`crate::supervise::plist_contents`). launchd
+/// itself opens this file (`O_CREAT|O_APPEND`) and `dup2`s it onto the
+/// process's stdout BEFORE this binary execs; no `dl` code ever holds this as
+/// a writer it can rotate by closing and reopening a new file. The log-cap
+/// sweep (`daemon::logcap`) still needs the exact path so it can bound the
+/// file from the OUTSIDE (truncate in place) — see that module's doc for why
+/// truncate, not rename.
+pub fn launchd_stdout_log_path(home: &Path) -> PathBuf {
+    home.join("launchd-stdout.log")
+}
+
+/// `<home>/launchd-stderr.log` — launchd's `StandardErrorPath` twin of
+/// `launchd_stdout_log_path`. This is the file the class-28 incident
+/// (docs/failure-modes.md) found at 440MB: every `tracing` event that reaches
+/// stderr under launchd supervision lands here, unrotated, because nothing in
+/// the process owns this fd's lifecycle.
+pub fn launchd_stderr_log_path(home: &Path) -> PathBuf {
+    home.join("launchd-stderr.log")
+}
+
 /// `<home>/roots.json` — the registered-root persistence file.
 pub(crate) fn roots_json_path() -> PathBuf {
     daemon_home().join("roots.json")

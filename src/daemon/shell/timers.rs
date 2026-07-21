@@ -27,6 +27,11 @@ pub(crate) async fn idle_task(d: Arc<Daemon>, ctx: ShellCtx, idle_secs: u64) {
         if let Err(e) = d.jobs.reconcile() {
             tracing::warn!("[daemon] job reconcile: {e}");
         }
+        // Class-28 rail: re-check the externally-redirected log files every
+        // idle tick (30s), so a long-lived run stays bounded, not just the
+        // one-time sweep `run_daemon` does at boot. Three `stat` calls, no
+        // lock — see `daemon::logcap`'s module doc for the mechanism.
+        crate::daemon::logcap::sweep(&d.home);
         let roots = d.all_roots();
         let all_idle = roots.iter().all(|sr| {
             lock(&sr.last_activity).elapsed() > Duration::from_secs(idle_secs)
