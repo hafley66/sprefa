@@ -9,7 +9,23 @@ pub const NO_HEAD_REV: &str = "0000000000000000000000000000000000000000+";
 
 use std::io::{Read, Write};
 use std::ops::{Deref, DerefMut};
-use std::process::Child;
+use std::process::{Child, Command};
+
+/// Stamp a `dl` Command with a fully hermetic state-home environment rooted at
+/// `home` (a per-test temp dir). Belt-and-suspenders: it sets ALL THREE of
+/// `DL_STATE_DIR` (the honored knob since the class-30 fix), `XDG_STATE_HOME`,
+/// and `HOME` so no resolution path — present or future — can escape onto the
+/// developer's real `~/.local/state/sprefa`. `DL_STATE_DIR` IS the sprefa dir
+/// itself (`<home>/sprefa`), matching `daemon_home()`'s rank-1 override.
+/// `SPREFA_CONFIG` points at a nonexistent file so no real turnkey config leaks
+/// repo state into the run.
+#[allow(dead_code)]
+pub fn hermetic_env(cmd: &mut Command, home: &std::path::Path) {
+    cmd.env("DL_STATE_DIR", home.join("sprefa"))
+        .env("XDG_STATE_HOME", home)
+        .env("HOME", home)
+        .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml");
+}
 
 /// One JSON-RPC exchange with a sandboxed daemon over its UDS socket. The
 /// socket carries HTTP since the axum adoption arc (one Router, two listeners

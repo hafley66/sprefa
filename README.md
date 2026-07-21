@@ -656,6 +656,15 @@ Two usage forms, then the flag reference:
 | `dl prog.dl` | run; print `?` queries as TSV |
 | `dl` (no positional) | discovery: merge every `<root>/.dl/*.dl` (filename order, shared `rel` decls dedupe); auto-cache at the shared per-root `$XDG_STATE_HOME/sprefa/roots/<key>/db.sqlite` (the same db a daemon serves) |
 
+**State home** (where the per-root dbs, socket, and logs live). Override
+precedence, highest first: an explicit `--db <path>` (db-level) > `DL_STATE_DIR`
+(the sprefa state dir itself — the honored sandbox knob) > `XDG_STATE_HOME`
+(`<XDG_STATE_HOME>/sprefa`) > platform default (`~/.local/state/sprefa`). To run
+`dl` fully isolated (agents, tests, CI): set `DL_STATE_DIR=<scratch>` — nothing
+touches the real home. A file-scoped `dl <file> --check`/`--diag-json`/`--lsp`
+runs on an ephemeral in-memory db by default and never writes the real
+served-root cache; pass `--attach` to opt into the warm cache on purpose.
+
 The flag table below is generated from the clap `Cli` struct (each flag's
 `///` doc-comment) by [examples/cli-doc.dl](examples/cli-doc.dl), so it can't
 drift from the parser: every flag auto-appears, and a flag with no doc-comment
@@ -668,6 +677,7 @@ doc-comment in [src/cli/mod.rs](src/cli/mod.rs) and rerun the generator.
 | flag | effect |
 |---|---|
 | `--apply` | _undocumented_ |
+| `--attach` | Attach a file-scoped run to the REAL served-root db (`<state-home>/roots/<key>/db.sqlite`, the warm cache the daemon serves) instead of the default ephemeral in-memory db. Opt-in only: a bare `dl <file> --check`/`--diag-json`/`--lsp` defaults to `:memory:` so a read-shaped check never narrows the real analysis cache. Discovery mode (no positional) still attaches by default; `--db` overrides both |
 | `--changed <CHANGED>` | Drive one incremental tick for these changed paths (the delta path the watcher uses), instead of a full run. Repeatable |
 | `--check` | Lint/ban mode: render the `diag` relation to stderr. Exit 0 clean, 2 if any `error`-severity row exists (Claude Code's blocking-hook code), 1 on a broken program. For pre-commit / CI / Claude Code hooks. See docs/rails.md |
 | `--cmd-budget <CMD_BUDGET>` | Cap `cmd` invocations per tick (or DL_CMD_BUDGET); over budget is a loud error, never a silent truncation. Default: unlimited |
@@ -687,6 +697,7 @@ doc-comment in [src/cli/mod.rs](src/cli/mod.rs) and rerun the generator.
 | `--repo <REPO>` | With --move, which repo to rewrite: a config slug, or `*`/`all` for every configured repo. Omitted = the cwd repo (self) |
 | `--settle-max` | _undocumented_ |
 | `--settle` | _undocumented_ |
+| `--stage <STAGE>` | R7 diag routing stage whose diagnostics to surface — `live` \| `commit` \| `agent-turn` \| `agent-session`. Default `commit` (the pre-commit / `--check` surface). A code with no `diag_stage` row routes by severity: an error reaches every stage, a warning only `commit`. Rails opt a code into other stages by heading `diag_stage(code, stage)` |
 | `--tick-audit` | After each tick, print every relation's row count (or DL_TICK_AUDIT=1) |
 | `--verify <VERIFY>` | Verify-rollback: run the program (applying `gen` edits), then run this shell command as a checker in the root. Keep the edits only if it exits 0; otherwise restore every touched file to its pre-run state and exit 1. Transactional codemod — apply, test, keep-if-pass. See christmas #14 |
 | `--watch` | Re-tick on file changes in the source root (in-process watcher, the pre-daemon path). For the warm long-lived watcher, use `dl daemon start` |

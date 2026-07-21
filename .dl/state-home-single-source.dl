@@ -1,0 +1,81 @@
+# Rail: state-home resolution has ONE source (src/daemon/home.rs)
+#
+# Failure-modes class 30 (2026-07-21): the fleet was told to sandbox `dl` runs
+# with `DL_STATE_DIR=<scratch>`, but `DL_STATE_DIR` was not read anywhere — the
+# only knob honored was `XDG_STATE_HOME`, resolved in `daemon::daemon_home`.
+# Every "sandboxed" run wrote the REAL `~/.local/state/sprefa`, rebuilding the
+# sprefa root db from partial worktree scans. Parallel to class 14
+# (`hook::refuse_worktree_cold_check`): both protect the real state home from a
+# write no one intended.
+#
+# THE LAW: state-home resolution (reading `XDG_STATE_HOME` / `DL_STATE_DIR` to
+# build a state path) lives in exactly ONE function, `daemon::daemon_home`
+# (src/daemon/home.rs). A second site reading these env vars to resolve a home
+# is how the "sandbox that did not isolate" bug is reintroduced — a new knob
+# that disagrees with the resolver.
+#
+# Mechanism: eprintln-style grandfather ratchet. The regex matches an ACTUAL
+# `env::var*("XDG_STATE_HOME"|"DL_STATE_DIR")` read (not doc/comment mentions,
+# which carry no `env::var(` call, and not `env::set_var` test setup). The three
+# sites that legitimately read these vars today are grandfathered at their
+# current count: the resolver itself, plus two presence-PROBES that only ask
+# "is a sandbox set?" (`.is_none()`) before delegating to the resolver. A file
+# over its baseline, or a brand-new reader with no baseline row, warns.
+#
+# Warning severity only (2026-07-11 outage law: an error rail exiting non-zero
+# from a PostToolUse hook blocks every write repo-wide). No waiver rel: shrink a
+# file's baseline in the same commit that removes a read; a new resolver is
+# fixed by routing through `daemon_home`, not by waiving.
+#
+# Run: dl .dl/state-home-single-source.dl --check
+
+rel state_home_env_read(source_file: file, line_number: int).
+state_home_env_read(source_file, line_number) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    match_line(source_file, source_rev, /env::var(_os)?\(.(XDG_STATE_HOME|DL_STATE_DIR)./, line_number).
+
+rel state_home_read_count(source_file: file, hits: int).
+state_home_read_count(source_file, count(line_number)) <-
+    state_home_env_read(source_file, line_number).
+
+# Grandfathered baseline (measured 2026-07-21). Lower a row when a commit
+# removes a read; never raise one. Rows at 0 get deleted.
+#   src/daemon/home.rs        the ONE resolver (DL_STATE_DIR + XDG_STATE_HOME)
+#   src/setup/manifest.rs     cfg(test) presence-probe, then delegates
+#   src/cli/daemon_cmd.rs     "is a sandbox active?" supervisor-delegation probe
+rel state_home_read_baseline(source_file: file, allowed: int).
+state_home_read_baseline("src/daemon/home.rs", 2).
+state_home_read_baseline("src/setup/manifest.rs", 2).
+state_home_read_baseline("src/cli/daemon_cmd.rs", 1).
+
+# A grandfathered file grew past its baseline: a new state-home env read landed.
+diag(
+    path: source_file,
+    line: 1,
+    severity: "warning",
+    code: "state-home-read-exceeded",
+    msg: "a new XDG_STATE_HOME/DL_STATE_DIR read grew past this file's baseline — resolve the state home through daemon::daemon_home() instead of a parallel knob (failure-modes class 30)"
+) <-
+    state_home_read_count(source_file, hits),
+    state_home_read_baseline(source_file, allowed),
+    hits > allowed.
+
+# A file with no baseline row reads the state-home env vars: a brand-new
+# resolver outside src/daemon/home.rs. Flag every hit line precisely.
+diag(
+    path: source_file,
+    line: line_number,
+    severity: "warning",
+    code: "state-home-read-new-file",
+    msg: "state-home env read outside the single resolver — route it through daemon::daemon_home() (DL_STATE_DIR > XDG_STATE_HOME > platform default); a second knob is failure-modes class 30"
+) <-
+    state_home_env_read(source_file, line_number),
+    !state_home_read_baseline(source_file, _).
+
+# Confront the agent that just wrote it, not only at commit.
+diag_stage("state-home-read-exceeded", "agent-turn").
+diag_stage("state-home-read-exceeded", "commit").
+diag_stage("state-home-read-new-file", "agent-turn").
+diag_stage("state-home-read-new-file", "commit").
+
+? diag(path, line, severity, code, msg).

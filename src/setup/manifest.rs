@@ -89,7 +89,7 @@ impl SetupJournal {
         Ok(())
     }
     pub fn load() -> Result<Self> {
-        let path = state_home().join("sprefa/setup-manifest.json");
+        let path = state_home().join("setup-manifest.json");
         let entries = match fs::read_to_string(&path) {
             Ok(s) => serde_json::from_str(&s).context("parse setup manifest")?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => vec![],
@@ -166,24 +166,26 @@ fn same_slot(old: &SetupEntry, new: &SetupEntry) -> bool {
     }
 }
 
+/// The sprefa state dir the setup manifest lives in. Delegates to the single
+/// resolver (`daemon::daemon_home`: DL_STATE_DIR > XDG_STATE_HOME > platform
+/// default) so the manifest path can never disagree with the roots db home. The
+/// cfg(test) branch keeps lib-unit-test isolation when NEITHER env is set —
+/// concurrent tests must not share one real home — mirroring the pre-2026-07-21
+/// per-test temp dir.
 fn state_home() -> PathBuf {
-    if let Some(path) = std::env::var_os("XDG_STATE_HOME") {
-        return PathBuf::from(path);
-    }
     #[cfg(test)]
     {
-        return std::env::temp_dir().join(format!(
-            "dl-test-state-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        if std::env::var_os("DL_STATE_DIR").is_none()
+            && std::env::var_os("XDG_STATE_HOME").is_none()
+        {
+            return std::env::temp_dir().join(format!(
+                "dl-test-state-{}-{:?}/sprefa",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+        }
     }
-    #[cfg(not(test))]
-    {
-        std::env::var_os("HOME")
-            .map(|h| PathBuf::from(h).join(".local/state"))
-            .unwrap_or_else(|| PathBuf::from("."))
-    }
+    crate::daemon::daemon_home()
 }
 fn parent(path: &Path) -> Result<()> {
     let Some(parent) = path.parent() else {

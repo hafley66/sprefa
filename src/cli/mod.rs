@@ -88,6 +88,16 @@ struct Cli {
     /// anything that reads SQLite.
     #[arg(long, help_heading = "Output & storage")]
     db: Option<String>,
+    /// Attach a file-scoped run to the REAL served-root db
+    /// (`<state-home>/roots/<key>/db.sqlite`, the warm cache the daemon serves)
+    /// instead of the default ephemeral in-memory db. Opt-in only: a bare
+    /// `dl <file> --check`/`--diag-json`/`--lsp` defaults to `:memory:` so a
+    /// read-shaped check never narrows the real analysis cache (failure-modes
+    /// class 29). The no-positional discovery mode still attaches by default;
+    /// this flag restores the warm path for a named file. `--db` (an explicit
+    /// path) overrides both.
+    #[arg(long, help_heading = "Output & storage")]
+    attach: bool,
     /// Re-tick on file changes in the source root (in-process watcher, the
     /// pre-daemon path). For the warm long-lived watcher, use the daemon.
     #[arg(long, help_heading = "Run modes")]
@@ -403,30 +413,39 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
         crate::trace::finish_chrome_trace();
         std::process::exit(code);
     }
-    // Discovery mode (no positional) defaults the db to the PER-ROOT db the
-    // daemon itself serves: $XDG_STATE_HOME/sprefa/roots/<key>/db.sqlite
-    // (storage-endgame L2, one db per corpus). A one-shot run without a daemon
-    // warms/reads the SAME file a daemon would, so no second
-    // `.dl/.state/cache.db` world ever grows beside it (`cache.db` is
-    // historical; L1's `dl daemon gc` sweeps leftovers). `db_defaulted` still
-    // marks these modes daemon-eligible so a reachable daemon is preferred
-    // over opening the file in-process; when both worlds do touch the file
-    // (daemon up, attach failed), WAL + busy_timeout in db.rs is the
-    // shared-access discipline.
+    // Attaching to the REAL served-root db (`<state-home>/roots/<key>/db.sqlite`,
+    // storage-endgame L2, one db per corpus) is OPT-IN: only the no-positional
+    // discovery mode, or an explicit `--attach`, may default onto it.
+    //
+    // Failure-modes class 29: a file-scoped read-shaped run
+    // (`--check`/`--diag-json`/`--lsp` WITH a positional) must NEVER default
+    // onto the real db — the old `want_default` heuristic conflated "user asked
+    // for a check" with "attach to the served root" and let a worktree's partial
+    // scan narrow an ~860MB analysis cache to ~0.6MB. Such a run now defaults to
+    // an ephemeral in-memory db. Crucially the default is a CONCRETE `:memory:`,
+    // not `None`: `run_file`/`run_check` daemon-eligibility keys on
+    // `db_path.is_none() || db_defaulted`, so a concrete `:memory:` also keeps
+    // the run off the daemon that would otherwise tick+write the real served db.
+    //
+    // Discovery mode (`programs.is_empty()`) still defaults to the real root db
+    // and stays daemon-eligible (`db_defaulted`): a warm daemon is preferred,
+    // and when both worlds touch the file (daemon up, attach failed) WAL +
+    // busy_timeout in db.rs is the shared-access discipline. `--db` outranks all.
     let mut db = cli.db;
     let mut db_defaulted = false;
     if db.is_none() {
         let dir = root.join(".dl");
-        let daemon_on = crate::daemon::enabled();
-        let want_default =
-            programs.is_empty() || (daemon_on && (cli.lsp || cli.check || cli.diag_json));
-        if want_default && dir.is_dir() {
+        let attach_served = programs.is_empty() || cli.attach;
+        if attach_served && dir.is_dir() {
             let root_db = crate::daemon::root_db_path(&root);
             if let Some(parent) = root_db.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
             db = Some(root_db.to_string_lossy().into_owned());
             db_defaulted = true;
+        } else if cli.check || cli.diag_json || cli.lsp {
+            // File-scoped read-shaped run, not attaching: ephemeral + hermetic.
+            db = Some(":memory:".to_string());
         }
     }
     // Every one-shot mode takes the full (expanded) positional set: multiple
