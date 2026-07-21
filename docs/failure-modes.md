@@ -1123,6 +1123,60 @@ sites but not against new code. **missing** = nothing.
   inside the process, and only if you have first confirmed the writer opens
   `O_APPEND`.
 
+## 32. Normalizing a folded composite id onto a LOSSIER decomposition
+
+- WHAT IT LOOKS LIKE: a composite identity is stored as one folded value
+  (`sym = hash64("repo::file::kind::name")`, an instance of class 26), and the
+  "fix" is to normalize it into a dictionary surrogate keyed on the entity's
+  separate columns. The trap: those separate columns are NOT a faithful
+  decomposition of the folded id, so the surrogate SILENTLY MERGES distinct
+  symbols. Every equijoin then returns a subtly wrong set, and the whole test
+  suite stays green (a merge changes which rows join, not whether the query
+  runs).
+- HOW IT BIT US (near-miss, 2026-07-21, caught before a line shipped): the
+  written sym-dict plan (`plans/2026-07-21-symbol-dict-normalization.md`) keyed
+  `_sym_dict` on `UNIQUE(repo, file, kind, name, parent)` — the stored
+  `rel_type_entity` columns. Measured against the live 833MB root
+  (`~/.local/state/sprefa/roots/fbabddda40d22347`, `immutable=1`):
+  - `rel_call_def` has NO `name`/`parent` columns at all — keying on its
+    columns collapses **11,737 distinct syms → 1,028** `(repo,kind,file)`
+    tuples. Every same-kind callable in a file folds into one symbol.
+  - **5,454** of 6,363 `rel_type_entity` syms carry an enclosing scope in the
+    folded string (`::const::addMark.fact`) but store an EMPTY `parent` column;
+    the `parent` column is non-empty for only 1,918 / 7,372 rows. Worked case:
+    `(file=extension.ts, kind=const, name="fact", parent="")` maps to TWO syms
+    — `addMark.fact` and `addTypeSeed.fact`, two consts named `fact` in two
+    different functions — that the columns cannot tell apart.
+  - **6,018** closure syms carry a `coord` (`::closure::<coord>`) that exists in
+    no column.
+- THE LAW: replacing a folded composite id with a surrogate is behavior-
+  preserving IFF the new identity reproduces the old identity's partition of
+  the corpus (proof in `plans/2026-07-21-sym-dict-correctness-proof.md`, §2).
+  Two non-negotiables fall out: (1) resolve the surrogate at the MINT seam from
+  the exact inputs that built the folded id — never from independently-populated
+  rel columns (mirror `_df_node_dict`/`resolve_coord_surrogates`, which resolve
+  from the node's real `(file,line,col,kind)`, not from `rel_df_node`). (2) Gate
+  the migration on a build-time BIJECTION CHECK: `count(distinct new surrogate)
+  == count(distinct old id)` per rel (baselines: type_entity 6363, call_def
+  11737). Equal proves the partition is preserved; unequal HALTS and dumps the
+  delta tuples. A silent merge passes a green suite; only the count-equality
+  gate catches it.
+- THE RAIL: two enforcement points specified, neither yet code (this is the
+  chapter's deferred arc). (a) The bijection gate above, run per sym-bearing rel
+  during the migration. (b) A JOIN-PARITY PROBE per cross-family sym join
+  (`df_node.fn_sym ↔ call_def.sym`, closure `var ↔ call_def.sym`,
+  `type_edge ↔ type_entity`, `call_edge ↔ call_def`): `rowcount(new) ==
+  rowcount(old)`. Because join = integer equality on the surrogate, a column
+  left in the old id-space while its partner moved to the new one lands in a
+  disjoint integer domain and the join returns ∅ — the probe is the only thing
+  that catches that silent empty-join.
+- SAY THIS TO AN AGENT: before you normalize a folded composite key onto
+  "separate columns", MEASURE whether those columns reproduce the folded value
+  1:1 (`count(distinct folded) == count(distinct tuple)`). If they do not, the
+  columns are lossy and your surrogate will merge distinct entities silently.
+  Resolve the surrogate from the id's mint-time inputs, and gate the whole
+  migration on a bijection count-equality check that HALTS on any delta.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
@@ -1157,6 +1211,7 @@ sites but not against new code. **missing** = nothing.
 | 29 | read-shaped CLI flag retargets --db to the real served root | enforced | — (file-scoped `--check`/`--diag-json`/`--lsp` defaults to `:memory:`, attach is opt-in via `--attach` or discovery mode; src/cli/mod.rs; tests/it/hermetic_state.rs) |
 | 30 | state-home sandbox knob `DL_STATE_DIR` ignored | enforced | — (`daemon_home()` honors `DL_STATE_DIR` > `XDG_STATE_HOME` > default, one resolver src/daemon/home.rs; `.dl/state-home-single-source.dl` warns on a second reader; tests/it/hermetic_state.rs) |
 | 31 | unbounded daemon logs (launchd redirect + spawn-only cap) | enforced | OS-level `newsyslog.d` complement remains a documented recommendation, not a shipped config |
+| 32 | normalizing a folded composite id onto a lossier decomposition | missing | the sym-dict migration (next chapter) must ship the bijection count-equality gate + per-join parity probe from `plans/2026-07-21-sym-dict-correctness-proof.md`; today only R1 (df in-memory id → `NodeIdx`) landed, mint_sym/lambda_sym still fold `format!` strings |
 
 ## How a new rail gets born here
 
