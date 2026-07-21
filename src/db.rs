@@ -164,19 +164,17 @@ impl SymAlloc {
     /// first sight. The empty-string sentinel (hash 0) maps to itself and is
     /// never dicted. The caller must have loaded the persisted dict first
     /// (`Db::ensure_sym_alloc_loaded`) or `next` would collide with stored ids.
+    /// Dense surrogate for a raw StringId `hash`, minting on first sight. The
+    /// caller guarantees `hash` is a raw StringId, NEVER an already-dense id:
+    /// the encode path only ever calls this on a cell it just interned from
+    /// `Value::Text`, and the call router only on its owned raw-hash `_call_*`
+    /// cells. A pass-through `Value::Int` cell (already dense, or a coord id) is
+    /// left untouched by the caller and never reaches here — so there is no
+    /// dense-vs-hash guess to make, and no range guard that could alias a real
+    /// hash onto an existing symbol.
     fn dense_of(&mut self, hash: i64) -> i64 {
         if hash == 0 {
             return 0;
-        }
-        // Idempotence: an id already inside the range this allocator has handed
-        // out is a dense surrogate passed through from another rel (a native
-        // walk's node cell, a pass-through source var), NOT a raw StringId hash
-        // to re-mint. Return it unchanged so re-encoding a dense cell is a no-op
-        // instead of a double-mint. Real hashes land in this window only at the
-        // ~1-in-10^14 rate the whole dense/hash range split already tolerates,
-        // and even then decode still resolves (the `_strings` direct-hash arm).
-        if hash >= SYM_DENSE_BASE && hash < self.next {
-            return hash;
         }
         if let Some(&dense) = self.map.get(&hash) {
             return dense;
@@ -348,9 +346,10 @@ pub fn open(path: Option<&str>) -> Result<Db> {
                 let hash = crate::spine::StringId::of(&text).sqlite();
                 pending.lock().expect("pending symbol queue poisoned").push(text.clone());
                 // Return the DENSE surrogate, not the hash, so the interned cell
-                // this value lands in stores 1-2 bytes and shares one id space
-                // with every other write path. The allocator is loaded before any
-                // write (`ensure_sym_alloc_loaded`, called from `ensure_meta`).
+                // this value lands in stores a ~5-byte varint (vs 8 for a random
+                // hash) and shares one id space with every other write path. The
+                // allocator is loaded before any write (`ensure_sym_alloc_loaded`,
+                // called from `ensure_meta`).
                 let dense = alloc.lock().expect("sym allocator poisoned").dense_of(hash);
                 Ok(Some(dense))
             })?;
@@ -1349,6 +1348,14 @@ impl Db {
 
     /// execute_batch("_tx", "ROLLBACK")
     pub fn rollback(&self) -> Result<()> {
+        // The rolled-back transaction's `_strings`/`_sym_dict` inserts are gone,
+        // so the in-memory memo of "already attempted this tx" must not keep
+        // claiming those ids durable — otherwise the next tx's flush skips
+        // re-inserting them (the `to_send` filter) and a dense cell it commits
+        // has no `_strings`/`_sym_dict` row: an undecodable cell. Clearing here
+        // forces a clean re-offer. (The in-memory sym allocator map is fine to
+        // keep: it re-hands the SAME id, and the re-offer re-persists the row.)
+        self.inflight_strings.borrow_mut().clear();
         self.execute_batch_on("_tx", "ROLLBACK")
     }
 
@@ -1487,7 +1494,11 @@ impl Db {
     /// calls it right after creating `_sym_dict`.
     pub(crate) fn ensure_sym_alloc_loaded(&self) -> Result<()> {
         {
-            if self.sym_alloc.lock().expect("sym allocator poisoned").loaded {
+            // Steady state: map loaded AND the table is known to exist. While
+            // `dict_exists` is still false we must fall through and re-probe, or
+            // a pre-`ensure_meta` load would latch it false forever.
+            let alloc = self.sym_alloc.lock().expect("sym allocator poisoned");
+            if alloc.loaded && alloc.dict_exists {
                 return Ok(());
             }
         }
@@ -1516,10 +1527,26 @@ impl Db {
         if !alloc.loaded {
             alloc.map = map;
             alloc.next = max_id + 1;
-            alloc.dict_exists = exists;
             alloc.loaded = true;
         }
+        // ALWAYS refresh `dict_exists`, never latch it false: a first call before
+        // `ensure_meta` created `_sym_dict` (e.g. an early spine flush on a fresh
+        // db) would otherwise pin it false for the connection's life and silently
+        // skip persisting EVERY dict row, making every dense cell undecodable.
+        // Cheap to re-probe while false (steady state is true after ensure_meta).
+        alloc.dict_exists = exists;
         Ok(())
+    }
+
+    /// Dense `_sym_dict` surrogate for a single StringId hash, via the one
+    /// shared allocator. The empty sentinel (0) maps to itself. The dict row is
+    /// persisted by the next `flush_syms` (the text rides `_strings` there).
+    pub(crate) fn dense_of_hash(&self, hash: i64) -> Result<i64> {
+        if hash == 0 {
+            return Ok(0);
+        }
+        self.ensure_sym_alloc_loaded()?;
+        Ok(self.sym_alloc.lock().expect("sym allocator poisoned").dense_of(hash))
     }
 
     /// Map each distinct interned StringId hash to its dense `_sym_dict`

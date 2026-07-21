@@ -36,9 +36,22 @@ const PROG: &str = r#"
 rel seen(path: file).
 seen(path) <- scan("WORK", "src/**/*.rs", path, rev).
 
+# SQL write paths — the exact seams 624ba534 left in raw-hash space. `word` is a
+# ground-fact rel (its sym literals lower through `sprf_sym_intern`); `echo_word`
+# is a derived rel that passes the sym through. Both must land in the SAME dense
+# id space as the router-written call/type rels, or the cross-path join below is
+# empty.
+rel word(w: sym).
+word("alpha_symbol").
+word("beta_symbol").
+rel echo_word(w: sym).
+echo_word(w) <- word(w).
+
 ? call_def(repo, sym, kind, file, line, end).
 ? call_edge(caller, callee, kind).
 ? type_entity(repo, sym, name, kind, parent, file, line).
+? word(w).
+? echo_word(w).
 "#;
 
 fn git(dir: &Path, args: &[&str]) {
@@ -99,7 +112,8 @@ fn sym_dict_is_a_dense_bijection_and_preserves_every_join() {
     let dict_hashes = count(&eng, "SELECT COUNT(DISTINCT sym_hash) FROM _sym_dict");
     assert_eq!(dict_rows, dict_ids, "_sym_dict.id is not unique");
     assert_eq!(dict_rows, dict_hashes, "_sym_dict.sym_hash is not unique");
-    // Contiguous ids (no gaps) — the seed row sits at 1e9, real syms at 1e9+1..
+    // Contiguous ids (no gaps on a fresh build) — the allocator hands out
+    // 1e9+1, 1e9+2, ... in order; there is no seed row.
     let span = count(&eng, "SELECT MAX(id) - MIN(id) + 1 FROM _sym_dict");
     assert_eq!(
         span, dict_rows,
@@ -128,6 +142,8 @@ fn sym_dict_is_a_dense_bijection_and_preserves_every_join() {
         ("type_edge", "\"from\""),
         ("type_edge", "\"to\""),
         ("call_name", "sym"),
+        ("word", "w"),       // SQL ground-fact write path
+        ("echo_word", "w"),  // SQL derived-rule write path
     ];
     for (rel, col) in cases {
         let dense = count(&eng, &format!("SELECT COUNT(DISTINCT {col}) FROM rel_{rel}"));
@@ -170,6 +186,32 @@ fn sym_dict_is_a_dense_bijection_and_preserves_every_join() {
     assert!(
         dense_join > 0,
         "call_edge.caller <-> call_def.sym join is empty — the gate would be vacuous"
+    );
+
+    // 5. Cross-WRITE-PATH parity: a SQL ground fact (`word`, lowered through
+    //    `sprf_sym_intern`) and a SQL derived rel (`echo_word`, pass-through)
+    //    must store the SAME dense id for the SAME symbol. This is the exact
+    //    join that was EMPTY under 624ba534's split id space (one side dense,
+    //    the other raw hash). A dense integer join must equal the row count and
+    //    the decoded-text join.
+    let word_rows = count(&eng, "SELECT COUNT(*) FROM rel_word");
+    assert!(word_rows >= 2, "fixture: word should have 2 fact rows, got {word_rows}");
+    let dense_word_join = count(
+        &eng,
+        "SELECT COUNT(*) FROM rel_word w JOIN rel_echo_word e ON w.w = e.w",
+    );
+    let text_word_join = count(
+        &eng,
+        "SELECT COUNT(*) FROM rel_word_txt w JOIN rel_echo_word_txt e ON w.w = e.w",
+    );
+    assert_eq!(
+        dense_word_join, word_rows,
+        "SQL fact `word` and SQL derived `echo_word` disagree on the dense id for a \
+         symbol: dense self-join {dense_word_join} != {word_rows} fact rows (the 624ba534 split)"
+    );
+    assert_eq!(
+        dense_word_join, text_word_join,
+        "cross-write-path join parity broken: dense {dense_word_join} vs decoded {text_word_join}"
     );
 
     let _ = fs::remove_dir_all(&dir);

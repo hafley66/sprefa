@@ -4,7 +4,11 @@ use super::*;
 // 11 (2026-07-20, rev identity normalization): `_file.rev` and every `_rev`
 // twin now hold a resolved oid instead of the `WORK` alias, and the extract
 // digest key moved out of `_reldigest` into the columned `_extract_digest`.
-const SCHEMA_EPOCH: i64 = 12;
+// 13 (2026-07-21): interned rel cells changed from an 8-byte StringId hash to a
+// dense `_sym_dict` surrogate. An existing db's rel_% tables hold raw-hash cells
+// that would silently fail to join freshly-extracted dense cells, so the epoch
+// bump drops and re-extracts every rel table into the one dense id space.
+const SCHEMA_EPOCH: i64 = 13;
 
 /// Result of `Engine::derived_rule_diff` — which derived rels' rule shapes
 /// moved since the stored `drv:` baseline, whether that motion is fully
@@ -354,11 +358,16 @@ impl Engine {
              -- Symbol/interned-string dictionary (2026-07-21 identity
              -- normalization). One row per DISTINCT interned StringId hash that
              -- lands in a `sym`/interned rel column; `id` is a DENSE surrogate
-             -- assigned by the rowid (contiguous from the 1e9 seed). Every interned
-             -- (`col.interned()` && not a `coord` column) rel cell stores THIS
-             -- dense `id` in place of the former 8-byte `StringId::of(text)`
-             -- hash — a 1-2 byte SQLite varint in the table cell AND in every PK
-             -- autoindex + secondary index over it. `sym_hash` is the StringId
+             -- handed out contiguously by the in-memory allocator from 1e9+1.
+             -- Every interned (`col.interned()` && not a `coord` column) rel cell
+             -- stores THIS dense `id` in place of the former 8-byte
+             -- `StringId::of(text)` hash. SQLite stores an integer cell as a
+             -- signed varint, so a ~1e9 id is 5 bytes vs the full 8 for a random
+             -- 64-bit hash (a random hash almost always needs the full 8) — the
+             -- saving is in the table cell AND in every PK autoindex + secondary
+             -- index over it. (Seeding the dense range lower would shrink the
+             -- varint further but risks colliding with the coord id space.)
+             -- `sym_hash` is the StringId
              -- the text interns to in `_strings` (unchanged, still keyed by the
              -- hash): decode is `dense id -> _sym_dict.sym_hash ->
              -- _strings.content`. The dense space (small ints) and the raw hash

@@ -869,11 +869,27 @@ impl Engine {
                 let Some(meta_pos) = positions.get(pos).and_then(|p| *p) else {
                     continue;
                 };
-                if !meta.cols[meta_pos].interned() {
+                let col = &meta.cols[meta_pos];
+                if !col.interned() {
                     continue;
                 }
+                // Storage normalization (2026-07-21): densify ONLY a cell we are
+                // interning fresh from `Value::Text` — intern the text (queued for
+                // `_strings`), then resolve its hash to the dense `_sym_dict`
+                // surrogate right here. A cell that ARRIVES as `Value::Int` is
+                // already encoded — a dense sym id passed through from another
+                // rel (a native walk's node), or a `_df_node_dict` coordinate id
+                // carried in a `text` column — and is left untouched. That is why
+                // there is no dense-vs-hash value guess: the `Text` vs `Int`
+                // origin is the discriminator. A coord column keeps the raw hash
+                // (`_df_node_dict` is its dictionary, not `_sym_dict`).
                 if let Value::Text(text) = value {
-                    *value = Value::Int(sink.sym(text).cell());
+                    let hash = sink.sym(text).cell();
+                    *value = Value::Int(if col.coord {
+                        hash
+                    } else {
+                        self.db.dense_of_hash(hash)?
+                    });
                 }
             }
             encoded.push(out);
@@ -881,13 +897,10 @@ impl Engine {
         // One flush per rel materialize (source reconcile + non-recursive
         // derived): O(rels written this tick) = O(program), never per row. The
         // label keeps this off the plain `INSERT _strings` key the scream
-        // reserves for a genuine per-row leak.
+        // reserves for a genuine per-row leak. The flush also persists the
+        // `_sym_dict` rows for every hash `dense_of_hash` just minted.
         self.db.flush_syms_keyed(&mut sink, "INSERT _strings (encode/rel)")?;
-        // Storage normalization (2026-07-21): swap each interned cell's 8-byte
-        // StringId hash for its 1-2 byte dense `_sym_dict` surrogate before the
-        // row lands. Text is already interned in `_strings` (the flush above),
-        // so the dict resolve only mints/reads the dense id.
-        self.densify_interned_cells(rel, cols, encoded)
+        Ok(encoded)
     }
 
     /// Remap every interned (`col.interned()` && not a `coord` column) cell in
