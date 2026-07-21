@@ -4,12 +4,27 @@ use super::*;
 
 // ---------- path helpers ----------
 
-/// The daemon's home: `$XDG_STATE_HOME/sprefa` (or `~/.local/state/sprefa`). ONE
-/// singleton serving daemon lives here, decoupled from any project root — the
-/// "folders in view" model. Tests set `XDG_STATE_HOME` to a sandbox, which makes
-/// a stray test daemon structurally unable to bind a developer's socket. Created
-/// on demand.
+/// The daemon's home / sprefa state dir. THE single resolver every caller goes
+/// through (roots db, socket, pid, roots.json, why/events/invlog/health/trace,
+/// setup manifest). Precedence, highest first:
+///   1. `DL_STATE_DIR` — IS the sprefa state dir itself (no `sprefa` suffix
+///      appended). The honored test/agent sandbox knob. Was silently ignored
+///      before 2026-07-21: the fleet believed it isolated runs while every one
+///      wrote the real `~/.local/state/sprefa` (failure-modes class 30).
+///   2. `XDG_STATE_HOME` -> `<XDG_STATE_HOME>/sprefa`.
+///   3. platform default -> `$HOME/.local/state/sprefa` (or `./sprefa`).
+/// An explicit `--db <path>` outranks all of these but is a db-file override
+/// resolved by the caller, not a home. ONE singleton serving daemon lives at
+/// this home, decoupled from any project root — the "folders in view" model. A
+/// sandboxed home makes a stray test daemon structurally unable to bind a
+/// developer's socket. Created on demand.
+///
+/// Build-vs-buy: no config crate. This is one ordered `env::var_os` chain plus a
+/// `join`; figment/config would be dead weight for a single env lookup.
 pub fn daemon_home() -> PathBuf {
+    if let Some(dir) = std::env::var_os("DL_STATE_DIR") {
+        return PathBuf::from(dir);
+    }
     let base = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".local/state")))

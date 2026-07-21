@@ -344,11 +344,9 @@ fn append_section_j(journal: &mut SetupJournal, root: &Path, f: &Path) -> Result
 pub fn uninstall() -> Result<i32> {
     let mut journal = SetupJournal::load()?;
     journal.undo(None, false, false)?;
-    let state = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("sprefa/setup-manifest.json");
+    // Single resolver (DL_STATE_DIR > XDG_STATE_HOME > platform default) so the
+    // uninstall path matches exactly where `SetupJournal::save` wrote.
+    let state = crate::daemon::daemon_home().join("setup-manifest.json");
     if state.exists() {
         std::fs::remove_file(&state)?;
     }
