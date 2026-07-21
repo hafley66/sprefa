@@ -64,6 +64,11 @@ pub fn ts_comments(content: &str, tsx: bool) -> Vec<crate::cst::RawComment> {
 pub struct TemplatePart {
     pub node: String,
     pub line: u32,
+    /// 0-based byte column of the occurrence anchor — the `col` component of the
+    /// `node` coordinate, retained so `template_parts.node` can be resolved to
+    /// the SAME `_df_node_dict` surrogate as `df_lit.id` (identity
+    /// normalization, 2026-07-20).
+    pub col: u32,
     pub idx: u32,
     pub kind: &'static str,
     pub text: String,
@@ -133,7 +138,7 @@ impl<'a, 's> OxcVisit<'a> for TsTemplateWalker<'s> {
         // `` ` ` ``) still yields one static row.
         for (slot, quasi) in it.quasis.iter().enumerate() {
             self.out.push(TemplatePart {
-                node: node.clone(), line, idx, kind: "static", text: quasi.value.raw.to_string(),
+                node: node.clone(), line, col, idx, kind: "static", text: quasi.value.raw.to_string(),
             });
             idx += 1;
             if let Some(expr) = it.expressions.get(slot) {
@@ -141,7 +146,7 @@ impl<'a, 's> OxcVisit<'a> for TsTemplateWalker<'s> {
                 let span = expr.span();
                 let text = self.content.get(span.start as usize..span.end as usize)
                     .unwrap_or_default().to_string();
-                self.out.push(TemplatePart { node: node.clone(), line, idx, kind: "expr", text });
+                self.out.push(TemplatePart { node: node.clone(), line, col, idx, kind: "expr", text });
                 idx += 1;
             }
         }

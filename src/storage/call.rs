@@ -388,7 +388,7 @@ fn apply_sqlite_call_owner_delta_inner(
 
     let mut sink = SymSink::new();
     let fact_digest_sid = sink.sym(&delta.owner.fact_digest).cell();
-    Storage::flush_syms(db, &mut sink)?;
+    Storage::flush_syms_keyed(db, &mut sink, "INSERT _strings (spine/call)")?;
     let next_generation = generation + 1;
     let mut update_owner = db.prepare(
         "UPDATE _call_owner SET fact_digest_sid = ?1, generation = ?2 WHERE owner_id = ?3",
@@ -491,7 +491,7 @@ fn insert_sqlite_call_delta_sites(
         ]);
     }
     let call_sid = sink.sym("call").cell();
-    Storage::flush_syms(db, &mut sink)?;
+    Storage::flush_syms_keyed(db, &mut sink, "INSERT _strings (spine/call)")?;
     Storage::insert_rows(
         db,
         "_call_raw_site",
@@ -622,7 +622,7 @@ fn replace_sqlite_call_baseline(
                 .unwrap_or(Value::Null),
         ]);
     }
-    Storage::flush_syms(db, &mut sink)?;
+    Storage::flush_syms_keyed(db, &mut sink, "INSERT _strings (spine/call)")?;
     insert_sqlite_call_owners(db, generation, &owner_rows)?;
     Storage::insert_rows(
         db,
@@ -819,7 +819,7 @@ fn replace_sqlite_call_def(db: &Db, defs: &[CallDefBaseline]) -> Result<()> {
             ]);
         }
     }
-    Storage::flush_syms(db, &mut sink)?;
+    Storage::flush_syms_keyed(db, &mut sink, "INSERT _strings (spine/call)")?;
     // `insert_rows` quotes each column name, so `end` is passed bare here (it
     // becomes `"end"` in the INSERT) — unlike Ctx::scan, which needs it
     // pre-quoted.

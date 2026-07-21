@@ -122,25 +122,26 @@ impl Engine {
         let columns: Vec<String> = meta.cols.iter().map(|col| {
             if col.coord {
                 // A df-coordinate id: reconstruct `file:line:col:kind` from
-                // rel_df_node (the coordinate text is no longer in `_strings`).
+                // `_df_node_dict` (keyed by the dense surrogate; the coordinate
+                // text is not in `_strings`).
                 format!(
-                    "(SELECT (SELECT content FROM _strings WHERE _strings.id = dn.\"file\") || ':' || \
-                     dn.\"line\" || ':' || dn.\"col\" || ':' || \
-                     (SELECT content FROM _strings WHERE _strings.id = dn.\"kind\") \
-                     FROM rel_df_node dn WHERE dn.\"id\" = rel_{rel}.\"{}\" LIMIT 1) AS \"{}\"",
+                    "(SELECT (SELECT content FROM _strings WHERE _strings.id = dnd.\"file\") || ':' || \
+                     dnd.\"line\" || ':' || dnd.\"col\" || ':' || \
+                     (SELECT content FROM _strings WHERE _strings.id = dnd.\"kind\") \
+                     FROM _df_node_dict dnd WHERE dnd.\"id\" = rel_{rel}.\"{}\" LIMIT 1) AS \"{}\"",
                     col.name, col.name
                 )
             } else if col.interned() {
                 // COALESCE fallback: an ordinary `text` column carrying a df
                 // coordinate id (ecosystem flow rels) reconstructs from
-                // rel_df_node when its text is absent from `_strings`. Short-
-                // circuits for a normal interned string (the _strings hit).
+                // `_df_node_dict` when its value is absent from `_strings`.
+                // Short-circuits for a normal interned string (the _strings hit).
                 format!(
                     "COALESCE((SELECT content FROM _strings WHERE _strings.id = rel_{rel}.\"{name}\"), \
-                     (SELECT (SELECT content FROM _strings WHERE _strings.id = dn.\"file\") || ':' || \
-                     dn.\"line\" || ':' || dn.\"col\" || ':' || \
-                     (SELECT content FROM _strings WHERE _strings.id = dn.\"kind\") \
-                     FROM rel_df_node dn WHERE dn.\"id\" = rel_{rel}.\"{name}\" LIMIT 1)) AS \"{name}\"",
+                     (SELECT (SELECT content FROM _strings WHERE _strings.id = dnd.\"file\") || ':' || \
+                     dnd.\"line\" || ':' || dnd.\"col\" || ':' || \
+                     (SELECT content FROM _strings WHERE _strings.id = dnd.\"kind\") \
+                     FROM _df_node_dict dnd WHERE dnd.\"id\" = rel_{rel}.\"{name}\" LIMIT 1)) AS \"{name}\"",
                     name = col.name
                 )
             } else {
@@ -1227,36 +1228,27 @@ impl Engine {
         self.db
             .exec_on(&d.name, &format!("DROP TABLE IF EXISTS {v}"))?;
         let (c0, c1) = (&d.cols[0].name, &d.cols[1].name);
-        // Re-encode an SCC node name back to the head column's stored int handle
-        // by HASHING (`sprf_sym`, pure), not a `_strings` content lookup: the
-        // hash IS the id (`_strings.id = StringId::of(content)` by construction),
-        // so this is equivalent for an interned-text head — and it is the ONLY
-        // form that works for a df-coordinate (`node`) head, whose coordinate
-        // text is no longer in `_strings`. `na.name` is the decoded/reconstructed
-        // edge endpoint (from `rel_<edge>_txt`), so `sprf_sym(na.name)` recovers
-        // the same id `df_edge.from` carries.
-        let output_name = |column: &str| {
+        // An int-keyed head column (interned text OR a df-coordinate `node`)
+        // carries its STORED id verbatim in `scc_node.name` (the closure edge was
+        // read raw, `load_edges`), so recovering it is a plain `CAST(name AS
+        // INTEGER)` — no re-hash. This replaces the old `sprf_sym(name)`, which
+        // rebuilt the id from its text (correct only while the id WAS a hash of
+        // that text; false for the dense `_df_node_dict` surrogate, identity
+        // normalization 2026-07-20). A plain (non-interned) column stores its
+        // text directly and passes through unchanged.
+        let output_expr = |side: &str, column: &str| {
             if d.cols
                 .iter()
                 .find(|c| c.name == column)
-                .is_some_and(|c| c.interned())
+                .is_some_and(|c| c.interned() || c.coord)
             {
-                "sprf_sym(na.name)".to_string()
+                format!("CAST({side}.name AS INTEGER)")
             } else {
-                "na.name".to_string()
+                format!("{side}.name")
             }
         };
-        let output_name_b = |column: &str| {
-            if d.cols
-                .iter()
-                .find(|c| c.name == column)
-                .is_some_and(|c| c.interned())
-            {
-                "sprf_sym(nb.name)".to_string()
-            } else {
-                "nb.name".to_string()
-            }
-        };
+        let output_name = |column: &str| output_expr("na", column);
+        let output_name_b = |column: &str| output_expr("nb", column);
         let first_a = output_name(c0);
         let first_b = output_name_b(c1);
         let second_a = output_name(c0);
@@ -1285,21 +1277,21 @@ impl Engine {
             let decode_head = |col: &Col| -> String {
                 if col.coord {
                     format!(
-                        "(SELECT (SELECT content FROM _strings WHERE _strings.id = dn.\"file\") || ':' || \
-                         dn.\"line\" || ':' || dn.\"col\" || ':' || \
-                         (SELECT content FROM _strings WHERE _strings.id = dn.\"kind\") \
-                         FROM rel_df_node dn WHERE dn.\"id\" = rel_{}.\"{}\" LIMIT 1)",
+                        "(SELECT (SELECT content FROM _strings WHERE _strings.id = dnd.\"file\") || ':' || \
+                         dnd.\"line\" || ':' || dnd.\"col\" || ':' || \
+                         (SELECT content FROM _strings WHERE _strings.id = dnd.\"kind\") \
+                         FROM _df_node_dict dnd WHERE dnd.\"id\" = rel_{}.\"{}\" LIMIT 1)",
                         d.name, col.name
                     )
                 } else {
                     // COALESCE fallback (see create_rel_view): a `text` closure
-                    // head carrying df ids reconstructs from rel_df_node.
+                    // head carrying df ids reconstructs from `_df_node_dict`.
                     format!(
                         "COALESCE((SELECT content FROM _strings WHERE _strings.id = rel_{name}.\"{col}\"), \
-                         (SELECT (SELECT content FROM _strings WHERE _strings.id = dn.\"file\") || ':' || \
-                         dn.\"line\" || ':' || dn.\"col\" || ':' || \
-                         (SELECT content FROM _strings WHERE _strings.id = dn.\"kind\") \
-                         FROM rel_df_node dn WHERE dn.\"id\" = rel_{name}.\"{col}\" LIMIT 1))",
+                         (SELECT (SELECT content FROM _strings WHERE _strings.id = dnd.\"file\") || ':' || \
+                         dnd.\"line\" || ':' || dnd.\"col\" || ':' || \
+                         (SELECT content FROM _strings WHERE _strings.id = dnd.\"kind\") \
+                         FROM _df_node_dict dnd WHERE dnd.\"id\" = rel_{name}.\"{col}\" LIMIT 1))",
                         name = d.name, col = col.name
                     )
                 }

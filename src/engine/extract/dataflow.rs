@@ -55,6 +55,111 @@ impl Engine {
         Ok(())
     }
 
+    /// Assign a DENSE surrogate id to each distinct dataflow-node coordinate
+    /// `(file, line, col, kind)` via the persistent `_df_node_dict`, and return
+    /// the coordinate-key -> surrogate map the row writers probe. This replaces
+    /// the former `StringId::of(format!("{file}:{line}:{col}:{kind}"))` naked
+    /// hash as the node identity: the surrogate is dense (AUTOINCREMENT, zero
+    /// hash-collision risk across the corpus's coordinates) and the dict's
+    /// `UNIQUE(file, line, col, kind)` is the real key over the coordinate
+    /// columns. Content-keyed (`INSERT OR IGNORE` on the tuple), so a re-run
+    /// cold-chunk slice or a later wholesale refresh resolves an unchanged
+    /// coordinate to the SAME surrogate — the property the cold-slice append
+    /// relies on, kept without a corpus-global sequence.
+    ///
+    /// `coords` is `(coord_key, file_text, line, col, kind_text)`. `file`/`kind`
+    /// are keyed in the dict by their `StringId` (the SAME id the df rels store),
+    /// and their TEXT is interned into `_strings` here so `coord_reconstruct`
+    /// resolves the coordinate even when no rel row otherwise carries it (a
+    /// module-level template's `"template"` kind, say). Batched N+1-safe: one
+    /// `_strings` flush + one TEMP-probe load + one `INSERT OR IGNORE` + one
+    /// `SELECT` per call, regardless of coordinate count.
+    pub(crate) fn resolve_coord_surrogates(
+        &self,
+        coords: &[(String, String, u32, u32, String)],
+    ) -> Result<std::collections::HashMap<String, i64>> {
+        use std::collections::HashMap;
+        use crate::spine::StringId;
+        if coords.is_empty() {
+            return Ok(HashMap::new());
+        }
+        // Intern every distinct file/kind text so the dict's StringId keys decode
+        // back to text at display time (`coord_reconstruct`). Dedup is the
+        // sink's + `_strings` cache's job; re-offering an already-interned file
+        // (the common df case) is a cache hit.
+        let mut sink = crate::spine::SymSink::new();
+        // Distinct tuple -> a representative coord_key (edges/args reference the
+        // key; identical tuples share one dict row and one surrogate).
+        let mut probe_rows: Vec<Vec<Value>> = Vec::with_capacity(coords.len());
+        let mut seen_tuple: std::collections::HashSet<(i64, u32, u32, i64)> =
+            std::collections::HashSet::new();
+        for (coord_key, file_text, line, col, kind_text) in coords {
+            let file_sid = StringId::of(file_text).sqlite();
+            let kind_sid = StringId::of(kind_text).sqlite();
+            if seen_tuple.insert((file_sid, *line, *col, kind_sid)) {
+                sink.sym(file_text);
+                sink.sym(kind_text);
+                probe_rows.push(vec![
+                    Value::Int(file_sid),
+                    Value::Int(*line as i64),
+                    Value::Int(*col as i64),
+                    Value::Int(kind_sid),
+                    Value::Text(coord_key.clone()),
+                ]);
+            }
+        }
+        self.db.flush_syms_keyed(&mut sink, "INSERT _strings (spine/source)")?;
+        self.db.exec_on(
+            "_df_coord_probe",
+            "CREATE TEMP TABLE IF NOT EXISTS _df_coord_probe \
+             (file INTEGER, line INTEGER, col INTEGER, kind INTEGER, coord TEXT)",
+        )?;
+        self.db.exec_on("_df_coord_probe", "DELETE FROM _df_coord_probe")?;
+        self.db.insert_rows_keyed(
+            "_df_coord_probe",
+            "INSERT _df_coord_probe",
+            &["file", "line", "col", "kind", "coord"],
+            &probe_rows,
+        )?;
+        self.db.exec_on(
+            "_df_node_dict",
+            "INSERT OR IGNORE INTO _df_node_dict (file, line, col, kind) \
+             SELECT DISTINCT file, line, col, kind FROM _df_coord_probe",
+        )?;
+        // The probe carries one representative coord per tuple; join it back to
+        // the dict to read the surrogate assigned (or already present) for that
+        // tuple. Every OTHER coord string that maps to the same tuple is filled
+        // by the caller from this representative (they share the surrogate).
+        let mut tuple_id: HashMap<(i64, u32, u32, i64), i64> =
+            HashMap::with_capacity(probe_rows.len());
+        self.db.query_rows(
+            "_df_node_dict",
+            "SELECT p.file, p.line, p.col, p.kind, d.id FROM _df_coord_probe p \
+             JOIN _df_node_dict d ON d.file = p.file AND d.line = p.line \
+               AND d.col = p.col AND d.kind = p.kind",
+            &[],
+            |row| {
+                let file: i64 = row.get(0)?;
+                let line: i64 = row.get(1)?;
+                let col: i64 = row.get(2)?;
+                let kind: i64 = row.get(3)?;
+                let id: i64 = row.get(4)?;
+                tuple_id.insert((file, line as u32, col as u32, kind), id);
+                Ok(())
+            },
+        )?;
+        // Map EVERY input coord_key to its tuple's surrogate.
+        let mut surrogate: HashMap<String, i64> = HashMap::with_capacity(coords.len());
+        for (coord_key, file_text, line, col, kind_text) in coords {
+            let file_sid = StringId::of(file_text).sqlite();
+            let kind_sid = StringId::of(kind_text).sqlite();
+            if let Some(&id) = tuple_id.get(&(file_sid, *line, *col, kind_sid)) {
+                surrogate.insert(coord_key.clone(), id);
+            }
+        }
+        Ok(surrogate)
+    }
+
     /// Parse `files` and build every dataflow rel's row set (dedup + intern),
     /// flushing the interned id strings to `_strings`. Shared by the wholesale
     /// refresh and the cold-chunk slice append; the ONLY difference between them
@@ -88,16 +193,34 @@ impl Engine {
         // Opaque df-coordinate id columns (df_node.id and every column that
         // carries one: df_edge.from/to, df_arg.call/arg, df_field.id/value,
         // df_param.id, df_lit.id, df_node_repo.id, nest.call_id, and the `_rev`
-        // twins — the twin id columns carry the SAME raw id, never a rev-folded
-        // string) store the id's blake3 `StringId` hash as the join handle, but
-        // the `file:line:col:kind` TEXT is NEVER interned into `_strings` (it was
-        // 91.7% of the dictionary). Every such column is declared `Col::node`
-        // (coord), so on display it reconstructs from the df_node coordinate
-        // columns (`coord_decode`) instead of a `_strings` lookup. `nid` is the
-        // pure hash — no queue, no `_strings` row. The text these ids are BUILT
-        // from (fn_sym, var, kind, file, ...) still interns normally via
-        // `encode_rel_rows` (those columns stay `Value::Text`).
-        let nid = |s: &str| Value::Int(crate::spine::StringId::of(s).sqlite());
+        // twins) carry a DENSE surrogate assigned per distinct `(file, line,
+        // col, kind)` coordinate by `_df_node_dict` (identity normalization,
+        // 2026-07-20) — replacing the former
+        // `StringId::of(format!("{file}:{line}:{col}:{kind}"))` naked hash. The
+        // coordinate TEXT is still never interned into `_strings`; on display
+        // every coord id reconstructs `file:line:col:kind` from the dict
+        // (`coord_reconstruct`). `nid(coord_string)` looks the coordinate up in
+        // the surrogate map built below (every referenced id IS a df_node, so it
+        // is always present; a miss is an identity-invariant break, hence the
+        // `?`). The text these coordinates are BUILT from (fn_sym, var, kind,
+        // file, ...) still interns normally via `encode_rel_rows`.
+        let mut coords: Vec<(String, String, u32, u32, String)> = Vec::new();
+        for (_, _, _, f) in &facts {
+            for n in &f.nodes {
+                coords.push((n.id.clone(), n.file.clone(), n.line, n.col, n.kind.clone()));
+            }
+        }
+        let surrogate = self.resolve_coord_surrogates(&coords)?;
+        let nid = |s: &str| -> Result<Value> {
+            surrogate
+                .get(s)
+                .copied()
+                .map(Value::Int)
+                .ok_or_else(|| anyhow::anyhow!(
+                    "dataflow id {s:?} references a coordinate with no df_node \
+                     (identity invariant: every id column is a df_node id)"
+                ))
+        };
         let mut node_rows: Vec<Vec<Value>> = Vec::new();
         let mut edge_rows: Vec<Vec<Value>> = Vec::new();
         let mut loop_rows: Vec<Vec<Value>> = Vec::new();
@@ -154,7 +277,7 @@ impl Engine {
                     n.line,
                 )) {
                     node_rows.push(vec![
-                        nid(&n.id),
+                        nid(&n.id)?,
                         t(&n.kind),
                         t(&n.var),
                         t(&n.fn_sym),
@@ -165,7 +288,7 @@ impl Engine {
                 }
                 if seen_node_rev.insert((n.id.as_str(), rev.as_str())) {
                     node_rev_rows.push(vec![
-                        nid(&n.id),
+                        nid(&n.id)?,
                         t(&n.kind),
                         t(&n.var),
                         t(&n.fn_sym),
@@ -186,12 +309,12 @@ impl Engine {
                 // rev share one df_node row but get TWO df_node_repo(_rev) rows,
                 // so the join mints the field for BOTH (they both really have it).
                 if seen_node_repo_rev.insert((n.id.as_str(), repo.as_str(), rev.as_str())) {
-                    node_repo_rev_rows.push(vec![nid(&n.id), t(repo), t(rev)]);
+                    node_repo_rev_rows.push(vec![nid(&n.id)?, t(repo), t(rev)]);
                 }
             }
             for e in &f.edges {
                 if seen_edge.insert((e.from.as_str(), e.to.as_str())) {
-                    edge_rows.push(vec![nid(&e.from), nid(&e.to)]);
+                    edge_rows.push(vec![nid(&e.from)?, nid(&e.to)?]);
                 }
             }
             for l in &f.loops {
@@ -212,7 +335,7 @@ impl Engine {
             for ns in &f.nests {
                 if seen_nest.insert((ns.call_id.as_str(), ns.loop_id.as_str())) {
                     nest_rows.push(vec![
-                        nid(&ns.call_id),
+                        nid(&ns.call_id)?,
                         t(&ns.loop_id),
                         i(ns.depth),
                         t(&ns.collection),
@@ -221,7 +344,7 @@ impl Engine {
             }
             for (id, pos) in &f.param_pos {
                 if seen_param.insert(id.as_str()) {
-                    param_rows.push(vec![nid(id), i(*pos)]);
+                    param_rows.push(vec![nid(id)?, i(*pos)]);
                 }
             }
             for (call, pos, arg) in &f.args {
@@ -230,7 +353,7 @@ impl Engine {
                 // the `_rev` twin is written. call/arg carry the raw df_node ids
                 // (matching df_node_rev.id); rev is its own trailing dedup column.
                 if seen_arg_rev.insert((call.as_str(), *pos, arg.as_str(), rev.as_str())) {
-                    arg_rev_rows.push(vec![nid(call), Value::Int(*pos), nid(arg), t(rev)]);
+                    arg_rev_rows.push(vec![nid(call)?, Value::Int(*pos), nid(arg)?, t(rev)]);
                 }
             }
             for (id, field, value) in &f.fields {
@@ -245,25 +368,24 @@ impl Engine {
                     value.as_str(),
                     rev.as_str(),
                 )) {
-                    field_rev_rows.push(vec![nid(id), t(field), nid(value), t(rev)]);
+                    field_rev_rows.push(vec![nid(id)?, t(field), nid(value)?, t(rev)]);
                 }
             }
             for (id, text, kind) in &f.lits {
                 if seen_lit.insert((id.as_str(), text.as_str(), *kind)) {
-                    lit_rows.push(vec![nid(id), t(text), t(kind)]);
+                    lit_rows.push(vec![nid(id)?, t(text), t(kind)]);
                 }
                 // id is the raw df_node id, matching df_node_rev.id (D5 pattern,
                 // same shape as df_field_rev); rev is a plain trailing column.
                 if seen_lit_rev.insert((id.as_str(), rev.as_str())) {
-                    lit_rev_rows.push(vec![nid(id), t(text), t(kind), t(rev)]);
+                    lit_rev_rows.push(vec![nid(id)?, t(text), t(kind), t(rev)]);
                 }
             }
         }
 
-        // No `_strings` flush for the df ids: `nid` hashes only (the coordinate
-        // TEXT is never interned — that dictionary bloat is what this arc
-        // deletes). The remaining text columns (kind/var/fn/file/lit-text)
-        // intern normally in `encode_rel_rows` at write time.
+        // No `_strings` flush for the df ids: they are dense `_df_node_dict`
+        // surrogates now, never interned text. The remaining text columns
+        // (kind/var/fn/file/lit-text) intern normally in `encode_rel_rows`.
 
         Ok(DataflowRowSet {
             node: node_rows,

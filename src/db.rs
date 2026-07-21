@@ -777,11 +777,24 @@ impl Db {
     pub fn is_autocommit(&self) -> bool { self.conn.is_autocommit() }
 
     pub fn flush_pending_syms(&self) -> Result<usize> {
+        self.flush_pending_syms_keyed("INSERT _strings")
+    }
+
+    /// `flush_pending_syms` with a caller-chosen N+1 counter key. The pending
+    /// intern queue is drained at O(program) or O(fixpoint-depth) boundaries
+    /// (per-component, per-pass), never per row — the caller names which
+    /// structural axis it flushes on (`INSERT _strings (fixpoint/pass)`,
+    /// `... (fixpoint/component)`) so the tick counter attributes the batched
+    /// `_strings` inserts to their real scaling term instead of summing them
+    /// under one key that then mislabels legitimate depth work as a per-row
+    /// loop. The plain `INSERT _strings` key stays reserved for a genuine
+    /// unlabeled per-row flush, which must still scream.
+    pub fn flush_pending_syms_keyed(&self, bump_key: &str) -> Result<usize> {
         let texts = std::mem::take(&mut *self.pending_syms.lock().expect("pending symbol queue poisoned"));
         if texts.is_empty() { return Ok(0); }
         let mut sink = crate::spine::SymSink::new();
         for text in texts { sink.sym(&text); }
-        self.flush_syms(&mut sink)
+        self.flush_syms_keyed(&mut sink, bump_key)
     }
 
     fn bump(&self, key: &str) {
@@ -818,7 +831,14 @@ impl Db {
             let counts = self.counts.borrow();
             let mut top: Vec<(&String, &u32)> = counts.iter().filter(|(_, n)| **n > 1).collect();
             top.sort_by(|a, b| b.1.cmp(a.1));
-            for (key, n) in top.iter().take(5) {
+            // `DL_PROFILE_TOPN` widens the shortlist (default 5) for attribution
+            // sweeps where the key of interest is not in the top 5 — sibling
+            // knob to `DL_PROFILE_SQL_MS`.
+            let topn = std::env::var("DL_PROFILE_TOPN")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(5);
+            for (key, n) in top.iter().take(topn) {
                 let key = *key;
                 let count = **n;
                 tracing::debug!(key = %key, count, "[profile] {count}x {key}");
@@ -828,9 +848,18 @@ impl Db {
         // Reads bump under a "SELECT {rel}" key and stay out of the scream:
         // the fixpoint legitimately queries a shared head rel once per rule,
         // which is O(program), never O(rows). The scream is for write loops.
+        // Labeled `_strings` flushes (`INSERT _strings (fixpoint/pass)`,
+        // `... (fixpoint/component)`, `... (encode/rel)`, `... (spine/source)`)
+        // are the batched intern drains at fixpoint-depth / program-structure
+        // boundaries — legitimately O(depth) or O(rels), NOT per-row — so they
+        // stay out of the scream too. The plain `INSERT _strings` key (no
+        // parenthetical label) is what an unlabeled per-row flush would bump,
+        // and it still screams.
         let (key, &n) = counts
             .iter()
-            .filter(|(key, _)| !key.starts_with("SELECT "))
+            .filter(|(key, _)| {
+                !key.starts_with("SELECT ") && !key.starts_with("INSERT _strings (")
+            })
             .max_by_key(|(_, n)| **n)?;
         if n > N1_THRESHOLD {
             tracing::warn!(key = %key, n, "[n+1] '{key}' ran {n}x this tick — collect the set and call Db::insert_rows once");
@@ -1379,6 +1408,16 @@ impl Db {
     /// earlier in a still-open transaction (`inflight_strings`) — that's the
     /// actual waste this cuts (see both fields' doc comments on `Db`).
     pub fn flush_syms(&self, sink: &mut crate::spine::SymSink) -> Result<usize> {
+        self.flush_syms_keyed(sink, "INSERT _strings")
+    }
+
+    /// `flush_syms` with a caller-chosen N+1 counter key (see
+    /// `flush_pending_syms_keyed`). Threads `bump_key` into the batched
+    /// `_strings` insert so a structural, O(program) source-side flush (one per
+    /// rel materialize) reports under its own label — `INSERT _strings
+    /// (encode/rel)`, `... (spine/source)` — instead of the plain
+    /// `INSERT _strings` key the scream watches for a genuine per-row leak.
+    pub fn flush_syms_keyed(&self, sink: &mut crate::spine::SymSink, bump_key: &str) -> Result<usize> {
         use std::collections::BTreeMap;
         let pending = sink.drain();
         if pending.is_empty() { return Ok(0); }
@@ -1442,7 +1481,7 @@ impl Db {
         // `insert_source_rows_for_paths` calling `insert_spine_strings` then
         // `encode_rel_rows` over the same row set) does not re-issue the same
         // `INSERT OR IGNORE` for ids this transaction already holds.
-        let total = self.insert_rows("_strings", &["id", "content"], &rows)?;
+        let total = self.insert_rows_keyed("_strings", bump_key, &["id", "content"], &rows)?;
         if was_autocommit {
             let mut persisted = self.persisted_strings.borrow_mut();
             if persisted.len() + attempted_ids.len() > STRING_CACHE_CAP {
@@ -1611,6 +1650,50 @@ mod tests {
         assert!(db.tick_end().is_none(), "chunked insert must not trip the n+1 counter");
         let count: i64 = db.query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
         assert_eq!(count, 33_000);
+    }
+
+    /// The `_strings` N+1 rail must distinguish a genuine per-row leak from the
+    /// batched, structural intern flushes (per fixpoint pass / per rel). The
+    /// labeled variants (`INSERT _strings (fixpoint/pass)`, `... (encode/rel)`,
+    /// ...) are O(depth) or O(program), never per row, so they stay OUT of the
+    /// scream even past the threshold; the plain `INSERT _strings` key — what an
+    /// unlabeled per-row `flush_syms` would bump — still screams. This locks the
+    /// relabel that stopped the rail from mislabeling legitimate depth work as a
+    /// per-row loop (v11 strings-n1 verdict).
+    #[test]
+    fn strings_n1_rail_screams_on_plain_key_not_labeled_variants() {
+        let db = open(None).unwrap();
+        create_strings_table(&db);
+        let n = N1_THRESHOLD as usize + 5;
+
+        // A labeled, structural flush repeated past the threshold must NOT
+        // scream: this is the O(fixpoint-depth) per-pass drain, one batched
+        // insert per pass, exactly the shape the old single key mislabeled.
+        db.tick_begin();
+        for i in 0..n {
+            let mut sink = crate::spine::SymSink::new();
+            sink.sym(&format!("pass-{i}-str"));
+            db.flush_syms_keyed(&mut sink, "INSERT _strings (fixpoint/pass)").unwrap();
+        }
+        assert!(
+            db.tick_end().is_none(),
+            "labeled O(depth) _strings flushes must not trip the per-row scream"
+        );
+
+        // The plain key (unlabeled per-row flush) past the threshold MUST
+        // scream — a real leak stays loud.
+        db.tick_begin();
+        for i in 0..n {
+            let mut sink = crate::spine::SymSink::new();
+            sink.sym(&format!("leak-{i}-str"));
+            db.flush_syms(&mut sink).unwrap();
+        }
+        let screamed = db.tick_end();
+        assert_eq!(
+            screamed,
+            Some(("INSERT _strings".to_string(), n as u32)),
+            "a genuine per-row _strings flush must still scream on the plain key"
+        );
     }
 
     #[test]

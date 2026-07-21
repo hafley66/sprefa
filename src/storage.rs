@@ -75,6 +75,10 @@ pub trait Storage {
     /// Flush one explicitly collected symbol batch.
     fn flush_syms(&self, sink: &mut SymSink) -> Result<usize>;
 
+    /// `flush_syms` with a caller-chosen N+1 counter key (see
+    /// `Db::flush_syms_keyed`).
+    fn flush_syms_keyed(&self, sink: &mut SymSink, bump_key: &str) -> Result<usize>;
+
     /// Flush symbols queued by SQLite scalar functions.
     fn flush_pending_syms(&self) -> Result<usize>;
 
@@ -160,6 +164,10 @@ impl Storage for Db {
 
     fn flush_syms(&self, sink: &mut SymSink) -> Result<usize> {
         Db::flush_syms(self, sink)
+    }
+
+    fn flush_syms_keyed(&self, sink: &mut SymSink, bump_key: &str) -> Result<usize> {
+        Db::flush_syms_keyed(self, sink, bump_key)
     }
 
     fn flush_pending_syms(&self) -> Result<usize> {

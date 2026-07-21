@@ -878,7 +878,11 @@ impl Engine {
             }
             encoded.push(out);
         }
-        self.db.flush_syms(&mut sink)?;
+        // One flush per rel materialize (source reconcile + non-recursive
+        // derived): O(rels written this tick) = O(program), never per row. The
+        // label keeps this off the plain `INSERT _strings` key the scream
+        // reserves for a genuine per-row leak.
+        self.db.flush_syms_keyed(&mut sink, "INSERT _strings (encode/rel)")?;
         Ok(encoded)
     }
 

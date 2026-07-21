@@ -280,6 +280,20 @@ impl Engine {
 
         let t = |s: &str| Value::Text(s.to_string());
         let i = |n: u32| Value::Int(n as i64);
+        // `template_parts.node` must carry the SAME `_df_node_dict` surrogate as
+        // `df_lit.id` for the occurrence, so it joins the dataflow rels. Resolve
+        // every part's coordinate `(path, line, col, "template")` through the
+        // dict — the dataflow lift mints the identical coordinate, so INSERT OR
+        // IGNORE converges both to one surrogate regardless of extract order.
+        let coords: Vec<(String, String, u32, u32, String)> = facts
+            .iter()
+            .flat_map(|(_repo, path, _rev, parts)| {
+                parts.iter().map(move |p| {
+                    (p.node.clone(), path.clone(), p.line, p.col, "template".to_string())
+                })
+            })
+            .collect();
+        let surrogate = self.resolve_coord_surrogates(&coords)?;
         let mut seen: HashSet<(String, u32)> = HashSet::new();
         let mut rows: Vec<Vec<Value>> = Vec::new();
         for (_repo, path, _rev, parts) in &facts {
@@ -288,10 +302,16 @@ impl Engine {
                 if !seen.insert((p.node.clone(), p.idx)) {
                     continue;
                 }
+                let node_id = *surrogate.get(&p.node).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "template_parts coordinate {:?} did not resolve to a surrogate",
+                        p.node
+                    )
+                })?;
                 rows.push(vec![
                     t(path),
                     i(p.line),
-                    t(&p.node),
+                    Value::Int(node_id),
                     i(p.idx),
                     t(p.kind),
                     t(&p.text),

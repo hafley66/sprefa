@@ -564,15 +564,17 @@ pub(crate) fn comment_rel_decls() -> Vec<RelDecl> {
 pub(crate) fn template_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
-        // `node` carries a df-coordinate id (joins df_lit.id/df_node.id) but is
-        // kept a normal interned `text` column, NOT `Col::node`: a MODULE-level
-        // template (`export const x = ` + backticks) has a template_parts row but
-        // NO df_node (the df lift only walks fn bodies), so coord reconstruction
-        // would have nothing to read. Template occurrences are few (~120 vs 126k
-        // df coords), so interning their text costs nothing meaningful, and the
-        // int join key still matches df_lit.id (same StringId hash).
+        // `node` carries a df-coordinate id (joins df_lit.id/df_node.id). It is
+        // now `Col::node` (coord, 2026-07-20 identity normalization): the
+        // `_df_node_dict` surrogate replaces the old StringId hash, and the
+        // template extractor resolves its coordinate through the SAME dict
+        // (`collect_template_rows`), so `template_parts.node == df_lit.id`. A
+        // MODULE-level template (no df_node — the df lift only walks fn bodies)
+        // is safe now: reconstruction reads `_df_node_dict`, which HAS a row for
+        // every coordinate the template pass resolved, so display no longer needs
+        // a df_node.
         RelDecl { name: "template_parts".into(), cols: vec![
-            c("file", Type::Path), c("line", Type::Int), c("node", Type::Text),
+            c("file", Type::Path), c("line", Type::Int), Col::node("node"),
             c("idx", Type::Int), c("kind", Type::Text), Col::raw("text", Type::Text)], group: "template",
             doc: "every template literal's ordered static/interpolated pieces: (file, line, node, idx, kind is static/expr, text); TS/TSX/JS/JSX/MJS/CJS only (oxc), one line per file's occurrence group via node = the df_node/df_lit id for the SAME template occurrence (join key: node = df_lit.id, node = df_edge.to for whatever flows in); text is verbatim (raw static chunk or the interpolated expression's exact source); template-built import paths/URLs/keys become joinable; line: 1-based", ..Default::default() },
     ]

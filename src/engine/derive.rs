@@ -635,7 +635,7 @@ impl Engine {
         // Pass boundary: strings these rules minted must be durable before a
         // refill copies their sym ids into the live table, and the
         // "empty intern queue on return" invariant holds for this path too.
-        self.db.flush_pending_syms()?;
+        self.db.flush_pending_syms_keyed("INSERT _strings (fixpoint/component)")?;
         let t_compare = std::time::Instant::now();
         let live = tbl(head_rel);
         let mirror_rows: i64 = self.db.query_one(
@@ -712,7 +712,7 @@ impl Engine {
             // One pass, one flush: drain any strings these rules minted (literal
             // or `+` concat heads) so a later component / the final query decodes
             // them. Empty for the common pass-through-id rule (no bump).
-            self.db.flush_pending_syms()?;
+            self.db.flush_pending_syms_keyed("INSERT _strings (fixpoint/component)")?;
             return Ok(());
         }
         // Native graph walks are strict recognizers. A miss falls through
@@ -722,7 +722,7 @@ impl Engine {
             // Native walks carry pass-through node ids (no minted strings), but
             // flush once on the way out to keep the invariant "run_component
             // returns with an empty intern queue" uniform across every path.
-            self.db.flush_pending_syms()?;
+            self.db.flush_pending_syms_keyed("INSERT _strings (fixpoint/component)")?;
             return Ok(());
         }
         // Defense twin of typecheck's `recursive-null-pad`: a NULL-padded
@@ -781,8 +781,8 @@ impl Engine {
                 // Pass boundary: make this pass's minted strings durable before
                 // the next pass re-runs `stmts` and decodes them (a `+` concat
                 // head reading the row it produced last pass). One flush per
-                // pass, not per statement — the N+1 collapse.
-                self.db.flush_pending_syms()?;
+                // pass, not per statement — O(fixpoint depth), not per row.
+                self.db.flush_pending_syms_keyed("INSERT _strings (fixpoint/pass)")?;
                 total_promoted = total_promoted.saturating_add(delta);
                 check_fixpoint_row_budget(&comp_rels, total_promoted, row_max)?;
                 // Every execution after pass 1 is a full-input re-run
@@ -1654,7 +1654,7 @@ impl Engine {
         check_fixpoint_row_budget(&comp_rel_names, total_promoted, row_max)?;
         // Drain the seed rules' minted strings before the first recursive pass
         // (or the pure-seed return) decodes them. Pass boundary, one flush.
-        self.db.flush_pending_syms()?;
+        self.db.flush_pending_syms_keyed("INSERT _strings (fixpoint/component)")?;
 
         if rec_ris.is_empty() {
             return Ok(());
@@ -1808,13 +1808,14 @@ impl Engine {
             // Pass boundary: this iteration's promoted rows (now in `_delta_`)
             // become the next iteration's differentiated input, so their minted
             // strings must be in `_strings` before the next pass's variant
-            // statements decode them. One flush per pass — the N+1 collapse.
-            self.db.flush_pending_syms()?;
+            // statements decode them. One flush per pass — O(fixpoint depth),
+            // not per row.
+            self.db.flush_pending_syms_keyed("INSERT _strings (fixpoint/pass)")?;
         }
         // The breaking iteration (total_new == 0) leaves only duplicate interns
         // queued (strings already in `_strings` from when their row first
         // derived); drain them so the queue never leaks across components.
-        self.db.flush_pending_syms()?;
+        self.db.flush_pending_syms_keyed("INSERT _strings (fixpoint/component)")?;
         Ok(())
     }
 
@@ -2039,7 +2040,26 @@ impl Engine {
         c0: &str,
         c1: &str,
     ) -> Result<(Vec<Vec<u32>>, Vec<String>)> {
-        let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {}", txt_tbl(edge));
+        self.load_edges_from(edge, c0, c1, false)
+    }
+
+    /// `load_edges`, choosing the STORED-id table (`raw = true`, node identity is
+    /// the verbatim `_strings` StringId / `_df_node_dict` surrogate) or the
+    /// reconstructed `_txt` view (`raw = false`, node identity is the display
+    /// text). The persisted closure VIEW (`rebuild_closures`) needs the stored
+    /// id so it can pass it back through unchanged; the in-memory point/body
+    /// walks (`refresh_cond_cache`) need the display text they emit directly.
+    /// A df-coordinate surrogate is NOT a hash of its text, so these two can no
+    /// longer be bridged by `sprf_sym` (identity normalization, 2026-07-20).
+    pub(crate) fn load_edges_from(
+        &self,
+        edge: &str,
+        c0: &str,
+        c1: &str,
+        raw: bool,
+    ) -> Result<(Vec<Vec<u32>>, Vec<String>)> {
+        let source = if raw { tbl(edge) } else { txt_tbl(edge) };
+        let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {source}");
         let mut intern: HashMap<String, u32> = HashMap::new();
         let mut names: Vec<String> = Vec::new();
         let mut pairs: Vec<(u32, u32)> = Vec::new();
@@ -2091,7 +2111,13 @@ impl Engine {
                 bail!("closure edge {edge} must have at least 2 columns");
             }
             let (c0, c1) = (meta.cols[0].name.clone(), meta.cols[1].name.clone());
-            let (adj, names) = self.load_edges(edge, &c0, &c1)?;
+            // The persisted closure VIEW passes `scc_node.name` back through as
+            // the head column's STORED id (`CAST(name AS INTEGER)` for an
+            // int-keyed head, `declare_closure`), so condense over the RAW ids —
+            // a df-coordinate surrogate is not recoverable from its display text
+            // by hashing. A plain (non-int-keyed) head keeps display text.
+            let int_keyed = meta.cols[0].interned() || meta.cols[0].coord;
+            let (adj, names) = self.load_edges_from(edge, &c0, &c1, int_keyed)?;
             let cond = scc::build_condensed(&adj);
             let (nt, et) = (scc_node_tbl(edge), scc_edge_tbl(edge));
             let mut node_rows: Vec<Vec<Value>> = Vec::with_capacity(names.len());

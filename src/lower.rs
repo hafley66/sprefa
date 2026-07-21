@@ -42,11 +42,18 @@ fn sym_decode(e: &str) -> String {
 /// The `rel_df_node` reconstruction subquery for a coordinate id cell (shared by
 /// `coord_decode` and `sym_decode`'s fallback).
 fn coord_reconstruct(e: &str) -> String {
+    // Reconstruct `file:line:col:kind` from `_df_node_dict` — the authority for
+    // a coordinate's columns, keyed by the dense surrogate `id` (2026-07-20
+    // identity normalization). The dict has a row for EVERY coordinate that ever
+    // received a surrogate (incl. a module-level template with no df_node row),
+    // so this reconstructs uniformly where the old `rel_df_node` self-lookup
+    // could miss. `file`/`kind` are the same interned StringIds, decoded through
+    // `_strings`.
     format!(
-        "(SELECT (SELECT content FROM _strings WHERE id = dn.\"file\") || ':' || \
-         dn.\"line\" || ':' || dn.\"col\" || ':' || \
-         (SELECT content FROM _strings WHERE id = dn.\"kind\") \
-         FROM rel_df_node dn WHERE dn.\"id\" = {e} LIMIT 1)"
+        "(SELECT (SELECT content FROM _strings WHERE id = dnd.\"file\") || ':' || \
+         dnd.\"line\" || ':' || dnd.\"col\" || ':' || \
+         (SELECT content FROM _strings WHERE id = dnd.\"kind\") \
+         FROM _df_node_dict dnd WHERE dnd.\"id\" = {e} LIMIT 1)"
     )
 }
 
