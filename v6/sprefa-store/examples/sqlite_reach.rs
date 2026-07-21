@@ -12,6 +12,16 @@ use sprefa_store::{benchgraph, cascade, memcap, stmt_counter};
 #[global_allocator]
 static GLOBAL: memcap::CappedAlloc = memcap::CappedAlloc;
 
+/// SQLite's OWN C-allocator high-water, in MB. This memory is malloc'd by the
+/// bundled C library, NOT through Rust's #[global_allocator], so the memcap
+/// counter is BLIND to it. Reading it here is the honest accounting: the wall
+/// claim needs SQLite's C heap measured, not assumed bounded.
+fn sqlite_highwater_mb() -> f64 {
+    // reset=0: report the peak, don't clear it.
+    let hw = unsafe { libsqlite3_sys::sqlite3_memory_highwater(0) };
+    hw as f64 / (1024.0 * 1024.0)
+}
+
 fn peak_rss_mb() -> f64 {
     unsafe {
         let mut ru: libc::rusage = std::mem::zeroed();
@@ -78,6 +88,16 @@ async fn main() {
             .await
             .unwrap();
     }
+    // Independent cap on SQLite's C heap (the memcap allocator cannot touch it).
+    // DL_SQLITE_HEAP_MB > 0 sets PRAGMA hard_heap_limit: past it SQLite returns
+    // SQLITE_NOMEM (a clean error, never swap). Completing a retract under a tight
+    // limit PROVES SQLite's own footprint is bounded, not secretly ballooning.
+    let heap_mb: u64 = std::env::var("DL_SQLITE_HEAP_MB").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+    if heap_mb != 0 {
+        db.execute_unprepared(&format!("PRAGMA hard_heap_limit={};", heap_mb * 1024 * 1024))
+            .await
+            .unwrap();
+    }
     cascade::create_schema(&db).await.unwrap();
 
     let rows: Vec<(i64, i64, i64)> =
@@ -95,6 +115,9 @@ async fn main() {
     cascade::insert_deps(&db, &deps).await.unwrap();
     let setup = t_setup.elapsed();
     let setup_stmts = stmt_counter::get();
+    // SQLite C-heap peak for SETUP alone, then RESET the highwater (arg=1) so the
+    // next read isolates the RETRACT's own C-heap from setup's.
+    let setup_sqlite_hw = unsafe { libsqlite3_sys::sqlite3_memory_highwater(1) } as f64 / (1024.0 * 1024.0);
 
     // The corpus now lives on disk; drop the Rust-side staging so the measured
     // retract works against the db alone (this is the whole disk-resident point:
@@ -109,21 +132,40 @@ async fn main() {
     let retract = t.elapsed();
     let retract_stmts = stmt_counter::get();
 
-    // Output the survivor set as dense encoded ids (tag*STRIDE+id), so all three
-    // engines emit byte-identical identifiers.
+    // Snapshot memory HERE — right after the retract, BEFORE the survivor output
+    // query materializes 4.5M rows (a reporting artifact that would otherwise
+    // inflate rust_live). sqlite_highwater is a monotonic peak so it already
+    // covers setup + retract; rust_live is instantaneous so it must be read now.
+    let sqlite_hw = sqlite_highwater_mb();
+    let rust_live = memcap::live_bytes() as f64 / (1024.0 * 1024.0);
+
+    // Survivor COUNT is a scalar aggregate (one integer, tiny allocation) so the
+    // reported killed/survivors is correct even when a C-heap cap is set — it is
+    // NOT derived from materializing millions of rows. This is the honest engine
+    // result: it lives on disk in cx_row.weight, read back with O(1) memory.
+    let survivors = db
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "SELECT count(*) FROM cx_row WHERE weight > 0".to_string(),
+        ))
+        .await
+        .unwrap()
+        .map(|r| r.try_get_by_index::<i64>(0).unwrap_or(0))
+        .unwrap_or(0) as usize;
+    let killed = n - survivors;
+
+    // Full survivor DUMP (stdout) for the byte-identical head-to-head. This is the
+    // one memory-heavy step — it materializes every survivor id into a Rust Vec
+    // (counted by memcap) — so it is done AFTER the memory snapshot above and is a
+    // REPORTING artifact, not part of the measured retract. `key` IS the rowid and
+    // equals tag*STRIDE+id (E2), so ORDER BY key is a no-sort ordered scan.
     let out = db
         .query_all_raw(Statement::from_string(
             DatabaseBackend::Sqlite,
-            format!(
-                "SELECT tag*{stride}+id AS key FROM cx_row WHERE weight > 0 ORDER BY key",
-                stride = benchgraph::TAG_STRIDE
-            ),
+            "SELECT key FROM cx_row WHERE weight > 0 ORDER BY key".to_string(),
         ))
         .await
         .unwrap();
-    let survivors = out.len();
-    let killed = n - survivors;
-
     let mut buf = String::new();
     for r in &out {
         buf.push_str(&r.try_get_by_index::<i64>(0).unwrap().to_string());
@@ -153,14 +195,22 @@ async fn main() {
          | peak_rss {:.1} MB | db {:.1} MB",
         retract, retract_stmts, rounds, rss, db_mb
     );
-    // Machine-parseable: engine,nodes,edges,killed,setup_ms,retract_ms,ops,rss_mb,db_mb
+    // The memory split the memcap allocator alone cannot show: Rust live heap
+    // (what memcap DOES cap) vs SQLite's C-allocator high-water (what it CANNOT).
     eprintln!(
-        "CSV,{engine},{n},{n_edges},{killed},{:.3},{:.3},{},{:.1},{:.1}",
+        "[{engine}] MEMORY  rust_live {:.1} MB (memcap sees) | sqlite_c_heap setup {:.1} / \
+         retract {:.1} MB (memcap BLIND) | peak_rss {:.1} MB",
+        rust_live, setup_sqlite_hw, sqlite_hw, rss
+    );
+    // Machine-parseable: engine,nodes,edges,killed,setup_ms,retract_ms,ops,rss_mb,db_mb,sqlite_hw_mb
+    eprintln!(
+        "CSV,{engine},{n},{n_edges},{killed},{:.3},{:.3},{},{:.1},{:.1},{:.1}",
         setup.as_secs_f64() * 1e3,
         retract.as_secs_f64() * 1e3,
         retract_stmts,
         rss,
-        db_mb
+        db_mb,
+        sqlite_hw
     );
 
     drop(db);

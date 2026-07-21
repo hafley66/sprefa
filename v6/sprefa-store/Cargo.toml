@@ -41,6 +41,11 @@ required-features = ["with-dbsp"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# Direct handle on the SAME bundled SQLite sqlx links (version pinned to the one
+# in Cargo.lock) so the examples can read sqlite3_memory_used/_highwater — the C
+# allocator the Rust memcap #[global_allocator] CANNOT see. Closes the "is SQLite
+# secretly using RAM while we say Rust is fine" hole. Features union with sqlx's.
+libsqlite3-sys = "0.37"
 # Head-to-head baseline: the resident incremental engine we are NOT adopting for
 # the corpus, run byte-for-byte against our on-disk weight cascade.
 differential-dataflow = "0.25"

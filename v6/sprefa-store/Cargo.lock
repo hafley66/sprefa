@@ -3645,6 +3645,7 @@ dependencies = [
  "differential-dataflow",
  "lasso",
  "libc",
+ "libsqlite3-sys",
  "sea-orm",
  "timely",
  "tokio",
