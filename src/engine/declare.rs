@@ -132,12 +132,18 @@ impl Engine {
                     col.name, col.name
                 )
             } else if col.interned() {
-                // COALESCE fallback: an ordinary `text` column carrying a df
-                // coordinate id (ecosystem flow rels) reconstructs from
-                // `_df_node_dict` when its value is absent from `_strings`.
-                // Short-circuits for a normal interned string (the _strings hit).
+                // Three-way COALESCE (disjoint id spaces, first non-NULL wins):
+                //   1. dense `_sym_dict` surrogate -> hash -> `_strings` (the
+                //      normal interned cell after storage normalization);
+                //   2. raw StringId hash -> `_strings` (a computed derived value
+                //      the write seam left as a hash);
+                //   3. a df-coordinate id in an ordinary `text` column (ecosystem
+                //      flow rels) reconstructs from `_df_node_dict`.
                 format!(
-                    "COALESCE((SELECT content FROM _strings WHERE _strings.id = rel_{rel}.\"{name}\"), \
+                    "COALESCE(\
+                     (SELECT content FROM _strings WHERE _strings.id = \
+                       (SELECT sym_hash FROM _sym_dict WHERE _sym_dict.id = rel_{rel}.\"{name}\")), \
+                     (SELECT content FROM _strings WHERE _strings.id = rel_{rel}.\"{name}\"), \
                      (SELECT (SELECT content FROM _strings WHERE _strings.id = dnd.\"file\") || ':' || \
                      dnd.\"line\" || ':' || dnd.\"col\" || ':' || \
                      (SELECT content FROM _strings WHERE _strings.id = dnd.\"kind\") \
@@ -1284,10 +1290,14 @@ impl Engine {
                         d.name, col.name
                     )
                 } else {
-                    // COALESCE fallback (see create_rel_view): a `text` closure
-                    // head carrying df ids reconstructs from `_df_node_dict`.
+                    // Three-way COALESCE (see create_rel_view): dense `_sym_dict`
+                    // surrogate -> hash -> `_strings`, then raw hash -> `_strings`,
+                    // then a df-coordinate id reconstructs from `_df_node_dict`.
                     format!(
-                        "COALESCE((SELECT content FROM _strings WHERE _strings.id = rel_{name}.\"{col}\"), \
+                        "COALESCE(\
+                         (SELECT content FROM _strings WHERE _strings.id = \
+                           (SELECT sym_hash FROM _sym_dict WHERE _sym_dict.id = rel_{name}.\"{col}\")), \
+                         (SELECT content FROM _strings WHERE _strings.id = rel_{name}.\"{col}\"), \
                          (SELECT (SELECT content FROM _strings WHERE _strings.id = dnd.\"file\") || ':' || \
                          dnd.\"line\" || ':' || dnd.\"col\" || ':' || \
                          (SELECT content FROM _strings WHERE _strings.id = dnd.\"kind\") \

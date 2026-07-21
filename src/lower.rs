@@ -29,14 +29,23 @@ fn esc(s: &str) -> String { s.replace('\'', "''") }
 /// concat, projection into a text column or query output); sym = sym joins
 /// and literal filters never decode.
 fn sym_decode(e: &str) -> String {
-    // A plain interned column decodes through `_strings`, BUT a df-coordinate id
-    // carried in an ordinary `text` column (the whole `.dl` ecosystem: flow_edge,
-    // string_flow, user reach closures, ...) has no `_strings` row after the
-    // coordinate de-intern. Fall back to reconstructing it from `rel_df_node`, so
-    // any text column holding a df id still displays its coordinate without the
-    // author having to spell the `node` type. COALESCE short-circuits: for a
-    // normal interned string (the _strings hit) the df_node fallback never runs.
-    format!("COALESCE((SELECT content FROM _strings WHERE id = {e}), {})", coord_reconstruct(e))
+    // Three-way COALESCE, in this order (the id spaces are disjoint, so the
+    // first non-NULL arm is authoritative):
+    //   1. dense `_sym_dict` surrogate -> `_sym_dict.sym_hash` -> `_strings`
+    //      (the normal interned sym cell after storage normalization).
+    //   2. raw StringId hash -> `_strings` directly (a computed derived-rule
+    //      value the write seam left as a hash — dense ids are small, hashes are
+    //      huge, so this arm only fires for a genuine hash cell).
+    //   3. a df-coordinate id carried in an ordinary `text` column (the `.dl`
+    //      ecosystem: flow_edge, string_flow, user reach closures) reconstructs
+    //      from `_df_node_dict`.
+    format!(
+        "COALESCE(\
+         (SELECT content FROM _strings WHERE id = (SELECT sym_hash FROM _sym_dict WHERE _sym_dict.id = {e})), \
+         (SELECT content FROM _strings WHERE id = {e}), \
+         {})",
+        coord_reconstruct(e)
+    )
 }
 
 /// The `rel_df_node` reconstruction subquery for a coordinate id cell (shared by
@@ -84,10 +93,36 @@ fn decode_cell(cell: &str, interned: bool, coord: bool) -> String {
     }
 }
 
-/// A text literal compared against / inserted into a `sym` column lowers to
-/// its content-addressed StringId at compile time — no lookup, no decode.
+/// A text literal used as a `sym`-typed VALUE (a comparison operand, not a
+/// standalone filter). After storage normalization an interned column stores a
+/// dense `_sym_dict` surrogate, so the literal resolves its compile-time
+/// StringId hash to that surrogate; `COALESCE(..., hash)` keeps the literal
+/// usable against a raw-hash cell (a computed derived value) and preserves the
+/// empty-string sentinel (hash 0, never dicted, so the COALESCE yields 0). An
+/// unseen non-empty sym resolves to its own hash, which no dense cell equals —
+/// exactly "matches no row".
 fn sym_lit(s: &str) -> String {
-    crate::spine::StringId::of(s).sqlite().to_string()
+    dense_val(&crate::spine::StringId::of(s).sqlite().to_string())
+}
+
+/// A `sym`-typed VALUE from a hash SQL expression: prefer its dense `_sym_dict`
+/// surrogate, fall back to the raw hash (empty-string sentinel 0, computed
+/// derived-rule hashes, and sym-not-in-corpus all pass through as the hash).
+fn dense_val(hash_sql: &str) -> String {
+    format!("COALESCE((SELECT id FROM _sym_dict WHERE sym_hash = {hash_sql}), {hash_sql})")
+}
+
+/// A CONDITION: interned column `cell` equals text literal `s`. Space-agnostic
+/// via `IN (dense, hash)` — matches whether the column stores the dense
+/// `_sym_dict` surrogate (source / pass-through rels) or the raw StringId hash
+/// (a computed derived value); the two id spaces are disjoint so this never
+/// false-matches. The empty string (hash 0, the sentinel) stays a plain `= 0`.
+fn sym_eq_lit(cell: &str, s: &str) -> String {
+    let hash = crate::spine::StringId::of(s).sqlite();
+    if hash == 0 {
+        return format!("{cell} = 0");
+    }
+    format!("{cell} IN ((SELECT id FROM _sym_dict WHERE sym_hash = {hash}), {hash})")
 }
 
 /// Equality between two cells that may disagree on sym-ness: text = sym stays
@@ -116,8 +151,12 @@ fn eq_cond(a_sql: &str, a_ty: Option<Type>, a_interned: bool,
            b_sql: &str, b_ty: Option<Type>, b_interned: bool) -> String {
     if a_ty.is_some_and(|t| t.textish()) && b_ty.is_some_and(|t| t.textish()) {
         return match (a_interned, b_interned) {
-            (true, false) => format!("{a_sql} = sprf_sym({b_sql})"),
-            (false, true) => format!("sprf_sym({a_sql}) = {b_sql}"),
+            // One side is a dense interned column, the other raw text: hash the
+            // text (`sprf_sym`) then resolve THAT hash to its dense `_sym_dict`
+            // surrogate (`dense_val`), so the compare stays in the column's dense
+            // id space. The sym side never decodes.
+            (true, false) => format!("{a_sql} = {}", dense_val(&format!("sprf_sym({b_sql})"))),
+            (false, true) => format!("{} = {b_sql}", dense_val(&format!("sprf_sym({a_sql})"))),
             _ => format!("{a_sql} = {b_sql}"),
         };
     }
@@ -134,13 +173,22 @@ fn head_term_sql(term: &Term, col: &Col, canon: &HashMap<String, String>, tys: &
         // so a literal/computed value written into it hashes with `sprf_sym`
         // (pure, no `_strings` queue) rather than `sprf_sym_intern`. An interned
         // source var still passes its int handle through unchanged.
+        //
+        // For a plain interned (non-coord) sym column, wrap the hash in
+        // `dense_val`: a literal/computed value that already exists in the corpus
+        // resolves to its dense `_sym_dict` surrogate (so it joins source syms in
+        // the same id space, and stores 1-2 bytes), while a genuinely-novel
+        // derived value falls back to the raw hash (decode + filter are
+        // hash-aware). A pass-through interned source var already carries its
+        // dense id. Storage normalization, 2026-07-21.
+        let densify = |hash_sql: String| if col.coord { hash_sql } else { dense_val(&hash_sql) };
         let hash_fn = if col.coord { "sprf_sym" } else { "sprf_sym_intern" };
         return match term {
-            Term::Str(s) => Ok(format!("{hash_fn}('{}')", esc(s))),
+            Term::Str(s) => Ok(densify(format!("{hash_fn}('{}')", esc(s)))),
             Term::Var(v) if var_interned(tys, v) => term_sql(term, canon, tys),
             Term::Call { name, args } if name == "sym" && args.len() == 1
                 && term_interned(&args[0], tys) => term_sql(&args[0], canon, tys),
-            _ => Ok(format!("{hash_fn}({})", term_sql_text(term, canon, tys)?)),
+            _ => Ok(densify(format!("{hash_fn}({})", term_sql_text(term, canon, tys)?))),
         };
     }
     // Non-interned target column: decode any interned source var to its text so
@@ -450,9 +498,10 @@ fn body_sql_ex(body: &[BodyItem], rels: &Rels, overrides: &HashMap<usize, String
                         }
                     },
                     // A text literal against a sym column filters by its
-                    // compile-time StringId — an int compare, no decode.
+                    // dense `_sym_dict` surrogate (or raw hash) — an int compare,
+                    // no decode.
                     Term::Str(s) if meta.cols[pos].interned() =>
-                        wheres.push(format!("{cell} = {}", sym_lit(s))),
+                        wheres.push(sym_eq_lit(&cell, s)),
                     Term::Str(_) | Term::Int(_) => wheres.push(format!("{cell} = {}", lit_sql(term).unwrap())),
                     Term::Interp(_) => bail!("interpolated string only allowed in a rule head, not a body atom"),
                     Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
@@ -552,7 +601,7 @@ fn body_sql_ex(body: &[BodyItem], rels: &Rels, overrides: &HashMap<usize, String
                         }
                     }
                     Term::Str(s) if meta.cols[pos].interned() =>
-                        sub.push(format!("{cell} = {}", sym_lit(s))),
+                        sub.push(sym_eq_lit(&cell, s)),
                     Term::Str(_) | Term::Int(_) => sub.push(format!("{cell} = {}", lit_sql(term).unwrap())),
                     Term::Interp(_) => bail!("interpolated string only allowed in a rule head, not a body atom"),
                     Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
@@ -913,7 +962,7 @@ pub fn lower_query(q: &Query, rels: &Rels) -> Result<(String, Vec<String>)> {
             },
             // A text literal against a sym column filters by its compile-time
             // StringId — an int compare, no decode (mirrors the body-atom arm).
-            Term::Str(s) if is_sym => wheres.push(format!("{cell} = {}", sym_lit(s))),
+            Term::Str(s) if is_sym => wheres.push(sym_eq_lit(&cell, s)),
             Term::Str(_) | Term::Int(_) => wheres.push(format!("{cell} = {}", lit_sql(term).unwrap())),
             Term::Interp(_) => bail!("interpolated string not supported in a query head"),
             Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
@@ -980,7 +1029,7 @@ fn lower_query_agg(q: &Query, meta: &RelMeta) -> Result<(String, Vec<String>)> {
         let display_cell = decode_cell(&cell, meta.cols[i].interned(), meta.cols[i].coord);
         match &terms[i] {
             Term::Wild => {}
-            Term::Str(s) if meta.cols[i].interned() => wheres.push(format!("{raw_cell} = {}", sym_lit(s))),
+            Term::Str(s) if meta.cols[i].interned() => wheres.push(sym_eq_lit(&raw_cell, s)),
             Term::Str(_) | Term::Int(_) => wheres.push(format!("{raw_cell} = {}", lit_sql(&terms[i]).unwrap())),
             Term::Interp(_) => bail!("interpolated string not supported in a query head"),
             Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
@@ -1148,7 +1197,7 @@ mod tests {
             "rel line(kind: text, item: text, price: int).\n",
             "? line(\"food\", item, sum(total)).\n"));
         let (sql, _) = lower_query(&q, &rels).unwrap();
-        assert!(sql.contains(&format!("WHERE \"kind\" = {}", sym_lit("food"))), "literal filters: {sql}");
+        assert!(sql.contains(&sym_eq_lit("\"kind\"", "food")), "literal filters: {sql}");
         assert!(sql.contains("GROUP BY \"item\""), "grouped by the surviving var: {sql}");
     }
 
@@ -1300,7 +1349,8 @@ mod tests {
             "rel resolved(caller: text).\n",
             "resolved(caller) <- raw_edge(caller, callee_q), callee = replace(callee_q, \".\", \"::\"), !blocked(callee).\n"));
         let sql = lower_rule(&rule, &rels).unwrap();
-        assert!(sql.contains("ax0.\"name\" = sprf_sym(replace(") && sql.contains("callee_q"),
-            "negation must join the bind's expression: {sql}");
+        assert!(sql.contains("ax0.\"name\" = COALESCE((SELECT id FROM _sym_dict WHERE sym_hash = sprf_sym(replace(")
+            && sql.contains("callee_q"),
+            "negation must join the bind's expression (dense-resolved): {sql}");
     }
 }

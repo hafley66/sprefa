@@ -1396,6 +1396,53 @@ impl Db {
         Ok(total)
     }
 
+    /// Map each distinct interned StringId hash to its dense `_sym_dict`
+    /// surrogate, minting a dict row for any hash not seen before. Batched and
+    /// N+1-safe: one TEMP-probe fill + one `INSERT OR IGNORE` + one `SELECT`,
+    /// regardless of how many hashes are offered — the sym twin of
+    /// `resolve_coord_surrogates_tuples`. The sentinel `StringId::EMPTY` (0)
+    /// maps to itself and is never dicted, so an empty-string cell stays 0 (the
+    /// "none" marker every reader already honors). Text is NOT touched here: it
+    /// stays interned in `_strings` keyed by the hash, so decode is
+    /// `dense id -> _sym_dict.sym_hash -> _strings.content`.
+    pub fn resolve_sym_surrogates(&self, hashes: &[i64]) -> Result<HashMap<i64, i64>> {
+        let mut dense: HashMap<i64, i64> = HashMap::new();
+        dense.insert(0, 0);
+        let mut seen: HashSet<i64> = HashSet::new();
+        let mut probe_rows: Vec<Vec<Value>> = Vec::new();
+        for &hash in hashes {
+            if hash != 0 && seen.insert(hash) {
+                probe_rows.push(vec![Value::Int(hash)]);
+            }
+        }
+        if probe_rows.is_empty() {
+            return Ok(dense);
+        }
+        self.exec_on(
+            "_sym_probe",
+            "CREATE TEMP TABLE IF NOT EXISTS _sym_probe (sym_hash INTEGER)",
+        )?;
+        self.exec_on("_sym_probe", "DELETE FROM _sym_probe")?;
+        self.insert_rows_keyed("_sym_probe", "INSERT _sym_probe", &["sym_hash"], &probe_rows)?;
+        self.exec_on(
+            "_sym_dict",
+            "INSERT OR IGNORE INTO _sym_dict (sym_hash) SELECT DISTINCT sym_hash FROM _sym_probe",
+        )?;
+        self.for_each_row(
+            "_sym_dict",
+            "SELECT p.sym_hash, d.id FROM _sym_probe p \
+             JOIN _sym_dict d ON d.sym_hash = p.sym_hash",
+            &[],
+            |row| {
+                let hash: i64 = row.get(0)?;
+                let id: i64 = row.get(1)?;
+                dense.insert(hash, id);
+                Ok(())
+            },
+        )?;
+        Ok(dense)
+    }
+
     /// Drain a `SymSink`'s queued interns into ONE batched `_strings` insert.
     ///
     /// Before touching SQL, dedup + collision-check the FULL pending set (the

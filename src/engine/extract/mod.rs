@@ -677,7 +677,10 @@ impl Engine {
         // holds raw text revs. Hash the text side into id-space (`sprf_sym`) so the
         // set-match runs in the same representation — else the stale rows are never
         // cleared before re-insert (same fix as `refresh_rel_for_revs`).
-        let del_by_rev = "\"rev\" IN (SELECT sprf_sym(rev) FROM _module_refresh_rev)";
+        // `rev` stores the dense `_sym_dict` surrogate; join the hashed text
+        // revs through the dict so the set-match runs in dense id space.
+        let del_by_rev = "\"rev\" IN (SELECT d.id FROM _sym_dict d \
+             JOIN _module_refresh_rev m ON d.sym_hash = sprf_sym(m.rev))";
         self.db.exec(&format!("DELETE FROM {} WHERE {del_by_rev}", tbl("module_import")))?;
         self.db.exec(&format!("DELETE FROM {} WHERE {del_by_rev}", tbl("module_edge_rev")))?;
         self.db.exec(&format!("DELETE FROM {} WHERE {del_by_rev}", tbl("module_unresolved_rev")))?;
@@ -703,10 +706,13 @@ impl Engine {
         self.db.exec("DELETE FROM _module_refresh_path")?;
         let path_rows: Vec<Vec<Value>> = paths.iter().map(|p| vec![Value::Text(p.clone())]).collect();
         self.db.insert_rows("_module_refresh_path", &["path"], &path_rows)?;
-        // Interned `rev`/`file`/`src` columns: hash the raw literal rev and the
-        // raw temp-table paths into id-space so the per-path DELETE matches.
-        let rev_id = format!("sprf_sym('{rev}')");
-        let paths_id = "(SELECT sprf_sym(path) FROM _module_refresh_path)";
+        // Interned `rev`/`file`/`src` columns store the dense `_sym_dict`
+        // surrogate: resolve the hashed literal rev and the hashed temp-table
+        // paths to their dense ids so the per-path DELETE matches.
+        let rev_id =
+            format!("COALESCE((SELECT id FROM _sym_dict WHERE sym_hash = sprf_sym('{rev}')), sprf_sym('{rev}'))");
+        let paths_id = "(SELECT d.id FROM _sym_dict d \
+             JOIN _module_refresh_path m ON d.sym_hash = sprf_sym(m.path))";
         self.db.exec(&format!(
             "DELETE FROM {} WHERE \"rev\" = {rev_id} AND \"file\" IN {paths_id}",
             tbl("module_import"),
@@ -1025,7 +1031,7 @@ impl Engine {
             let live: i64 = self.db
                 .query_one(
                     rel,
-                    &format!("SELECT COUNT(*) FROM {} WHERE \"rev\" IN (SELECT sprf_sym(rev) FROM _rel_refresh_rev)", tbl(rel)),
+                    &format!("SELECT COUNT(*) FROM {} WHERE \"rev\" IN (SELECT d.id FROM _sym_dict d JOIN _rel_refresh_rev m ON d.sym_hash = sprf_sym(m.rev))", tbl(rel)),
                     &[], |r| Ok(r.get(0)?),
                 )
                 .unwrap_or(-1);
@@ -1037,7 +1043,7 @@ impl Engine {
         // holds the raw text revs. Hash the text side into id-space so the
         // set-match happens in the same representation (else i64 IN (text…)
         // never matches and the stale rows are never cleared before re-insert).
-        self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT sprf_sym(rev) FROM _rel_refresh_rev)", tbl(rel)))?;
+        self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT d.id FROM _sym_dict d JOIN _rel_refresh_rev m ON d.sym_hash = sprf_sym(m.rev))", tbl(rel)))?;
         self.db.insert_rows(&tbl(rel), cols, &encoded)
             .map_err(|error| anyhow::anyhow!("refresh relation {rel}: {error}"))?;
         self.save_rel_digest(&content_key, &digest)?;
@@ -1103,7 +1109,8 @@ impl Engine {
         // the rows the extraction just wrote.
         for twin in Self::REV_TWINS {
             self.db.exec(&format!(
-                "DELETE FROM {} WHERE \"rev\" NOT IN (SELECT sprf_sym(rev) FROM _live_rev_scope)",
+                "DELETE FROM {} WHERE \"rev\" NOT IN (SELECT d.id FROM _sym_dict d \
+                 JOIN _live_rev_scope l ON d.sym_hash = sprf_sym(l.rev))",
                 tbl(twin),
             ))?;
         }

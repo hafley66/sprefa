@@ -283,7 +283,14 @@ impl Engine {
         if already > 0 {
             self.db.exec_params(
                 "diag_mute",
-                &format!("DELETE FROM {} WHERE \"code\" = sprf_sym(?1)", tbl("diag_mute")),
+                // `code` stores the dense `_sym_dict` surrogate; resolve the
+                // hashed literal to it (falling back to the raw hash) so the
+                // delete matches. Storage normalization, 2026-07-21.
+                &format!(
+                    "DELETE FROM {} WHERE \"code\" = \
+                     COALESCE((SELECT id FROM _sym_dict WHERE sym_hash = sprf_sym(?1)), sprf_sym(?1))",
+                    tbl("diag_mute")
+                ),
                 &[code.into()],
             )?;
             Ok(false)
@@ -382,7 +389,11 @@ impl Engine {
         let ph = (1..=ids.len())
             .map(|i| {
                 if interned_id {
-                    format!("sprf_sym(?{i})")
+                    // Interned `id` stores the dense `_sym_dict` surrogate;
+                    // resolve the hashed request id to it (raw-hash fallback).
+                    format!(
+                        "COALESCE((SELECT id FROM _sym_dict WHERE sym_hash = sprf_sym(?{i})), sprf_sym(?{i}))"
+                    )
                 } else {
                     format!("?{i}")
                 }

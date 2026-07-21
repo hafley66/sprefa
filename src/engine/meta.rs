@@ -351,6 +351,43 @@ impl Engine {
                  kind INTEGER NOT NULL,
                  UNIQUE(file, line, col, kind)
              );
+             -- Symbol/interned-string dictionary (2026-07-21 identity
+             -- normalization). One row per DISTINCT interned StringId hash that
+             -- lands in a `sym`/interned rel column; `id` is a DENSE surrogate
+             -- assigned by AUTOINCREMENT (1, 2, 3, ...). Every interned
+             -- (`col.interned()` && not a `coord` column) rel cell stores THIS
+             -- dense `id` in place of the former 8-byte `StringId::of(text)`
+             -- hash — a 1-2 byte SQLite varint in the table cell AND in every PK
+             -- autoindex + secondary index over it. `sym_hash` is the StringId
+             -- the text interns to in `_strings` (unchanged, still keyed by the
+             -- hash): decode is `dense id -> _sym_dict.sym_hash ->
+             -- _strings.content`. The dense space (small ints) and the raw hash
+             -- space (huge 64-bit) are DISJOINT, so a read that COALESCEs a
+             -- dense-dict lookup with a direct `_strings` hit decodes either
+             -- encoding — the property that lets a computed derived-rule sym
+             -- stay a raw hash without a join break. `UNIQUE(sym_hash)` makes the
+             -- dict content-keyed (INSERT OR IGNORE + SELECT), so a re-run or
+             -- cold-chunk slice resolves an unchanged hash to the SAME surrogate.
+             -- Persistent, never rev-scoped, never pruned (same policy as
+             -- `_df_node_dict`); AUTOINCREMENT so a reclaimed rowid can never
+             -- alias a live surrogate.
+             CREATE TABLE IF NOT EXISTS _sym_dict (
+                 id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                 sym_hash INTEGER NOT NULL,
+                 UNIQUE(sym_hash)
+             );
+             -- Seed the surrogate space to start at 1e9 so dense sym ids
+             -- (>= 1e9+1) are DISJOINT from dense `_df_node_dict` coordinate ids
+             -- (small: one per df node, orders of magnitude below 1e9). A `.dl`
+             -- rule may carry a df-coordinate id in a plain `text`/`sym` column
+             -- (e.g. `reach(from: text) <- df_edge(a, b)`), and its `_txt` decode
+             -- must reconstruct the COORDINATE, not mistake the small id for a
+             -- sym surrogate. Disjoint ranges make the decode COALESCE
+             -- unambiguous by value. The seed row itself (sym_hash 0, the empty
+             -- sentinel which is never dicted) only advances AUTOINCREMENT; it is
+             -- never looked up. 1e9 leaves sym ids in SQLite's 4-byte int class
+             -- (< 2^31), still half the former 8-byte hash cell.
+             INSERT OR IGNORE INTO _sym_dict (id, sym_hash) VALUES (1000000000, 0);
              CREATE TABLE IF NOT EXISTS _program (
                  path TEXT PRIMARY KEY,
                  hash TEXT NOT NULL DEFAULT '',

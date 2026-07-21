@@ -883,7 +883,68 @@ impl Engine {
         // label keeps this off the plain `INSERT _strings` key the scream
         // reserves for a genuine per-row leak.
         self.db.flush_syms_keyed(&mut sink, "INSERT _strings (encode/rel)")?;
-        Ok(encoded)
+        // Storage normalization (2026-07-21): swap each interned cell's 8-byte
+        // StringId hash for its 1-2 byte dense `_sym_dict` surrogate before the
+        // row lands. Text is already interned in `_strings` (the flush above),
+        // so the dict resolve only mints/reads the dense id.
+        self.densify_interned_cells(rel, cols, encoded)
+    }
+
+    /// Remap every interned (`col.interned()` && not a `coord` column) cell in
+    /// `rows` from its StringId-hash `Value::Int` to its dense `_sym_dict`
+    /// surrogate — the storage-normalization write seam shared by
+    /// `encode_rel_rows` (Rust source/spine rels) and the call family router
+    /// (`flip_call_rels_via_router`). `cols` names the columns positionally; a
+    /// name absent from the rel meta, a non-interned column, a `coord` column
+    /// (whose `Value::Int` is already a dense `_df_node_dict` id — a DIFFERENT
+    /// dictionary), and a non-`Int` cell all pass through untouched. Batched:
+    /// one `resolve_sym_surrogates` round trip regardless of row count.
+    pub(crate) fn densify_interned_cells(
+        &self,
+        rel: &str,
+        cols: &[&str],
+        rows: Vec<Vec<Value>>,
+    ) -> Result<Vec<Vec<Value>>> {
+        let Some(meta) = self.rels.get(rel) else {
+            return Ok(rows);
+        };
+        let densify_pos: Vec<bool> = cols
+            .iter()
+            .map(|name| {
+                meta.cols
+                    .iter()
+                    .find(|col| col.name == *name)
+                    .map(|col| col.interned() && !col.coord)
+                    .unwrap_or(false)
+            })
+            .collect();
+        if !densify_pos.iter().any(|&is_sym| is_sym) {
+            return Ok(rows);
+        }
+        let mut hashes: Vec<i64> = Vec::new();
+        for row in &rows {
+            for (pos, value) in row.iter().enumerate() {
+                if densify_pos.get(pos).copied().unwrap_or(false) {
+                    if let Value::Int(hash) = value {
+                        hashes.push(*hash);
+                    }
+                }
+            }
+        }
+        let dense = self.db.resolve_sym_surrogates(&hashes)?;
+        let mut out = rows;
+        for row in &mut out {
+            for (pos, value) in row.iter_mut().enumerate() {
+                if densify_pos.get(pos).copied().unwrap_or(false) {
+                    if let Value::Int(hash) = value {
+                        if let Some(&dense_id) = dense.get(hash) {
+                            *value = Value::Int(dense_id);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 
     pub(crate) fn insert_rel_rows(

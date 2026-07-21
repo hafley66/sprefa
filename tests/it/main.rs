@@ -225,3 +225,4 @@ mod scan_narrowing;
 mod worktree_cold_check;
 mod family_scaling_probe;
 mod strings_gc;
+mod sym_dict_bijection;

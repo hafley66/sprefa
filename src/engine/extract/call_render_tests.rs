@@ -182,9 +182,14 @@ fn cold_derivation_snapshot(engine: &Engine) -> Vec<(&'static str, Vec<Vec<i64>>
     router.cold(&engine.db).unwrap();
     let mut out = Vec::with_capacity(CALL_REL_QUERIES.len());
     for (name, _, _) in CALL_REL_QUERIES {
-        let mut rows: Vec<Vec<i64>> = router
-            .rows(name)
-            .unwrap_or(&[])
+        // Densify the family's raw hash memo rows exactly as the render does,
+        // so a cold derivation compares equal to the stored (dense) public rel.
+        let cols = router.family(name).expect("routed family").out_cols();
+        let memo_rows: Vec<Vec<Value>> = router.rows(name).unwrap_or(&[]).to_vec();
+        let dense = engine
+            .densify_interned_cells(name, cols, memo_rows)
+            .expect("densify memo rows");
+        let mut rows: Vec<Vec<i64>> = dense
             .iter()
             .map(|r| r.iter().map(as_int).collect())
             .collect();
@@ -200,10 +205,17 @@ fn assert_all_call_rels_match_memo(engine: &Engine) {
     let router = engine.call_router.borrow();
     let router = router.as_ref().expect("router memo should be populated");
 
+    // The render densifies the family's interned columns (hash -> dense
+    // `_sym_dict` surrogate) before writing the public rel, so the memo's raw
+    // hash rows are densified the SAME way here before the compare. Storage
+    // normalization, 2026-07-21.
     let memo_as_sorted_i64 = |name: &str| {
-        let mut rows: Vec<Vec<i64>> = router
-            .rows(name)
-            .unwrap_or(&[])
+        let cols = router.family(name).expect("routed family").out_cols();
+        let memo_rows: Vec<Vec<Value>> = router.rows(name).unwrap_or(&[]).to_vec();
+        let dense = engine
+            .densify_interned_cells(name, cols, memo_rows)
+            .expect("densify memo rows");
+        let mut rows: Vec<Vec<i64>> = dense
             .iter()
             .map(|r| r.iter().map(as_int).collect())
             .collect();

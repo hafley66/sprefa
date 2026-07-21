@@ -421,12 +421,27 @@ impl Engine {
                     .family(name)
                     .ok_or_else(|| anyhow::anyhow!("router produced unrouted family `{name}`"))?
                     .out_cols();
+                // The family scans the OWNED `_call_*` tables, whose `*_sid`
+                // columns still carry raw StringId hashes; the PUBLIC call rels
+                // store the dense `_sym_dict` surrogate like every other rel, so
+                // densify the interned columns at this render seam (both the
+                // insert and the retract, so the delete matches the dense rows a
+                // prior flip stored). Storage normalization, 2026-07-21.
                 if cold.contains(name) {
-                    self.db.reload_rel(&tbl(name), cols, router.rows(name).unwrap_or(&[]))?;
+                    let rows = self.densify_interned_cells(
+                        name,
+                        cols,
+                        router.rows(name).unwrap_or(&[]).to_vec(),
+                    )?;
+                    self.db.reload_rel(&tbl(name), cols, &rows)?;
                     any_moved = true;
                 } else if !delta.is_empty() {
-                    self.db.retract_rows(&tbl(name), cols, &delta.retracted)?;
-                    self.db.insert_rows(&tbl(name), cols, &delta.inserted)?;
+                    let retracted =
+                        self.densify_interned_cells(name, cols, delta.retracted.clone())?;
+                    let inserted =
+                        self.densify_interned_cells(name, cols, delta.inserted.clone())?;
+                    self.db.retract_rows(&tbl(name), cols, &retracted)?;
+                    self.db.insert_rows(&tbl(name), cols, &inserted)?;
                     any_moved = true;
                 }
                 rerun.push(*name);
