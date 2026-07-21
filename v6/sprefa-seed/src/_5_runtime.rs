@@ -20,6 +20,38 @@ pub enum Change {
     EffectResult(RelId),        // an async effect completed -> re-enters next tick
 }
 
+// --- HOOKS: the forward-authored dependency surface (React hooks / Salsa queries) ---
+
+/// A recorded READ = a dependency edge + an early-cutoff key. An op that called
+/// `use_file(p)` gets a `Read { File(p), digest }`; the runtime re-invokes the op
+/// only when the LIVE digest differs from `digest` — "changed from the last time i
+/// saw it" = Salsa early-cutoff / backdating = the makeSwitchMapCached keyFn.
+pub struct Read {
+    pub on: ReadTarget,
+    pub digest: u64,     // value-at-read; re-run iff the live digest differs
+}
+
+pub enum ReadTarget {
+    File(FileId),
+    Rel(RelId),
+    Sym(SymId),
+}
+
+/// Forward authoring (React hooks, Solid signals, Salsa queries) — NOT backward
+/// RxJS pipe wiring. An op body calls `use_*` in natural reading order; each call
+/// PUSHES a `Read` into the op's dep-set and returns the current value. The
+/// dependency GRAPH is INFERRED from the reads (like `_4_analyze` infers the static
+/// ref graph), not authored. Independent reads in one round FLATTEN + batch (Haxl
+/// applicative = a static graph we can do math over); a read whose value picks the
+/// next read is the monadic case (can't flatten) — so PREFER applicative. This is
+/// the fine-grained (file/row) DYNAMIC twin of analyze's coarse (rel) STATIC graph.
+pub trait Hooks {
+    fn use_file(&mut self, path: SymId) -> FileId;   // pushes Read{File(..)}
+    fn use_rel(&mut self, rel: RelId);               // pushes Read{Rel(..)}; returns rows in the real crate
+    fn use_sym(&mut self, sym: SymId) -> SymId;      // pushes Read{Sym(..)}
+    // the collected dep-set drives invalidation AND feeds _4_analyze's RefGraph.
+}
+
 /// Effects have a DIRECTION. sprefa's original feature was `--move`, a MUTATION —
 /// so the reconciler was born writing, not reading.
 pub enum EffectDir {
