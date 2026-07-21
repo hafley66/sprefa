@@ -67,6 +67,17 @@ tags consumed by cargo-dist.
   instead of batching.
 
 ### Changed
+- Storage: the sym identity space is normalized behind one dense-surrogate
+  allocator (`Db::sym_alloc`) shared by every write path — the `sprf_sym_intern`
+  SQL UDF (facts, derived-rule heads), the Rust encode path, and flush — so an
+  interned `sym` rel column stores a dense `_sym_dict` surrogate id (a ~5-byte
+  varint) instead of the 8-byte `StringId` hash, and no join has to bridge two id
+  spaces. `SCHEMA_EPOCH` 12 -> 13 drops and re-extracts every `rel_%` table into
+  the dense space on first open of an older db. Behavior-preserving: gated by a
+  build-time bijection check (distinct dense == distinct text per rel) and
+  native-vs-SQL row parity on reachability closures (`sym_dict_bijection`,
+  `halt_bfs` rails). Single-writer per root db (the daemon) is a documented
+  invariant of the in-memory allocator.
 - `DL_RAYON_THREADS` now defaults to 2, bounding extraction and hashing CPU by
   default while preserving an explicit override for larger worker pools.
 - Rust type, call, and dataflow extraction now share one `syn` parse per changed
@@ -169,6 +180,14 @@ tags consumed by cargo-dist.
   never schedule a tick, closing a recursive self-tick loop.
 
 ### Performance
+- Dense `_sym_dict` surrogate for interned sym columns shrinks both the stored
+  cell and every index built on it. Measured A/B on the full `.dl/` program set
+  over this repo (516 rels, identical corpus, epoch 12 raw-hash vs epoch 13
+  dense): **624.2 MB -> 515.4 MB, -17.4% (-108.9 MB)**. Gross saving on interned
+  cells + indexes is ~115.6 MB; the dictionary overhead (`_sym_dict` + its
+  autoindex, ~9.4 MB) is netted out and pays for itself ~12x. `_strings`,
+  `_df_node_dict` coordinate ids, and dataflow rows are unchanged (already dense
+  or not interned syms).
 - Auto-index demand is now planner-honest: PK-prefix on rowid tables, a
   tiny-relation floor, and a constant-column check replace the old broad
   index-everything policy, cutting the auto-index count from 771 to ~260 and
