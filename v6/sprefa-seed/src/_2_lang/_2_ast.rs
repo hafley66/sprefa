@@ -2,8 +2,8 @@
 //! an @async flag. Those are DERIVED by lang::analyze from the reference graph
 //! (inference, not manual mounting). The author writes rules; the analyzer paints.
 
-use crate::key::{ColId, RelId, SymId, VarId};
-use crate::lang::types::Type;
+use crate::_0_key::{ColId, RelId, SymId, VarId};
+use crate::_2_lang::_0_types::Type;
 
 pub struct Rel {
     pub name: RelId,

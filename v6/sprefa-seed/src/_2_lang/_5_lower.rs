@@ -4,8 +4,8 @@
 //!   - Emit a per-rel plan node carrying its derived EvalStrategy + stratum, so the
 //!     runtime knows push vs pull vs clock without any authored annotation.
 
-use crate::key::RelId;
-use crate::lang::analyze::EvalStrategy;
+use crate::_0_key::RelId;
+use crate::_2_lang::_4_analyze::EvalStrategy;
 
 pub struct Plan {
     pub nodes: Vec<PlanNode>,

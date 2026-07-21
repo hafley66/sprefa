@@ -4,7 +4,7 @@
 //! sonnet-level task is exactly `fn extract(&str) -> RowSet` — bounded, pure,
 //! cannot break the fixpoint (touches only its own leaf).
 
-use crate::key::SymId;
+use crate::_0_key::SymId;
 
 /// A produced set of rows (typed by the rel schema at the call site). Placeholder
 /// shape in the seed.

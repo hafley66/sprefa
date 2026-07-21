@@ -3,8 +3,8 @@
 //! the trait LAW proven in the cascade lab (54MB C-heap, wavefront-bounded). A
 //! future store-rocksdb / store-mem slots beside store-sqlite with no change above.
 
-use crate::feldera::{Delta, Weight};
-use crate::key::RelId;
+use crate::_1_feldera::{Delta, Weight};
+use crate::_0_key::RelId;
 
 pub enum PhysForm {
     Table,   // materialized, push-maintained (the cascade)

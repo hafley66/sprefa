@@ -18,7 +18,7 @@
 //! invalidation); datalog stratification. The escape hatch stays: `escape` lets an
 //! author override the inferred class when analysis is too conservative.
 
-use crate::key::RelId;
+use crate::_0_key::RelId;
 
 /// The reference graph: (reader_rel, read_rel) edges, harvested from rule bodies.
 /// = the signal read-set. Invalidation propagates along these edges backwards.

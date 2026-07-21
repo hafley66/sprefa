@@ -3,7 +3,7 @@
 //! FieldKind, which decides how it lowers (see below + lang::lower). No FieldKind
 //! for a `.field` -> type error. So the lowered join can never dangle.
 
-use crate::key::{FieldId, SymId};
+use crate::_0_key::{FieldId, SymId};
 
 pub enum Type {
     Scalar(Scalar),

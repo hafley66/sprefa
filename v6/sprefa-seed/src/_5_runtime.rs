@@ -8,8 +8,8 @@
 //! (bidi / backpressure aren't here yet — same words apply, embed later: a bounded
 //! channel = the dam; mergeMap concurrency = the pool.)
 
-use crate::feldera::Delta;
-use crate::key::{FileId, RelId, RevId, SymId};
+use crate::_1_feldera::Delta;
+use crate::_0_key::{FileId, RelId, RevId, SymId};
 
 /// Input sources into the reactive graph (json-rx `bindings.sources`, generalized).
 pub enum Change {
