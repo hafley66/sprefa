@@ -108,6 +108,34 @@ Two hidden-RAM bugs found and fixed in the example (were inflating the picture):
   wavefront-proportional sorter; the trustworthy signals are the C highwater + RSS.
 - CSV gained a 10th field: sqlite_c_highwater_mb (retract phase).
 
+## SCALING — Big-O of the retract, with receipts
+Measured via `sqlite_reach`, disk, DL_MEMCAP_MB=0.
+
+Axis 1 — fixed depth (layers=10), grow width so n AND delta scale together:
+  killed  retract_ms  ratio   us/killed
+   50k     130.8       -        2.62
+  100k     272.9      2.09x     2.73
+  200k     566.7      2.08x     2.83
+  400k    1152.4      2.03x     2.88
+  -> LINEAR in delta (2x delta = 2x time). us/killed drifts 2.62->2.88 as n grows
+     8x = a weak log(n) factor from b-tree descents into the n-row tables.
+
+Axis 2 — fixed width=100k (delta fixed ~100k), grow layers so ONLY the corpus grows
+(deep layers survive via fan-in, add rows but no deaths):
+  layers  n        killed   retract_ms  rounds
+    4     400k     100k     270.4       3
+    8     800k     100k     271.4       3
+   16    1.6M      100k     274.2       3
+   20    2.0M      100k     273.2       3
+  -> 5x corpus at FIXED delta = retract FLAT (270->273ms). The untouched corpus
+     costs nothing. rounds bounded by kill-front depth, not layer count.
+
+VERDICT: retract = **O(delta * log n_hot) ~= O(delta)**. Work tracks the size of the
+CHANGE (killed + decremented nodes), with only a logarithmic dependence on corpus
+size (b-tree descent). rounds = O(kill-front depth); each round a fixed statement
+set, O(delta) total row-work. This is the delta-proportional / bounded-work claim,
+now measured. (Setup, by contrast, is O(n): it inserts every row + edge once.)
+
 ## E6 — PRAGMA threads=4/8 to parallelize the GROUP BY sort — REJECTED
 - Hypothesis: SQLite's multi-threaded sorter parallelizes the 549ms GROUP BY.
 - Measure: retract 1.453 (0) / 1.442 (4) / 1.440 (8). ~0.8%, noise.
