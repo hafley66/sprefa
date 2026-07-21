@@ -39,3 +39,38 @@ but ABORT past the memory wall where sqlite completes.
 - Cumulative E0 -> E2: retract **2.57 -> 1.48 s (−42%)**, db **224.7 -> 207.0 MB (−7.9%)**,
   setup 8.0 -> 6.9s (−14%). Both axes down.
 - Guard: full sprefa-store suite green incl. head_to_head 4-engine byte-identical.
+
+## E3 — mmap_size=512MB for retract reads — REJECTED
+- Hypothesis: random PK lookups into cx_row/cx_dep are disk-read-bound; mmap the
+  whole 207MB db so reads skip the heap-cache copy.
+- Measure: retract 1.455 / 1.454 (mmap 512) vs 1.437 / 1.442 (mmap 0). No change
+  (slightly worse, within noise).
+- Verdict: REJECTED, reverted. The 207MB db already sits in the OS page cache after
+  setup, so retract is NOT read-bound. The remaining cost is CPU in SQLite's VDBE
+  (GROUP BY / UPDATE over 100k-row wavefronts), not disk. mmap is the wrong lever.
+
+## Per-statement breakdown (DL_CASCADE_TRACE=1, added to cascade.rs) — the map
+At 5M/500k/depth-3, the retract's ~1.45s splits (summed over 3 rounds):
+- weight UPDATE (correlated subquery): 212+227+192 = **631 ms** (dominant)
+- cx_hits build (CROSS JOIN cx_dep + GROUP BY child_key): 161+258+130 = **549 ms**
+- cx_next (transition guard): 66+40+28 = 134 ms
+- cx_frontier copy: 44+20+0 = 64 ms
+- everything else (DELETEs, seed, counts): < 10 ms total
+The UPDATE is ~1M scattered rowid row-rewrites into the 5M-row cx_row, each
+WAL-logged — the on-disk penalty dd/dbsp avoid (RAM hashmaps, no page writes).
+
+## E4 — UPDATE..FROM cx_hits instead of correlated subquery — REJECTED
+- Hypothesis: one join-driven update beats a correlated subquery + IN(SELECT).
+- Measure: retract **2.52s** (was 1.48) — 70% WORSE.
+- Verdict: REJECTED, reverted. Without the `WHERE key IN (SELECT..)` the planner
+  drove the join from the 5M-row cx_row (full scan x3 rounds) instead of the tiny
+  cx_hits. The IN(SELECT) was doing load-bearing join-order pinning. Correctness
+  held (tests green) — pure perf regression.
+
+## E5 — bigger page cache (cache_size 32 -> 512 MB) — REJECTED
+- Hypothesis: the UPDATE spills dirty pages past the 32MB cache mid-transaction.
+- Measure: retract 1.436 (32) / 1.439 (128) / 1.421 (256) / 1.416 (512) MB cache.
+  ~1.4% gain for 16x memory. peak_rss 1602 -> 1651 MB.
+- Verdict: REJECTED, reverted. The dirty-page set fits in 32MB; retract is NOT
+  cache-spill bound. Answers the open tradeoff question: relaxing the memory bound
+  buys ~nothing here. 32MB stays optimal and the bounded-memory thesis holds.

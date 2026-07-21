@@ -51,8 +51,22 @@ fn key(tag: i64, id: i64) -> i64 {
 // connection OR a single-connection transaction. The transaction path is the
 // point: it pins every statement to ONE connection (correctness under pooling)
 // and batches all the WAL writes into a single commit (the big speed win).
+/// Per-statement wall-time trace, opt-in via `DL_CASCADE_TRACE=1`. Off by default
+/// (one env read per statement, 29 total — negligible). Prints ms + a SQL prefix
+/// to stderr so an experiment can see which statement in the round dominates.
+fn traced() -> bool {
+    std::env::var("DL_CASCADE_TRACE").map(|v| v != "0" && !v.is_empty()).unwrap_or(false)
+}
+
 async fn exec(db: &impl ConnectionTrait, sql: &str) -> Result<(), DbErr> {
     stmt_counter::incr();
+    if traced() {
+        let t = std::time::Instant::now();
+        db.execute_unprepared(sql).await?;
+        let head: String = sql.chars().take(50).collect::<String>().replace('\n', " ");
+        eprintln!("[cascade] {:>8.2} ms  {}", t.elapsed().as_secs_f64() * 1e3, head);
+        return Ok(());
+    }
     db.execute_unprepared(sql).await?;
     Ok(())
 }
