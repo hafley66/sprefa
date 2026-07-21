@@ -740,7 +740,7 @@ fn py_flow_fn(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut Dataflo
     let Some(name_node) = node.child_by_field_name("name") else { return };
     let name = py_text(name_node, src);
     let fn_sym = mint_sym(file, EntityKind::Function, &name, None);
-    let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut scope: std::collections::HashMap<String, NodeIdx> = std::collections::HashMap::new();
     if let Some(params) = node.child_by_field_name("parameters") {
         let mut cur = params.walk();
         let mut pos: u32 = 0;
@@ -779,7 +779,7 @@ fn py_flow_stmt(
     src: &[u8],
     file: &str,
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
 ) {
     match node.kind() {
@@ -820,13 +820,13 @@ fn py_flow_assignment(
     src: &[u8],
     file: &str,
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
 ) {
     let Some(right) = node.child_by_field_name("right") else { return };
     let rhs = py_flow_expr(right, src, file, fn_sym, scope, out);
     if let Some(left) = node.child_by_field_name("left") {
-        py_bind_pattern(left, &rhs, src, file, fn_sym, scope, out);
+        py_bind_pattern(left, rhs, src, file, fn_sym, scope, out);
     }
 }
 
@@ -837,11 +837,11 @@ fn py_flow_assignment(
 /// (honest limit — attribute-chain flow is scoped out).
 fn py_bind_pattern(
     node: tree_sitter::Node,
-    rhs: &str,
+    rhs: NodeIdx,
     src: &[u8],
     file: &str,
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
 ) {
     match node.kind() {
@@ -849,7 +849,7 @@ fn py_bind_pattern(
             let name = py_text(node, src);
             let pos = node.start_position();
             let id = push_node(out, file, pos.row as u32, pos.column as u32, "let_bind", &name, fn_sym);
-            out.edges.push(DfEdge { from: rhs.to_string(), to: id.clone() });
+            out.edges.push(DfEdge { from: rhs, to: id });
             scope.insert(name, id);
         }
         "tuple_pattern" | "list_pattern" | "pattern_list" => {
@@ -883,7 +883,7 @@ fn py_flow_for(
     src: &[u8],
     file: &str,
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
 ) {
     let pos = node.start_position();
@@ -919,7 +919,7 @@ fn py_flow_while(
     src: &[u8],
     file: &str,
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
 ) {
     let pos = node.start_position();
@@ -949,9 +949,9 @@ fn py_comprehension_flow(
     src: &[u8],
     file: &str,
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
-) -> String {
+) -> NodeIdx {
     let pos = node.start_position();
     let mut loop_var = String::new();
     let mut cur = node.walk();
@@ -1019,9 +1019,9 @@ fn py_flow_expr(
     src: &[u8],
     file: &str,
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
-) -> String {
+) -> NodeIdx {
     let pos = node.start_position();
     match node.kind() {
         "identifier" => {
@@ -1043,7 +1043,7 @@ fn py_flow_expr(
         // convention), minted as a `new` node carrying the type name.
         "call" => {
             let func = node.child_by_field_name("function");
-            let mut recv: Option<String> = None;
+            let mut recv: Option<NodeIdx> = None;
             let mut callee_name = String::new();
             match func.map(|f| f.kind()) {
                 Some("identifier") => { callee_name = py_text(func.unwrap(), src); }
@@ -1062,7 +1062,7 @@ fn py_flow_expr(
                     }
                 }
             }
-            let mut arg_ids: Vec<(Option<String>, String)> = Vec::new();
+            let mut arg_ids: Vec<(Option<String>, NodeIdx)> = Vec::new();
             if let Some(args) = node.child_by_field_name("arguments") {
                 let mut cur = args.walk();
                 for a in args.named_children(&mut cur) {
@@ -1202,7 +1202,7 @@ fn py_flow_expr(
         }
         "list" | "set" | "tuple" => {
             let mut cur = node.walk();
-            let ids: Vec<String> = node.named_children(&mut cur)
+            let ids: Vec<NodeIdx> = node.named_children(&mut cur)
                 .map(|el| py_flow_expr(el, src, file, fn_sym, scope, out))
                 .collect();
             let id = push_node(out, file, pos.row as u32, pos.column as u32, "new", "", fn_sym);
@@ -1216,7 +1216,7 @@ fn py_flow_expr(
         // `**spread` lands under the ".." pseudo-field (the FRU convention).
         "dictionary" => {
             let mut cur = node.walk();
-            let mut filled: Vec<(String, String)> = Vec::new();
+            let mut filled: Vec<(String, NodeIdx)> = Vec::new();
             for child in node.named_children(&mut cur) {
                 match child.kind() {
                     "pair" => {

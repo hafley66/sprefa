@@ -617,7 +617,7 @@ fn go_walk_fns(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut Datafl
 /// name, matching `go_fn_type`'s slot count; an unnamed parameter still
 /// advances the position counter so later named params keep the right index.
 fn go_flow_fn(fn_node: tree_sitter::Node, src: &[u8], file: &str, fn_sym: &str, out: &mut DataflowFacts) {
-    let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut scope: std::collections::HashMap<String, NodeIdx> = std::collections::HashMap::new();
     let mut pos: u32 = 0;
     if let Some(params) = fn_node.child_by_field_name("parameters") {
         let mut cursor = params.walk();
@@ -650,9 +650,9 @@ fn flow_go(
     src: &[u8],
     file: &str,
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
-) -> Option<String> {
+) -> Option<NodeIdx> {
     let pos = node.start_position();
     match node.kind() {
         "identifier" => {
@@ -676,7 +676,7 @@ fn flow_go(
         // call is `call_res`; instantiation rides `composite_literal` below.
         "call_expression" => {
             let func = node.child_by_field_name("function");
-            let mut recv: Option<String> = None;
+            let mut recv: Option<NodeIdx> = None;
             if let Some(func) = func {
                 if func.kind() == "selector_expression" {
                     if let Some(operand) = func.child_by_field_name("operand") {
@@ -733,7 +733,7 @@ fn flow_go(
             let type_name = node.child_by_field_name("type").map(|t| go_type_name_text(t, src)).unwrap_or_default();
             let id = push_node(out, file, pos.row as u32, pos.column as u32, "new", &type_name, fn_sym);
             if let Some(body) = node.child_by_field_name("body") {
-                go_flow_literal_fields(body, src, file, fn_sym, scope, out, &id);
+                go_flow_literal_fields(body, src, file, fn_sym, scope, out, id);
             }
             Some(id)
         }
@@ -742,7 +742,7 @@ fn flow_go(
         // composite (`[]Foo{ {A: 1} }`'s inner `{A: 1}`). Anonymous `new`.
         "literal_value" => {
             let id = push_node(out, file, pos.row as u32, pos.column as u32, "new", "", fn_sym);
-            go_flow_literal_fields(node, src, file, fn_sym, scope, out, &id);
+            go_flow_literal_fields(node, src, file, fn_sym, scope, out, id);
             Some(id)
         }
         "binary_expression" => {
@@ -940,9 +940,9 @@ fn go_flow_expr_list(
     src: &[u8],
     file: &str,
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
-) -> Vec<Option<String>> {
+) -> Vec<Option<NodeIdx>> {
     let mut cursor = list.walk();
     list.children(&mut cursor).map(|e| flow_go(e, src, file, fn_sym, scope, out)).collect()
 }
@@ -953,12 +953,12 @@ fn go_flow_expr_list(
 /// value, conservative). `_` binds nothing.
 fn go_bind(
     names: &[tree_sitter::Node],
-    rhs_ids: &[Option<String>],
+    rhs_ids: &[Option<NodeIdx>],
     kind: &str,
     src: &[u8],
     file: &str,
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
 ) {
     for (i, name_node) in names.iter().enumerate() {
@@ -979,7 +979,7 @@ fn go_flow_spec(
     src: &[u8],
     file: &str,
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
 ) {
     let mut cursor = spec.walk();
@@ -998,9 +998,9 @@ fn go_flow_literal_fields(
     src: &[u8],
     file: &str,
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
-    owner_id: &str,
+    owner_id: NodeIdx,
 ) {
     let mut cursor = lit.walk();
     let mut pos_idx: usize = 0;
@@ -1019,9 +1019,9 @@ fn go_flow_literal_fields(
         let Some(value_wrap) = value_wrap else { continue };
         let Some(inner) = value_wrap.named_child(0) else { continue };
         if let Some(vid) = flow_go(inner, src, file, fn_sym, scope, out) {
-            out.edges.push(DfEdge { from: vid.clone(), to: owner_id.to_string() });
+            out.edges.push(DfEdge { from: vid, to: owner_id });
             let field = key_text.unwrap_or_else(|| pos_idx.to_string());
-            out.fields.push((owner_id.to_string(), field, vid));
+            out.fields.push((owner_id, field, vid));
         }
         pos_idx += 1;
     }
@@ -1035,9 +1035,9 @@ fn go_recurse_children(
     src: &[u8],
     file: &str,
     fn_sym: &str,
-    scope: &mut std::collections::HashMap<String, String>,
+    scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
-) -> Option<String> {
+) -> Option<NodeIdx> {
     let mut cursor = node.walk();
     let mut last = None;
     for child in node.children(&mut cursor) {

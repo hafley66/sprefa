@@ -99,16 +99,18 @@ fn rail_flags_a_sym_delimited_id_red() {
     );
 }
 
-/// The real `mint_sym` site (`src/graph/typegraph/mod.rs:398`, `format!("{file}::{}::{p}.{name}",
+/// The real `mint_sym` site (`src/graph/typegraph/mod.rs`, `format!("{file}::{}::{p}.{name}",
 /// kind.tag())`) still fires on the shipped repo tree — the narrowing pass
 /// must not have swept away a genuine finding along with the false
-/// positives.
+/// positives. Asserted by the fn the finding names (`mint_sym`) rather than a
+/// hardcoded line, so it tracks the site through unrelated edits above it (the
+/// df-id `NodeIdx` normalization shifted mint_sym down ~16 lines).
 #[test]
 fn rail_flags_the_real_mint_sym_site_red() {
     let stdout = run_against_repo_root();
     assert!(
-        stdout.contains("src/graph/typegraph/mod.rs") && stdout.contains("398"),
-        "the real mint_sym composite key (typegraph/mod.rs:398) must still fire; stdout:\n{stdout}"
+        stdout.contains("src/graph/typegraph/mod.rs") && stdout.contains("mint_sym"),
+        "the real mint_sym composite key (typegraph/mod.rs, fn mint_sym) must still fire; stdout:\n{stdout}"
     );
 }
 
