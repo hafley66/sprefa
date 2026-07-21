@@ -27,10 +27,12 @@ pub enum EffectDir {
     Mutate,   // Facts -> World (--move/rename/codemod WRITE): apply a derived change.
 }
 
-/// A registered effect: bound facts -> async -> {rows | edits}. http/cmd/clock are
-/// Ingest; --move/rename/codemod are Mutate. The runtime supplies skip-if-same (via
-/// `cache_key`), cancel-stale (switchMap), and clock scheduling — the
-/// makeSwitchMapCached triplet, once, for both directions.
+/// A registered effect — PUBLIC and OPEN like Extractor (React component contract):
+/// we ship builtins (http/cmd/clock/--move), users `impl Effect` in their own Rust
+/// crate. Native vs Composed mirrors host vs composite components; both referenced
+/// by name. Ingest = http/cmd read; Mutate = --move/codemod write. The runtime
+/// supplies skip-if-same (`cache_key`), cancel-stale (switchMap), and clock
+/// scheduling — the makeSwitchMapCached triplet, once, for both directions.
 pub trait Effect {
     fn dir(&self) -> EffectDir;
     // async fn run_ingest(&self, inputs: &[SymId]) -> RowSet;   // Ingest

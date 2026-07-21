@@ -11,10 +11,11 @@ pub struct Rel {
     pub rules: Vec<Rule>,   // INVARIANT: all one Rule kind (the DELETE FROM rel bug)
 }
 
-/// The four rule kinds — the FIXED kernel. Each is the sole holder of one
-/// invariant; three collapses are documented v5 data-loss/non-termination bugs.
-/// Extract/Effect are parameterized by a REGISTRY name, so new ops are registered
-/// impls, never new rule kinds (see extract::Extractor, runtime::Effect).
+/// The four rule kinds — the CLOSED/SEALED kernel (like React's fixed element
+/// protocol). Each is the sole holder of one invariant; three collapses are
+/// documented v5 data-loss/non-termination bugs. Extract/Effect carry a REGISTRY
+/// name, so the OPEN universe of ops (React's open component set) lives behind them:
+/// users add ops (native Rust impl OR composed .dl), never new rule kinds.
 pub enum Rule {
     Source(SourceRule),   // EDB: World -> Facts. effectful read, reconciled per-file.
     Derived(DerivedRule), // IDB: Rels -> Rels. pure, recursive, retraction-cascaded.

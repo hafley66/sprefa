@@ -18,12 +18,33 @@ pub struct ExtractArgs {
     pub path: String,   // e.g. a jsonpath / regex / ast pattern
 }
 
-/// The seam. `input` is the bound string the rule explodes.
+/// The seam — PUBLIC and OPEN, exactly like a React component contract. We ship
+/// builtins; users `impl Extractor` in their OWN Rust crate and register it. No
+/// builtin privilege: every op is referenced by name in `.dl` and resolved through
+/// the same registry. `input` is the bound string the rule explodes.
 pub trait Extractor {
     fn extract(&self, input: &str, args: &ExtractArgs) -> RowSet;
 }
 
-/// name -> handler. New op = registry.insert("yaml", Box::new(Yaml)).
+/// Ops are OPEN, and come in two flavors mirroring React host vs composite:
+///   Native   — a Rust `impl Extractor` (a primitive the engine calls) = host component.
+///   Composed — a `.dl` template expanded into existing ops/rules, no Rust = composite.
+/// Both are used identically at the call site (`foo(blob, "$.x", out)`).
+pub enum ExtractorDef {
+    Native(Box<dyn Extractor>),
+    Composed(ComposedOp),
+}
+
+/// A parameterized `.dl` op: params + a body template, expanded at lower time.
+/// The "write a reusable op without touching Rust" path (composite component).
+pub struct ComposedOp {
+    pub params: Vec<SymId>,
+    // body template -> expanded against the call's args during lowering.
+}
+
+/// name -> op. Builtins are pre-registered; users add their own. Closed KERNEL
+/// (the 4 rule kinds) + open UNIVERSE (these ops) = React's fixed protocol + open
+/// components. New op = registry.insert("yaml", ExtractorDef::Native(Box::new(Yaml))).
 pub struct Registry {
-    pub handlers: Vec<(SymId, Box<dyn Extractor>)>,
+    pub ops: Vec<(SymId, ExtractorDef)>,
 }
