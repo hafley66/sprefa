@@ -197,7 +197,19 @@ pub fn sweep(db: &Db, decls: &[RelDecl], apply: bool) -> Result<SweepReport> {
         if !seen_tables.insert(table.clone()) { continue; }
         for col in &decl.cols {
             if col.interned() {
-                root_selects.push(format!("SELECT \"{}\" AS id FROM {table} WHERE \"{}\" IS NOT NULL", col.name, col.name));
+                // Storage normalization (2026-07-21): an interned cell now stores
+                // a dense `_sym_dict` surrogate, NOT the `_strings` hash it
+                // decodes to, so resolve dense -> `sym_hash` to reach the real
+                // `_strings.id`. `COALESCE(..., cell)` keeps a raw-hash cell
+                // (a coord id in a `text` column, or the rare in-range value)
+                // reachable by passing through. This follows only LIVE references
+                // — a string with no live cell stays collectable, so the dict
+                // does not pin every string it ever saw.
+                root_selects.push(format!(
+                    "SELECT COALESCE((SELECT sym_hash FROM _sym_dict WHERE _sym_dict.id = t.\"{col}\"), t.\"{col}\") AS id \
+                     FROM {table} t WHERE t.\"{col}\" IS NOT NULL",
+                    col = col.name
+                ));
                 decl_columns_scanned += 1;
             }
         }

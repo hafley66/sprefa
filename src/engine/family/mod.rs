@@ -892,18 +892,21 @@ fn gamma() {
         engine
     }
 
-    fn names(engine: &Engine) -> Vec<[i64; 2]> {
-        let mut v: Vec<[i64; 2]> = engine
-            .db
-            .query_rows(
-                "rel_call_name",
-                "SELECT sym, name FROM rel_call_name",
-                &[],
-                |row| Ok([row.get(0)?, row.get(1)?]),
-            )
-            .unwrap();
-        v.sort();
+    // Compare DECODED rows (the `_txt` views), not raw cells. An interned cell
+    // now stores a dense `_sym_dict` surrogate assigned in allocation order, so
+    // the SAME symbol gets a DIFFERENT dense id in two independently-built dbs
+    // (content-addressability is the accepted storage-normalization trade-off).
+    // The invariant these tests assert — a reran family equals a reference
+    // extraction — is SEMANTIC (same symbols), so it must be checked on decoded
+    // text, which is stable across dbs; raw dense ids are not.
+    fn decoded_rows(engine: &Engine, sql: &str) -> Vec<Vec<serde_json::Value>> {
+        let mut v = engine.query_sql(sql, &[]).unwrap();
+        v.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
         v
+    }
+
+    fn names(engine: &Engine) -> Vec<Vec<serde_json::Value>> {
+        decoded_rows(engine, "SELECT sym, name FROM rel_call_name_txt")
     }
 
     fn make_dir(tag: &str) -> PathBuf {
@@ -920,33 +923,14 @@ fn gamma() {
         dir
     }
 
-    fn snapshot(engine: &Engine) -> (Vec<[i64; 5]>, Vec<[i64; 3]>) {
-        let site: Vec<[i64; 5]> = {
-            let mut v: Vec<[i64; 5]> = engine
-                .db
-                .query_rows(
-                    "rel_call_site",
-                    "SELECT repo, caller, callee, file, line FROM rel_call_site",
-                    &[],
-                    |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?]),
-                )
-                .unwrap();
-            v.sort();
-            v
-        };
-        let edge: Vec<[i64; 3]> = {
-            let mut v: Vec<[i64; 3]> = engine
-                .db
-                .query_rows(
-                    "rel_call_edge",
-                    "SELECT caller, callee, kind FROM rel_call_edge",
-                    &[],
-                    |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]),
-                )
-                .unwrap();
-            v.sort();
-            v
-        };
+    fn snapshot(
+        engine: &Engine,
+    ) -> (Vec<Vec<serde_json::Value>>, Vec<Vec<serde_json::Value>>) {
+        let site = decoded_rows(
+            engine,
+            "SELECT repo, caller, callee, file, line FROM rel_call_site_txt",
+        );
+        let edge = decoded_rows(engine, "SELECT caller, callee, kind FROM rel_call_edge_txt");
         (site, edge)
     }
 

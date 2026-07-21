@@ -142,8 +142,11 @@ fn assert_memo_matches_rel(
     rels: &BTreeMap<&'static str, Vec<String>>,
 ) {
     for &(rel, _) in REL_COLS {
+        // The router memo is the raw-hash working copy; the public rel stores
+        // the dense `_sym_dict` surrogate. Compare in one id space: densify the
+        // memo exactly as the render seam does (storage normalization, 2026-07-21).
         let memo_rows = engine
-            .call_router_memo_rows(rel)
+            .call_router_memo_rows_dense(rel)
             .unwrap_or_else(|| panic!("{scenario}: router memo for `{rel}` should be populated"));
         let mut memo_lines: Vec<String> = memo_rows
             .iter()

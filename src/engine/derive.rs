@@ -1078,7 +1078,13 @@ impl Engine {
             .enumerate()
             .map(|(index, column)| {
                 if Some(index) == tag_index && head_meta.cols[index].interned() {
-                    format!("(SELECT content FROM _strings WHERE id = \"{column}\")")
+                    // The tag cell stores a dense `_sym_dict` surrogate, so decode
+                    // dense -> sym_hash -> `_strings` (storage normalization,
+                    // 2026-07-21); a raw `_strings WHERE id = cell` would miss.
+                    format!(
+                        "(SELECT content FROM _strings WHERE id = \
+                         (SELECT sym_hash FROM _sym_dict WHERE _sym_dict.id = \"{column}\"))"
+                    )
                 } else {
                     format!("\"{column}\"")
                 }

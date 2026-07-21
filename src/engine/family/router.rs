@@ -237,6 +237,27 @@ impl crate::engine::Engine {
             .map(|rows| rows.iter().cloned().collect())
     }
 
+    /// `call_router_memo_rows` densified exactly as `flip_call_rels_via_router`
+    /// writes the public rel — each interned column's raw StringId hash swapped
+    /// for its dense `_sym_dict` surrogate. The router memo is the raw-hash
+    /// working copy; the stored public rel is dense. A test that compares the
+    /// two must do so in ONE id space, so densify the memo side here (the twin
+    /// of the `call_render_tests` memo densify). Test-only.
+    #[doc(hidden)]
+    pub fn call_router_memo_rows_dense(&self, name: &str) -> Option<Vec<Vec<crate::ast::Value>>> {
+        let (rows, cols) = {
+            let router = self.call_router.borrow();
+            let router = router.as_ref()?;
+            let rows = router.rows(name)?.to_vec();
+            let cols = router.family(name)?.out_cols();
+            (rows, cols)
+        };
+        Some(
+            self.densify_interned_cells(name, cols, rows)
+                .expect("densify memo rows"),
+        )
+    }
+
     /// Family names that would rerun if `flip_call_rels_via_router` were called
     /// with `changed`. A cold router (no memo yet) reports every family.
     /// Test-only.

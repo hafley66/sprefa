@@ -174,21 +174,21 @@ fn head_term_sql(term: &Term, col: &Col, canon: &HashMap<String, String>, tys: &
         // (pure, no `_strings` queue) rather than `sprf_sym_intern`. An interned
         // source var still passes its int handle through unchanged.
         //
-        // For a plain interned (non-coord) sym column, wrap the hash in
-        // `dense_val`: a literal/computed value that already exists in the corpus
-        // resolves to its dense `_sym_dict` surrogate (so it joins source syms in
-        // the same id space, and stores 1-2 bytes), while a genuinely-novel
-        // derived value falls back to the raw hash (decode + filter are
-        // hash-aware). A pass-through interned source var already carries its
-        // dense id. Storage normalization, 2026-07-21.
-        let densify = |hash_sql: String| if col.coord { hash_sql } else { dense_val(&hash_sql) };
+        // For a plain interned (non-coord) sym column the write goes through
+        // `sprf_sym_intern`, which returns the DENSE `_sym_dict` surrogate
+        // directly (the shared allocator mints it at call time and `flush_syms`
+        // persists the dict row) — so the cell stores 1-2 bytes in the one id
+        // space every other write path uses, no COALESCE bridge needed. A
+        // coord column uses pure `sprf_sym` (its id is a `_df_node_dict`
+        // surrogate, not a sym-dict one). A pass-through interned source var
+        // already carries its dense id. Storage normalization, 2026-07-21.
         let hash_fn = if col.coord { "sprf_sym" } else { "sprf_sym_intern" };
         return match term {
-            Term::Str(s) => Ok(densify(format!("{hash_fn}('{}')", esc(s)))),
+            Term::Str(s) => Ok(format!("{hash_fn}('{}')", esc(s))),
             Term::Var(v) if var_interned(tys, v) => term_sql(term, canon, tys),
             Term::Call { name, args } if name == "sym" && args.len() == 1
                 && term_interned(&args[0], tys) => term_sql(&args[0], canon, tys),
-            _ => Ok(densify(format!("{hash_fn}({})", term_sql_text(term, canon, tys)?))),
+            _ => Ok(format!("{hash_fn}({})", term_sql_text(term, canon, tys)?)),
         };
     }
     // Non-interned target column: decode any interned source var to its text so

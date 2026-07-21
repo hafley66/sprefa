@@ -354,7 +354,7 @@ impl Engine {
              -- Symbol/interned-string dictionary (2026-07-21 identity
              -- normalization). One row per DISTINCT interned StringId hash that
              -- lands in a `sym`/interned rel column; `id` is a DENSE surrogate
-             -- assigned by AUTOINCREMENT (1, 2, 3, ...). Every interned
+             -- assigned by the rowid (contiguous from the 1e9 seed). Every interned
              -- (`col.interned()` && not a `coord` column) rel cell stores THIS
              -- dense `id` in place of the former 8-byte `StringId::of(text)`
              -- hash — a 1-2 byte SQLite varint in the table cell AND in every PK
@@ -369,25 +369,30 @@ impl Engine {
              -- dict content-keyed (INSERT OR IGNORE + SELECT), so a re-run or
              -- cold-chunk slice resolves an unchanged hash to the SAME surrogate.
              -- Persistent, never rev-scoped, never pruned (same policy as
-             -- `_df_node_dict`); AUTOINCREMENT so a reclaimed rowid can never
-             -- alias a live surrogate.
+             -- `_df_node_dict`), so a rowid is never reclaimed and can never
+             -- alias a live surrogate. PLAIN `INTEGER PRIMARY KEY`, NOT
+             -- AUTOINCREMENT: the resolve seam re-offers the SAME hash set on
+             -- every re-tick as `INSERT OR IGNORE`, and AUTOINCREMENT bumps
+             -- `sqlite_sequence` on each ignored `UNIQUE(sym_hash)` conflict —
+             -- an unbounded upward drift that leaves gaps and eventually pushes
+             -- ids out of the 4-byte class. Plain rowid recomputes max+1 at
+             -- insert, so an ignored insert commits nothing and the id space
+             -- stays contiguous and stable across ticks.
+             -- The dense ids are handed out by the in-memory allocator
+             -- (`Db::sym_alloc`), seeded to start at 1e9+1 so real sym ids are
+             -- DISJOINT from `_df_node_dict` coordinate ids (small: one per df
+             -- node, orders of magnitude below 1e9) — a `.dl` rule may carry a
+             -- df-coordinate id in a plain `text` column (e.g.
+             -- `reach(from: text) <- df_edge(a, b)`), and the decode COALESCE
+             -- stays unambiguous by value. The empty-string sentinel (hash 0)
+             -- keeps dense id 0 and is never dicted. No seed row: the allocator
+             -- assigns the first real id, and `ensure_sym_alloc_loaded` reloads
+             -- the max on a warm db so ids stay stable across restarts.
              CREATE TABLE IF NOT EXISTS _sym_dict (
-                 id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                 id       INTEGER PRIMARY KEY,
                  sym_hash INTEGER NOT NULL,
                  UNIQUE(sym_hash)
              );
-             -- Seed the surrogate space to start at 1e9 so dense sym ids
-             -- (>= 1e9+1) are DISJOINT from dense `_df_node_dict` coordinate ids
-             -- (small: one per df node, orders of magnitude below 1e9). A `.dl`
-             -- rule may carry a df-coordinate id in a plain `text`/`sym` column
-             -- (e.g. `reach(from: text) <- df_edge(a, b)`), and its `_txt` decode
-             -- must reconstruct the COORDINATE, not mistake the small id for a
-             -- sym surrogate. Disjoint ranges make the decode COALESCE
-             -- unambiguous by value. The seed row itself (sym_hash 0, the empty
-             -- sentinel which is never dicted) only advances AUTOINCREMENT; it is
-             -- never looked up. 1e9 leaves sym ids in SQLite's 4-byte int class
-             -- (< 2^31), still half the former 8-byte hash cell.
-             INSERT OR IGNORE INTO _sym_dict (id, sym_hash) VALUES (1000000000, 0);
              CREATE TABLE IF NOT EXISTS _program (
                  path TEXT PRIMARY KEY,
                  hash TEXT NOT NULL DEFAULT '',
@@ -637,6 +642,10 @@ impl Engine {
         if self.column_exists("_strings", "norm")? {
             self.db.exec_on("_strings", "ALTER TABLE _strings DROP COLUMN norm")?;
         }
+        // `_sym_dict` now exists: load the dense-surrogate allocator from it
+        // BEFORE any tick runs `sprf_sym_intern`, so a warm db keeps stable ids
+        // and `next` sits above every persisted id. Idempotent (loads once).
+        self.db.ensure_sym_alloc_loaded()?;
         Ok(())
     }
 

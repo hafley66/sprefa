@@ -122,6 +122,70 @@ pub struct Db {
     /// `flush_syms` the moment autocommit returns), so it cannot make a
     /// rolled-back id look durable to a later, unrelated transaction.
     inflight_strings: RefCell<HashSet<i64>>,
+    /// The one dense-surrogate allocator (storage normalization, 2026-07-21).
+    /// Maps every interned `StringId` hash to a small dense `_sym_dict.id` and
+    /// hands the SAME id to every write path — the `sprf_sym_intern` SQL UDF
+    /// (facts, derived-rule heads), `resolve_sym_surrogates` (the Rust encode
+    /// path), and `flush_syms` (persist). One id space, assigned synchronously
+    /// at write time, so no interned cell is ever stored as a raw 8-byte hash
+    /// and no join has to bridge two spaces. Shared with the UDF closure via
+    /// `Arc<Mutex<..>>`. Lazy-loaded from the persisted `_sym_dict` once per
+    /// connection (`ensure_sym_alloc_loaded`) so a warm-db restart keeps every
+    /// surrogate stable.
+    sym_alloc: Arc<Mutex<SymAlloc>>,
+}
+
+/// In-memory `StringId hash -> dense _sym_dict.id` allocator. See `Db::sym_alloc`.
+#[derive(Default)]
+struct SymAlloc {
+    /// Loaded the persisted `_sym_dict` into `map`/`next` yet? Lazy so a brand
+    /// new db (no `_sym_dict` table until `ensure_meta`) does not fail the load.
+    loaded: bool,
+    /// Did `_sym_dict` exist at load time? A storage-layer unit test builds a
+    /// bare `_strings` (no `ensure_meta`, no `_sym_dict`) and still flushes syms;
+    /// the flush must skip persisting the dict rather than fail on the missing
+    /// table. False until a load sees the table (every real engine runs
+    /// `ensure_meta`, which creates it, before any flush).
+    dict_exists: bool,
+    /// hash -> dense id. The empty-string sentinel (hash 0) is never stored here.
+    map: HashMap<i64, i64>,
+    /// Next dense id to hand out. Seeded to `max(persisted id, 1e9) + 1` so real
+    /// sym ids stay >= 1e9+1 — disjoint from the `_df_node_dict` coordinate ids
+    /// (small, one per df node) that a plain `text` column can also carry.
+    next: i64,
+}
+
+/// Dense sym ids start here + 1, above every `_df_node_dict` coordinate id, so a
+/// `text` column carrying either kind decodes unambiguously by value.
+const SYM_DENSE_BASE: i64 = 1_000_000_000;
+
+impl SymAlloc {
+    /// Dense surrogate for a `StringId` hash, minting a fresh contiguous id on
+    /// first sight. The empty-string sentinel (hash 0) maps to itself and is
+    /// never dicted. The caller must have loaded the persisted dict first
+    /// (`Db::ensure_sym_alloc_loaded`) or `next` would collide with stored ids.
+    fn dense_of(&mut self, hash: i64) -> i64 {
+        if hash == 0 {
+            return 0;
+        }
+        // Idempotence: an id already inside the range this allocator has handed
+        // out is a dense surrogate passed through from another rel (a native
+        // walk's node cell, a pass-through source var), NOT a raw StringId hash
+        // to re-mint. Return it unchanged so re-encoding a dense cell is a no-op
+        // instead of a double-mint. Real hashes land in this window only at the
+        // ~1-in-10^14 rate the whole dense/hash range split already tolerates,
+        // and even then decode still resolves (the `_strings` direct-hash arm).
+        if hash >= SYM_DENSE_BASE && hash < self.next {
+            return hash;
+        }
+        if let Some(&dense) = self.map.get(&hash) {
+            return dense;
+        }
+        let dense = self.next;
+        self.next += 1;
+        self.map.insert(hash, dense);
+        dense
+    }
 }
 
 /// Cap on `Db::persisted_strings`. At ~1.2M live strings measured on the
@@ -269,16 +333,26 @@ pub fn open(path: Option<&str>) -> Result<Db> {
     register_split(&conn)?;
     register_string_fns(&conn)?;
     let pending_syms = Arc::new(Mutex::new(Vec::new()));
+    let sym_alloc = Arc::new(Mutex::new(SymAlloc::default()));
     {
         let pending = pending_syms.clone();
+        let alloc = sym_alloc.clone();
         conn.create_scalar_function("sprf_sym_intern", 1,
             rusqlite::functions::FunctionFlags::SQLITE_UTF8,
             move |ctx| {
                 let Some(text) = ctx.get::<Option<String>>(0)? else { return Ok(None); };
-                if !text.is_empty() {
-                    pending.lock().expect("pending symbol queue poisoned").push(text.clone());
+                if text.is_empty() {
+                    // Empty-string sentinel: dense id 0, never interned or dicted.
+                    return Ok(Some(0));
                 }
-                Ok(Some(crate::spine::StringId::of(&text).sqlite()))
+                let hash = crate::spine::StringId::of(&text).sqlite();
+                pending.lock().expect("pending symbol queue poisoned").push(text.clone());
+                // Return the DENSE surrogate, not the hash, so the interned cell
+                // this value lands in stores 1-2 bytes and shares one id space
+                // with every other write path. The allocator is loaded before any
+                // write (`ensure_sym_alloc_loaded`, called from `ensure_meta`).
+                let dense = alloc.lock().expect("sym allocator poisoned").dense_of(hash);
+                Ok(Some(dense))
             })?;
     }
     if profiling() { conn.profile(Some(profile_hook)); }
@@ -299,6 +373,7 @@ pub fn open(path: Option<&str>) -> Result<Db> {
         write_ledger: RefCell::new(Vec::new()),
         persisted_strings: RefCell::new(HashSet::new()),
         inflight_strings: RefCell::new(HashSet::new()),
+        sym_alloc,
     })
 }
 
@@ -1375,7 +1450,14 @@ impl Db {
             }
         }
         if owns_tx { self.conn.execute_batch("COMMIT").map_err(|e| sql_err(table, "COMMIT", e))?; }
-        if total > 0 && table != "_write_ledger" {
+        // `_sym_probe` is the transient scratch table the sym-surrogate resolve
+        // DELETEs and re-fills every call (src/db.rs `resolve_sym_surrogates`);
+        // its insert is never a real corpus change, so it must not register as a
+        // write or a settled warm tick would look non-quiescent to the daemon.
+        // (`_sym_dict` itself is NOT excluded: its INSERT OR IGNORE affects 0
+        // rows on a settled tick and legitimately bumps only when a NEW sym is
+        // minted.) Storage normalization, 2026-07-21.
+        if total > 0 && table != "_write_ledger" && table != "_sym_probe" {
             let rel = table
                 .strip_prefix("rel_")
                 .unwrap_or(table)
@@ -1396,50 +1478,69 @@ impl Db {
         Ok(total)
     }
 
-    /// Map each distinct interned StringId hash to its dense `_sym_dict`
-    /// surrogate, minting a dict row for any hash not seen before. Batched and
-    /// N+1-safe: one TEMP-probe fill + one `INSERT OR IGNORE` + one `SELECT`,
-    /// regardless of how many hashes are offered — the sym twin of
-    /// `resolve_coord_surrogates_tuples`. The sentinel `StringId::EMPTY` (0)
-    /// maps to itself and is never dicted, so an empty-string cell stays 0 (the
-    /// "none" marker every reader already honors). Text is NOT touched here: it
-    /// stays interned in `_strings` keyed by the hash, so decode is
-    /// `dense id -> _sym_dict.sym_hash -> _strings.content`.
-    pub fn resolve_sym_surrogates(&self, hashes: &[i64]) -> Result<HashMap<i64, i64>> {
-        let mut dense: HashMap<i64, i64> = HashMap::new();
-        dense.insert(0, 0);
-        let mut seen: HashSet<i64> = HashSet::new();
-        let mut probe_rows: Vec<Vec<Value>> = Vec::new();
-        for &hash in hashes {
-            if hash != 0 && seen.insert(hash) {
-                probe_rows.push(vec![Value::Int(hash)]);
+    /// Load the persisted `_sym_dict` into the in-memory allocator ONCE per
+    /// connection, so a warm-db restart hands out the SAME dense id for a hash
+    /// it already stored and `next` never collides with a persisted id. A no-op
+    /// after the first call and on a db whose `_sym_dict` table does not exist
+    /// yet (a brand new db before `ensure_meta`). MUST run before any write that
+    /// invokes `sprf_sym_intern` or `resolve_sym_surrogates` — `ensure_meta`
+    /// calls it right after creating `_sym_dict`.
+    pub(crate) fn ensure_sym_alloc_loaded(&self) -> Result<()> {
+        {
+            if self.sym_alloc.lock().expect("sym allocator poisoned").loaded {
+                return Ok(());
             }
         }
-        if probe_rows.is_empty() {
-            return Ok(dense);
+        let exists = !self.schema_objects(&["_sym_dict"])?.is_empty();
+        let mut map: HashMap<i64, i64> = HashMap::new();
+        let mut max_id = SYM_DENSE_BASE;
+        if exists {
+            self.for_each_row(
+                "_sym_dict",
+                "SELECT id, sym_hash FROM _sym_dict",
+                &[],
+                |row| {
+                    let id: i64 = row.get(0)?;
+                    let hash: i64 = row.get(1)?;
+                    if hash != 0 {
+                        map.insert(hash, id);
+                    }
+                    if id > max_id {
+                        max_id = id;
+                    }
+                    Ok(())
+                },
+            )?;
         }
-        self.exec_on(
-            "_sym_probe",
-            "CREATE TEMP TABLE IF NOT EXISTS _sym_probe (sym_hash INTEGER)",
-        )?;
-        self.exec_on("_sym_probe", "DELETE FROM _sym_probe")?;
-        self.insert_rows_keyed("_sym_probe", "INSERT _sym_probe", &["sym_hash"], &probe_rows)?;
-        self.exec_on(
-            "_sym_dict",
-            "INSERT OR IGNORE INTO _sym_dict (sym_hash) SELECT DISTINCT sym_hash FROM _sym_probe",
-        )?;
-        self.for_each_row(
-            "_sym_dict",
-            "SELECT p.sym_hash, d.id FROM _sym_probe p \
-             JOIN _sym_dict d ON d.sym_hash = p.sym_hash",
-            &[],
-            |row| {
-                let hash: i64 = row.get(0)?;
-                let id: i64 = row.get(1)?;
-                dense.insert(hash, id);
-                Ok(())
-            },
-        )?;
+        let mut alloc = self.sym_alloc.lock().expect("sym allocator poisoned");
+        if !alloc.loaded {
+            alloc.map = map;
+            alloc.next = max_id + 1;
+            alloc.dict_exists = exists;
+            alloc.loaded = true;
+        }
+        Ok(())
+    }
+
+    /// Map each distinct interned StringId hash to its dense `_sym_dict`
+    /// surrogate via the one shared allocator (`Db::sym_alloc`) — the Rust
+    /// encode-path twin of the `sprf_sym_intern` UDF, so both write paths hand
+    /// the same hash the same id. Minting is in-memory here; the dict row is
+    /// PERSISTED by `flush_syms` alongside the string's `_strings` row (they
+    /// commit and roll back together). The sentinel `StringId::EMPTY` (0) maps
+    /// to itself and is never dicted. Text is NOT touched here: it stays interned
+    /// in `_strings` keyed by the hash, so decode is
+    /// `dense id -> _sym_dict.sym_hash -> _strings.content`.
+    pub fn resolve_sym_surrogates(&self, hashes: &[i64]) -> Result<HashMap<i64, i64>> {
+        self.ensure_sym_alloc_loaded()?;
+        let mut dense: HashMap<i64, i64> = HashMap::new();
+        dense.insert(0, 0);
+        let mut alloc = self.sym_alloc.lock().expect("sym allocator poisoned");
+        for &hash in hashes {
+            if hash != 0 {
+                dense.entry(hash).or_insert_with(|| alloc.dense_of(hash));
+            }
+        }
         Ok(dense)
     }
 
@@ -1529,6 +1630,32 @@ impl Db {
         // `encode_rel_rows` over the same row set) does not re-issue the same
         // `INSERT OR IGNORE` for ids this transaction already holds.
         let total = self.insert_rows_keyed("_strings", bump_key, &["id", "content"], &rows)?;
+        // Persist the dense `_sym_dict` surrogate for every string written here,
+        // in the SAME transaction as the `_strings` row so the two commit or roll
+        // back together — the dict is the authority a dense cell decodes through,
+        // and a dense id with no dict row would be undecodable. Minting is the
+        // shared allocator (already assigned for anything that flowed through
+        // `sprf_sym_intern`/`resolve_sym_surrogates`; assigned here for a
+        // spine/source SymSink string that reached `_strings` some other way).
+        // `INSERT OR IGNORE` keeps it idempotent under the same
+        // persisted/inflight re-offer skipping that guards `_strings`.
+        self.ensure_sym_alloc_loaded()?;
+        let dict_rows: Vec<Vec<Value>> = {
+            let mut alloc = self.sym_alloc.lock().expect("sym allocator poisoned");
+            if !alloc.dict_exists {
+                // Storage-layer unit test with a bare `_strings`, no `_sym_dict`.
+                Vec::new()
+            } else {
+                attempted_ids
+                    .iter()
+                    .filter(|&&hash| hash != 0)
+                    .map(|&hash| vec![Value::Int(alloc.dense_of(hash)), Value::Int(hash)])
+                    .collect()
+            }
+        };
+        if !dict_rows.is_empty() {
+            self.insert_rows_keyed("_sym_dict", "INSERT _sym_dict", &["id", "sym_hash"], &dict_rows)?;
+        }
         if was_autocommit {
             let mut persisted = self.persisted_strings.borrow_mut();
             if persisted.len() + attempted_ids.len() > STRING_CACHE_CAP {
