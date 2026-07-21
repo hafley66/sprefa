@@ -81,9 +81,9 @@ pub async fn create_schema(db: &DatabaseConnection) -> Result<(), DbErr> {
     db.execute_unprepared(
         "CREATE TABLE cx_row (
             key    INTEGER PRIMARY KEY,
-            tag    INTEGER NOT NULL,
-            id     INTEGER NOT NULL,
-            weight INTEGER NOT NULL DEFAULT 1
+            weight INTEGER NOT NULL DEFAULT 1,
+            tag    INTEGER GENERATED ALWAYS AS (key / 1000000000) VIRTUAL,
+            id     INTEGER GENERATED ALWAYS AS (key % 1000000000) VIRTUAL
          );
          CREATE TABLE cx_dep (
             parent_key INTEGER NOT NULL,
@@ -105,9 +105,9 @@ pub async fn insert_rows(db: &DatabaseConnection, rows: &[(i64, i64, i64)]) -> R
     for chunk in rows.chunks(CHUNK) {
         let vals: Vec<String> = chunk
             .iter()
-            .map(|(t, i, w)| format!("({},{t},{i},{w})", key(*t, *i)))
+            .map(|(t, i, w)| format!("({},{w})", key(*t, *i)))
             .collect();
-        exec(&txn, &format!("INSERT INTO cx_row(key,tag,id,weight) VALUES {}", vals.join(","))).await?;
+        exec(&txn, &format!("INSERT INTO cx_row(key,weight) VALUES {}", vals.join(","))).await?;
     }
     txn.commit().await?;
     Ok(())

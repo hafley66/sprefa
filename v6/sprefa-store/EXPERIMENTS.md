@@ -26,3 +26,16 @@ but ABORT past the memory wall where sqlite completes.
 - Verdict: KEEP. Time −42% is the axis we chase (dd/dbsp ~291ms; ~9x -> ~5x gap).
   Space +6MB is the redundant tag/id on cx_row (key already encodes them) — E2 target.
 - Guard: full suite green incl. head_to_head 4-engine byte-identical.
+
+## E2 — drop redundant tag/id, make them VIRTUAL generated columns — KEEP
+- Hypothesis: E1 stored tag+id as payload AND key=encode(tag,id) as rowid — a
+  redundant copy (the +2.7% disk). Replace with `tag/id GENERATED ALWAYS AS
+  (key/1e9), (key%1e9) VIRTUAL` — computed on read, zero storage — so cx_row
+  payload is just weight. Every `WHERE tag=.. AND id=..` assertion still resolves.
+- Change: src/cascade.rs schema (2 generated virtual cols) + insert into (key,weight).
+- Measure (3 runs): retract **1.488 / 1.473 / 1.474 s** (flat vs E1). db **207.0 MB**
+  (E1 230.8, E0 224.7 — **−7.9% vs baseline**, −10.3% vs E1). Setup 7.5 -> 6.9s.
+- Verdict: KEEP. Space reclaimed at zero time cost; VIRTUAL cols cost nothing to store.
+- Cumulative E0 -> E2: retract **2.57 -> 1.48 s (−42%)**, db **224.7 -> 207.0 MB (−7.9%)**,
+  setup 8.0 -> 6.9s (−14%). Both axes down.
+- Guard: full sprefa-store suite green incl. head_to_head 4-engine byte-identical.
