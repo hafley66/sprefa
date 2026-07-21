@@ -6,6 +6,8 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-21
+
 ### Added
 - `dl daemon events [--kind K] [--root R] [--limit N]` reads `events.jsonl`, a
   trail beside `why.jsonl` that records the ARGUMENTS of each discrete IO event
