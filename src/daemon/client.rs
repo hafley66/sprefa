@@ -205,9 +205,13 @@ pub fn spawn_detached() -> Result<()> {
         .context("locate current exe for daemon spawn")?;
     let home = daemon_home();
     std::fs::create_dir_all(&home)?;
-    let log = home.join("daemon.log");
-    const LOG_CAP_BYTES: u64 = 8 * 1024 * 1024;
-    let oversized = std::fs::metadata(&log).map(|m| m.len() > LOG_CAP_BYTES).unwrap_or(false);
+    // Same path `daemon::logcap::sweep` checks on every idle tick once the
+    // child is running; this spawn-time check just means a fresh child never
+    // starts by appending onto an already-oversized file from a prior run.
+    let log = daemon_log_path(&home);
+    let oversized = std::fs::metadata(&log)
+        .map(|m| m.len() > crate::daemon::logcap::EXTERNAL_LOG_CAP_BYTES)
+        .unwrap_or(false);
     let log_file = std::fs::OpenOptions::new()
         .create(true)
         .append(!oversized)

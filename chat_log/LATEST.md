@@ -1,1 +1,1 @@
-20260720.6.strings-diet-rev-identity-dataflow-deintern.md
+20260720.8.strings-diet-1nf-normalization-hermetic-state.md

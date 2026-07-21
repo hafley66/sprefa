@@ -230,6 +230,36 @@ combination needs a memory comparison against typed vectors, compact IDs,
 interned repeated field names, and a separate structural interner before being
 used at repository scale.
 
+### Storage matrix result
+
+The follow-up lab added a flat vector representation and direct String storage.
+All measurements include the lab's process-wide measuring allocator.
+
+| Variant | Workload | Declarations | Fields | Nodes | Interned names | Peak bytes |
+|---|---|---:|---:|---:|---:|---:|
+| arena-lasso | deep | 100,000 | 300,000 | 200,002 | 100,003 | 39,506,882 |
+| flat-lasso | repeated | 100,000 | 300,000 | 100,005 | 3 | 9,734,855 |
+| flat-lasso | unique | 100,000 | 300,000 | 100,005 | 300,000 | 24,078,297 |
+| flat-strings | repeated | 100,000 | 300,000 | 100,005 | 0 | 23,785,921 |
+| flat-strings | unique | 100,000 | 300,000 | 100,005 | 0 | 25,585,919 |
+| flat-lasso | wide | 1,000 | 1,000,000 | 1,005 | 3 | 24,654,593 |
+| flat-lasso | unions | 100,000 | 300,000 | 100,004 | 3 | 9,734,853 |
+| flat-lasso | generic | 100,000 | 300,000 | 200,003 | 3 | 13,863,627 |
+| flat-lasso | repeated | 1,000,000 | 3,000,000 | 1,000,005 | 3 | 122,066,376 |
+| flat-lasso | unique | 1,000,000 | 3,000,000 | 1,000,005 | 3,000,000 | 262,566,606 |
+| flat-strings | repeated | 1,000,000 | 3,000,000 | 1,000,005 | 0 | 239,239,408 |
+
+The flat representation reduced the repeated-name one-million case from
+517,421,260 bytes to 122,066,376 bytes. Replacing three repeated interned
+field names with three million owned Strings increased the same case to
+239,239,408 bytes. Unique field names raised flat lasso storage to
+262,566,606 bytes, so symbol cardinality is a first-order input to memory use.
+
+The result selects flat contiguous storage for resolved declarations as the
+next implementation candidate. la-arena remains relevant for mutable or
+incrementally replaced declaration graphs. lasso remains useful when names are
+repeated, with a separate test required for high-cardinality source symbols.
+
 ## Recon lab
 
 The standalone experiment is at labs/type-system-rust/README.md. It imports no

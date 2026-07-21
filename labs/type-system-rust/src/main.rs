@@ -423,6 +423,160 @@ fn stress(count: usize) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum FlatNode {
+    String,
+    Int,
+    Bool,
+    Record(u32),
+    Array(u32),
+    Map(u32),
+    Union(u32, u32),
+    Apply(u32, u32),
+}
+
+#[derive(Clone, Copy)]
+enum Workload {
+    Repeated,
+    Unique,
+    Wide,
+    Deep,
+    Unions,
+    Generic,
+}
+
+impl Workload {
+    fn parse(value: Option<&str>) -> Self {
+        match value.unwrap_or("deep") {
+            "repeated" => Self::Repeated,
+            "unique" => Self::Unique,
+            "wide" => Self::Wide,
+            "unions" => Self::Unions,
+            "generic" => Self::Generic,
+            _ => Self::Deep,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Repeated => "repeated",
+            Self::Unique => "unique",
+            Self::Wide => "wide",
+            Self::Deep => "deep",
+            Self::Unions => "unions",
+            Self::Generic => "generic",
+        }
+    }
+}
+
+fn flat_node(
+    nodes: &mut Vec<FlatNode>,
+    interned: &mut HashMap<FlatNode, u32>,
+    node: FlatNode,
+) -> u32 {
+    if let Some(id) = interned.get(&node) {
+        return *id;
+    }
+    let id = nodes.len() as u32;
+    interned.insert(node.clone(), id);
+    nodes.push(node);
+    id
+}
+
+fn stress_flat(count: usize, workload: Workload, intern_names: bool) -> Result<()> {
+    let mut names: Option<Rodeo> = intern_names.then(Rodeo::new);
+    let mut direct_names = Vec::<String>::new();
+    let mut decls = Vec::<(u32, u32)>::with_capacity(count);
+    let mut fields = Vec::<(usize, u32)>::with_capacity(count.saturating_mul(3));
+    let mut nodes = Vec::<FlatNode>::new();
+    let mut interned = HashMap::<FlatNode, u32>::new();
+    let string = flat_node(&mut nodes, &mut interned, FlatNode::String);
+    let int = flat_node(&mut nodes, &mut interned, FlatNode::Int);
+    let bool_ty = flat_node(&mut nodes, &mut interned, FlatNode::Bool);
+    let field_count = if matches!(workload, Workload::Wide) {
+        count
+    } else {
+        3
+    };
+
+    for index in 0..count {
+        flat_node(&mut nodes, &mut interned, FlatNode::Record(index as u32));
+        let field_start = fields.len() as u32;
+        for field_index in 0..field_count {
+            let field_name = match workload {
+                Workload::Unique => format!("field{index}_{field_index}"),
+                _ => ["value", "items", "metadata"][field_index % 3].to_string(),
+            };
+            let field_name_len = field_name.len();
+            if let Some(names) = names.as_mut() {
+                names.get_or_intern(&field_name);
+            } else {
+                direct_names.push(field_name);
+            }
+            let field_ty = match workload {
+                Workload::Unions => {
+                    flat_node(&mut nodes, &mut interned, FlatNode::Union(string, int))
+                }
+                Workload::Generic => flat_node(
+                    &mut nodes,
+                    &mut interned,
+                    FlatNode::Apply(index as u32, string),
+                ),
+                _ => match field_index % 3 {
+                    0 => string,
+                    1 => flat_node(&mut nodes, &mut interned, FlatNode::Array(string)),
+                    _ => flat_node(&mut nodes, &mut interned, FlatNode::Map(bool_ty)),
+                },
+            };
+            fields.push((field_name_len, field_ty));
+        }
+        decls.push((field_start, field_count as u32));
+    }
+
+    println!(
+        "stress.variant=flat-{}",
+        if intern_names { "lasso" } else { "strings" }
+    );
+    println!("stress.workload={}", workload.name());
+    println!("stress.count={count}");
+    println!("stress.declarations={}", decls.len());
+    println!("stress.fields={}", fields.len());
+    println!("stress.nodes={}", nodes.len());
+    println!(
+        "stress.interned_names={}",
+        names.as_ref().map_or(0, Rodeo::len)
+    );
+    println!("stress.direct_names={}", direct_names.len());
+    println!(
+        "stress.peak_allocated_bytes={}",
+        PEAK_BYTES.load(Ordering::Relaxed)
+    );
+    Ok(())
+}
+
+fn stress_command(args: &[String]) -> Result<()> {
+    let legacy_count: Option<usize> = args.get(2).and_then(|value| value.parse().ok());
+    let (variant, count_arg, workload_arg) = if legacy_count.is_some() {
+        ("arena-lasso", args.get(2), args.get(3))
+    } else {
+        (
+            args.get(2).map(String::as_str).unwrap_or("arena-lasso"),
+            args.get(3),
+            args.get(4),
+        )
+    };
+    let count = count_arg
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(100_000);
+    let workload = Workload::parse(workload_arg.map(String::as_str));
+    match variant {
+        "flat-lasso" => stress_flat(count, workload, true),
+        "flat-strings" => stress_flat(count, workload, false),
+        "arena-lasso" => stress(count),
+        _ => Err(miette!("unknown stress variant {variant}")),
+    }
+}
+
 fn demo() -> Result<()> {
     let mut store = build_store()?;
     let user = store.primitive("User", &[])?;
@@ -469,11 +623,7 @@ fn demo() -> Result<()> {
 fn main() -> Result<()> {
     let args = env::args().collect::<Vec<_>>();
     if args.get(1).map(String::as_str) == Some("--stress") {
-        let count = args
-            .get(2)
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(100_000);
-        stress(count)
+        stress_command(&args)
     } else {
         demo()
     }

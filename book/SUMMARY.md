@@ -69,6 +69,18 @@
   - [The six languages](logic-language-survey/01-the-six-languages.md)
 - [Beyond manual paging](beyond-manual-paging/README.md)
   - [The six bodies](beyond-manual-paging/01-the-six-bodies.md)
+- [SWI-Prolog for a self-describing type language](swi-prolog/README.md)
+  - [0. Orientation](swi-prolog/0_orientation.md)
+  - [0a. From SQL and Datalog to Prolog](swi-prolog/0a_sql-to-prolog.md)
+  - [1. Runtime toolbox](swi-prolog/1_runtime-toolbox.md)
+  - [2. Logic and constraint toolbox](swi-prolog/2_logic-toolbox.md)
+  - [3. Server, storage, and deployment toolbox](swi-prolog/3_server-storage-deployment.md)
+  - [4. Rust implementations](swi-prolog/4_rust-prolog.md)
+  - [5. A self-LSP for Soup](swi-prolog/5_self-lsp.md)
+  - [6. Exercises against the lab](swi-prolog/6_exercises.md)
+  - [7. Diagram appendix](swi-prolog/7_diagrams.md)
+  - [8. Research notes and sources](swi-prolog/8_research-notes.md)
+  - [9. How this started and where it landed](swi-prolog/9_session-arc.md)
 
 ## Reference
 

@@ -98,8 +98,12 @@ fn domain_target() -> String {
 #[cfg(target_os = "macos")]
 pub fn plist_contents(program: &Path, home: &Path) -> String {
     let label = qualified_label();
-    let stdout = home.join("launchd-stdout.log");
-    let stderr = home.join("launchd-stderr.log");
+    // Named path fns (`crate::daemon::launchd_std{out,err}_log_path`), not an
+    // inline `.join`, so the plist generator and the log-cap sweep
+    // (`daemon::logcap`, failure-modes class 31) can never drift apart on
+    // where these files live.
+    let stdout = crate::daemon::launchd_stdout_log_path(home);
+    let stderr = crate::daemon::launchd_stderr_log_path(home);
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

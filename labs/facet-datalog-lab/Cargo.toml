@@ -1,0 +1,11 @@
+[package]
+name = "sprefa-facet-datalog-lab"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+facet = "0.46"
+serde_json = "1"

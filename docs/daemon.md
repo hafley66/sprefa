@@ -72,11 +72,54 @@ Home layout (`$XDG_STATE_HOME/sprefa`, `src/daemon/home.rs`):
 <home>/
   daemon.sock          # THE socket, mode 0600
   daemon.pid           # pid\nstart_secs\n
-  daemon.log           # one log; lines prefixed [<root basename>]
+  daemon.log           # spawn_detached's own stdout+stderr redirect (fallback path)
+  launchd-stdout.log   # launchd's StandardOutPath redirect (supervised path)
+  launchd-stderr.log   # launchd's StandardErrorPath redirect (supervised path)
+  log/dl.log           # rolling info+ log, every dl process writes here
+  log/error.log        # rolling warn+ log, independent of DL_LOG
+  why.jsonl            # self-diagnosis trail (dl daemon why)
   roots.json           # [{root, key, added_at}] — registration persistence
   db.sqlite            # the config-view engine db
   roots/<key>/db.sqlite  # one db per registered root
 ```
+
+**Log files are all bounded — by two different mechanisms, since they have
+two different owners** (failure-modes class 28, docs/failure-modes.md):
+
+- `log/dl.log`, `log/error.log`, `why.jsonl` are opened and written by THIS
+  process on every append (`crate::trace::RollingWriter`, `crate::why`); each
+  checks its own size on every write and renames to `<name>.1` (one
+  generation kept) past 4MB. Ordinary rotation, no daemon involvement beyond
+  writing.
+- `launchd-stdout.log` / `launchd-stderr.log` are opened by **launchd**
+  itself (`StandardOutPath`/`StandardErrorPath` in the plist,
+  `crate::supervise::plist_contents`) and `dup2`'d onto this process's
+  stdout/stderr before it execs. No in-process rotator — hand-rolled or a
+  crate like `tracing-appender` — can rotate a file it never opened; that fd's
+  lifecycle belongs to launchd, not to `dl`. `daemon.log` is the same shape
+  for the un-supervised `spawn_detached` fallback (a real in-process writer,
+  but its own size check only ran at spawn time historically). All three are
+  instead capped by `src/daemon/logcap.rs::sweep`: once at daemon boot and
+  every 30s idle-task tick thereafter, it truncates any of the three IN PLACE
+  (same path, same inode — never rename) once it crosses 8MB. Truncate, not
+  rename, is the correct move specifically because launchd opens these
+  `O_APPEND`: POSIX recomputes the write offset to the current end-of-file on
+  every write, so an external truncate takes effect on the writer's very next
+  write with no signal, no reopen, no torn line. A rename would instead
+  orphan the writer's fd onto a now-unlinked inode that keeps growing forever,
+  invisible to `ls`.
+- The stderr layer `init_daemon_tracing` installs also defaults to `warn`
+  (not `DL_LOG`'s `info` default) so it stops mirroring `log/dl.log`'s
+  already-capped content into whichever of `launchd-stderr.log` or a
+  foreground terminal is on the other end; set `DL_LOG` explicitly (e.g. for
+  `--foreground` debugging) to widen it back, unchanged from before this fix.
+- **Not shipped by this repo**: an OS-level `newsyslog.d` (macOS) or
+  `logrotate` config for `launchd-stdout.log`/`launchd-stderr.log` is a valid,
+  documented complement (`newsyslog`'s own rename+recreate scheme also works
+  correctly against an `O_APPEND` writer once the process next restarts and
+  gets a fresh fd from launchd) but is not installed or enforced by `dl
+  daemon install` — the in-process sweep above is the only bound guaranteed
+  without extra setup.
 
 - `daemon.sock` — if a deep `$XDG_STATE_HOME` would overrun the OS `sun_path` cap
   (104 bytes on macOS), just the socket relocates to a short hashed path under

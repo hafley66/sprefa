@@ -1,0 +1,27 @@
+// This file is parsed by the DCG in 0_schema.pl.
+
+type UserId = String;
+type EventKind = "created" | "deleted";
+
+type Profile {
+  name: String;
+}
+
+type User {
+  id: UserId;
+  profile: Profile?;
+  tags: String[];
+  metadata: Map<String, String>;
+}
+
+pattern UserPath = `/users/{id: UserId}`;
+pattern UserEvent = `users/:id/events/{kind: EventKind}`;
+pattern UserField = `users.{id: UserId}.profile.name`;
+
+consumer http {
+  get UserPath -> User;
+}
+
+consumer channel {
+  subscribe UserEvent -> User;
+}

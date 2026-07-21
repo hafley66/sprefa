@@ -1,0 +1,74 @@
+// Soufflé side of the isolated Facet-to-facts experiment.
+//
+// The Rust program currently emits equivalent facts. These inline facts make
+// the rule system executable on a machine with the souffle binary installed.
+
+.type Type = symbol
+
+.decl type_decl(name: Type, kind: symbol)
+.decl field(owner: Type, segment: symbol, child: Type)
+.decl array(container: Type, element: Type)
+.decl map(container: Type, value: Type)
+.decl scalar(name: Type)
+
+.decl path(root: Type, template: symbol, leaf: Type)
+
+// Rust reflection facts
+type_decl("User", "record").
+type_decl("Profile", "record").
+type_decl("Order", "record").
+type_decl("Page<User>", "record").
+
+field("User", "id", "String").
+field("User", "profile", "Profile").
+field("User", "orders", "Vec<Order>").
+field("User", "metadata", "HashMap<String,String>").
+field("Profile", "avatar", "String").
+field("Profile", "tags", "Vec<String>").
+field("Order", "id", "String").
+field("Order", "total", "i64").
+field("Page<User>", "items", "Vec<User>").
+field("Page<User>", "next", "String").
+
+array("Vec<Order>", "Order").
+array("Vec<String>", "String").
+array("Vec<User>", "User").
+map("HashMap<String,String>", "String").
+
+scalar("String").
+scalar("i64").
+
+// A direct scalar field.
+path(Root, Segment, Leaf) :-
+    field(Root, Segment, Leaf),
+    scalar(Leaf).
+
+// A direct array/map leaf.
+path(Root, cat(Segment, "[*]"), Element) :-
+    field(Root, Segment, Container),
+    array(Container, Element),
+    scalar(Element).
+
+path(Root, cat(Segment, "{key}"), Value) :-
+    field(Root, Segment, Container),
+    map(Container, Value),
+    scalar(Value).
+
+// Recursive record descent.
+path(Root, cat(Segment, cat(".", Tail)), Leaf) :-
+    field(Root, Segment, Child),
+    path(Child, Tail, Leaf).
+
+// Recursive array descent.
+path(Root, cat(Segment, cat("[*].", Tail)), Leaf) :-
+    field(Root, Segment, Container),
+    array(Container, Element),
+    path(Element, Tail, Leaf).
+
+// Recursive map descent.
+path(Root, cat(Segment, cat("{key}.", Tail)), Leaf) :-
+    field(Root, Segment, Container),
+    map(Container, Value),
+    path(Value, Tail, Leaf).
+
+.output path(IO=file, filename="path.csv")

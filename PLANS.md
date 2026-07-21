@@ -39,6 +39,8 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `decision` plans/2026-07-16-arch-doc-saga.md:456 — memo-spill depth — M1+M2+M3 (rec) vs stop at M1 vs stop at M2
 - `decision` plans/2026-07-16-arch-doc-saga.md:459 — doc-internal xref marks — every doc-file @arch mark is a decl in v1 (rec); form="xref" variant deferred
 - `decision` plans/2026-07-18-db-seam-migration.md:463 — the pre-existing Storage trait (src/storage.rs) predates the struct ruling; collapse it into Db's inherent API or keep it for CallStore — decided outside this arc
+- `decision` plans/2026-07-20-typed-template-bootstrap-lab.md:705 — Select the embedded relation storage strategy after measuring Vec-plus-indexes against a Rust Datalog crate on the fixed fact vocabulary.
+- `decision` plans/2026-07-20-typed-template-bootstrap-lab.md:711 — Decide whether repeated named slots mean equality constraints or duplicate-binding errors after matcher ambiguity tests exist.
 - `docs` plans/2026-07-10-change-cost-friction-inventory.md:151 — item 6 — a generated per-language coverage table (which node kinds each TypeLang lift emits, tested counts on a fixture) in docs/reference
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:105 — match() trailing positional is a match ID not captured text — rename convention to match_id in shipped examples, show named-capture form in the op quickref
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:106 — comment_node.text strips comment tokens — state it in the relations table row, not only the buried authoring bullet
@@ -96,6 +98,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-07-16-family-cutover-completion-map.md:68 — C5 reactive signature — formalize SubscribePolicy/memo as a declared per-op reactive signature over the existing DepKey read-capture; reconcile/retract (built) is the render (src/engine/family/router.rs)
 - `feature` plans/2026-07-16-family-cutover-completion-map.md:80 — capstone — after C1-C6 land, host call_kind/call_edge_rev/call_def_rev and cut over to families-as-sole-writer with live react_deltas render, proving the surface end-to-end; freeze 6-rel golden snapshots BEFORE deleting legacy (legacy is the parity oracle)
 - `feature` plans/2026-07-18-db-seam-migration.md:462 — extend .dl/no-new-rusqlite.dl scans from src/**/*.rs to tests/**/*.rs so the rail covers the it suite
+- `feature` plans/2026-07-20-typed-template-bootstrap-lab.md:709 — Define the exact positional-slot surface spelling after named brace and colon slots pass parser and normalization tests.
 - `perf` plans/2026-07-11-codex-feedback-queue.md:92 — semi-naive delta-growth bail + wedge visibility
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:189 — replace corpus-wide extraction payload caches with bounded byte-weighted reuse and stream WORK and Git inventories into staging
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:190 — replace per-connection 512 MiB SQLite cache and mmap settings with one measured process-wide budget and permit disk-backed large temporary work
@@ -116,6 +119,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `perf` plans/2026-07-15-reproducible-reactivity-evidence.md:214 — route one measured relation family through owner-scoped source deltas and affected derived maintenance while retaining a loud production fallback
 - `perf` plans/2026-07-16-arch-doc-saga.md:494 — measure A5 wall time vs the 73 ms/1000-file baseline from plans/2026-07-15-family-derive-reactive-engine.md:187 once M3 lands
 - `perf` plans/2026-07-18-db-seam-migration.md:461 — after the seam migration, profile a chunk-loop-heavy --check run; if prepare-per-call regressed a hot loop, add a seam-internal statement cache keyed by SQL
+- `perf` plans/2026-07-20-typed-template-bootstrap-lab.md:707 — Record fresh-process allocation and wall-time measurements for every required scale case before selecting interning and matcher-cache policies.
 - `triage` plans/2026-07-11-cross-harness-agent-tooling.md:147 — a CodexSessions AgentHarness arm for agent_* rels — session-store format needs research
 - `triage` plans/2026-07-11-docs-and-dogfood-audit.md:40 — re-enable hooks (timeout+advisory) — relights the dark event arm; Chris flips
 - `triage` plans/2026-07-11-engine-mod-split.md:72 — SG_LANG_TABLE final home (src/sg.rs vs engine/lang_tables.rs) when the lang_tables cluster moves
@@ -237,6 +241,10 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-18-db-seam-migration.md:462 `feature` — extend .dl/no-new-rusqlite.dl scans from src/**/*.rs to tests/**/*.rs so the rail covers the it suite
 - plans/2026-07-18-db-seam-migration.md:463 `decision` — the pre-existing Storage trait (src/storage.rs) predates the struct ruling; collapse it into Db's inherent API or keep it for CallStore — decided outside this arc
 - plans/2026-07-18-db-seam-migration.md:464 `docs` — src/db.rs grows past 1500 lines under this plan; it is already in scripts/filesize-allow.txt, but a future split into src/db/ requires extending rusqlite_seam in .dl/no-new-rusqlite.dl
+- plans/2026-07-20-typed-template-bootstrap-lab.md:705 `decision` — Select the embedded relation storage strategy after measuring Vec-plus-indexes against a Rust Datalog crate on the fixed fact vocabulary.
+- plans/2026-07-20-typed-template-bootstrap-lab.md:707 `perf` — Record fresh-process allocation and wall-time measurements for every required scale case before selecting interning and matcher-cache policies.
+- plans/2026-07-20-typed-template-bootstrap-lab.md:709 `feature` — Define the exact positional-slot surface spelling after named brace and colon slots pass parser and normalization tests.
+- plans/2026-07-20-typed-template-bootstrap-lab.md:711 `decision` — Decide whether repeated named slots mean equality constraints or duplicate-binding errors after matcher ambiguity tests exist.
 <!-- END: plans-by-plan -->
 
 ## By code file
@@ -244,7 +252,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 <!-- BEGIN: code-by-file -->
 - feature src/cst.rs:230 — add html once tree-sitter-html is a Cargo dep.
 - feature src/engine/lang_tables.rs:47 — add html once tree-sitter-html is a Cargo dep.
-- untriaged debt: 4 bare TODO/FIXME comments in src
+- untriaged debt: 3 bare TODO/FIXME comments in src
 <!-- END: code-by-file -->
 
 ## Hand-owned notes (pre-index rows, migrated from chat_log/NOTES.md)

@@ -8,7 +8,14 @@ Run the normal demo:
 
 Run the stress demo:
 
-    /usr/bin/time -l cargo run --release --manifest-path labs/type-system-rust/Cargo.toml -- --stress 100000
+    cargo run --release --manifest-path labs/type-system-rust/Cargo.toml -- --stress arena-lasso 100000 deep
+
+Compare storage variants:
+
+    cargo run --release --manifest-path labs/type-system-rust/Cargo.toml -- --stress flat-lasso 100000 repeated
+    cargo run --release --manifest-path labs/type-system-rust/Cargo.toml -- --stress flat-lasso 100000 unique
+    cargo run --release --manifest-path labs/type-system-rust/Cargo.toml -- --stress flat-strings 100000 repeated
+    cargo run --release --manifest-path labs/type-system-rust/Cargo.toml -- --stress flat-lasso 1000 wide
 
 The program exercises:
 
@@ -19,5 +26,10 @@ The program exercises:
 - recursive dotted-path enumeration with array and map wildcards
 - serde_json serialization
 - miette diagnostics
+
+Stress variants are arena-lasso, flat-lasso, and flat-strings. Workloads are
+repeated, unique, wide, deep, unions, and generic. The process includes a
+measuring global allocator so peak allocated bytes are reported even when the
+host blocks ps and RSS inspection.
 
 This crate is outside the workspace member list and imports no sprefa code.

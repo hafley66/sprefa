@@ -1021,6 +1021,108 @@ sites but not against new code. **missing** = nothing.
   every test's XDG sandbox and collapses them into one shared home, breaking
   socket/roots isolation across the suite. Let the tests self-isolate via XDG.
 
+## 31. Unbounded daemon logs (launchd redirect + a spawn-only cap)
+
+- WHAT IT LOOKS LIKE: `~/.local/state/sprefa/launchd-stderr.log` grows without
+  bound on a long-lived supervised daemon — 440MB observed, ~494MB total
+  across every unrotated file under the daemon home (`launchd-stderr.log`,
+  `launchd-stdout.log`, `daemon.log`, plus the newer `events.jsonl` this
+  incident's report also names). Nothing truncates, nothing caps; on a
+  long-running install it grows until the disk fills.
+- HOW IT BIT US (2026-07-20, incident receipt from the user's real daemon
+  home): `crate::daemon::init_daemon_tracing` installed an stderr `fmt` layer
+  filtered at `DL_LOG`'s default of `info` — the SAME level
+  `crate::trace::dl_log_layer` already writes to the size-capped
+  `<home>/log/dl.log` (`crate::trace::RollingWriter`, 4MB cap, one
+  generation). Under `dl daemon install` + `dl daemon start` (the launchd-
+  supervised path, `crate::supervise::plist_contents`), that stderr stream is
+  `dup2`'d by launchd into `launchd-stderr.log` BEFORE this binary ever runs a
+  line of Rust — every `info`-level event was silently duplicated into a file
+  no in-process rotator, subscriber, or crate (`tracing-appender`,
+  `file-rotate`, `flexi_logger`) can ever rotate, because rotation means
+  closing the writer and opening a new one, and the writer here (fd 2) is not
+  a handle this process owns. Separately, `daemon::client::spawn_detached`'s
+  own `daemon.log` cap (8MB, truncate-on-oversized) only ran ONCE, at spawn
+  time — a long daemon run had no periodic recheck.
+- BUILD-VS-BUY RECEIPT (required before any fix per CLAUDE.md's standing
+  law): researched `tracing-appender` (`RollingFileAppender`,
+  `Rotation::{MINUTELY,HOURLY,DAILY,NEVER}` — rotation trigger is TIME ONLY,
+  no size-based variant exists; `max_log_files` bounds retained PERIODS, not
+  bytes within one un-rolled period — does not match this incident's actual
+  shape, a burst inside one period, and cannot touch the launchd-redirect
+  file at all since the fd is opened by launchd before this binary execs),
+  `file-rotate` (same fundamental limitation for the launchd file; supports
+  size-based rotation for files THIS process opens, but is a second,
+  lower-adoption dependency doing exactly what this repo's own
+  `trace::RollingWriter` already does for dl.log/error.log/why.jsonl — no
+  incident calls for touching those), `flexi_logger` (a competing logging
+  FACADE, not a `tracing_subscriber::Layer`; adopting it would violate the
+  standing law that logging rides `tracing` subscribers, not a parallel
+  pipeline — rejected outright), and macOS `newsyslog`/OS-level rotation
+  (the textbook system fix; genuinely correct for files the OS opens directly
+  IF the app either restarts periodically or reopens on signal — this repo
+  ships no config file and cannot enforce the user has one installed).
+  Conclusion, stated plainly: no in-process rotator crate — bought or
+  hand-rolled — can touch `launchd-stdout.log`/`launchd-stderr.log`, because
+  the OS opens and holds that fd before the binary runs; that half of the
+  fix is either (a) an OS-level `newsyslog.d` config outside this binary
+  (recommended, documented, not shipped/enforced by this repo), or (b) the
+  daemon periodically truncating the SAME path IN PLACE (no rename) from a
+  separate fd — safe specifically because launchd opens the redirect
+  `O_APPEND`, and POSIX recomputes the append offset to the current
+  end-of-file on every write, so an external truncate is immediately safe
+  with no signal and no reopen. (b) is the one implemented here; it is a
+  single `stat`+`set_len(0)` primitive reusing the repo's existing size-cap
+  idiom (`trace::RollingWriter`, `why.rs::ROTATE_BYTES`), not a general
+  rotator framework — no retention windows, no compression, no multi-writer
+  coordination.
+- THE LAW: every daemon-owned log file — one this process writes itself, or
+  one an OS redirect writes on its behalf — needs an enforced hard byte cap.
+  "The daemon does not log unboundedly" is exactly the same standing
+  discipline as "nothing seizes the machine" (CPU/IO/threads capped in
+  `apply_daemon_budget`): a class of resource a long-lived daemon can exhaust
+  gets a ceiling before the daemon ships, not a follow-up.
+- THE RAIL: enforced. `src/daemon/logcap.rs` (`sweep`, `cap_in_place`):
+  truncates `launchd-stdout.log`/`launchd-stderr.log`/`daemon.log` to 0 bytes
+  in place once any crosses `EXTERNAL_LOG_CAP_BYTES` (8MB, matching
+  `daemon.log`'s pre-existing convention). Called once at daemon boot
+  (`run_daemon`, so a prior oversized file does not wait out a cadence) and
+  every 30s idle-task tick thereafter
+  (`daemon_shell::timers::idle_task`) — reusing the daemon's existing
+  maintenance cadence, not a new timer. `init_daemon_tracing`'s stderr filter
+  now defaults to `warn` (not `info`) unless `DL_LOG` is explicitly set —
+  the root-cause half of the fix: `warn`-and-up already lands in the
+  size-capped `error.log` too, so nothing is lost, and an explicit ask for
+  more terminal verbosity (`--foreground` debugging) still widens it exactly
+  as before (`stderr_filter_spec`, unit-tested). Fail-pre-fix-shaped proof:
+  `truncate_in_place_is_safe_under_a_live_o_append_writer` and
+  `rename_would_orphan_an_external_o_append_writer_truncate_does_not`
+  (src/daemon/logcap.rs) drive a real `O_APPEND` writer through both the
+  correct (truncate) and wrong (rename) mechanisms and observe the difference
+  directly; `tests/it/log_cap_sweep.rs` boots a real (foreground) daemon
+  against pre-seeded oversized files at the real path helpers
+  (`daemon::launchd_stdout_log_path` etc., also used by
+  `supervise::plist_contents` so the two can never drift) and observes the
+  boot-time sweep truncate them, plus a companion test proving an under-cap
+  file survives untouched.
+- RESIDUAL: this rail proves the sweep runs on the right paths inside a real
+  daemon process; it does not (cannot, without a real launchd install) prove
+  launchd itself actually redirects stdout/stderr into those exact files —
+  that wiring is `supervise::plist_contents`, exercised by
+  `supervise::tests::plist_contents_carries_the_gate2_decision`, but the
+  end-to-end "launchd truly holds this fd open across the sweep's truncate"
+  path is unverified in CI. The `newsyslog`/OS-level complement remains
+  undocumented as a config file this repo ships; only the in-process sweep is
+  shipped code today.
+- SAY THIS TO AN AGENT: a daemon log file with no periodic size check is an
+  unbounded-growth bug waiting for a long-lived install to trigger it — for a
+  file this process writes itself, extend `trace::RollingWriter`'s pattern;
+  for a file an OS redirect (launchd `StandardOutPath`/`StandardErrorPath`,
+  or any inherited-fd redirect) writes on the process's behalf, no in-process
+  crate can rotate it — truncate the SAME path in place (never rename) from
+  inside the process, and only if you have first confirmed the writer opens
+  `O_APPEND`.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
@@ -1054,6 +1156,7 @@ sites but not against new code. **missing** = nothing.
 | 28 | clean-tree-only code path masked by an always-dirty verification tree | half | wire a clean-tree (or `DL_REV_OVERRIDE`) measurement into CI so rev-resolution / git-object branches actually get exercised, not just measured on a dirty tree |
 | 29 | read-shaped CLI flag retargets --db to the real served root | enforced | — (file-scoped `--check`/`--diag-json`/`--lsp` defaults to `:memory:`, attach is opt-in via `--attach` or discovery mode; src/cli/mod.rs; tests/it/hermetic_state.rs) |
 | 30 | state-home sandbox knob `DL_STATE_DIR` ignored | enforced | — (`daemon_home()` honors `DL_STATE_DIR` > `XDG_STATE_HOME` > default, one resolver src/daemon/home.rs; `.dl/state-home-single-source.dl` warns on a second reader; tests/it/hermetic_state.rs) |
+| 31 | unbounded daemon logs (launchd redirect + spawn-only cap) | enforced | OS-level `newsyslog.d` complement remains a documented recommendation, not a shipped config |
 
 ## How a new rail gets born here
 
