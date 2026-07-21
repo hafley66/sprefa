@@ -20,8 +20,64 @@
 # rels), so this program works loaded alone or merged with anything else.
 # Severity is WARNING, never error (the 2026-07-11 outage law: an
 # error-severity rail exiting non-zero from a PostToolUse hook blocks every
-# write repo-wide). A legitimate instance is admitted via `composite_key_ok`
-# below, same shape as `file-size.dl`'s `big_file_ok`.
+# write repo-wide).
+#
+# NO WAIVER, NO BASELINE (user law, 2026-07-20): this is the single most
+# important invariant in the repo. A composite key minted by string
+# concatenation is the first-normal-form violation that has bitten us
+# repeatedly, and it shipped in the dataflow node id precisely because a
+# grandfathered baseline row waived it. There is no `composite_key_ok` rel
+# and no `composite_key_baseline` — every candidate is a finding, full stop.
+# The fix for a false positive is to NARROW THE MATCH PATTERNS so the rail
+# never fires on a non-key `format!`, never to add a waiver escape hatch.
+#
+# Precision pass (2026-07-20 PM, this revision): the de-waived rail's first
+# run flagged 13 sites. Five site groups are real composite-string keys and
+# must keep flagging: `mint_sym` (typegraph/mod.rs:398,399, `{file}::{}::...}`),
+# `lambda_sym` (typegraph/mod.rs:417, `{fn}::closure::{coord}`), the dataflow
+# node id (typegraph/mod.rs:723 and ts/flow.rs:17, `{file}:{line}:{col}:{kind}`),
+# and the rev cache key (engine/repo.rs:23, `{}::{rev}`). Four sites were
+# FALSE POSITIVES, now excluded by narrowing (not waiving) the match:
+#   - lower.rs:39 (`sym_decode`): the format! builds a SQL string
+#     (`COALESCE((SELECT content FROM _strings WHERE id = {e}), ...)`);
+#     excluded by the new `sql_format` negative-filter AND, independently,
+#     because its literal has no key-delimiter shape at all.
+#   - lsp.rs:481 (`handle_hover`): builds markdown (`{entity_md}\n\n---\n\n...`);
+#     `handle` is dropped from the id-word list (an LSP event handler is not
+#     a join handle) AND the literal has no key-delimiter shape.
+#   - daemon/mod.rs:761 (`build_id`): `format!("{version}:{secs}")`, a build
+#     etag — single colon between exactly two holes, which the new
+#     `key_delimiter_coord` arm requires THREE holes for (see below); a
+#     genuine coordinate id like the dataflow node id chains 3+ holes on
+#     single colons, a two-part etag does not.
+#   - effect.rs:1266 (`let id = format!("test-{state}-{kind}")`): a
+#     `#[cfg(test)]` fixture inside `mod tests`; excluded by the new
+#     `composite_key_test_span` containment check (same `ast_yaml`
+#     `inside: mod_item / has: name ~ ^tests?$` idiom `.dl/rails.dl`'s
+#     unwrap rule and `.dl/rusqlite-coupling.dl`'s `family_test_span` use),
+#     independently of its (already non-matching) delimiter shape.
+# Three sites are BORDERLINE and, per a written decision, are LEFT
+# FLAGGING rather than excluded: effect.rs:527,614,646, the `@async` clock
+# salt / request-digest key (`format!("\u{0}clock:{secs}=...")` /
+# `format!("{head_rel}\u{0}{kind}\u{0}{args_json}{clock_salt}")`). These
+# fold multiple values behind a control-character separator into ONE string
+# that is then blake3-hashed into a request id — arguably a digest salt, not
+# a stored/joined key, since nothing ever splits it back apart. But there is
+# no clean structural signal that distinguishes "this control-char-joined
+# string becomes a hash input" from "this control-char-joined string becomes
+# a stored key" (both are anonymous `format!(...)` calls with no id-shaped
+# binding or enclosing fn name — the value flows into `blake3::hash(...)`
+# two tokens later, and `.as_bytes()` on a `format!` result is not
+# structurally distinct from any other consumer). Per the user's own law
+# above, the only allowed fix for a candidate this rail can't prove clean is
+# to narrow the PATTERN so it stops matching, not to hand-waive the three
+# lines with an exception list keyed on `blake3::hash` — that would be a
+# waiver wearing a different hat. So arm 2 (the control-character arm)
+# stays UNCONDITIONED on id-naming, exactly as before this pass: a real
+# key-shaped value hiding behind `blake3::hash` is exactly the kind of
+# thing a future contributor copies without noticing, and the SHAPE (a
+# control-character-joined multi-hole format string) is still the
+# incident's shape regardless of what consumes the result immediately after.
 #
 # Run: dl .dl/composite-key-string.dl --no-daemon
 # Gate: dl .dl/composite-key-string.dl --check
@@ -51,8 +107,84 @@ two_or_more_holes(source_file, line, FORMAT_STR) <-
     format_call(source_file, line, FORMAT_STR),
     FORMAT_STR =~ /\{[A-Za-z0-9_]*\}.*\{[A-Za-z0-9_]*\}/.
 
+# ── Key-delimiter shape: the signal that separates a real composite key from
+# a display string or a SQL fragment. A real key JOINS its holes with a
+# delimiter that only makes sense as a field separator: `::` (this repo's
+# `sym` namespacing convention), a chain of 3+ holes on bare single colons
+# (a coordinate tuple — `{file}:{line}:{col}:{kind}`), or a control
+# character (NUL/SOH/unit-separator — never legitimate in human-facing
+# text). A DISPLAY string joins holes with prose/markdown (`\n\n---\n\n`); a
+# SQL fragment joins them with SQL syntax; a two-part ETAG (`{version}:{secs}`)
+# joins exactly two holes on one colon, which `key_delimiter_coord` does NOT
+# accept — a coordinate needs a full chain (>=3 holes), not a single pair,
+# so a two-part `a:b` is deliberately left to look like ordinary rendered
+# text rather than a key. Unioned into `key_delimiter_format`.
+rel key_delimiter_sym(source_file: file, line: int, FORMAT_STR: text).
+key_delimiter_sym(source_file, line, FORMAT_STR) <-
+    format_call(source_file, line, FORMAT_STR),
+    FORMAT_STR =~ /\{[A-Za-z0-9_]*\}.*::.*\{[A-Za-z0-9_]*\}/.
+
+# Three-or-more holes chained on a BARE single colon, hole-boundary-adjacent
+# (`}:{` with nothing between — no room for a second colon, so this can
+# never accidentally match a `::` sym join; see the header for the disjoint
+# proof). Matches `{file}:{line}:{col}:{kind}` (finds `{file}:{line}:{col}`
+# as its 3-hole witness); does NOT match `{version}:{secs}` (only 2 holes
+# exist in the whole literal, so no 3-hole chain can be found).
+rel key_delimiter_coord(source_file: file, line: int, FORMAT_STR: text).
+key_delimiter_coord(source_file, line, FORMAT_STR) <-
+    format_call(source_file, line, FORMAT_STR),
+    FORMAT_STR =~ /\{[A-Za-z0-9_]*\}:\{[A-Za-z0-9_]*\}:\{[A-Za-z0-9_]*\}/.
+
+# `\u{0}`/`\u{1}`/`\x1f` (NUL, SOH, unit separator) alongside 2+ holes — see
+# arm 2 below for why this stays unconditioned on an id-shaped name.
+rel key_delimiter_control(source_file: file, line: int, FORMAT_STR: text).
+key_delimiter_control(source_file, line, FORMAT_STR) <-
+    two_or_more_holes(source_file, line, FORMAT_STR),
+    FORMAT_STR =~ /\\u\{0\}|\\u\{1\}|\\x1f/.
+
+rel key_delimiter_format(source_file: file, line: int, FORMAT_STR: text).
+key_delimiter_format(source_file, line, FORMAT_STR) <- key_delimiter_sym(source_file, line, FORMAT_STR).
+key_delimiter_format(source_file, line, FORMAT_STR) <- key_delimiter_coord(source_file, line, FORMAT_STR).
+key_delimiter_format(source_file, line, FORMAT_STR) <- key_delimiter_control(source_file, line, FORMAT_STR).
+
+# ── SQL exclusion: a `format!` whose literal names a SQL clause keyword is
+# building a query fragment (`lower.rs`'s `sym_decode`, `COALESCE(...
+# SELECT ... WHERE ...)`), never a key — excluded from the id-named arms
+# regardless of delimiter shape (defense in depth; `sym_decode`'s literal
+# also fails `key_delimiter_format` outright, since it has no colon at all).
+rel sql_format(source_file: file, line: int).
+sql_format(source_file, line) <-
+    format_call(source_file, line, FORMAT_STR),
+    FORMAT_STR =~ /\b(SELECT|COALESCE|INSERT|UPDATE|FROM|WHERE|VALUES)\b/.
+
+# ── Test-code exemption: a `format!` inside a `#[cfg(test)] mod tests { }`
+# block is a fixture, never a real stored/joined key (mirrors `.dl/rails.dl`'s
+# `unwrap_hit` and `.dl/rusqlite-coupling.dl`'s `family_test_span`, the same
+# `ast_yaml` `inside: mod_item / has: field: name regex: ^tests?$` idiom).
+rel composite_key_test_span(source_file: file, start_line: int, end_line: int).
+composite_key_test_span(source_file, start_line, end_line) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    ast_yaml(source_file, source_rev, :rust, `
+kind: mod_item
+has:
+  field: name
+  regex: '^tests?$'
+`, start_line, _, end_line, _).
+
 # ── Arm 1: concatenation minting an id ───────────────────────────────────
-# Sub-shape (a): `let $NAME = format!(...)` where NAME reads as an id/key.
+# Sub-shape (a): `let $NAME = format!(...)` where NAME reads as an id/key
+# AND the literal has a key-delimiter shape AND is not a SQL fragment.
+# `handle` dropped from the word list (see header: `handle_hover` is an LSP
+# event handler, not a join handle) — no live let-bound site depended on it.
+# The word regex is now SEGMENT-anchored (`(^|_)WORD(_|$)`), not the bare
+# `\bWORD\b` this arm shipped with pre-de-waive: `\b` alone does not fire on
+# "id" inside `node_id` either (`_` is a word character, so there is no
+# boundary between `node_` and `id`) — this arm's only two prior live hits
+# happened to be the bare words `id`/`key`, which dodged the bug by luck.
+# `node_id` (this repo's own descriptive-naming convention — see CLAUDE.md's
+# style law, "node_id"/"loop_id" not "id") needs the segment anchor to be
+# caught at all; the fn-name arm (sub-shape (b), below) already used this
+# form.
 rel let_bound_format_single(source_file: file, line: int, ID_LIKE_NAME: text, FORMAT_STR: text).
 let_bound_format_single(source_file, line, ID_LIKE_NAME, FORMAT_STR) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
@@ -68,22 +200,27 @@ let_bound_format(source_file, line, ID_LIKE_NAME, FORMAT_STR) <- let_bound_forma
 let_bound_format(source_file, line, ID_LIKE_NAME, FORMAT_STR) <- let_bound_format_multi(source_file, line, ID_LIKE_NAME, FORMAT_STR).
 
 rel arm1_let_bound_id(source_file: file, line: int, detail: text).
-arm1_let_bound_id(source_file, line, "let ${ID_LIKE_NAME} = format!(...) with 2+ holes") <-
+arm1_let_bound_id(source_file, line, "let ${ID_LIKE_NAME} = format!(...) with a key-delimiter shape") <-
     let_bound_format(source_file, line, ID_LIKE_NAME, FORMAT_STR),
-    ID_LIKE_NAME =~ /(?i)\b(id|key|sym|handle|slug)\b/,
-    FORMAT_STR =~ /\{[A-Za-z0-9_]*\}.*\{[A-Za-z0-9_]*\}/.
+    ID_LIKE_NAME =~ /(?i)(^|_)(id|key|sym|slug)(_|$)/,
+    key_delimiter_format(source_file, line, FORMAT_STR),
+    !sql_format(source_file, line).
 
 # Sub-shape (b): the `format!` sits inside a fn whose NAME reads as an
-# id/key mint (`build_id`, `mint_sym`, `extract_digest_key`, ...) — join
-# format_call's line against call_def's span to find the enclosing fn, then
-# check the LAST `::`-segment of its repo-qualified sym (never the file-path
-# segments, which would false-positive on a directory named e.g. `handle/`).
-# The regex requires the id-ish word to be its OWN underscore-delimited
-# segment (`(word_)*TOKEN(_word)*$`), not a bare substring — `\b` alone does
-# NOT do this job in snake_case, since `_` is a word character and `\bid\b`
-# would not fire inside `user_id`. Measured without this guard:
-# `validate_brands` and `install_busy_verdict_handler` false-matched on the
-# substrings "id" (inside "valid") and "handle" (inside "handler").
+# id/key mint (`build_id`, `mint_sym`, `sym_decode`, ...) AND the literal has
+# a key-delimiter shape AND is not a SQL fragment — join format_call's line
+# against call_def's span to find the enclosing fn, then check the LAST
+# `::`-segment of its repo-qualified sym (never the file-path segments,
+# which would false-positive on a directory named e.g. `handle/`). The
+# regex requires the id-ish word to be its OWN underscore-delimited segment
+# (`(word_)*TOKEN(_word)*$`), not a bare substring — `\b` alone does NOT do
+# this job in snake_case, since `_` is a word character and `\bid\b` would
+# not fire inside `user_id`. Measured without this guard: `validate_brands`
+# and `install_busy_verdict_handler` false-matched on the substrings "id"
+# (inside "valid") and "handle" (inside "handler") — `handle` is now
+# dropped from the word list entirely (see header: `sym_decode` still
+# matches on `sym`; `handle_hover` no longer matches on anything, AND its
+# literal has no key-delimiter shape either — double exclusion).
 rel format_in_fn(source_file: file, line: int, fn_sym: text, FORMAT_STR: text).
 format_in_fn(source_file, line, fn_sym, FORMAT_STR) <-
     format_call(source_file, line, FORMAT_STR),
@@ -91,46 +228,26 @@ format_in_fn(source_file, line, fn_sym, FORMAT_STR) <-
     line >= def_line, line <= def_end.
 
 rel arm1_id_named_fn(source_file: file, line: int, detail: text).
-arm1_id_named_fn(source_file, line, "format!(...) with 2+ holes inside fn `${fn_sym}`") <-
+arm1_id_named_fn(source_file, line, "format!(...) with a key-delimiter shape inside fn `${fn_sym}`") <-
     format_in_fn(source_file, line, fn_sym, FORMAT_STR),
-    fn_sym =~ /::([A-Za-z0-9]+_)*(?i:id|key|sym|handle|slug)(_[A-Za-z0-9]+)*$/,
-    FORMAT_STR =~ /\{[A-Za-z0-9_]*\}.*\{[A-Za-z0-9_]*\}/.
+    fn_sym =~ /::([A-Za-z0-9]+_)*(?i:id|key|sym|slug)(_[A-Za-z0-9]+)*$/,
+    key_delimiter_format(source_file, line, FORMAT_STR),
+    !sql_format(source_file, line).
 
 # ── Arm 2: a separator constant that only makes sense as a field delimiter ─
-# `\u{0}`/`\u{1}`/`\x1f` (NUL, SOH, unit separator — control characters with
-# no other reason to appear in a Rust format string) alongside 2+ holes.
-# `::` was measured and DROPPED from this arm: at full-repo scale it produced
-# 39 hits, 37 of them the repo's own accepted `sym` convention
-# (`{repo}::{file}::{kind}::{name}`-style joins that `call_def`/`type_entity`
-# already treat as ONE text column by design — flagging those would tell a
-# contributor to un-fix the engine's own idiom). The two real control-
-# character hits (`salt_rev`, and effect.rs's digest-key builders) survive;
-# `::` is not the incident's shape, an unusual control character is.
+# UNCONDITIONED on an id-shaped name (see header's BORDERLINE note: the
+# clock-salt / request-digest sites at effect.rs:527,614,646 have no
+# id-named binding and sit in a fn — `rebuild_async` — that does not read as
+# an id/key mint either, yet the SHAPE (a control-character-joined 2+-hole
+# format string) is exactly the incident's shape regardless of what consumes
+# the result). `::` was measured and DROPPED from this arm long before this
+# revision: at full-repo scale it produced 39 hits, 37 of them the repo's
+# own accepted `sym` convention — that shape now lives in `key_delimiter_sym`
+# / arm 1(b) instead, gated on an id-named fn so it does not relitigate that
+# false-positive class.
 rel arm2_separator_key(source_file: file, line: int, detail: text).
 arm2_separator_key(source_file, line, "format!(...) mixes a control-character separator with 2+ holes") <-
-    format_call(source_file, line, FORMAT_STR),
-    FORMAT_STR =~ /\\u\{0\}|\\u\{1\}|\\x1f/,
-    FORMAT_STR =~ /\{[A-Za-z0-9_]*\}.*\{[A-Za-z0-9_]*\}/.
-
-# ── Arm 3: the declared-column half — NOT expressible, stated plainly ─────
-# A `RelDecl` column named `id`/`*_id` fed by an arm-1/arm-2 value is the
-# strongest signal, but two facts this engine does not have block it:
-#   1. RelDecl schemas (src/engine/decls.rs) are STATIC (name, type) pairs;
-#      the Rust expression that fills column N at a write site is a
-#      `Vec<Value>` built by POSITION somewhere else entirely (often a
-#      different file), with no structural rel linking "column name" to
-#      "the expression that produced this position's value". Building that
-#      link would require per-call-site dataflow attribution dl does not
-#      extract for Rust struct/vec literal writers — the same kind of
-#      analysis this rail exists to approximate, circularly.
-#   2. Even the weak fallback (does a RelDecl's doc string TEXT mention the
-#      arm-1/2 hit's enclosing fn name, as `decls.rs`'s own
-#      "id is salt_rev(raw id, rev)" comments do by hand) has no operator:
-#      dl's regex constraint (`=~`) takes a LITERAL pattern, not one built
-#      from a second bound text column, so there is no `contains(text,
-#      text)` predicate to test two dl variables against each other this
-#      way. Arm 3 is not implemented; a faked join would misreport
-#      confidence rather than name the gap.
+    key_delimiter_control(source_file, line, _FORMAT_STR).
 
 # ── Union ─────────────────────────────────────────────────────────────────
 rel composite_key_candidate(source_file: file, line: int, detail: text).
@@ -138,17 +255,20 @@ composite_key_candidate(source_file, line, detail) <- arm1_let_bound_id(source_f
 composite_key_candidate(source_file, line, detail) <- arm1_id_named_fn(source_file, line, detail).
 composite_key_candidate(source_file, line, detail) <- arm2_separator_key(source_file, line, detail).
 
-# NO WAIVER, NO BASELINE (user law, 2026-07-20): this is the single most
-# important invariant in the repo. A composite key minted by string
-# concatenation is the first-normal-form violation that has bitten us
-# repeatedly, and it shipped in the dataflow node id precisely because a
-# grandfathered baseline row waived it. There is no `composite_key_ok` rel and
-# no `composite_key_baseline`: every candidate is a finding, full stop. Fix the
-# site — split the folded value into two columns with a composite PRIMARY KEY,
-# or key it through a dictionary surrogate — never grandfather it.
+# Drop anything inside a `#[cfg(test)] mod tests { }` span (see the
+# `composite_key_test_span` rule above) — a fixture id/key/sym string is not
+# a real stored/joined key. NO WAIVER, NO BASELINE beyond this: every
+# candidate outside test code is a finding, full stop.
+rel composite_key_in_test(source_file: file, line: int, detail: text).
+composite_key_in_test(source_file, line, detail) <-
+    composite_key_candidate(source_file, line, detail),
+    composite_key_test_span(source_file, start_line, end_line),
+    line >= start_line, line <= end_line.
+
 rel composite_key_finding(source_file: file, line: int, detail: text).
 composite_key_finding(source_file, line, detail) <-
-    composite_key_candidate(source_file, line, detail).
+    composite_key_candidate(source_file, line, detail),
+    !composite_key_in_test(source_file, line, detail).
 
 # Every finding is reported at its own line. No baseline rel, no grandfather
 # count, no per-file allowance — the six baseline rows that used to live here
