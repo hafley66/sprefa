@@ -1177,6 +1177,54 @@ sites but not against new code. **missing** = nothing.
   Resolve the surrogate from the id's mint-time inputs, and gate the whole
   migration on a bijection count-equality check that HALTS on any delta.
 
+## 33. Storage id-space change bypassed by a native fast path's re-hash
+
+- WHAT IT LOOKS LIKE: a storage normalization moves a column into a new id
+  space (interned cells go from raw 8-byte `StringId` hash to a dense
+  `_sym_dict` surrogate). Every SQL path follows, but a BESPOKE NATIVE FAST
+  PATH that reconstructs keys from decoded text keeps hashing text to the OLD
+  space. Its adjacency is loaded in the new space (raw cell = dense id) while
+  its seeds/masks are keyed in the old space (`StringId::of(text)` = raw hash),
+  so the two never join. The walk silently returns only its seed rows; the SQL
+  fixpoint stays correct. Green suite throughout — the split is a wrong ANSWER,
+  not a crash.
+- HOW IT BIT US (2026-07-21, caught by round-2 adversarial review — codex
+  gpt-5.6-sol + an opus reviewer independently reproduced it; the author's
+  green suite and the sym-dict bijection gate both missed it): the dense
+  `_sym_dict` arc converted interned rel cells to dense ids. `try_native_halt_bfs`
+  (`src/engine/derive.rs`) loaded edge adjacency from `tbl(edge)` (now dense)
+  but keyed its frontier seeds (derive.rs:1460) and halt mask (1482) via
+  `StringId::of(decoded_text).sqlite()` = raw hash, and rendered output text with
+  `_strings WHERE id = <dense>` (misses; `_strings.id` is the raw hash). Result:
+  every interned-edge halt-BFS reachability closure collapsed to its seeds —
+  exactly the flow-panel `port_of_reach_rec`-class rels the project ships.
+  Reproduction (`edge s->a->b`, `seed p->s`, unrelated halt): native returned
+  `{(p,a)}`, `DL_NO_HALT_BFS=1` SQL returned `{(p,a),(p,b)}`. INVISIBLE because
+  the existing `halt_bfs` fixture's recursive rule was VACUOUS (every seed hit a
+  halt or leaf on the first hop, so the base rule alone produced the expected
+  rows); the twin native fast path `try_native_depth_walk` had already been
+  converted (it reads its head from `tbl` in dense space), so only the untouched
+  path drifted.
+- THE LAW: when a column's stored id space changes, EVERY consumer that keys on
+  that column must move together — including native fast paths that rebuild keys
+  from decoded text. A decode-then-re-hash step is a second id-space assignment
+  and must target the SAME space as the stored cells (resolve text -> hash ->
+  dense via the one allocator, `Db::dense_of_hash`), or it lands in a disjoint
+  integer domain and every lookup misses. Audit is by GREP for the primitive
+  (`StringId::of`, raw `_strings WHERE id =`) across native walkers, not by
+  trusting the suite.
+- THE RAIL: `tests/it/halt_bfs.rs::native_halt_bfs_recursion_matches_sql_over_dense_edges`
+  — a NON-VACUOUS recursion over a dense (interned `text`) edge graph whose
+  recursive rule carries rows the base never emits, asserted row-for-row against
+  the `DL_NO_HALT_BFS=1` SQL fixpoint. Fails (native drops the recursive rows)
+  without the dense-key resolution; the pre-existing vacuous fixture could not.
+  Fail-first verified by reverting the derive.rs fix.
+- SAY THIS TO AN AGENT: after changing a column's stored id space, grep every
+  native/in-memory path for where it rebuilds keys from text (`StringId::of`,
+  `_strings WHERE id =`) and confirm each targets the new space. Then prove it
+  with a fixture whose RECURSION is non-vacuous — a vacuous recursive fixture
+  passes even when the recursive step is completely broken.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |

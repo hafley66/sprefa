@@ -1457,7 +1457,15 @@ impl Engine {
                             i
                         }
                     };
-                    let key = StringId::of(&node_s).sqlite();
+                    // The adjacency is keyed in the edge column's stored id space.
+                    // A `sym` edge now stores a DENSE `_sym_dict` surrogate, so the
+                    // seed key (read as text from `txt_tbl`) must resolve
+                    // text -> hash -> dense to land on the same node; a `text` edge
+                    // keys on the raw `StringId` hash directly. Skipping this was the
+                    // 2026-07-21 split-id-space regression: dense adjacency vs
+                    // raw-hash seeds collapsed every recursive closure to its seeds.
+                    let hash = StringId::of(&node_s).sqlite();
+                    let key = if sym_edge { self.db.dense_of_hash(hash)? } else { hash };
                     let nid = intern_key(key, &node_s, adj, id2key, interner, text_by_id);
                     if text_by_id.is_none() {
                         sym_text.entry(nid).or_insert_with(|| node_s.clone());
@@ -1479,7 +1487,12 @@ impl Engine {
                 &[],
                 |r| {
                     let name = r.get::<_, String>(0)?;
-                    if let Some(&id) = interner.get(&StringId::of(&name).sqlite()) {
+                    // Same id space as the adjacency (dense for a sym edge, raw
+                    // hash for a text edge); a halt node absent from the graph
+                    // mints a throwaway dense id that simply misses the interner.
+                    let hash = StringId::of(&name).sqlite();
+                    let key = if sym_edge { self.db.dense_of_hash(hash)? } else { hash };
+                    if let Some(&id) = interner.get(&key) {
                         halt_mask[id as usize] = true;
                     }
                     Ok(())
@@ -1510,13 +1523,19 @@ impl Engine {
             // statement count stays O(need / 30k), never O(need). Batched under
             // SQLite's variable ceiling; a key->text map keeps only the output
             // strings (which are being written out regardless).
+            // `id2key` holds DENSE `_sym_dict` surrogates in sym mode (this block
+            // only runs when `text_by_id.is_none()`, i.e. a sym edge), so decode
+            // dense -> `sym_hash` -> `_strings.content` in one join. Querying
+            // `_strings.id` with a dense id (the pre-2026-07-21 code) matched
+            // nothing and rendered every non-base node as empty text.
             let keys: Vec<i64> = need.iter().map(|&nid| id2key[nid as usize]).collect();
             let mut keymap: HashMap<i64, String> = HashMap::with_capacity(keys.len());
             let key_params: Vec<crate::db::SqlVal> = keys.iter().map(|&k| k.into()).collect();
             let rows = self.db.query_in_chunks(
                 "_strings",
                 |n| format!(
-                    "SELECT id, content FROM _strings WHERE id IN ({})",
+                    "SELECT d.id, s.content FROM _sym_dict d \
+                     JOIN _strings s ON s.id = d.sym_hash WHERE d.id IN ({})",
                     crate::db::holes(n)
                 ),
                 &[],
@@ -1926,11 +1945,15 @@ impl Engine {
         Option<Vec<String>>,
     )> {
         use crate::spine::StringId;
-        // sym mode keys on the raw interned StringId (i64), so read the RAW table;
-        // the head-node side is read raw too (`tbl(head_rel)`), so both agree in
-        // id-space. Text mode hashes the decoded value, so it reads the `_txt`
-        // view. Reading the decoded view under sym would feed text to `get::<i64>`
-        // and yield an empty adjacency (the walk then never leaves its seeds).
+        // sym mode keys on the stored interned cell (i64), so read the RAW table.
+        // Post-2026-07-21 that cell is a DENSE `_sym_dict` surrogate, so every
+        // consumer of this adjacency must key in dense space too:
+        // `try_native_depth_walk` reads its head from `tbl(head_rel)` (dense, agrees
+        // directly); `try_native_halt_bfs` reads head/halt as text and resolves
+        // text -> hash -> dense (`dense_of_hash`) before looking up the interner.
+        // Text mode hashes the decoded value, so it reads the `_txt` view. Reading
+        // the decoded view under sym would feed text to `get::<i64>` and yield an
+        // empty adjacency (the walk then never leaves its seeds).
         let source = if sym { tbl(edge) } else { txt_tbl(edge) };
         let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {source}");
         let mut interner: HashMap<i64, u32> = HashMap::new();

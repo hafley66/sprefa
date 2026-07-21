@@ -132,6 +132,18 @@ pub struct Db {
     /// `Arc<Mutex<..>>`. Lazy-loaded from the persisted `_sym_dict` once per
     /// connection (`ensure_sym_alloc_loaded`) so a warm-db restart keeps every
     /// surrogate stable.
+    ///
+    /// SINGLE-WRITER INVARIANT: id assignment is authoritative only because ONE
+    /// process owns the write role for a given root `db.sqlite` — the daemon.
+    /// One-shot runs under a daemon-served root route through it
+    /// (`run_file_via_daemon`), and `--check`/`--diag-json`/`--lsp` open
+    /// `:memory:` (cli/mod.rs), never the shared file. Two live writer
+    /// connections each minting from a private stale `next` could assign one
+    /// dense id to two different symbols (the second `INSERT OR IGNORE` on
+    /// `_sym_dict` is dropped) — so a second concurrent writer is out of the
+    /// model, not a supported mode. Cross-process WRITE sharing would need
+    /// DB-atomic allocation (mint inside the write tx), not this in-memory
+    /// cache; readers share the file freely.
     sym_alloc: Arc<Mutex<SymAlloc>>,
 }
 
@@ -279,10 +291,12 @@ pub fn open(path: Option<&str>) -> Result<Db> {
     // parse once per connection instead of once per call. Default capacity
     // is 16, far below a tick's distinct-statement count.
     conn.set_prepared_statement_cache_capacity(256);
-    // busy_timeout: a hook `--check`, a resident `--lsp`, and a daemon can all
-    // share the per-root `roots/<key>/db.sqlite` across processes
-    // (storage-endgame L2, one db per corpus); a write collision should wait,
-    // not fail "locked".
+    // busy_timeout: many READER processes share the per-root
+    // `roots/<key>/db.sqlite` (storage-endgame L2, one db per corpus) while the
+    // daemon writes; a reader/writer collision should wait, not fail "locked".
+    // Note `--check`/`--diag-json`/`--lsp` open `:memory:` (cli/mod.rs), so they
+    // are not writers here — the daemon is the single writer per root db (see
+    // the SINGLE-WRITER INVARIANT on `Db::sym_alloc`).
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
     // Cache and mapped-page ceilings are process-wide. The former duplicated
     // 512 MiB setup made every connection eligible to retain a huge page cache,
@@ -1524,7 +1538,17 @@ impl Db {
             )?;
         }
         let mut alloc = self.sym_alloc.lock().expect("sym allocator poisoned");
-        if !alloc.loaded {
+        // Adopt the freshly-read map on first load OR when `_sym_dict` transitions
+        // from absent to present (`!dict_exists && exists`). Without the second
+        // clause, a provisional empty load before `ensure_meta` created the table
+        // latched `loaded=true` with an EMPTY map and `next=1e9+1`, and this
+        // re-probe would read the real rows into `map` but then discard them
+        // (the old `!loaded` guard was false) — leaving the connection minting
+        // from 1e9+1 over ids the table already holds (codex round-2, db.rs:1527).
+        // Replacing the empty map is safe: the real engine writes NO rel cell
+        // before `ensure_meta`, so nothing was encoded against the discarded ids.
+        let adopt = !alloc.loaded || (!alloc.dict_exists && exists);
+        if adopt {
             alloc.map = map;
             alloc.next = max_id + 1;
             alloc.loaded = true;

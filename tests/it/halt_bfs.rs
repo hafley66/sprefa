@@ -105,6 +105,55 @@ reach(port, node) <- reach(port, mid), !halt(mid, _), edge(mid, node).
 ? reach(port, node).
 "#;
 
+// NON-VACUOUS recursion over a DENSE (interned `text` = `sym`) edge graph. The
+// fixture above passes even with a broken dense/raw-hash id split because its
+// recursive rule adds NO row beyond the base (every seed hits a halt or a leaf
+// on the first hop). This graph forces the recursion to carry rows the base
+// never emits, so a native walk that keys dense adjacency against raw-hash seeds
+// (the 2026-07-21 regression, derive.rs try_native_halt_bfs) collapses the
+// closure to its seeds and diverges from the SQL fixpoint. Graph:
+//   s -> a -> b -> c   (main chain) ,  s -> x -> y  (second branch)
+//   b is a HALT node.
+// Seed p at s. Base: edge(s,·) => {a, x}. Recursion: a(not halt)->b, x(not
+// halt)->y, b(HALT)->stop (c excluded), y(leaf). So p reaches {a, x, b, y};
+// b and y exist ONLY because the recursive rule fired, and c is correctly
+// pruned behind the halt.
+const PROG_RECUR: &str = r#"
+rel edge(from: text, to: text).
+edge("s","a"). edge("a","b"). edge("b","c"). edge("s","x"). edge("x","y").
+rel halt(node: text, kind: text).
+halt("b", "pin").
+rel seed(port: text, start: text).
+seed("p","s").
+rel reach(port: text, node: text).
+reach(port, node) <- seed(port, start), edge(start, node).
+reach(port, node) <- reach(port, mid), !halt(mid, _), edge(mid, node).
+? reach(port, node).
+"#;
+
+#[test]
+fn native_halt_bfs_recursion_matches_sql_over_dense_edges() {
+    // Hand-computed non-vacuous closure.
+    let dir = sandbox("recur_hand");
+    let got = rows_of(&run(&dir, PROG_RECUR, false), "reach");
+    assert_eq!(
+        got,
+        vec!["p\ta", "p\tb", "p\tx", "p\ty"],
+        "native recursion over dense edges dropped rows (c must stay pruned behind halt b)"
+    );
+    // Row-for-row identical to the SQL fixpoint — the split-id-space regression
+    // made the native side return only the base rows {a, x}.
+    let dir_n = sandbox("recur_nat");
+    let dir_s = sandbox("recur_sql");
+    let native = rows_of(&run(&dir_n, PROG_RECUR, false), "reach");
+    let sql = rows_of(&run(&dir_s, PROG_RECUR, true), "reach");
+    assert_eq!(
+        native, sql,
+        "native halt-BFS diverged from SQL over dense edges\nnative={native:?}\nsql={sql:?}"
+    );
+    assert_eq!(native.len(), 4, "expected a 4-row non-vacuous closure, got {native:?}");
+}
+
 const DEPTH_PROG: &str = r#"
 rel flow_edge(from: text, to: text).
 flow_edge("a", "b"). flow_edge("b", "c"). flow_edge("a", "c"). flow_edge("c", "a").

@@ -188,12 +188,16 @@ fn sym_dict_is_a_dense_bijection_and_preserves_every_join() {
         "call_edge.caller <-> call_def.sym join is empty — the gate would be vacuous"
     );
 
-    // 5. Cross-WRITE-PATH parity: a SQL ground fact (`word`, lowered through
+    // 5. SQL write-path parity: a SQL ground fact (`word`, lowered through
     //    `sprf_sym_intern`) and a SQL derived rel (`echo_word`, pass-through)
-    //    must store the SAME dense id for the SAME symbol. This is the exact
-    //    join that was EMPTY under 624ba534's split id space (one side dense,
-    //    the other raw hash). A dense integer join must equal the row count and
-    //    the decoded-text join.
+    //    must store the SAME dense id for the SAME symbol, so their integer join
+    //    equals both the fact-row count and the decoded-text join. NOTE (codex/
+    //    opus round-2 correction): both sides lower through the SQL path, so this
+    //    does NOT by itself catch the 624ba534 split (under it both would have
+    //    been raw-hash and still agreed). The split is caught by the atomicity
+    //    check (case 3: no cell outside `_sym_dict`) and the router-written
+    //    call/type cross-family join (case 4). This case pins that
+    //    `sprf_sym_intern` agrees with itself across fact and derived lowering.
     let word_rows = count(&eng, "SELECT COUNT(*) FROM rel_word");
     assert!(word_rows >= 2, "fixture: word should have 2 fact rows, got {word_rows}");
     let dense_word_join = count(
@@ -207,7 +211,7 @@ fn sym_dict_is_a_dense_bijection_and_preserves_every_join() {
     assert_eq!(
         dense_word_join, word_rows,
         "SQL fact `word` and SQL derived `echo_word` disagree on the dense id for a \
-         symbol: dense self-join {dense_word_join} != {word_rows} fact rows (the 624ba534 split)"
+         symbol: dense self-join {dense_word_join} != {word_rows} fact rows"
     );
     assert_eq!(
         dense_word_join, text_word_join,
