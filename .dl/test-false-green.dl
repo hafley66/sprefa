@@ -197,8 +197,11 @@ ignore_hiding_bug(f, l) <- scan("WORK", "src/**/*.rs", f, rev),
 #   - tests/it/daemon.rs ignore_bug (1 row, line 1038): genuinely names an
 #     unbuilt feature (`linux_inotify_watch_count_tracks_unignored` is its own
 #     spec for Linux per-directory watch pruning, which has not landed).
-#   - the four remaining asserts_nothing rows (src/engine/**, src/graph/**)
-#     sit outside this pass's file ownership.
+#   - of the four asserts_nothing rows, the two src/engine/** ones
+#     (ownership.rs, pipeline/stage.rs) were driven to 0 on 2026-07-21 and
+#     their baseline rows removed; the two src/graph/typegraph/** ones
+#     (go.rs:1185, ts/flow.rs:920) stay grandfathered pending the concurrent
+#     symbol-dict rewrite that owns those files.
 
 rel silent_skip_count(file: file, hits: int).
 silent_skip_count(f, count(line)) <- silent_skip_finding(f, line).
@@ -210,8 +213,12 @@ rel asserts_nothing_count(file: file, hits: int).
 asserts_nothing_count(f, count(line)) <- asserts_nothing_finding(f, line).
 
 rel asserts_nothing_baseline(file: file, allowed: int).
-asserts_nothing_baseline("src/engine/ownership.rs", 1).
-asserts_nothing_baseline("src/engine/pipeline/stage.rs", 1).
+# ownership.rs + pipeline/stage.rs driven to 0 (2026-07-21): stage.rs's
+# transition test now asserts the intent survives the full typestate chain;
+# ownership.rs:324 asserted only through the `assert_delta_plan_is_bounded`
+# helper (invisible to this rail's in-span assert scan) and now carries a
+# direct non-empty guard so an empty EXPLAIN cannot pass vacuously. Rows
+# removed, not lowered — a regression in either file re-blocks per-hit.
 asserts_nothing_baseline("src/graph/typegraph/go.rs", 1).
 asserts_nothing_baseline("src/graph/typegraph/ts/flow.rs", 1).
 

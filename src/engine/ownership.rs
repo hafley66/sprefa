@@ -325,6 +325,11 @@ mod tests {
         let db = contract_db();
         let removed = explain(&db, REMOVED_PLAN);
         let added = explain(&db, ADDED_PLAN);
+        // Guard the bounded-plan check against a vacuous pass: an empty plan
+        // trivially satisfies "no full scan", so prove EXPLAIN actually
+        // produced plan rows before trusting the shape assertions below.
+        assert!(!removed.is_empty(), "REMOVED_PLAN produced no query plan");
+        assert!(!added.is_empty(), "ADDED_PLAN produced no query plan");
         assert_delta_plan_is_bounded(&removed);
         assert_delta_plan_is_bounded(&added);
     }

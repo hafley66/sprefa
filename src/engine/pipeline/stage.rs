@@ -20,8 +20,13 @@ mod tests {
     use crate::engine::pipeline::GenerationIntent;
 
     #[test]
-    fn legal_prepare_then_stage_transition_compiles() {
+    fn legal_prepare_then_stage_transition_preserves_intent() {
         let prepared = GenerationIntent::new().prepare();
-        let _ready: ReadyGeneration = prepared.stage();
+        let ready: ReadyGeneration = prepared.stage();
+        // Staging is a typestate move, not a mutation: the intent that entered
+        // preparation must survive staging and the commit that follows it,
+        // recoverable unchanged at the end of the chain.
+        let recovered = ready.into_committed().into_intent();
+        assert_eq!(recovered, GenerationIntent::new());
     }
 }
