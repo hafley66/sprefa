@@ -1595,19 +1595,38 @@ fn coordinate_id_deinterned_but_joins_and_display_hold() {
         .unwrap();
     assert_eq!(coord_rows, 0, "no df coordinate id text may remain interned in _strings");
 
-    // (2) JOIN KEY intact: the stored df_node.id integer is exactly the blake3
-    // StringId of the reconstructed coordinate, so int==int joins are unchanged.
-    let known = node_rows[0][0].clone();
-    let want = sprefa_v5::spine::StringId::of(&known).sqlite();
+    // (2) JOIN KEY is a DENSE `_df_node_dict` surrogate keyed on
+    // (file,line,col,kind), NOT a hash of the interpolated coordinate string
+    // (identity normalization, 2026-07-20). Verify the id stored for this
+    // coordinate is exactly its dict surrogate, and that it is NOT the old
+    // StringId hash of the coordinate text — the normalization is real.
+    let r = &node_rows[0];
+    let (kind, file, line, col) = (&r[1], &r[4], &r[5], &r[6]);
+    let file_sid = sprefa_v5::spine::StringId::of(file).sqlite();
+    let kind_sid = sprefa_v5::spine::StringId::of(kind).sqlite();
+    let surrogate: i64 = conn
+        .query_row(
+            "SELECT id FROM _df_node_dict WHERE file = ?1 AND line = ?2 AND col = ?3 AND kind = ?4",
+            rusqlite::params![
+                file_sid,
+                line.parse::<i64>().unwrap(),
+                col.parse::<i64>().unwrap(),
+                kind_sid
+            ],
+            |row| row.get(0),
+        )
+        .expect("the coordinate has a _df_node_dict surrogate");
     let matches: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM rel_df_node WHERE id = ?1",
-            [want],
+            [surrogate],
             |row| row.get(0),
         )
         .unwrap();
-    assert!(
-        matches >= 1,
-        "df_node.id must store StringId::of(coordinate) — the surrogate join key"
+    assert!(matches >= 1, "df_node.id stores its dense _df_node_dict surrogate");
+    let old_hash = sprefa_v5::spine::StringId::of(&r[0]).sqlite();
+    assert_ne!(
+        surrogate, old_hash,
+        "identity is a dense surrogate, not a hash of the coordinate string"
     );
 }

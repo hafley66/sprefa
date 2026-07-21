@@ -323,6 +323,34 @@ impl Engine {
                  rev TEXT NOT NULL DEFAULT '0',
                  path TEXT NOT NULL DEFAULT ''
              );
+             -- Dataflow node dictionary (2026-07-20 identity normalization).
+             -- One row per DISTINCT coordinate (file, line, col, kind); `id` is a
+             -- DENSE surrogate assigned by AUTOINCREMENT. This is the node
+             -- identity: `df_node.id` / `df_edge.from|to` / `df_arg.call|arg` /
+             -- `df_field.id|value` / `df_param.id` / `df_lit.id` /
+             -- `df_node_repo.id` / `nest.call_id` / `template_parts.node` and the
+             -- `_rev` twins all carry THIS surrogate, replacing the former
+             -- naked hash of the interpolated `file:line:col:kind` string.
+             -- `file`/`kind` are the SAME interned StringIds `df_node` stores
+             -- (`StringId::of`, computed without an intern — the value, not a
+             -- REFERENCES, matching `_extract_digest`'s reasoning above so
+             -- `PRAGMA foreign_keys=ON` connections do not fault). The
+             -- `UNIQUE(file,line,col,kind)` is the real key over the coordinate
+             -- columns: it makes the dict content-keyed, so a cold-chunk slice
+             -- re-run or a later wholesale refresh resolves an unchanged
+             -- coordinate to the SAME surrogate (INSERT OR IGNORE + SELECT).
+             -- Persistent, never rev-scoped, never pruned by retraction (a
+             -- since-deleted coordinate's row is simply never looked up again,
+             -- same policy as `_derived_complete`); AUTOINCREMENT so a reclaimed
+             -- rowid can never alias a live surrogate.
+             CREATE TABLE IF NOT EXISTS _df_node_dict (
+                 id   INTEGER PRIMARY KEY AUTOINCREMENT,
+                 file INTEGER NOT NULL,
+                 line INTEGER NOT NULL,
+                 col  INTEGER NOT NULL,
+                 kind INTEGER NOT NULL,
+                 UNIQUE(file, line, col, kind)
+             );
              CREATE TABLE IF NOT EXISTS _program (
                  path TEXT PRIMARY KEY,
                  hash TEXT NOT NULL DEFAULT '',
@@ -1529,7 +1557,9 @@ impl Engine {
                 sink.sym(s);
             }
         }
-        self.db.flush_syms(&mut sink)
+        // One flush per source-rel spine insert: O(source rels this tick), not
+        // per row.
+        self.db.flush_syms_keyed(&mut sink, "INSERT _strings (spine/source)")
     }
 
     /// Batch located string occurrences into `_where_bytes`. Each row says
@@ -1578,7 +1608,9 @@ impl Engine {
                 }
             }
         }
-        self.db.flush_syms(&mut sink)?;
+        // One flush per staged where-bytes batch (source located-slice text):
+        // O(source batches this tick), not per row.
+        self.db.flush_syms_keyed(&mut sink, "INSERT _strings (spine/source)")?;
         let rows: Vec<Vec<Value>> = by_id.into_values().collect();
         self.db.insert_rows(
             "_where_bytes",
