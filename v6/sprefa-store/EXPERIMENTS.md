@@ -113,3 +113,32 @@ Two hidden-RAM bugs found and fixed in the example (were inflating the picture):
 - Measure: retract 1.453 (0) / 1.442 (4) / 1.440 (8). ~0.8%, noise.
 - Verdict: REJECTED, reverted. The per-round sort is small/memory-resident and
   below the threshold where the auxiliary sort threads engage. No win.
+
+## E7 — accumulator: defer all cx_row writes to one final key-ordered UPDATE — REJECTED
+- Hypothesis: the per-round weight UPDATE (631ms) is scattered WAL row-rewrites;
+  keep decs in a small cx_acc(key,dec_sum), test crossings against read-only
+  original weights, mutate cx_row ONCE at the end in key (= page) order. Bet: one
+  sequential update beats 3 scattered ones.
+- Change: full retract rewrite (cx_acc upsert per round, 3-way cx_next join,
+  final UPDATE). Correct — all tests green incl. head_to_head byte-identical.
+- Measure (3 runs): retract **1.86s** (was 1.48), db 216 MB (was 207), C-heap 71
+  (was 54). WORSE on every axis. Trace: final UPDATE **655ms ≈ the old per-round
+  631ms** (deferring did NOT make the ~1M row-rewrites cheaper — key-order gave
+  nothing, pages already cache-resident), PLUS new cost: cx_acc fold 271ms +
+  cx_next doubled to 277ms (extra LEFT JOIN cx_acc).
+- Verdict: REJECTED, reverted. Falsifies the "scattered vs sequential writes"
+  hypothesis: the cx_row write volume (~1M rows) is identical either way and is not
+  page-order-bound; the accumulator is pure added bookkeeping. The E2 in-place
+  per-round update is optimal.
+
+## Standing conclusion (after E1-E7)
+Retract at 5M/500k/depth-3 sits at **~1.44s**, CPU-bound in SQLite's VDBE, split
+~evenly between the weight UPDATE (~631ms, ~1M WAL-logged rowid rewrites) and the
+cx_hits GROUP BY (~549ms sort). Both are at the SQLite floor: mmap, cache_size,
+threads, UPDATE..FROM, and the accumulator were each measured and rejected. The
+~5x gap to resident dd/dbsp (~291ms) is the price of durable on-disk state
+(WAL-logged page writes vs RAM hashmaps) — the same property that wins the memory
+wall. KEPT wins: E1 (single key, -42% time) + E2 (virtual cols, -7.9% db).
+A genuinely different design (in-RAM i32 weight vector, ~20MB for 5M nodes, over an
+on-disk edge CSR) could close the gap while staying bounded, but that is a new arc,
+not a tuning lever on this cascade.
