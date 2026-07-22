@@ -417,16 +417,64 @@ async fn main() {
         eprintln!("[perf] {label} done ({:.0}s elapsed)", started.elapsed().as_secs_f64());
     }
 
-    md.push_str("## Breakpoints\n\n");
-    if broke.is_empty() {
-        md.push_str(&format!("No engine aborted under the {cap} MB gun at the scales run.\n\n"));
-    } else {
-        md.push_str(&format!("Under the {cap} MB memcap gun, these engines hit the RAM wall (SIGABRT):\n\n"));
+    if !broke.is_empty() {
+        md.push_str("## Matrix breakpoints\n\n");
+        md.push_str(&format!("Under the {cap} MB gun in the matrix above, these aborted (SIGABRT):\n\n"));
         for b in &broke {
             md.push_str(&format!("- {b}\n"));
         }
         md.push('\n');
     }
+
+    // ---- dedicated breakpoint ramp: TIGHT gun, force dd's RAM wall -------------
+    // dd holds the reachable set resident (rust_live ~215 B/node above); the store
+    // holds ~0 Rust heap (state on disk). Ramp width under a tight cap so dd aborts
+    // and the on-disk store keeps going — the whole thesis, observed not asserted.
+    let break_cap: u64 = std::env::var("DL_BREAK_CAP").ok().and_then(|s| s.parse().ok()).unwrap_or(700);
+    md.push_str(&format!("## Breakpoint ramp — tight gun {break_cap} MB\n\n"));
+    md.push_str(&format!(
+        "Same task, ramping nodes under a {break_cap} MB memcap. dd is resident so it \
+         hits the wall on its arrangements. **Honest caveat:** the store engines keep \
+         retract state on disk (rust_live ~0.1 MB in the matrix), so when a store row \
+         below aborts it is the SHARED in-RAM graph BUILDER (benchgraph holds the whole \
+         `Vec<Vec>` + row/edge Vecs before inserting), NOT the retract. That builder \
+         ceiling hits all engines at the same scale and masks dd's true resident wall \
+         at extreme sizes — the real per-engine memory story is the `rust_live` column \
+         in the matrix (dd climbs ~215 B/node; the store stays 0.09 MB flat). Isolating \
+         dd's wall past the builder ceiling needs a streaming graph generator (gap G6).\n\n"
+    ));
+    md.push_str("| nodes | dd | sqlite-count | sqlite-dred-loop |\n|---:|:---:|:---:|:---:|\n");
+    let ramp_engines = ["dd", "sqlite-count", "sqlite-dred-loop"];
+    let mut still: std::collections::HashSet<&str> = ramp_engines.iter().copied().collect();
+    for &w in &[160_000usize, 480_000, 960_000, 1_600_000, 2_400_000, 3_200_000] {
+        let nodes = 2 + 6 * w;
+        let mut cells = Vec::new();
+        for e in ramp_engines {
+            if !still.contains(e) {
+                cells.push("—".to_string());
+                continue;
+            }
+            let c = run_child(&exe, e, 6, w, 0, break_cap);
+            if c.ok {
+                cells.push(format!("{:.0} ms / {:.0} MB rss", c.out.retract_ms, c.out.peak_rss_mb));
+            } else {
+                cells.push(format!("**ABORT** (>{break_cap} MB)"));
+                still.remove(e);
+            }
+        }
+        md.push_str(&format!("| {nodes} | {} | {} | {} |\n", cells[0], cells[1], cells[2]));
+        eprintln!("[perf] ramp nodes={nodes} done ({:.0}s)", started.elapsed().as_secs_f64());
+        if still.is_empty() {
+            break;
+        }
+    }
+    md.push('\n');
+    for e in ramp_engines {
+        if still.contains(e) {
+            md.push_str(&format!("- `{e}` never aborted in the ramp (RAM bounded at this cap).\n"));
+        }
+    }
+
     md.push_str(&format!("\n_Report generated in {:.0}s._\n", started.elapsed().as_secs_f64()));
 
     std::fs::write(&report_path, &md).unwrap();
