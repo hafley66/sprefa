@@ -216,22 +216,30 @@ flowchart TB
 
 ## Definition of DONE — the contract (living checklist)
 
+> **2026-07-22 correction:** rows 1–7 were previously marked ✅ but NO reach/walk/
+> count SQL existed in the store — the ✅ was aspirational. As of `03579e9d` all 7
+> ship for real in `src/reach.rs` over `cx_dep`, each bound byte-identical to v5's
+> `src/graph/{scc,walk}.rs` (vendored verbatim) by `tests/covering.rs` (5 asserts ×
+> 8+ shapes incl. no-cap cycles). SCC agreement is partition-canonical (min-member).
+
 | # | covering function | ships as | oracle | test | status |
 |---|---|---|---|---|---|
-| 1 | reaches_from | recursive CTE | walk.rs vectors | agreement | ✅ |
-| 2 | reached_by | recursive CTE | walk.rs vectors | agreement | ✅ |
-| 3 | multi_source_walk | recursive CTE (depth cap) | walk.rs vectors | agreement | ✅ |
-| 4 | multi_source_halt_bfs | recursive CTE | walk.rs vectors | agreement | ✅ |
-| 5 | tarjan (SCC) | SCC nested fixpoint (retract_scc) | oracle_survivors | agreement 3/3 | ✅ correct, ⚠️ perf (DAG early-out open) |
-| 6 | build_condensed | SCC scope tables | oracle_survivors | agreement | ⚠️ verify coverage |
-| 7 | count_pairs | counting cascade | oracle_survivors | agreement | ⚠️ distinct-count trap — verify |
+| 1 | reaches_from | recursive CTE (fwd) | scc.rs (vendored) | covering.rs | ✅ earned |
+| 2 | reached_by | recursive CTE (rev, ix_cx_dep_child) | scc.rs | covering.rs | ✅ earned |
+| 3 | multi_source_walk | Rust-driven level BFS (halt+cap, min-depth) | walk.rs | covering.rs | ✅ earned |
+| 4 | multi_source_halt_bfs | walk special-case | walk.rs | covering.rs | ✅ earned |
+| 5 | tarjan (SCC) | scc_labels = fwd∩rev closure, min-member repr | scc.rs | covering.rs (partition) | ✅ correct, ⚠️ Θ(V²) lab method |
+| 6 | build_condensed | derived from scc_labels + cx_dep group-by | scc.rs | covering.rs (size+cyclic+cadj) | ✅ earned |
+| 7 | count_pairs | COUNT over strict closure (=v5 total) | scc.rs | covering.rs (byte-exact i128) | ✅ earned |
 | — | retraction (Z-set) | counting upsert, delete-at-0 | oracle_survivors | agreement | ✅ |
 | — | reconciliation (salsa role) | recursive CTE + digest cutoff | reach table | reconcile tests | ✅ mechanism, ⚠️ wired |
-| — | memory-optimal engine | mmap KV (candidate) | oracle_survivors | agreement | 🔄 G8 in flight |
+| — | uniform measurement | measure::run_cell → perf-runs.csv/.sqlite | out_hash vs oracle | reach_perf (turnkey) | ✅ landed `cc6cf885` |
+| — | memory-optimal engine | mmap KV (candidate) | oracle_survivors | agreement | 🔄 G8 (suspect, unmerged) |
 | — | full engine matrix | 0_unified | oracle | 0_unified | ⚠️ 7/11 wired |
 | — | GUI / flow-panel | panel layers | — | — | ⚠️ open |
 | — | node2vec / similar | (not yet unified) | — | — | ⚠️ out of the cascade model |
 
-**Read the DONE bar off this table.** When every row is ✅ — each function on the
-on-disk cascade, oracle-verified, RAM-flat, Big-O measured — v6 has covered v5's
-set without the resident-RAM tax, and the rest is speed tuning.
+**Read the DONE bar off this table.** The 7 covering functions are now ✅ earned
+(oracle-verified on-disk). What remains is NOT correctness: the SCC/count_pairs lab
+methods are Θ(V²) closure (row 5) and must get a production Big-O (H4 DAG early-out),
+G8's memory-optimal engine is unproven, and the engine matrix / GUI are unwired.
