@@ -3,3 +3,4 @@ target/
 
 # bench outputs (regenerated)
 bench/out/
+perf-runs.csv

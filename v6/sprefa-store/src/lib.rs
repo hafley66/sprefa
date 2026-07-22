@@ -19,7 +19,6 @@ pub mod spine;
 pub mod engine;
 pub mod measure;
 pub mod oracle;
-pub mod trace;
 
 pub use engine::{cascade, reach, reconcile, temporal};
 pub use measure::{benchgraph, memcap};

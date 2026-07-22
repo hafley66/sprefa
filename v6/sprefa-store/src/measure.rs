@@ -1,52 +1,158 @@
-//! The ONE uniform measurement path. Recursive-CTE RAM is not guessable from row
-//! counts, so every perf run captures the SAME sensor set at the SAME phase
-//! boundaries through `run_cell`. No example may read a sensor by hand — that
-//! makes its numbers incomparable and disqualifies them from the golden archive.
+//! The ONE measurement harness: plain `tracing`, collected like normal people.
 //!
-//! FROZEN CONTRACT: `v6/findings/INSIGHTS.md` §C. Sink: `v6/labs/perf-runs.sqlite`.
+//! Instrument code with run-of-the-mill tracing — `info_span!("phase")` for the
+//! code that ran (and its timing), `info!(target: "measure", rss_kb = …)` for a
+//! metric sample. [`collect`] runs a workload under one small
+//! `tracing_subscriber::Layer` and hands back every span + event as [`Record`]s.
+//! [`run_cell`] is the perf-sweep driver built on it: it opens a store, runs a
+//! build phase and an op phase, and appends one CSV row of the collected
+//! metrics. No `dlsym`, no sqlite3-CLI shell-out, no hand-plumbed sensor structs.
 
-/// Independent variables — one OS process per Cell.
-#[derive(Clone, Debug)]
-pub struct Cell {
-    pub engine: &'static str,
-    pub workload: &'static str,
-    pub nodes: i64,
-    pub edges: i64,
-    pub cache_size_kib: i64,
-    pub memcap_mb: u64,
-}
-
-/// Captured identically at each phase boundary ("build" | "insert" | "op").
-#[derive(Clone, Debug)]
-pub struct PhaseSample {
-    pub phase: &'static str,
-    pub t_ms: f64,
-    pub rss_kb: i64,
-    pub sqlite_hw_kb: i64,
-    pub disk_read: i64,
-    pub disk_write: i64,
-    pub cache_hit: i64,
-    pub cache_miss: i64,
-    pub cache_write: i64,
-}
-
-#[derive(Clone, Debug)]
-pub struct RunRow {
-    pub cell: Cell,
-    pub samples: Vec<PhaseSample>,
-    pub correct: bool,
-    pub out_hash: String,
-    pub aborted: bool,
-}
-
-use sea_orm::{ConnectOptions, ConnectionTrait, Database};
-use crate::relstore::RelStore;
+use std::collections::BTreeMap;
+use std::future::Future;
+use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-static CURRENT_DB_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
+use sea_orm::{ConnectOptions, ConnectionTrait, Database, DbErr};
+use tracing::field::{Field, Visit};
+use tracing::span::{Attributes, Id};
+use tracing::{Event, Subscriber};
+use tracing_subscriber::layer::{Context, Layer};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::registry::LookupSpan;
 
+use crate::relstore::RelStore;
+
+// ============================ the collector ============================
+// (plain tracing → Vec<Record>; the one collection mechanism)
+
+/// A span closing (code that ran + how long) or an event (a metric sample).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Span,
+    Event,
+}
+
+/// One collected tracing record.
+#[derive(Clone, Debug)]
+pub struct Record {
+    pub kind: Kind,
+    pub target: String,
+    pub name: String,
+    pub fields: BTreeMap<String, String>,
+    pub elapsed_ns: u64,
+}
+
+impl Record {
+    /// Parse a field as i64 (metrics are integers).
+    pub fn i64(&self, key: &str) -> Option<i64> {
+        self.fields.get(key).and_then(|value| value.parse().ok())
+    }
+    /// Parse a field as f64.
+    pub fn f64(&self, key: &str) -> Option<f64> {
+        self.fields.get(key).and_then(|value| value.parse().ok())
+    }
+}
+
+#[derive(Default)]
+struct FieldVisitor(BTreeMap<String, String>);
+
+impl Visit for FieldVisitor {
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        self.0.insert(field.name().to_string(), format!("{value:?}"));
+    }
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.0.insert(field.name().to_string(), value.to_string());
+    }
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.0.insert(field.name().to_string(), value.to_string());
+    }
+    fn record_f64(&mut self, field: &Field, value: f64) {
+        self.0.insert(field.name().to_string(), value.to_string());
+    }
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        self.0.insert(field.name().to_string(), value.to_string());
+    }
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.0.insert(field.name().to_string(), value.to_string());
+    }
+}
+
+struct SpanState {
+    started: Instant,
+    fields: BTreeMap<String, String>,
+}
+
+struct CollectLayer {
+    out: Arc<Mutex<Vec<Record>>>,
+}
+
+impl<S> Layer<S> for CollectLayer
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+        if let Some(span) = ctx.span(id) {
+            let mut visitor = FieldVisitor::default();
+            attrs.record(&mut visitor);
+            span.extensions_mut().insert(SpanState {
+                started: Instant::now(),
+                fields: visitor.0,
+            });
+        }
+    }
+
+    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        let mut visitor = FieldVisitor::default();
+        event.record(&mut visitor);
+        self.out.lock().unwrap().push(Record {
+            kind: Kind::Event,
+            target: event.metadata().target().to_string(),
+            name: event.metadata().name().to_string(),
+            fields: visitor.0,
+            elapsed_ns: 0,
+        });
+    }
+
+    fn on_close(&self, id: Id, ctx: Context<'_, S>) {
+        if let Some(span) = ctx.span(&id) {
+            let extensions = span.extensions();
+            let (elapsed_ns, fields) = match extensions.get::<SpanState>() {
+                Some(state) => (state.started.elapsed().as_nanos() as u64, state.fields.clone()),
+                None => (0, BTreeMap::new()),
+            };
+            self.out.lock().unwrap().push(Record {
+                kind: Kind::Span,
+                target: span.metadata().target().to_string(),
+                name: span.name().to_string(),
+                fields,
+                elapsed_ns,
+            });
+        }
+    }
+}
+
+/// Run `body` under a collecting subscriber installed as the thread-local
+/// default; return its result plus every span/event emitted on this thread.
+/// Scoped via `with_default`, so it composes and runs repeatedly. Async bodies
+/// must run on a current-thread runtime (see [`run_cell`]) so every `.await`
+/// stays on this thread and is captured.
+pub fn collect<T>(body: impl FnOnce() -> T) -> (T, Vec<Record>) {
+    let out = Arc::new(Mutex::new(Vec::new()));
+    let subscriber = tracing_subscriber::registry().with(CollectLayer { out: out.clone() });
+    let result = tracing::subscriber::with_default(subscriber, body);
+    let records = std::mem::take(&mut *out.lock().unwrap());
+    (result, records)
+}
+
+// ============================ sensors ============================
+// Standard syscalls, emitted as tracing events. Not fancy — this is just how
+// you read RSS / disk / page-faults on this OS.
+
+/// Peak resident set, KiB. `getrusage.ru_maxrss` (bytes on macOS, KiB on Linux).
 fn peak_rss_kb() -> i64 {
     unsafe {
         let mut usage: libc::rusage = std::mem::zeroed();
@@ -59,17 +165,17 @@ fn peak_rss_kb() -> i64 {
     }
 }
 
-fn sqlite_hw_kb() -> i64 {
+/// Major page faults so far — the mmap/page-cache-miss signal. `ru_majflt`.
+fn major_faults() -> i64 {
     unsafe {
-        let symbol = std::ffi::CString::new("sqlite3_memory_highwater").unwrap();
-        let address = libc::dlsym(libc::RTLD_DEFAULT, symbol.as_ptr());
-        if address.is_null() { return -1; }
-        let highwater: unsafe extern "C" fn(i32) -> i64 = std::mem::transmute(address);
-        highwater(0) / 1024
+        let mut usage: libc::rusage = std::mem::zeroed();
+        libc::getrusage(libc::RUSAGE_SELF, &mut usage);
+        usage.ru_majflt as i64
     }
 }
 
-fn diskio() -> ((i64, i64), &'static str) {
+/// Bytes read/written to disk by this process. macOS `proc_pid_rusage`.
+fn diskio() -> (i64, i64) {
     #[cfg(target_os = "macos")]
     unsafe {
         let mut usage: libc::rusage_info_v2 = std::mem::zeroed();
@@ -79,130 +185,268 @@ fn diskio() -> ((i64, i64), &'static str) {
             &mut usage as *mut _ as *mut libc::rusage_info_t,
         );
         if result == 0 {
-            return ((usage.ri_diskio_bytesread as i64, usage.ri_diskio_byteswritten as i64), "proc_pid_rusage");
+            return (
+                usage.ri_diskio_bytesread as i64,
+                usage.ri_diskio_byteswritten as i64,
+            );
         }
     }
-    ((0, 0), "unavailable")
+    (0, 0)
 }
 
-fn db_status_cache() -> (i64, i64, i64) {
-    (-1, -1, -1)
+/// Emit one metric sample as a tracing event. Fields land in the collected
+/// [`Record`]s and in the CSV; anyone with their own subscriber sees them too.
+fn sample(phase: &'static str, t_ms: f64) {
+    let (disk_read, disk_write) = diskio();
+    tracing::info!(
+        target: "measure",
+        phase,
+        t_ms,
+        rss_kb = peak_rss_kb(),
+        disk_read,
+        disk_write,
+        major_faults = major_faults(),
+        stmt = crate::stmt_counter::get() as i64,
+    );
 }
 
-fn append_run(row: &RunRow) {
-    let measured_db = CURRENT_DB_PATH.lock().unwrap().clone().unwrap();
-    let archive = PathBuf::from("../labs/perf-runs.sqlite");
-    if let Some(parent) = archive.parent() {
+// ============================ the perf cell ============================
+
+/// Independent variables — one OS process per Cell.
+#[derive(Clone, Debug)]
+pub struct Cell {
+    pub engine: &'static str,
+    pub workload: &'static str,
+    pub nodes: i64,
+    pub edges: i64,
+    pub cache_size_kib: i64,
+    pub memcap_mb: u64,
+}
+
+/// One phase's metrics, derived from its `measure` event.
+#[derive(Clone, Debug)]
+pub struct PhaseSample {
+    pub phase: &'static str,
+    pub t_ms: f64,
+    pub rss_kb: i64,
+    pub disk_read: i64,
+    pub disk_write: i64,
+    pub major_faults: i64,
+    pub stmt: i64,
+}
+
+#[derive(Clone, Debug)]
+pub struct RunRow {
+    pub cell: Cell,
+    pub samples: Vec<PhaseSample>,
+    pub correct: bool,
+    pub out_hash: String,
+    pub aborted: bool,
+}
+
+const PHASES: [&str; 3] = ["build", "insert", "op"];
+
+/// Drive one cell: open a store, run `build` then `op`, collect the per-phase
+/// metrics through tracing, append a CSV row. Synchronous — it owns a
+/// current-thread runtime so `collect`'s thread-local subscriber captures every
+/// `.await`.
+pub fn run_cell<S, O>(cell: Cell, build: S, op: O) -> RunRow
+where
+    S: for<'a> FnOnce(&'a RelStore) -> Pin<Box<dyn Future<Output = Result<(), DbErr>> + 'a>>,
+    O: for<'a> FnOnce(&'a RelStore) -> Pin<Box<dyn Future<Output = Result<Vec<i64>, DbErr>> + 'a>>,
+{
+    let db_path = std::env::temp_dir().join(format!(
+        "sprefa_measure_{}_{}.sqlite",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    if cell.memcap_mb != 0 {
+        crate::memcap::cap_address_space_mb(cell.memcap_mb);
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let path = db_path.clone();
+    let cache_size_kib = cell.cache_size_kib;
+    let ((correct, out_hash, aborted), records) = collect(|| {
+        runtime.block_on(async move {
+            let mut options = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
+            options.max_connections(1).min_connections(1);
+            let db = Database::connect(options).await.unwrap();
+            let store = RelStore::attach(db.clone()).await.unwrap();
+            db.execute_unprepared(&format!("PRAGMA cache_size=-{cache_size_kib};"))
+                .await
+                .unwrap();
+
+            let started = Instant::now();
+            let build_result = build(&store).await;
+            sample("build", started.elapsed().as_secs_f64() * 1000.0);
+
+            // insert is folded into build for the retract engines — a real no-op,
+            // sampled so the phase set stays uniform across engines.
+            sample("insert", 0.0);
+
+            let op_started = Instant::now();
+            let op_result = op(&store).await;
+            sample("op", op_started.elapsed().as_secs_f64() * 1000.0);
+
+            let ok = build_result.is_ok() && op_result.is_ok();
+            let mut answer = op_result.unwrap_or_default();
+            answer.sort_unstable();
+            let out_hash = blake3::hash(format!("{answer:?}").as_bytes())
+                .to_hex()
+                .to_string();
+            (ok, out_hash, build_result.is_err())
+        })
+    });
+
+    let samples: Vec<PhaseSample> = PHASES
+        .iter()
+        .map(|&phase| phase_sample(phase, &records))
+        .collect();
+
+    let db_bytes = db_size_bytes(&db_path);
+    append_csv(&cell, &samples, correct, &out_hash, aborted, db_bytes);
+
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+    let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+
+    RunRow { cell, samples, correct, out_hash, aborted }
+}
+
+/// Build a `PhaseSample` from the collected `measure` event for `phase`.
+fn phase_sample(phase: &'static str, records: &[Record]) -> PhaseSample {
+    let event = records.iter().find(|record| {
+        record.kind == Kind::Event && record.fields.get("phase").map(String::as_str) == Some(phase)
+    });
+    match event {
+        Some(record) => PhaseSample {
+            phase,
+            t_ms: record.f64("t_ms").unwrap_or(0.0),
+            rss_kb: record.i64("rss_kb").unwrap_or(0),
+            disk_read: record.i64("disk_read").unwrap_or(0),
+            disk_write: record.i64("disk_write").unwrap_or(0),
+            major_faults: record.i64("major_faults").unwrap_or(0),
+            stmt: record.i64("stmt").unwrap_or(0),
+        },
+        None => PhaseSample {
+            phase,
+            t_ms: 0.0,
+            rss_kb: 0,
+            disk_read: 0,
+            disk_write: 0,
+            major_faults: 0,
+            stmt: 0,
+        },
+    }
+}
+
+/// On-disk size, WAL-aware: the main file plus any uncheckpointed `-wal`.
+fn db_size_bytes(db_path: &PathBuf) -> i64 {
+    let main = std::fs::metadata(db_path).map(|m| m.len()).unwrap_or(0);
+    let wal = std::fs::metadata(db_path.with_extension("sqlite-wal"))
+        .map(|m| m.len())
+        .unwrap_or(0);
+    (main + wal) as i64
+}
+
+fn append_csv(
+    cell: &Cell,
+    samples: &[PhaseSample],
+    correct: bool,
+    out_hash: &str,
+    aborted: bool,
+    db_bytes: i64,
+) {
+    // Crate-local and git-diffable (`just results` reads it). Overridable via
+    // DL_PERF_CSV for a hermetic run.
+    let csv = std::env::var("DL_PERF_CSV")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("perf-runs.csv"));
+    if let Some(parent) = csv.parent().filter(|p| !p.as_os_str().is_empty()) {
         let _ = std::fs::create_dir_all(parent);
     }
-    let schema = "CREATE TABLE IF NOT EXISTS runs (
-           sweep_ts TEXT NOT NULL, engine TEXT, workload TEXT, nodes INTEGER, edges INTEGER,
-           cache_size_kib INTEGER, memcap_mb INTEGER, correct INTEGER, out_hash TEXT, aborted INTEGER,
-           db_bytes INTEGER, final_table_bytes INTEGER, final_index_bytes INTEGER,
-           diskio_source TEXT, build_rss_kb INTEGER, insert_rss_kb INTEGER, op_rss_kb INTEGER
-         );
-         CREATE TABLE IF NOT EXISTS phase_samples (
-           sweep_ts TEXT NOT NULL, phase TEXT, t_ms REAL, rss_kb INTEGER, sqlite_hw_kb INTEGER,
-           disk_read INTEGER, disk_write INTEGER, cache_hit INTEGER, cache_miss INTEGER, cache_write INTEGER
-         );";
-    let _ = std::process::Command::new("sqlite3").arg(&archive).arg(schema).status();
-    let stats = std::process::Command::new("sqlite3")
-        .args(["-separator", "|", measured_db.to_str().unwrap(), "SELECT SUM(CASE WHEN name LIKE 'ix_%' OR name LIKE 'sqlite_autoindex_%' THEN pgsize ELSE 0 END), SUM(CASE WHEN name NOT LIKE 'ix_%' AND name NOT LIKE 'sqlite_autoindex_%' THEN pgsize ELSE 0 END) FROM dbstat;"])
-        .output().unwrap();
-    let values: Vec<i64> = String::from_utf8_lossy(&stats.stdout).trim().split('|').filter_map(|value| value.parse().ok()).collect();
-    let index_bytes = values.first().copied().unwrap_or(0);
-    let table_bytes = values.get(1).copied().unwrap_or(0);
-    let db_bytes = std::fs::metadata(&measured_db).map(|metadata| metadata.len() as i64).unwrap_or(table_bytes + index_bytes);
-    let sweep_ts = chrono_like_timestamp();
-    let source = row.samples.first().map(|sample| {
-        let _ = sample;
-        diskio().1
-    }).unwrap_or("unavailable");
-    let value = |phase: &str, field: fn(&PhaseSample) -> i64| {
-        row.samples.iter().find(|sample| sample.phase == phase).map(field).unwrap_or(0)
-    };
-    let build_rss = value("build", |sample| sample.rss_kb);
-    let insert_rss = value("insert", |sample| sample.rss_kb);
-    let op_rss = value("op", |sample| sample.rss_kb);
-    let run_sql = format!(
-        "INSERT INTO runs VALUES ('{}','{}','{}',{},{},{},{},{},'{}',{},{},{},{},'{}',{},{},{})",
-        sweep_ts, row.cell.engine, row.cell.workload, row.cell.nodes, row.cell.edges,
-        row.cell.cache_size_kib, row.cell.memcap_mb, row.correct as i64, row.out_hash,
-        row.aborted as i64, db_bytes, table_bytes, index_bytes, source,
-        build_rss, insert_rss, op_rss,
-    );
-    let _ = std::process::Command::new("sqlite3").arg(&archive).arg(run_sql).status();
-    for sample in &row.samples {
-        let phase_sql = format!(
-            "INSERT INTO phase_samples VALUES ('{}','{}',{},{},{},{},{},{},{},{})",
-            sweep_ts, sample.phase, sample.t_ms, sample.rss_kb, sample.sqlite_hw_kb,
-            sample.disk_read, sample.disk_write, sample.cache_hit, sample.cache_miss, sample.cache_write,
-        );
-        let _ = std::process::Command::new("sqlite3").arg(&archive).arg(phase_sql).status();
+    let header = "sweep_ns,engine,workload,nodes,edges,cache_size_kib,memcap_mb,correct,out_hash,aborted,db_bytes,\
+build_t_ms,build_rss_kb,build_disk_read,build_disk_write,build_major_faults,build_stmt,\
+insert_t_ms,insert_rss_kb,insert_disk_read,insert_disk_write,insert_major_faults,insert_stmt,\
+op_t_ms,op_rss_kb,op_disk_read,op_disk_write,op_major_faults,op_stmt\n";
+    if !csv.exists() {
+        let _ = std::fs::write(&csv, header);
     }
-    let csv = PathBuf::from("../labs/perf-runs.csv");
-    let header = "sweep_ts,engine,workload,nodes,edges,cache_size_kib,memcap_mb,correct,out_hash,aborted,db_bytes,final_table_bytes,final_index_bytes,diskio_source,build_t_ms,build_rss_kb,build_sqlite_hw_kb,build_disk_read,build_disk_write,build_cache_hit,build_cache_miss,build_cache_write,insert_t_ms,insert_rss_kb,insert_sqlite_hw_kb,insert_disk_read,insert_disk_write,insert_cache_hit,insert_cache_miss,insert_cache_write,op_t_ms,op_rss_kb,op_sqlite_hw_kb,op_disk_read,op_disk_write,op_cache_hit,op_cache_miss,op_cache_write\n";
-    if !csv.exists() { std::fs::write(&csv, header).unwrap(); }
-    let mut line = format!("{},{},{},{},{},{},{},{},{},{},{},{},{},{}", sweep_ts, row.cell.engine, row.cell.workload, row.cell.nodes, row.cell.edges, row.cell.cache_size_kib, row.cell.memcap_mb, row.correct as i64, row.out_hash, row.aborted as i64, db_bytes, table_bytes, index_bytes, source);
-    for phase in ["build", "insert", "op"] {
-        let sample = row.samples.iter().find(|sample| sample.phase == phase).unwrap();
-        line.push_str(&format!(",{},{},{},{},{},{},{},{}", sample.t_ms, sample.rss_kb, sample.sqlite_hw_kb, sample.disk_read, sample.disk_write, sample.cache_hit, sample.cache_miss, sample.cache_write));
+    let sweep_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let mut line = format!(
+        "{sweep_ns},{},{},{},{},{},{},{},{out_hash},{},{db_bytes}",
+        cell.engine,
+        cell.workload,
+        cell.nodes,
+        cell.edges,
+        cell.cache_size_kib,
+        cell.memcap_mb,
+        correct as i64,
+        aborted as i64,
+    );
+    for sample in samples {
+        line.push_str(&format!(
+            ",{},{},{},{},{},{}",
+            sample.t_ms,
+            sample.rss_kb,
+            sample.disk_read,
+            sample.disk_write,
+            sample.major_faults,
+            sample.stmt,
+        ));
     }
     line.push('\n');
-    std::fs::OpenOptions::new().append(true).open(csv).unwrap().write_all(line.as_bytes()).unwrap();
+    if let Ok(mut file) = std::fs::OpenOptions::new().append(true).create(true).open(&csv) {
+        let _ = file.write_all(line.as_bytes());
+    }
 }
 
-fn chrono_like_timestamp() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros().to_string()
+#[cfg(test)]
+mod harness_tests {
+    use super::*;
+
+    #[test]
+    fn collects_span_timing_and_event_fields() {
+        let (out, records) = collect(|| {
+            let span = tracing::info_span!("op", workload = "DAG");
+            let _guard = span.enter();
+            tracing::info!(target: "measure", rss_kb = 123i64, disk_read = 4096i64, "sample");
+            42
+        });
+        assert_eq!(out, 42);
+
+        let event = records
+            .iter()
+            .find(|record| record.kind == Kind::Event)
+            .expect("an event was collected");
+        assert_eq!(event.i64("rss_kb"), Some(123));
+        assert_eq!(event.i64("disk_read"), Some(4096));
+
+        let span = records
+            .iter()
+            .find(|record| record.kind == Kind::Span && record.name == "op")
+            .expect("the op span was collected");
+        assert_eq!(span.fields.get("workload").map(String::as_str), Some("DAG"));
+    }
+
+    #[test]
+    fn phase_sample_reads_the_measure_event() {
+        let (_out, records) = collect(|| sample("op", 12.5));
+        let phase = phase_sample("op", &records);
+        assert_eq!(phase.t_ms, 12.5);
+        assert!(phase.rss_kb > 0, "RSS should be a real positive number");
+    }
 }
-
-use std::io::Write;
-
-pub async fn run_cell<S, O>(cell: Cell, build: S, op: O) -> RunRow
-where
-    S: for<'a> FnOnce(&'a RelStore) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), sea_orm::DbErr>> + 'a>>,
-    O: for<'a> FnOnce(&'a RelStore) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<i64>, sea_orm::DbErr>> + 'a>>,
-{
-    let db_path = std::env::temp_dir().join(format!("sprefa_measure_{}_{}.sqlite", std::process::id(), chrono_like_timestamp()));
-    let mut options = ConnectOptions::new(format!("sqlite://{}?mode=rwc", db_path.display()));
-    options.max_connections(1).min_connections(1);
-    let db = Database::connect(options).await.unwrap();
-    let store = RelStore::attach(db.clone()).await.unwrap();
-    db.execute_unprepared(&format!("PRAGMA cache_size=-{};", cell.cache_size_kib)).await.unwrap();
-    if cell.memcap_mb != 0 { crate::memcap::cap_address_space_mb(cell.memcap_mb); }
-    *CURRENT_DB_PATH.lock().unwrap() = Some(db_path.clone());
-    let mut samples = Vec::new();
-    let phase = |name, elapsed: f64| {
-        let ((read, write), _) = diskio();
-        let (hit, miss, cache_write) = db_status_cache();
-        PhaseSample { phase: name, t_ms: elapsed, rss_kb: peak_rss_kb(), sqlite_hw_kb: sqlite_hw_kb(), disk_read: read, disk_write: write, cache_hit: hit, cache_miss: miss, cache_write }
-    };
-    let started = Instant::now();
-    let build_result = build(&store).await;
-    samples.push(phase("build", started.elapsed().as_secs_f64() * 1000.0));
-    let insert_started = Instant::now();
-    samples.push(phase("insert", insert_started.elapsed().as_secs_f64() * 1000.0));
-    let op_started = Instant::now();
-    let result = op(&store).await;
-    samples.push(phase("op", op_started.elapsed().as_secs_f64() * 1000.0));
-    let result_ok = result.is_ok();
-    let mut answer = result.unwrap_or_default();
-    answer.sort_unstable();
-    let out_hash = blake3::hash(format!("{:?}", answer).as_bytes()).to_hex().to_string();
-    let row = RunRow { cell, samples, correct: build_result.is_ok() && result_ok, out_hash, aborted: build_result.is_err() || !result_ok };
-    append_run(&row);
-    drop(store);
-    drop(db);
-    let _ = std::fs::remove_file(&db_path);
-    row
-}
-
-// job B ("luna-role") fills:
-//   fn peak_rss_kb() / sqlite_hw_kb() / diskio() / db_status_cache() — ONE impl each
-//   pub async fn run_cell<S,O>(cell, build, op) -> RunRow
-//   fn append_run(&RunRow) -> perf-runs.sqlite  (schema: runs / phase_samples)
-// See INSIGHTS §C. Sensors must match the golden-data contract (v6/labs/AGENTS.md).
 
 // ---- folded from memcap.rs / benchgraph.rs (harness helpers) ----
 pub mod memcap {

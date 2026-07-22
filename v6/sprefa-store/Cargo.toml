@@ -38,6 +38,10 @@ timely = "0.31"
 # no sqlite3-CLI shell-out.
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# run_cell (the perf harness) owns a current-thread runtime to drive the async
+# store under the tracing collector. Already present transitively via sqlx.
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 # The Feldera engine: the third Z-set/IVM implementation. OPTIONAL + feature-gated
 # because dbsp 0.323 triggers a rustc ICE on the repo's default nightly (its heavy
 # generics crash the next-trait-solver). Gating it keeps `cargo test` working on
@@ -49,7 +53,6 @@ dbsp = { version = "0.323", optional = true }
 with-dbsp = ["dep:dbsp"]
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 # Direct handle on the SAME bundled SQLite sqlx links (version pinned to the one
 # in Cargo.lock) so the examples can read sqlite3_memory_used/_highwater — the C
 # allocator the Rust memcap #[global_allocator] CANNOT see. Closes the "is SQLite

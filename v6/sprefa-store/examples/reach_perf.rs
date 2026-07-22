@@ -3,8 +3,7 @@ use sprefa_store::{benchgraph, measure::{run_cell, Cell}, memcap, relstore::RelS
 #[global_allocator]
 static GLOBAL: memcap::CappedAlloc = memcap::CappedAlloc;
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let mut sweep = Vec::new();
     for workload in ["DAG", "CYC"] {
         for cache_size_kib in [2_000, 32_000] {
@@ -45,7 +44,7 @@ async fn main() {
                 }
                 store.alive_keys().await
             }),
-        ).await;
+        );
         println!(
             "engine={} workload={} nodes={} cache_size_kib={} build_ms={:.1} insert_ms={:.1} op_ms={:.1} rss_kb={} out_hash={} correct={}",
             row.cell.engine,
