@@ -11,7 +11,9 @@
 
 pub mod benchgraph;
 pub mod cascade;
+pub mod measure;
 pub mod memcap;
+pub mod reach;
 pub mod reconcile;
 pub mod relstore;
 pub mod rels;
