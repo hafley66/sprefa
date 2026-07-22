@@ -380,6 +380,10 @@ async fn multi_source_walk_and_halt_bfs_agree() {
         ("min_depth", vec![(0, 1), (1, 4), (0, 2), (2, 3), (3, 4)], vec![(0, 0, 0)], vec![], None),
         ("two_tags", vec![(0, 2), (1, 2), (2, 3)], vec![(10, 0, 0), (20, 1, 0)], vec![], None),
         ("cycle", vec![(0, 1), (1, 2), (2, 0)], vec![(0, 0, 0)], vec![], Some(64)),
+        // no-cap cycle: the depth-carrying-CTE infinite-loop hazard. Must terminate
+        // via the per-(tag,node) visited dedup, recording each once at min depth.
+        ("cycle_nocap", vec![(0, 1), (1, 2), (2, 0)], vec![(0, 0, 0)], vec![], None),
+        ("cycle_nocap_halt", vec![(0, 1), (1, 2), (2, 0), (2, 3)], vec![(0, 0, 0)], vec![1], None),
     ];
     for (name, edges, starts, halt_nodes, cap) in cases {
         // build adj sized to explicit max node (walk vectors are dense 0..n already)
