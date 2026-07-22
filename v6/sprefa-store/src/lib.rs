@@ -17,6 +17,7 @@ pub mod relstore;
 pub mod rels;
 pub mod spine;
 pub mod strings;
+pub mod temporal;
 pub mod transforms;
 pub mod unfuck_sqlite;
 
