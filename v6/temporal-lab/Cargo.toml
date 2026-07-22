@@ -1,0 +1,20 @@
+# Standalone crate. Proves the synthesis: an append-only bitemporal fact table on
+# SQLite, where retraction = close-the-interval, gives correct live-set + as-of
+# queries at scale, stays memory-bounded (facts on disk, not resident), and stays
+# size-bounded under a retention compaction that never touches the live set — all
+# cross-checked against salsa as the validator.
+[workspace]
+
+[package]
+name = "temporal-lab"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# The single-binary substrate. bundled = no system sqlite, static in the binary.
+rusqlite = { version = "0.32", features = ["bundled", "functions"] }
+# The validator: salsa computes the same live-set digest, we assert agreement.
+salsa = "0.28"
+# getrusage peak RSS — the memory-bounded claim, same probe as the other labs.
+libc = "0.2"

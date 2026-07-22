@@ -1,0 +1,15 @@
+# Standalone crate. Proves, on the REAL salsa crate, two things the diagram claims:
+#   1. how salsa behaves — which queries execute vs get validated-from-memo (event log)
+#   2. salsa is RESIDENT, and whether it eats the RAM budget is decided by WHAT a
+#      tracked query returns: rows (scales with facts) vs a digest (scales with rels).
+[workspace]
+
+[package]
+name = "reactor-lab"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+salsa = "0.28"
+libc = "0.2" # getrusage peak RSS, same probe as frp-lab/sprefa-store
