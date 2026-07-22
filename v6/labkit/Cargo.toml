@@ -1,0 +1,37 @@
+# The golden harness. Every incremental-maintenance engine implements one trait;
+# the harness sweeps scales, counts EVERYTHING (time, writes, recompute units,
+# live/total cardinality, peak RSS, peak Rust-alloc), snapshots the query plan,
+# fits the empirical Big-O slope of time and space, and cross-checks every engine's
+# live-set digest for equivalence. A 5GB gun-to-head allocator caps the process.
+[workspace]
+
+[package]
+name = "labkit"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# The shipping SQLite engine (reach_dred.rs / cascade.rs) needs ONLY rusqlite. salsa
+# and differential-dataflow/timely are comparison ORACLES, both optional — a default
+# build pulls just rusqlite + libc.
+[dependencies]
+libc = "0.2"
+rusqlite = { version = "0.32", features = ["bundled", "functions"] }
+
+# oracles, off by default:
+salsa = { version = "0.28", optional = true }
+differential-dataflow = { version = "0.25", optional = true }
+timely = { version = "0.31", optional = true }
+
+[features]
+with-salsa = ["dep:salsa"]
+with-dd = ["dep:differential-dataflow", "dep:timely"]
+
+# the two examples that use the salsa oracle need the feature; everything else (the
+# SQLite engines) builds on a default rusqlite-only build.
+[[example]]
+name = "reconcile_table"
+required-features = ["with-salsa"]
+[[example]]
+name = "grand_table"
+required-features = ["with-salsa"]
