@@ -17,6 +17,7 @@ pub mod reach_dred;
 pub mod reach_inc;
 pub mod reconcile;
 pub mod sqlmem;
+pub mod store_db;
 mod ram_exp;
 mod reach_exp;
 #[cfg(feature = "with-salsa")]

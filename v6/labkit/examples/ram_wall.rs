@@ -11,43 +11,69 @@
 #[global_allocator]
 static GLOBAL: labkit::gun::Gun = labkit::gun::Gun;
 
-use rusqlite::Connection;
+use sea_orm::{ConnectionTrait, Database, DatabaseConnection, Statement};
 
 fn peak_rss_mb() -> f64 {
     labkit::gun::peak_rss_mb()
 }
 
-/// Build an in-memory bitemporal fact table with `n` live rows; report peak RSS.
-fn build_and_report(n: usize) {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch(
-        "PRAGMA soft_heap_limit=4294967296;
-         PRAGMA cache_size=-2000000;
-         CREATE TABLE fact(
-            key INTEGER NOT NULL, tt_from INTEGER NOT NULL, tt_to INTEGER,
-            weight INTEGER NOT NULL, PRIMARY KEY(key, tt_from)) WITHOUT ROWID;",
-    )
-    .unwrap();
-    conn.execute_batch("BEGIN").unwrap();
-    {
-        let mut ins = conn
-            .prepare("INSERT INTO fact(key,tt_from,tt_to,weight) VALUES(?1,0,NULL,1)")
-            .unwrap();
-        for i in 0..n as i64 {
-            ins.execute([i]).unwrap();
-        }
-    }
-    conn.execute_batch("COMMIT").unwrap();
-    // the live-row partial index temporal-lab carries (representative footprint)
-    conn.execute_batch("CREATE INDEX ix_live ON fact(key) WHERE tt_to IS NULL").unwrap();
+/// Inline-literal INSERT chunk size — mirrors cascade.rs. Integer literals are
+/// injection-safe, so the only ceiling is SQL length; a big chunk cuts the
+/// statement count sqlite has to prepare.
+const CHUNK: usize = 4000;
 
-    let rows: i64 = conn.query_row("SELECT count(*) FROM fact", [], |r| r.get(0)).unwrap();
-    let dbpages: i64 = conn.query_row("PRAGMA page_count", [], |r| r.get(0)).unwrap();
-    let pagesize: i64 = conn.query_row("PRAGMA page_size", [], |r| r.get(0)).unwrap();
-    let db_mb = (dbpages * pagesize) as f64 / (1024.0 * 1024.0);
-    let rss = peak_rss_mb();
-    // machine line the orchestrator parses:  DATA <rows> <rss_mb> <db_mb>
-    println!("DATA {} {:.1} {:.1}", rows, rss, db_mb);
+async fn scalar_i64(conn: &DatabaseConnection, sql: &str) -> i64 {
+    let backend = conn.get_database_backend();
+    let row = conn
+        .query_one_raw(Statement::from_string(backend, sql.to_owned()))
+        .await
+        .unwrap()
+        .unwrap();
+    row.try_get_by_index::<i64>(0).unwrap()
+}
+
+/// Build an in-memory bitemporal fact table with `n` live rows; report peak RSS.
+/// SQLite is reached through sea-orm now (rusqlite is gone from the crate); the
+/// engine is still the same C library, so the RSS wall this probes is unchanged.
+fn build_and_report(n: usize) {
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    runtime.block_on(async {
+        let conn = Database::connect("sqlite::memory:").await.unwrap();
+        conn.execute_unprepared(
+            "PRAGMA soft_heap_limit=4294967296;
+             PRAGMA cache_size=-2000000;
+             CREATE TABLE fact(
+                key INTEGER NOT NULL, tt_from INTEGER NOT NULL, tt_to INTEGER,
+                weight INTEGER NOT NULL, PRIMARY KEY(key, tt_from)) WITHOUT ROWID;",
+        )
+        .await
+        .unwrap();
+        conn.execute_unprepared("BEGIN").await.unwrap();
+        let mut start = 0usize;
+        while start < n {
+            let end = (start + CHUNK).min(n);
+            let mut sql = String::from("INSERT INTO fact(key,tt_from,tt_to,weight) VALUES");
+            for key in start..end {
+                if key > start {
+                    sql.push(',');
+                }
+                sql.push_str(&format!("({key},0,NULL,1)"));
+            }
+            conn.execute_unprepared(&sql).await.unwrap();
+            start = end;
+        }
+        conn.execute_unprepared("COMMIT").await.unwrap();
+        // the live-row partial index temporal-lab carries (representative footprint)
+        conn.execute_unprepared("CREATE INDEX ix_live ON fact(key) WHERE tt_to IS NULL").await.unwrap();
+
+        let rows = scalar_i64(&conn, "SELECT count(*) FROM fact").await;
+        let dbpages = scalar_i64(&conn, "PRAGMA page_count").await;
+        let pagesize = scalar_i64(&conn, "PRAGMA page_size").await;
+        let db_mb = (dbpages * pagesize) as f64 / (1024.0 * 1024.0);
+        let rss = peak_rss_mb();
+        // machine line the orchestrator parses:  DATA <rows> <rss_mb> <db_mb>
+        println!("DATA {} {:.1} {:.1}", rows, rss, db_mb);
+    });
 }
 
 fn main() {
