@@ -1,7 +1,29 @@
 # v6 pinned decisions — STOP re-deriving these
 
 If you are about to re-open "counting vs DRed", "how do cycles work", "weight
-semantics", or "acyclic fast-path": DON'T. It is decided. Pointers below.
+semantics", "acyclic fast-path", or "are these graph algos the same thing":
+DON'T. It is decided (6+ times). Pointers below.
+
+## THE UNIFICATION (the thesis, settled — do not re-argue it)
+
+Salsa reactivity (dep dirty-propagation), SCC decomposition, reachability /
+blast-radius, and dd/feldera Z-set incremental maintenance are **the same graph
+counting algorithm**. They sound eerily alike because they ARE one thing:
+
+    ONE semi-naive cascade:  frontier → one hop → prune → fixpoint
+
+The ONLY thing that varies is the prune predicate (`v6/ARCHITECTURE.md:73,108,144`):
+  - A · control (salsa)     → prune by **digest** (early-cutoff)
+  - B · facts (dd/feldera)  → prune by **weight ≠ 0** (Z-set counting)
+  - C · reach (SCC/blast)   → prune by **reached**
+
+Unifying them in SQLite is HIGHLY VIABLE and is the plan. The remaining work is
+NOT choosing an algorithm — it is **empirically deriving each path's Big-O and
+driving it down** (measured, not asserted). This is what the perf harness is for
+(`examples/perf_report.rs`, `profile_dred.rs`, `explain_plans.rs`). The point of
+all of it: kill v5's resident 36GB-swap model by keeping state on disk (RSS
+bounded by page cache, Rust heap ~0), while matching the resident engines on
+correctness and driving the counting Big-O down toward them on speed.
 
 ## The retraction / recursion model (DECIDED)
 
