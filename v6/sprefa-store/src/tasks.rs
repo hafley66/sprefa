@@ -175,9 +175,44 @@ pub struct Evidence;     // frontier : a measurement that would close a question
 //   not just the DDL. Releases `Independent`.
 
 // ── FRONTIER (the real remaining lever; measured on the split shape, no collapse) ──
-//   per-tuple reconcile: rx_memo is per-rel today; going per-tuple (same domain as
-//   cx_row — full salsa memoizes per (rel,args)) is the granularity unlock collapse was
-//   after. Measure it directly; collapse was never required for it.
+//   per-tuple reconcile. rx_memo is per-rel TODAY: the API keys id = key(rel,row)
+//   (lib.rs:829-848; dirty() maps back to (rel,row) at lib.rs:838-843), but the MODEL is
+//   one memo row per reactive relation (engine.rs:940) and the tests seed one id per
+//   relation (engine.rs:1102-1140). The row dimension is collapsed: one digest rolls up
+//   a whole relation's output.
+//
+//   GRANULARITY-AGNOSTIC LAYER (the load-bearing finding): the reconcile storage + query
+//   layer does NOT change to go per-tuple.
+//     · schema: rx_memo/rx_dep are already keyed by key(rel,row); KEY_STRIDE
+//       (engine.rs:51) already splits rel from row. No DDL change.
+//     · query: dirty() (engine.rs:1024) + verify() (engine.rs:1040) run on bare i64 ids;
+//       they cannot tell a relation-key from a tuple-key.
+//     · RelStore control API: already (rel,row) in, (rel,row) out.
+//   So per-tuple is a MODEL + SEEDING-CONTRACT change + a measurement, NOT a schema or
+//   query rewrite. The work is the seeding contract:
+//     · seed/verify once per OUTPUT TUPLE with that tuple's own digest;
+//     · deps = the actual tuples read, key(dep_rel, dep_tuple), not the relations read;
+//     · mark_changed on input tuples;
+//     · rx_dep goes O(rels) -> O(tuple-reads): denser, same 2-col WITHOUT ROWID shape.
+//
+//   THE WIN = blast radius. Today a one-input change dirties every relation downstream
+//   and each re-runs whole. Per-tuple, the dirty frontier is exactly the tuples that
+//   transitively READ the changed input. Worked example (3 rels, 6 tuples, 1 input
+//   change: a0->b0->{c0,c1}, a1->b1->c1; trigger = a1):
+//     · per-rel:   re-runs b0,b1,c0,c1 (4 tuples)  [b0,c0 had stable inputs]
+//     · per-tuple: re-runs b1,c1       (2 tuples)  [b0,c0 spared]
+//   Early cutoff isolates a no-op change to 1 recompute (verify(b1) not-moved -> c1 never
+//   dirties); per-rel cannot isolate inside a relation.
+//
+//   THE MEASUREMENT (Evidence): does per-tuple early-cutoff beat per-rel on a sparse-
+//   change workload, or does the denser rx_dep cost more in storage + CTE time than the
+//   recomputes it spares? Same shape of question collapse settled with a 5.66 GB run, not
+//   argument.
+//
+//   ADJACENT: the salsa oracle is still TODO (oracle.rs:2; reconcile seed/mark_changed/
+//   dirty/verify carry "oracle salsa NOT ported" at tasks.rs:280-292). It is the natural
+//   place to express per-tuple semantics + prove the SQLite plane matches, so it sits
+//   just upstream of this frontier.
 
 /// The remaining plan, as a trait. A method's ARGS are body predicates (facts
 /// released earlier); its RETURN is the head predicate. Epic 1 released the verdict;
@@ -189,6 +224,9 @@ pub trait GraphStorePlan {
     /// 3  two stores (default + prefixed) in one db retract without cross-talk (Epic 3).
     async fn two_stores_independent(&self, proof: &Namespaced) -> Independent;
     /// frontier: does per-tuple reconcile beat per-rel on the split shape? the real lever.
+    /// The reconcile layer is already granularity-agnostic (see FRONTIER above); this
+    /// measures whether a per-tuple seeding contract cuts blast radius enough to pay for
+    /// the denser rx_dep. Returns Evidence, not a shipped change.
     fn per_tuple_unlock_evidence(&self) -> Evidence;
 }
 // ─── end 2026-07-22 GraphStore plan ───
