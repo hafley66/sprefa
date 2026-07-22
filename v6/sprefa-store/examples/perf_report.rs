@@ -21,7 +21,7 @@
 
 use std::time::Instant;
 
-use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseBackend, Statement};
+use sea_orm::{ConnectOptions, ConnectionTrait, Database};
 use sprefa_store::{benchgraph, benchgraph::MultiGraph, memcap, relstore::RelStore, stmt_counter};
 
 use differential_dataflow::input::Input;
@@ -368,8 +368,13 @@ async fn main() {
         ("DAG 240k", 6, 40_000, 0),
         ("DAG 960k", 6, 160_000, 0),
         ("DAG 2.9M", 6, 480_000, 0),
+        ("DAG 5.8M", 6, 960_000, 0),
+        ("DAG 11.5M", 6, 1_920_000, 0),
         ("CYC 60k s7", 6, 10_000, 7),
         ("CYC 960k s7", 6, 160_000, 7),
+        ("CYC 2.9M s7", 6, 480_000, 7),
+        ("CYC 5.8M s7", 6, 960_000, 7),
+        ("CYC 11.5M s7", 6, 1_920_000, 7),
     ];
 
     let started = Instant::now();
@@ -395,9 +400,14 @@ async fn main() {
         cannot evict. Same RSS ballpark at 960k; the difference is evictability and growth.\n\n");
 
     let mut broke: Vec<String> = Vec::new();
+    // Machine-readable matrix — the single source of truth for the chart
+    // generator (tools/gen-perf-charts.sh). Emitted dependency-free (hand-rolled
+    // JSON: every field is a number or a bare identifier string) alongside the md.
+    let mut json_rows: Vec<String> = Vec::new();
 
     for (label, l, w, bs) in &scales {
         let nodes = 2 + l * w;
+        let shape = if *bs == 0 { "DAG" } else { "CYC" };
         // oracle first = the reference hash + the shared input hash for this scale.
         let oracle = run_child(&exe, "oracle", *l, *w, *bs, cap);
         let ref_hash = oracle.out_hash.clone();
@@ -427,12 +437,23 @@ async fn main() {
             if !cell.ok {
                 broke.push(format!("{name} @ {label} (nodes≈{nodes})"));
                 md.push_str(&format!("| {name} | — | **ABORT (gun {cap}MB)** | | | | | | |\n"));
+                json_rows.push(format!(
+                    "{{\"shape\":\"{shape}\",\"nodes\":{nodes},\"engine\":\"{name}\",\"aborted\":true,\"cap_mb\":{cap}}}"
+                ));
                 continue;
             }
             let mark = if name == "oracle" { "ref".to_string() } else if cell.correct { "yes".to_string() } else { "**NO**".to_string() };
             md.push_str(&format!(
                 "| {name} | {} | {mark} | {:.1} | {} | {:.2} | {:.2} | {:.1} | {:.2} |\n",
                 cell.out.survivors.len(), cell.out.retract_ms, cell.out.statements, cell.out.rust_peak_mb, cell.out.sqlite_hw_mb, cell.out.peak_rss_mb, cell.out.db_mb
+            ));
+            json_rows.push(format!(
+                "{{\"shape\":\"{shape}\",\"nodes\":{nodes},\"engine\":\"{name}\",\"aborted\":false,\
+                 \"correct\":{},\"survivors\":{},\"ms\":{:.1},\"stmts\":{},\
+                 \"rust_mb\":{:.3},\"sqlite_hw_mb\":{:.2},\"rss_mb\":{:.1},\"db_mb\":{:.2}}}",
+                if name == "oracle" { true } else { cell.correct },
+                cell.out.survivors.len(), cell.out.retract_ms, cell.out.statements,
+                cell.out.rust_peak_mb, cell.out.sqlite_hw_mb, cell.out.peak_rss_mb, cell.out.db_mb
             ));
         }
         md.push('\n');
@@ -501,6 +522,19 @@ async fn main() {
 
     std::fs::write(&report_path, &md).unwrap();
     eprintln!("[perf] wrote {report_path}");
+
+    // Machine-readable twin next to the md — the chart generator reads this, so
+    // nobody hand-edits a table again. Path mirrors the md (…/perf.json by default).
+    let json_path = std::env::var("DL_PERF_JSON").unwrap_or_else(|_| {
+        format!("{}/perf.json", env!("CARGO_MANIFEST_DIR"))
+    });
+    let json = format!(
+        "{{\"generated_s\":{:.0},\"cap_mb\":{cap},\"cells\":[\n{}\n]}}\n",
+        started.elapsed().as_secs_f64(),
+        json_rows.join(",\n")
+    );
+    std::fs::write(&json_path, &json).unwrap();
+    eprintln!("[perf] wrote {json_path}");
     if !broke.is_empty() {
         eprintln!("[perf] breakpoints: {}", broke.join(", "));
     }

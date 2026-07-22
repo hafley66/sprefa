@@ -1,0 +1,106 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>dl store — retraction perf matrix</title>
+<style>
+  :root { color-scheme: light dark; --fg:#111; --bg:#fff; --grid:#ddd; --muted:#666; --card:#f6f6f7; }
+  @media (prefers-color-scheme: dark){ :root{ --fg:#e8e8ea; --bg:#141416; --grid:#333; --muted:#999; --card:#1d1d20; } }
+  body{ font:14px/1.5 -apple-system,system-ui,sans-serif; color:var(--fg); background:var(--bg); margin:0; padding:24px; max-width:1100px; }
+  h1{ font-size:20px; margin:0 0 2px; } .sub{ color:var(--muted); margin:0 0 20px; }
+  .grid{ display:grid; grid-template-columns:1fr 1fr; gap:20px; } @media(max-width:800px){ .grid{ grid-template-columns:1fr; } }
+  .card{ background:var(--card); border-radius:10px; padding:14px 16px; }
+  .card h2{ font-size:14px; margin:0 0 2px; } .card .cap{ color:var(--muted); font-size:12px; margin:0 0 10px; }
+  canvas{ width:100%; height:280px; display:block; }
+  .legend{ display:flex; flex-wrap:wrap; gap:12px; font-size:12px; margin-top:8px; }
+  .legend span{ display:inline-flex; align-items:center; gap:5px; }
+  .sw{ width:11px; height:11px; border-radius:2px; display:inline-block; }
+  table{ border-collapse:collapse; width:100%; font-size:12px; margin-top:8px; overflow-x:auto; display:block; }
+  th,td{ text-align:right; padding:3px 8px; border-bottom:1px solid var(--grid); white-space:nowrap; }
+  th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){ text-align:left; }
+  .abort{ color:#d33; } .full{ margin-top:24px; }
+  tbody tr:hover{ background:rgba(128,128,128,.08); }
+</style>
+<h1>dl store — retraction perf matrix</h1>
+<p class="sub">Auto-generated from <code>perf.json</code> by <code>tools/gen-perf-charts.sh</code>. Do not hand-edit. Memory is the axis that matters: dd's resident line climbs ~215 B/node; the sqlite/counting engines stay flat (state on disk, evictable).</p>
+
+<div class="grid">
+  <div class="card"><h2>DAG — retract time</h2><p class="cap">ms vs nodes (log–log). Lower is faster.</p><canvas id="dag_time"></canvas><div class="legend" id="lg_dag_time"></div></div>
+  <div class="card"><h2>Cyclic — retract time</h2><p class="cap">ms vs nodes (log–log). Cyclic-correct engines only.</p><canvas id="cyc_time"></canvas><div class="legend" id="lg_cyc_time"></div></div>
+  <div class="card"><h2>DAG — resident RAM (the wall)</h2><p class="cap">rust_mb vs nodes (log–log). dd climbs; sqlite is flat.</p><canvas id="dag_mem"></canvas><div class="legend" id="lg_dag_mem"></div></div>
+  <div class="card"><h2>Cyclic — resident RAM</h2><p class="cap">rust_mb vs nodes (log–log).</p><canvas id="cyc_mem"></canvas><div class="legend" id="lg_cyc_mem"></div></div>
+</div>
+
+<div class="full card"><h2>Full matrix</h2><div id="tbl"></div></div>
+
+<script>const PERF = __PERF_JSON__;</script>
+<script>
+const COLORS = { "dd":"#e8590c", "sqlite-count":"#1c7ed6", "sqlite-count-scc":"#0ca678",
+  "sqlite-dred-loop":"#ae3ec9", "sqlite-dred-cte":"#f08c00", "oracle":"#868e96" };
+const cells = (PERF.cells||[]).filter(c=>c.engine!=="oracle");
+const engines = [...new Set(cells.map(c=>c.engine))];
+
+function series(shape, metric){
+  const out = {};
+  for(const e of engines){
+    const pts = cells.filter(c=>c.shape===shape && c.engine===e && !c.aborted && c[metric]!=null && c[metric]>0)
+                     .map(c=>({x:c.nodes,y:c[metric]})).sort((a,b)=>a.x-b.x);
+    if(pts.length) out[e]=pts;
+  }
+  return out;
+}
+function fmt(n){ return n>=1e6? (n/1e6)+"M" : n>=1e3? (n/1e3)+"k" : ""+n; }
+
+function draw(canvasId, legendId, shape, metric, ylabel){
+  const cv = document.getElementById(canvasId);
+  const dpr = window.devicePixelRatio||1, W=cv.clientWidth, H=cv.clientHeight;
+  cv.width=W*dpr; cv.height=H*dpr; const g=cv.getContext("2d"); g.scale(dpr,dpr);
+  const s = series(shape, metric);
+  const all = Object.values(s).flat();
+  if(!all.length){ g.fillStyle=getComputedStyle(document.body).color; g.fillText("no data",10,20); return; }
+  const pad={l:52,r:10,t:10,b:28};
+  const xs=all.map(p=>p.x), ys=all.map(p=>p.y);
+  const lx=v=>Math.log10(v);
+  const x0=lx(Math.min(...xs)), x1=lx(Math.max(...xs));
+  const y0=lx(Math.min(...ys)*0.8), y1=lx(Math.max(...ys)*1.2);
+  const X=v=>pad.l+(lx(v)-x0)/(x1-x0||1)*(W-pad.l-pad.r);
+  const Y=v=>H-pad.b-(lx(v)-y0)/(y1-y0||1)*(H-pad.t-pad.b);
+  const css=getComputedStyle(document.body); const grid=css.getPropertyValue('--grid'); const muted=css.getPropertyValue('--muted');
+  g.strokeStyle=grid; g.fillStyle=muted; g.font="11px system-ui"; g.lineWidth=1;
+  // y gridlines (decades)
+  for(let d=Math.floor(y0); d<=Math.ceil(y1); d++){ const yy=Y(Math.pow(10,d)); if(yy<pad.t||yy>H-pad.b)continue;
+    g.globalAlpha=.5; g.beginPath(); g.moveTo(pad.l,yy); g.lineTo(W-pad.r,yy); g.stroke(); g.globalAlpha=1;
+    g.fillText(Math.pow(10,d)>=1? (Math.pow(10,d)).toLocaleString():Math.pow(10,d), 4, yy+3); }
+  // x ticks
+  for(const v of xs.filter((v,i,a)=>a.indexOf(v)===i).sort((a,b)=>a-b)){
+    g.fillText(fmt(v), X(v)-8, H-pad.b+14); }
+  g.fillText("nodes →", W-70, H-4); g.save(); g.translate(12,pad.t+40); g.rotate(-Math.PI/2); g.fillText(ylabel,0,0); g.restore();
+  // lines
+  for(const [e,pts] of Object.entries(s)){
+    g.strokeStyle=COLORS[e]||"#999"; g.fillStyle=COLORS[e]||"#999"; g.lineWidth=2; g.beginPath();
+    pts.forEach((p,i)=> i?g.lineTo(X(p.x),Y(p.y)):g.moveTo(X(p.x),Y(p.y))); g.stroke();
+    pts.forEach(p=>{ g.beginPath(); g.arc(X(p.x),Y(p.y),3,0,7); g.fill(); });
+  }
+  const lg=document.getElementById(legendId); lg.innerHTML="";
+  for(const e of Object.keys(s)){ const sp=document.createElement("span");
+    sp.innerHTML=`<span class="sw" style="background:${COLORS[e]||'#999'}"></span>${e}`; lg.appendChild(sp); }
+}
+
+function table(){
+  const shapes=[...new Set(cells.map(c=>c.shape))];
+  let h="<table><thead><tr><th>shape</th><th>engine</th><th>nodes</th><th>ms</th><th>rust MB</th><th>sqlite_hw MB</th><th>rss MB</th><th>db MB</th><th>correct</th></tr></thead><tbody>";
+  const rows=[...cells].sort((a,b)=> a.shape.localeCompare(b.shape) || a.nodes-b.nodes || a.engine.localeCompare(b.engine));
+  for(const c of rows){
+    if(c.aborted){ h+=`<tr class="abort"><td>${c.shape}</td><td>${c.engine}</td><td>${c.nodes.toLocaleString()}</td><td colspan="5">ABORT (gun ${c.cap_mb}MB)</td><td>—</td></tr>`; continue; }
+    h+=`<tr><td>${c.shape}</td><td>${c.engine}</td><td>${c.nodes.toLocaleString()}</td><td>${c.ms}</td><td>${c.rust_mb}</td><td>${c.sqlite_hw_mb}</td><td>${c.rss_mb}</td><td>${c.db_mb}</td><td>${c.correct?"✓":"✗"}</td></tr>`;
+  }
+  document.getElementById("tbl").innerHTML=h+"</tbody></table>";
+}
+
+function render(){
+  draw("dag_time","lg_dag_time","DAG","ms","ms");
+  draw("cyc_time","lg_cyc_time","CYC","ms","ms");
+  draw("dag_mem","lg_dag_mem","DAG","rust_mb","rust MB");
+  draw("cyc_mem","lg_cyc_mem","CYC","rust_mb","rust MB");
+  table();
+}
+render(); addEventListener("resize", render);
+</script>
