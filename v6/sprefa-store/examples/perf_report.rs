@@ -69,9 +69,9 @@ struct Outcome {
     survivors: Vec<i64>,
     retract_ms: f64,
     statements: u64,
-    rust_live_mb: f64,
-    sqlite_hw_mb: f64,
-    peak_rss_mb: f64,
+    rust_peak_mb: f64,  // high-water Rust heap DURING the retract (not after)
+    sqlite_hw_mb: f64,  // SQLite C-heap high-water during the retract
+    peak_rss_mb: f64,   // process resident high-water (the TRUE footprint)
     db_mb: f64,
 }
 
@@ -122,11 +122,12 @@ where
 
     stmt_counter::reset();
     sqlite_hw_mb(true); // clear highwater so the retract's C-heap is isolated
+    memcap::reset_peak(); // bracket the retract's Rust-heap high-water
     let t = Instant::now();
     op(&store, seed).await;
     let retract_ms = t.elapsed().as_secs_f64() * 1e3;
     let statements = stmt_counter::get();
-    let rust_live = rust_live_mb();
+    let rust_peak = memcap::peak_bytes() as f64 / 1048576.0;
     let sqlite_hw = sqlite_hw_mb(false);
     let survivors = store.alive_keys().await.unwrap();
 
@@ -136,7 +137,7 @@ where
         survivors,
         retract_ms,
         statements,
-        rust_live_mb: rust_live,
+        rust_peak_mb: rust_peak,
         sqlite_hw_mb: sqlite_hw,
         peak_rss_mb: peak_rss_mb(),
         db_mb,
@@ -152,9 +153,11 @@ struct Oracle;
 impl Engine for Oracle {
     fn name() -> &'static str { "oracle" }
     async fn measure(g: MultiGraph) -> Outcome {
+        memcap::reset_peak();
         let t = Instant::now();
         let survivors: Vec<i64> = benchgraph::oracle_survivors(&g, g.seed).into_iter().collect();
-        Outcome { retract_ms: t.elapsed().as_secs_f64() * 1e3, rust_live_mb: rust_live_mb(), peak_rss_mb: peak_rss_mb(), survivors, ..Default::default() }
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        Outcome { retract_ms: ms, rust_peak_mb: memcap::peak_bytes() as f64 / 1048576.0, peak_rss_mb: peak_rss_mb(), survivors, ..Default::default() }
     }
 }
 
@@ -227,6 +230,7 @@ impl Engine for Dd {
             edges_in.advance_to(2); roots_in.advance_to(2); edges_in.flush(); roots_in.flush();
             worker.step_while(|| probe.less_than(roots_in.time()));
             *ms_out.lock().unwrap() = t.elapsed().as_secs_f64() * 1e3;
+            // dd's resident heap: arrangements + input it must keep to stay incremental.
             *live_out.lock().unwrap() = rust_live_mb();
         });
         let mut survivors: Vec<i64> = {
@@ -235,8 +239,8 @@ impl Engine for Dd {
         };
         survivors.sort_unstable();
         let retract_ms = *ms.lock().unwrap();
-        let rust_live = *live.lock().unwrap();
-        Outcome { retract_ms, rust_live_mb: rust_live, peak_rss_mb: peak_rss_mb(), survivors, ..Default::default() }
+        let rust_resident = *live.lock().unwrap();
+        Outcome { retract_ms, rust_peak_mb: rust_resident, peak_rss_mb: peak_rss_mb(), survivors, ..Default::default() }
     }
 }
 
@@ -305,7 +309,7 @@ fn run_child(exe: &std::path::Path, engine: &str, l: usize, w: usize, bs: usize,
                 "in_hash" => c.in_hash = v.to_string(),
                 "ms" => c.out.retract_ms = v.parse().unwrap_or(0.0),
                 "stmts" => c.out.statements = v.parse().unwrap_or(0),
-                "rust_live_mb" => c.out.rust_live_mb = v.parse().unwrap_or(0.0),
+                "rust_peak_mb" => c.out.rust_peak_mb = v.parse().unwrap_or(0.0),
                 "sqlite_hw_mb" => c.out.sqlite_hw_mb = v.parse().unwrap_or(0.0),
                 "rss_mb" => c.out.peak_rss_mb = v.parse().unwrap_or(0.0),
                 "db_mb" => c.out.db_mb = v.parse().unwrap_or(0.0),
@@ -334,8 +338,8 @@ async fn main() {
         let name = args[1].clone();
         let out = run_engine(&name, g).await.unwrap();
         println!(
-            "RESULT engine={name} count={} out_hash={} in_hash={ih} ms={:.3} stmts={} rust_live_mb={:.2} sqlite_hw_mb={:.2} rss_mb={:.1} db_mb={:.2}",
-            out.survivors.len(), fingerprint(&out.survivors), out.retract_ms, out.statements, out.rust_live_mb, out.sqlite_hw_mb, out.peak_rss_mb, out.db_mb
+            "RESULT engine={name} count={} out_hash={} in_hash={ih} ms={:.3} stmts={} rust_peak_mb={:.2} sqlite_hw_mb={:.2} rss_mb={:.1} db_mb={:.2}",
+            out.survivors.len(), fingerprint(&out.survivors), out.retract_ms, out.statements, out.rust_peak_mb, out.sqlite_hw_mb, out.peak_rss_mb, out.db_mb
         );
         return;
     }
@@ -368,9 +372,18 @@ async fn main() {
          dropped before the measured retract, so no metric counts corpus residence.\n\n"
     ));
     md.push_str("Columns: **ms** = measured retract wall time; **stmts** = SQL statements in \
-        the retract (0 for dd/oracle); **rust_live** = Rust heap after the op (what the gun \
-        caps); **sqlite_hw** = SQLite C-heap highwater (gun-blind); **rss** = process peak; \
-        **db** = on-disk db after the retract. `correct` = output hash equals the oracle's.\n\n");
+        the retract (0 for dd/oracle); **rust_peak** = HIGH-WATER Rust heap during the retract \
+        (what the gun caps); **sqlite_hw** = SQLite C-heap high-water during the retract \
+        (gun-blind, malloc'd by the bundled C lib); **rss** = process resident high-water — the \
+        TRUE footprint = sqlite_hw + bounded page cache + code; **db** = on-disk db after the \
+        retract. `correct` = output hash equals the oracle's.\n\n");
+    md.push_str("**Reading the memory columns (important):** the store engines show \
+        `rust_peak` ≈ 0.1 MB because the retract runs ENTIRELY inside SQLite's C engine — the \
+        800k-row working set never enters Rust. That is NOT the store's memory footprint; \
+        **`rss` is** (e.g. ~415 MB @ 960k, of which `sqlite_hw` ~80 MB is live SQLite heap and \
+        the rest is the bounded, evictable page cache set by `PRAGMA cache_size`). dd's number \
+        is the opposite: its `rust_peak`/`rss` are LIVE arrangements it must keep resident and \
+        cannot evict. Same RSS ballpark at 960k; the difference is evictability and growth.\n\n");
 
     let mut broke: Vec<String> = Vec::new();
 
@@ -386,7 +399,7 @@ async fn main() {
             if *bs == 0 { "DAG".to_string() } else { format!("cyclic stride={bs}") }
         ));
         md.push_str(&format!("_input hash `{ref_in}` (all engines must match)_\n\n"));
-        md.push_str("| engine | survivors | correct | ms | stmts | rust_live MB | sqlite_hw MB | rss MB | db MB |\n");
+        md.push_str("| engine | survivors | correct | ms | stmts | rust_peak MB | sqlite_hw MB | rss MB | db MB |\n");
         md.push_str("|---|---:|:---:|---:|---:|---:|---:|---:|---:|\n");
 
         for name in ENGINES {
@@ -410,7 +423,7 @@ async fn main() {
             let mark = if name == "oracle" { "ref".to_string() } else if cell.correct { "yes".to_string() } else { "**NO**".to_string() };
             md.push_str(&format!(
                 "| {name} | {} | {mark} | {:.1} | {} | {:.2} | {:.2} | {:.1} | {:.2} |\n",
-                cell.out.survivors.len(), cell.out.retract_ms, cell.out.statements, cell.out.rust_live_mb, cell.out.sqlite_hw_mb, cell.out.peak_rss_mb, cell.out.db_mb
+                cell.out.survivors.len(), cell.out.retract_ms, cell.out.statements, cell.out.rust_peak_mb, cell.out.sqlite_hw_mb, cell.out.peak_rss_mb, cell.out.db_mb
             ));
         }
         md.push('\n');

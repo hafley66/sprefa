@@ -30,6 +30,22 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 static LIVE: AtomicUsize = AtomicUsize::new(0);
 /// Hard ceiling in bytes; 0 means unlimited (no enforcement).
 static CAP: AtomicUsize = AtomicUsize::new(0);
+/// High-water mark of [`LIVE`] since the last [`reset_peak`]. This is the honest
+/// answer to "did the measured op ever transiently hold a lot of Rust heap?" —
+/// reading LIVE after an op only shows what survives, not the peak during it.
+static PEAK: AtomicUsize = AtomicUsize::new(0);
+
+/// Bump PEAK to at least `now` (relaxed CAS loop; only runs on the alloc path).
+#[inline]
+fn bump_peak(now: usize) {
+    let mut cur = PEAK.load(Ordering::Relaxed);
+    while now > cur {
+        match PEAK.compare_exchange_weak(cur, now, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(x) => cur = x,
+        }
+    }
+}
 
 /// A `#[global_allocator]` that refuses to exceed [`cap_address_space_mb`].
 /// Delegates every real allocation to the System allocator and only adds a pair
@@ -49,6 +65,8 @@ unsafe impl GlobalAlloc for CappedAlloc {
         let ptr = System.alloc(layout);
         if ptr.is_null() {
             LIVE.fetch_sub(size, Ordering::Relaxed);
+        } else {
+            bump_peak(prev + size);
         }
         ptr
     }
@@ -69,6 +87,8 @@ unsafe impl GlobalAlloc for CappedAlloc {
         let ptr = System.alloc_zeroed(layout);
         if ptr.is_null() {
             LIVE.fetch_sub(size, Ordering::Relaxed);
+        } else {
+            bump_peak(prev + size);
         }
         ptr
     }
@@ -86,6 +106,8 @@ unsafe impl GlobalAlloc for CappedAlloc {
             let new_ptr = System.realloc(ptr, layout, new_size);
             if new_ptr.is_null() {
                 LIVE.fetch_sub(grow, Ordering::Relaxed);
+            } else {
+                bump_peak(prev + grow);
             }
             new_ptr
         } else {
@@ -115,6 +137,19 @@ pub fn cap_address_space_mb(mb: u64) {
 /// hook; also lets a caller prove the accounting is wired.
 pub fn live_bytes() -> usize {
     LIVE.load(Ordering::Relaxed)
+}
+
+/// High-water mark of live Rust heap since the last [`reset_peak`]. This is the
+/// honest "peak Rust heap DURING the op" number: `live_bytes()` after an op only
+/// shows what survives it, so a transient spike is invisible without this.
+pub fn peak_bytes() -> usize {
+    PEAK.load(Ordering::Relaxed)
+}
+
+/// Reset the high-water to the current live value, so the next [`peak_bytes`]
+/// measures only allocations after this call (e.g. bracket the measured op).
+pub fn reset_peak() {
+    PEAK.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
 }
 
 /// The current hard cap in bytes; 0 = unlimited. Deterministic introspection for
