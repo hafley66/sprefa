@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>v6 core — the two layers</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#111725; --panel2:#0e1420; --ink:#e6edf3; --dim:#93a1b3;
+    --line:#26324a; --edge:#5aa9ff; --core:#ffb454; --have:#3fd88b; --gap:#ff7b72;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 70% -10%,#141c2e,var(--bg));
+    color:var(--ink);font-family:var(--sans);line-height:1.5;padding:32px clamp(16px,4vw,64px)}
+  h1{font-size:26px;margin:0 0 2px;letter-spacing:-.01em}
+  .sub{color:var(--dim);margin:0 0 28px;font-size:14px}
+  .wrap{max-width:1080px;margin:0 auto}
+  .lbl{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+  .stack{display:flex;flex-direction:column;gap:14px}
+  .panel{border:1px solid var(--line);border-radius:12px;background:linear-gradient(180deg,var(--panel),var(--panel2));padding:16px 18px}
+  .panel h2{font-size:16px;margin:6px 0 10px;display:flex;align-items:center;gap:10px}
+  .tag{font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:999px;border:1px solid currentColor;font-weight:600}
+  .edge{color:var(--edge)} .core{color:var(--core)} .have{color:var(--have)} .gap{color:var(--gap)}
+  .verdict{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--dim)}
+  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}
+  .flow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-family:var(--mono);font-size:12.5px}
+  .node{border:1px solid var(--line);border-radius:8px;padding:8px 11px;background:#0c1220}
+  .node b{color:var(--ink);font-weight:600} .node span{color:var(--dim);display:block;font-size:10.5px;margin-top:2px}
+  .arw{color:var(--dim);font-size:16px;padding:0 2px}
+  .fix{border-color:#3a2f18;background:linear-gradient(180deg,#1a1408,#120e06)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media(max-width:720px){.grid2{grid-template-columns:1fr}}
+  .card{border:1px solid var(--line);border-radius:10px;padding:13px 15px;background:#0d1424}
+  .card.have{border-color:#1c4d38} .card.gap{border-color:#4d2420}
+  .card h3{margin:0 0 8px;font-size:13px;display:flex;gap:8px;align-items:center}
+  ul{margin:6px 0 0;padding-left:18px} li{margin:4px 0;font-size:13.5px;color:#cdd8e6}
+  li code,p code{font-family:var(--mono);font-size:12px;background:#0a0f1a;border:1px solid var(--line);padding:1px 5px;border-radius:5px;color:#d8e2f0}
+  table{width:100%;border-collapse:collapse;margin-top:4px;font-size:13px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);font-weight:600}
+  td.k{font-family:var(--mono);color:var(--ink)}
+  .kill{color:var(--gap)} .keep{color:var(--have)} .warn{color:var(--core)}
+  .cap{color:var(--dim);font-size:12px;margin-top:10px}
+  .mem{display:flex;gap:2px;height:26px;border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-top:8px}
+  .mem i{display:block;height:100%} .mem .fits{background:#183e2b} .mem .over{background:#3a1c1a}
+  .memlab{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10.5px;color:var(--dim);margin-top:4px}
+  .foot{color:var(--dim);font-size:12px;margin-top:26px;font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>v6 core — what the cascade already is, and what the recompute graph still needs</h1>
+  <p class="sub">One primitive is PULL; PUSH is invalidation. The engine splits cleanly in two — and the hard half is already built and measured.</p>
+
+  <div class="stack">
+
+    <!-- EDGE -->
+    <section class="panel">
+      <h2 class="edge"><span class="tag edge">EDGE</span> event streams &nbsp;→&nbsp; the trigger
+        <span class="verdict">futures::Stream · owned · 'static · CLEAN</span></h2>
+      <div class="flow">
+        <div class="node"><b>watch / git / clock / user</b><span>owned events</span></div>
+        <span class="arw">→</span>
+        <div class="node"><b>buffer(tick)</b><span>flush on clock</span></div>
+        <span class="arw">→</span>
+        <div class="node"><b>groupBy(family)</b><span>route by kind</span></div>
+        <span class="arw">→</span>
+        <div class="node"><b>distinctUntilChanged</b><span>digest = no-op skip</span></div>
+        <span class="arw">→</span>
+        <div class="node"><b>DeriveJob</b><span>what + when</span></div>
+      </div>
+      <p class="cap">This is the only place FRP earns its keep. It decides WHAT to recompute and WHEN — it never touches a row.</p>
+    </section>
+
+    <div style="text-align:center;color:var(--dim);font-family:var(--mono);font-size:12px">▼ hands a DeriveJob down ▼</div>
+
+    <!-- CORE -->
+    <section class="panel">
+      <h2 class="core"><span class="tag core">CORE</span> batch-relational &nbsp;·&nbsp; the recompute graph
+        <span class="verdict">owned · per-tick · NOT streamed rows</span></h2>
+
+      <p class="lbl" style="margin:2px 0 8px">Layer 2 — the reactor &nbsp;(<span class="gap">the gap: not built yet</span>)</p>
+      <div class="flow" style="margin-bottom:6px">
+        <div class="node"><b>source</b><span>scan/ast/sg/json</span></div>
+        <span class="arw">→</span>
+        <div class="node"><b>extract</b><span>Hit&lt;'r&gt; → owned</span></div>
+        <span class="arw">→</span>
+        <div class="node"><b>derived (non-recursive)</b><span>joins across rels</span></div>
+        <span class="arw">→</span>
+        <div class="node fix"><b>derived (recursive)</b><span>fixpoint ↓</span></div>
+        <span class="arw">→</span>
+        <div class="node"><b>effect</b><span>--move, cmd</span></div>
+      </div>
+      <p class="cap">The reactor = dirty-tracking over this rule DAG + stratified re-run order (v5 <code>FamilyRouter</code> / salsa). It picks which rels re-run when a source changes.</p>
+
+      <div style="height:1px;background:var(--line);margin:14px 0"></div>
+
+      <p class="lbl" style="margin:2px 0 8px">Layer 1 — the fixpoint kernel &nbsp;(<span class="have">HAVE it: sprefa-store/src/cascade.rs, measured</span>)</p>
+      <div class="row">
+        <div class="node fix" style="flex:1;min-width:150px"><b>cx_row(key, weight)</b><span>weight = # surviving supports = the Z-set multiplicity</span></div>
+        <div class="node fix" style="flex:1;min-width:150px"><b>cx_dep(parent, child)</b><span>the support / edge graph</span></div>
+        <div class="node fix" style="flex:1.4;min-width:190px"><b>cx_frontier → cx_hits → cx_next</b><span>semi-naive loop: dead node → GROUP BY child COUNT(dead parents) → decrement → swap → repeat to fixpoint (DRed)</span></div>
+      </div>
+      <p class="cap"><span class="have">retract = O(delta·log n)</span> on disk. dd/dbsp <span class="kill">abort</span> past the memory wall where this completes — build-vs-buy already adjudicated with receipts.</p>
+    </section>
+
+  </div>
+
+  <!-- HAVE vs GAP -->
+  <p class="lbl" style="margin:28px 0 10px">Reuse the kernel · build the reactor</p>
+  <div class="grid2">
+    <div class="card have">
+      <h3 class="have"><span class="tag have">HAVE</span> the fixpoint kernel — reuse, don't rebuild</h3>
+      <ul>
+        <li><b>Z-set multiplicity</b> = <code>cx_row.weight</code> — the exact thing the frp-lab oracle validated over 20k states</li>
+        <li><b>Recursion / transitive closure</b> = the frontier→hits→next loop (semi-naive DRed), already written</li>
+        <li><b>On disk, measured</b>: retract O(delta·log n), beats dd/dbsp past the RAM wall</li>
+      </ul>
+    </div>
+    <div class="card gap">
+      <h3 class="gap"><span class="tag gap">GAP</span> to a full recompute graph — the remaining work</h3>
+      <ul>
+        <li><b>Addition cascade</b> — today only <code>retract()</code> exists (the hard direction); forward-add is easier, unwritten</li>
+        <li><b>Non-recursive derived rules</b> — arbitrary joins across rels, not just reachability</li>
+        <li><b>The rule DAG orchestration</b> — dirty-marking + stratified re-run (<code>FamilyRouter</code>)</li>
+        <li><b>Generalize schema</b> — <code>cx_*</code> single-i64 key → arbitrary rels</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- frp-lab mapping -->
+  <p class="lbl" style="margin:28px 0 10px">What frp-lab settled (three positions, not two)</p>
+  <table>
+    <thead><tr><th>approach</th><th>mechanism</th><th>fate</th></tr></thead>
+    <tbody>
+      <tr><td class="k">A · rayon full-recompute family</td><td>re-derive the world per edit</td><td class="kill">✗ terrible — O(corpus)/edit (213ms @ 100k for a 1-file edit)</td></tr>
+      <tr><td class="k">B · rxRust / stream the rows</td><td><code>Hit&lt;'r&gt;</code> on a scheduler</td><td class="kill">✗ impossible — E0521 'static wall, or a lifetime infecting the whole store</td></tr>
+      <tr><td class="k">C · Z-set / semi-naive IVM</td><td>delta over a weight map = <b>the cascade</b></td><td class="keep">✓ correct (oracle 20k states) &amp; cheap (7µs delta, flat in corpus)</td></tr>
+    </tbody>
+  </table>
+  <p class="cap">The break point killed A, not C — and C is <i>more</i> batch-relational than A, not more streamed. That C is our store cascade.</p>
+
+  <!-- scale wall -->
+  <p class="lbl" style="margin:28px 0 10px">The real wall at 10M edges is RAM, not correctness — which is why C lives on disk</p>
+  <div class="grid2">
+    <div class="card">
+      <h3>Z-set, string <code>Edge</code></h3>
+      <div class="mem"><i class="fits" style="width:70%"></i><i class="over" style="width:30%"></i></div>
+      <div class="memlab"><span>0</span><span>1.5GB budget ↑</span><span class="kill">2694 MB @ 10M</span></div>
+      <p class="cap">overflows before 5M (1872 MB)</p>
+    </div>
+    <div class="card">
+      <h3>Z-set, dense <code>(u32,u32)</code> &nbsp;<span class="warn">store lab E1</span></h3>
+      <div class="mem"><i class="fits" style="width:92%"></i><i class="over" style="width:8%"></i></div>
+      <div class="memlab"><span>0</span><span>1.5GB budget ↑</span><span class="warn">1622 MB @ 10M</span></div>
+      <p class="cap">representation is the lever; even dense overflows before 10M → on disk = the cascade</p>
+    </div>
+  </div>
+
+  <p class="foot">reuse: sprefa-store/src/cascade.rs (kernel) &nbsp;·&nbsp; build: the reactor over the rule DAG &nbsp;·&nbsp; edge: futures::Stream trigger</p>
+</div>
+</body>
+</html>

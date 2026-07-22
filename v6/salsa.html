@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Salsa — and why the reactor stays off the RAM budget</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#111725; --panel2:#0e1420; --ink:#e6edf3; --dim:#93a1b3;
+    --line:#26324a; --accent:#8b7bff; --green:#3fd88b; --red:#ff6f6f; --amber:#ffb454;
+    --disk:#5aa9ff;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 620px at 72% -12%,#171529,var(--bg));
+    color:var(--ink);font-family:var(--sans);line-height:1.5;padding:32px clamp(16px,4vw,64px)}
+  .wrap{max-width:1080px;margin:0 auto}
+  h1{font-size:25px;margin:0 0 2px;letter-spacing:-.01em}
+  .sub{color:var(--dim);margin:0 0 26px;font-size:14px;max-width:70ch}
+  .lbl{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin:26px 0 10px}
+  .panel{border:1px solid var(--line);border-radius:12px;background:linear-gradient(180deg,var(--panel),var(--panel2));padding:16px 18px}
+  .row{display:flex;flex-wrap:wrap;gap:12px}
+  .col{flex:1;min-width:220px}
+  .node{border:1px solid var(--line);border-radius:9px;padding:11px 13px;background:#0c1220}
+  .node .t{font-family:var(--mono);font-size:12.5px;font-weight:600}
+  .node .d{color:var(--dim);font-size:11.5px;margin-top:3px}
+  .node .fields{font-family:var(--mono);font-size:11px;color:#cdd8e6;margin-top:7px;display:flex;flex-direction:column;gap:2px}
+  .node .fields b{color:var(--accent);font-weight:600}
+  .pill{display:inline-block;font-family:var(--mono);font-size:10px;padding:1px 7px;border-radius:999px;border:1px solid currentColor;font-weight:600;margin-bottom:6px}
+  .in{color:var(--amber)} .q{color:var(--accent)} .rev{color:var(--disk)}
+  .green{color:var(--green)} .red{color:var(--red)}
+
+  /* red-green walk */
+  .walk{display:flex;flex-direction:column;gap:0;font-family:var(--mono);font-size:12.5px}
+  .step{display:flex;gap:12px;align-items:flex-start;padding:9px 0;border-top:1px dashed var(--line)}
+  .step:first-child{border-top:0}
+  .q-badge{flex:0 0 auto;width:20px;height:20px;border-radius:5px;display:grid;place-items:center;font-size:12px;margin-top:1px}
+  .q-badge.g{background:#12331f;color:var(--green);border:1px solid #1c5334}
+  .q-badge.r{background:#331515;color:var(--red);border:1px solid #532020}
+  .step .txt{flex:1}.step .txt b{color:var(--ink)} .step .txt .n{color:var(--dim)}
+  .win{color:var(--green);font-weight:600}
+
+  /* dag */
+  .dag{display:grid;grid-template-columns:repeat(4,1fr);gap:10px 26px;align-items:center;position:relative;font-family:var(--mono);font-size:12px}
+  .dnode{border:1px solid var(--line);border-radius:8px;padding:9px 10px;text-align:center;background:#0c1220}
+  .dnode.g{border-color:#1c5334;box-shadow:inset 0 0 0 1px #12331f} .dnode.g .s{color:var(--green)}
+  .dnode.r{border-color:#532020;box-shadow:inset 0 0 0 1px #331515} .dnode.r .s{color:var(--red)}
+  .dnode.cut{border-color:#4a3a1a} .dnode.cut .s{color:var(--amber)}
+  .dnode .s{font-size:10px;display:block;margin-top:3px}
+  @media(max-width:720px){.dag{grid-template-columns:1fr 1fr}}
+
+  table{width:100%;border-collapse:collapse;margin-top:4px;font-size:13px}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);font-weight:600}
+  td.k{font-family:var(--mono);color:var(--ink);white-space:nowrap}
+  .disk-c{color:var(--disk)} .ram-c{color:var(--accent)}
+  p{font-size:13.5px} p code,li code,td code{font-family:var(--mono);font-size:12px;background:#0a0f1a;border:1px solid var(--line);padding:1px 5px;border-radius:5px;color:#d8e2f0}
+  ul{margin:6px 0 0;padding-left:18px} li{margin:5px 0;font-size:13.5px;color:#cdd8e6}
+  .cap{color:var(--dim);font-size:12px;margin-top:10px}
+  .bars{display:flex;flex-direction:column;gap:12px;margin-top:6px}
+  .bar-row{display:grid;grid-template-columns:150px 1fr 130px;gap:12px;align-items:center;font-size:12.5px}
+  .bar-row .name{font-family:var(--mono)} .track{height:24px;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:#0a0f1a}
+  .track i{display:block;height:100%}
+  .amt{font-family:var(--mono);text-align:right}
+  .foot{color:var(--dim);font-size:12px;margin-top:28px;font-family:var(--mono)}
+  .key{display:flex;gap:16px;flex-wrap:wrap;font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:10px}
+  .key span{display:inline-flex;align-items:center;gap:6px} .sw{width:11px;height:11px;border-radius:3px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Salsa — the red-green reactor, and why it never touches the RAM budget</h1>
+  <p class="sub">Salsa is how rust-analyzer stays incremental. It is the algorithm for Layer 2 (the rule DAG). The trick that keeps it off the memory budget is one design choice: its memo stores a <b>digest + two revision numbers</b>, never the relation's rows. The rows stay on disk in the cascade.</p>
+
+  <!-- THREE NODE TYPES -->
+  <p class="lbl">1 · the three things salsa tracks</p>
+  <div class="row">
+    <div class="col node">
+      <span class="pill in">INPUT</span>
+      <div class="t">source rel (you SET it)</div>
+      <div class="d">file bytes, git HEAD, clock tick</div>
+      <div class="fields"><span><b>value</b> the raw source</span><span><b>set_at</b> = revision it last changed</span></div>
+    </div>
+    <div class="col node">
+      <span class="pill q">TRACKED QUERY</span>
+      <div class="t">derived rel (a pure fn, memoized)</div>
+      <div class="d">extract / join / fixpoint over other rels</div>
+      <div class="fields"><span><b>value</b> ← here we store a <span class="ram-c">digest</span>, not rows</span><span><b>deps[]</b> which rels it read</span><span><b>changed_at</b> · <b>verified_at</b></span></div>
+    </div>
+    <div class="col node">
+      <span class="pill rev">REVISION R</span>
+      <div class="t">one global monotonic counter</div>
+      <div class="d">bumps by 1 every time any input is set</div>
+      <div class="fields"><span><b>R</b> = 7 (now)</span><span>every stamp above is a revision number</span></div>
+    </div>
+  </div>
+
+  <!-- RED-GREEN WALK -->
+  <p class="lbl">2 · the red-green walk &nbsp;— asking for a derived rel Q at revision R</p>
+  <div class="panel walk">
+    <div class="step">
+      <div class="q-badge g">✓</div>
+      <div class="txt"><b>verified_at(Q) == R ?</b> <span class="n">→ already known current this revision.</span> <span class="win">return memo. zero work.</span></div>
+    </div>
+    <div class="step">
+      <div class="q-badge g">✓</div>
+      <div class="txt"><b>else: did any dep change since verified_at(Q)?</b> walk <code>maybe_changed_after(dep, verified_at)</code> for each. <span class="n">If NONE did →</span> <span class="win">bump verified_at = R, return old value WITHOUT re-executing.</span> <span class="n">(the backdating win — most of the DAG takes this path)</span></div>
+    </div>
+    <div class="step">
+      <div class="q-badge r">↻</div>
+      <div class="txt"><b>some dep changed → RE-EXECUTE Q.</b> <span class="n">run the derive fn, get a new value.</span></div>
+    </div>
+    <div class="step">
+      <div class="q-badge g">✓</div>
+      <div class="txt"><b>new digest == old digest ?</b> <span class="n">→</span> <span class="win">BACKDATE: leave changed_at alone.</span> downstream rels see "Q unchanged" and never re-run. <span class="n">(early cutoff / firewall)</span></div>
+    </div>
+    <div class="step">
+      <div class="q-badge r">△</div>
+      <div class="txt"><b>new digest != old digest →</b> set <b>changed_at = R</b>. <span class="n">only NOW do the rels that read Q become suspect.</span></div>
+    </div>
+  </div>
+  <p class="cap">Two revision numbers per query is the whole engine: <code>verified_at</code> says "I checked this at R," <code>changed_at</code> says "my output last actually moved at R." The gap between them is where all the skipped work lives.</p>
+
+  <!-- DAG example -->
+  <p class="lbl">3 · one source edit, propagated — green = revalidated free, red = re-ran, amber = cut off</p>
+  <div class="panel">
+    <div class="dag">
+      <div class="dnode r">file.rs<span class="s">INPUT set → R=7</span></div>
+      <div class="dnode r">extract_calls<span class="s">dep changed → re-ran</span></div>
+      <div class="dnode cut">call_graph<span class="s">re-ran, SAME digest → cut off</span></div>
+      <div class="dnode g">blast_radius<span class="s">dep unchanged → free</span></div>
+      <div class="dnode g" style="grid-column:1">std_prelude<span class="s">High durability → skipped</span></div>
+      <div class="dnode g">type_index<span class="s">verified_at==R → free</span></div>
+      <div class="dnode g">lint_rail<span class="s">backdated dep → free</span></div>
+      <div class="dnode g">effect: --move<span class="s">not demanded → dormant</span></div>
+    </div>
+  </div>
+  <p class="cap">Edit one file: two rels re-run, one hits early-cutoff and stops the wave, the rest revalidate for free or are never demanded. That is the "not always running" property — it falls out of pull + revisions.</p>
+
+  <div class="key">
+    <span><i class="sw" style="background:#12331f;border:1px solid #1c5334"></i> green: revalidated, no execution</span>
+    <span><i class="sw" style="background:#331515;border:1px solid #532020"></i> red: re-executed</span>
+    <span><i class="sw" style="background:#221a08;border:1px solid #4a3a1a"></i> amber: ran but backdated (cutoff)</span>
+  </div>
+
+  <!-- TWO MORE LEVERS -->
+  <p class="lbl">4 · two levers that skip whole subtrees</p>
+  <div class="row">
+    <div class="col node">
+      <div class="t"><span class="green">Durability</span> — Low / Medium / High</div>
+      <div class="d" style="margin-top:6px">Tag inputs by how often they move (your code = Low, deps = High). Salsa keeps the last revision each durability level changed. If nothing High-durability moved since <code>verified_at</code>, every query that only reads High inputs is green <b>without walking its deps at all</b>.</div>
+    </div>
+    <div class="col node">
+      <div class="t"><span class="accent" style="color:var(--accent)">LRU eviction</span> — the memo is a CACHE, not a ledger</div>
+      <div class="d" style="margin-top:6px">Memo values can be dropped under an LRU cap. Evicted query? Re-execute on next demand. Memory is bounded by the cache size you choose, <b>not</b> by how big the graph is. This is the second reason RAM stays flat.</div>
+    </div>
+  </div>
+
+  <!-- RAM BUDGET -->
+  <p class="lbl">5 · why this does NOT eat the RAM budget (the sqlite contrast)</p>
+  <table>
+    <thead><tr><th></th><th>what it stores</th><th>size</th><th>lives</th></tr></thead>
+    <tbody>
+      <tr><td class="k disk-c">sqlite cascade<br>(Layer 1, facts)</td><td>every derived <b>row</b> — 10M edges, weights, deps</td><td class="disk-c">O(facts) — GB</td><td class="disk-c">ON DISK</td></tr>
+      <tr><td class="k ram-c">salsa reactor<br>(Layer 2, control)</td><td>per rel: <b>one digest + deps[] + 2 revisions</b>. never a row.</td><td class="ram-c">O(rels) — KB</td><td class="ram-c">in RAM</td></tr>
+    </tbody>
+  </table>
+  <div class="bars">
+    <div class="bar-row"><span class="name disk-c">facts (sqlite)</span><div class="track"><i style="width:100%;background:linear-gradient(90deg,#1d3a5c,#5aa9ff)"></i></div><span class="amt disk-c">~2 GB @ 10M</span></div>
+    <div class="bar-row"><span class="name ram-c">reactor (salsa)</span><div class="track"><i style="width:0.4%;background:var(--accent)"></i></div><span class="amt ram-c">~40 KB / 400 rels</span></div>
+  </div>
+  <p class="cap">~100 bytes per rel (digest 32B + deps ptrs + two u32 revisions) × a few hundred rels. The 10M facts <b>never enter the reactor</b> — it holds "rel R was computed at revision 7 and its content hashes to <code>ab3f…</code>," and asks the cascade to do the row work on disk. Independent axes: facts scale with the corpus, reactor scales with the rule <i>count</i>.</p>
+
+  <!-- LAB PLAN -->
+  <p class="lbl">6 · how i lab it out (same discipline as frp-lab)</p>
+  <div class="panel">
+    <ul>
+      <li><b>Model:</b> a <code>reactor-lab</code> crate. Rels are salsa-style tracked nodes whose memo value is a <b>blake3 digest of the rel's content</b>, plus <code>deps[]</code>, <code>changed_at</code>, <code>verified_at</code>. The rows themselves sit in a stub "disk" map keyed by rel — standing in for the cascade — so the reactor genuinely never holds them.</li>
+      <li><b>Differential oracle</b> (the thing you made me build): under a random source-edit stream, assert the reactor's computed dirty-set == the set of rels whose digest <i>actually</i> changed by from-scratch recompute. If it ever re-runs a rel it didn't need, or skips one it did, the oracle catches it — seed+step localizes it.</li>
+      <li><b>Early-cutoff test:</b> edit a source so a derived rel recomputes to the SAME digest; assert <b>zero</b> downstream rels re-run (backdating works, the firewall holds).</li>
+      <li><b>The RAM proof — two independent axes:</b> grow <i>facts</i> (rows per rel) and <i>rels</i> (DAG size) separately. Measure reactor RSS. Show it is <b>flat in fact-count</b> and linear only in rel-count — the exact opposite of the sqlite side. That is the receipt that it does not eat the budget.</li>
+      <li><b>Build-vs-buy:</b> the <code>salsa</code> crate IS the candidate for this algorithm (rust-analyzer runs it). Caveat to measure: its default memo holds VALUES in RAM — we need it to hold digests instead. Lab decides: drive salsa with digest-values, or hand-roll the ~200-line red-green core. Not asserting bespoke first.</li>
+    </ul>
+  </div>
+
+  <p class="foot">salsa = Layer 2 control plane (digests + revisions, RAM, tiny) &nbsp;·&nbsp; cascade = Layer 1 facts (rows + weights, disk, big) &nbsp;·&nbsp; they meet at "recompute rel R"</p>
+</div>
+</body>
+</html>
