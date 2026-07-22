@@ -91,6 +91,31 @@ each run, at minimum:
 `× cache_size ∈ {a ladder, e.g. 2000, 8000, 32000, 128000 KiB}`
 all under `DL_MEMCAP_MB=1024` (and repeat at 512 to find the wall).
 
+## Where the standing context lives (READ before you re-derive anything)
+
+Half our pain is re-deriving decisions and **losing good hypotheses** we already
+had. Before proposing or re-arguing anything, check these. When you have a new
+banger idea, it goes in the HYPOTHESES ledger — do not let it evaporate into a
+transcript nobody re-reads.
+
+| file | what it holds |
+|---|---|
+| `chat_log/LATEST.md` → dated `chat_log/*.md` | the session log; resume via `/i:load-session`, dump via `/i:save-session` |
+| `v6/DECISIONS.md` | PINNED decisions — do not re-open (counting-not-DRed, SCC fixpoint, dd/salsa-as-teachers) |
+| `v6/MAP.md` | the living map: 7-function covering set, the one-cascade unification, exploration verdicts, the DONE contract |
+| `v6/findings/HYPOTHESES.md` | **the idea ledger — every promising-but-untested hypothesis with its source session + status (untested/promising/rejected).** The soft-delete/tombstone-for-temporal idea lives here. Add to it; never lose one. |
+| `v6/findings/SESSION-DIGEST.md` | the reactive/graph-algo lineage timeline, sourced |
+| `v6/findings/SELF-RESEARCH.md` | how to mine our own history (the method) |
+| `v6/sprefa-store/FINDINGS-AND-GAPS.md` | measured findings + open algorithmic gaps |
+| `v6/plans/*.md`, `plans/*.md` | dated design docs (the retraction model is `v6/plans/2026-07-19-v6-table-design.md:344-368`) |
+| `v6/labs/perf-runs.sqlite` / `.csv` | the raw golden-data archive (this contract's output) |
+
+To re-find any past decision or hypothesis, use `tools/chat-find.sh PATTERN`
+(rg+fzf over chat_log + the raw CC transcripts), or the command block in
+`v6/DECISIONS.md`. When a session ends, its plan/context changes get written back
+to these files — that write-back is not optional; a finding that only exists in a
+transcript is a finding we will lose.
+
 ## Standing discipline (non-negotiable, applies to every agent)
 
 - One OS process per cell; drop input staging before the retract timer so the
