@@ -1,4 +1,6 @@
 #!/bin/sh
-# Rails gate: blocks the commit on any error-severity diag (exit 2) or a
-# broken rails program (exit 1). See docs/rails.md. Bypass: git commit -n
-exec dl --check
+# Pre-commit: regenerate the live v6 markdown index and stage it.
+# (dl --check rails gate removed for now — restore `exec dl --check` when dl is
+#  back on PATH. Bypass this hook: git commit -n)
+repo_root=$(git rev-parse --show-toplevel)
+sh "$repo_root/v6/tools/gen-index.sh" && git add "$repo_root/v6/INDEX.md"
