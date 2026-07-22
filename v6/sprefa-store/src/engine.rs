@@ -1352,15 +1352,11 @@ mod tests {
         assert_eq!(store.total_rows().await.unwrap(), 2);
     }
 
-    #[tokio::test]
-    async fn commit_statement_count_is_constant_for_a_delta_batch() {
-        let _statement_guard = statement_lock().lock().unwrap();
-        let store = open().await;
-        let deltas: Vec<(i64, i64)> = (0..1_000).map(|key| (key, 1)).collect();
-        stmt_counter::reset();
-        store.commit(&deltas).await.unwrap();
-        assert_eq!(stmt_counter::get(), 5);
-    }
+    // `commit_statement_count_is_constant` lives in tests/stmt_count.rs (its own
+    // process): stmt_counter is a process-global atomic, so an exact-count assert
+    // races the cascade/reach/reconcile tests in the shared lib binary, and a
+    // failed assert here panics while holding statement_lock — poisoning it and
+    // cascading into every other temporal test.
 
     #[tokio::test]
     async fn digest_matches_the_expected_live_key_mix() {
