@@ -5,6 +5,67 @@ file defines **what data every run MUST capture**, how it is stored (raw, then
 aggregated), and the standing measurement discipline. Read it before touching a
 harness.
 
+---
+
+## SESSION HANDOFF — 2026-07-22 (READ FIRST after a context reset)
+
+**Mission:** kill v5's resident 36 GB-swap model by putting the graph-algo
+covering set on v6's **on-disk counting cascade** (RSS bounded, Rust heap ~0),
+matching the resident engines (dd/salsa) on correctness while driving the
+counting Big-O down. **Target machine ≈ 1 GB RAM, not 12.**
+
+**Landed this session on branch `v11` (newest first):**
+- `4c483691` `tools/chat-find.sh` (rg+fzf reverse chat index + pin) + `v6/MAP-SOURCES.md` + `v6/findings/soft-delete-durable-scan.md`
+- `4561e031` AGENTS context-pointer + `v6/findings/HYPOTHESES.md` idea ledger
+- `2310e7bf` this file — the golden-data contract
+- `015c4784` millions perf sweep to **11.5M nodes** + `perf-charts.html`
+- `2f94cc43` `v6/MAP.md` living map + `v6/skills/mermaid-living-map.md`
+- `5d3339dd` `perf.json` emit + `v6/sprefa-store/tools/gen-perf-charts.sh`
+- `004c1b68` reorg: experiment crates → `v6/labs/{labkit,frp-lab,reactor-lab,temporal-lab}`
+- `1fa19d35` **G6**: `retract_scc` BEATS DRed (2123<2267 ms CYC960k); DAG early-out still OPEN
+- `17cafc07` **G7**: 7 engines wired into `0_unified` (14/14 correct)
+- `0fc58912` **G5**: `retract_scc` cycle-correct counting (SCC nested fixpoint)
+- `fe386a15` **G4v2**: labkit rusqlite-free (SQLite in ONE crate) + hermetic runner
+
+**In flight — DO THIS NEXT:**
+- **G10** (`exp/g10-golden-data`, codex terra, was RUNNING): the golden-data
+  bench per this contract — impl-level `tracing` in `cascade.rs` + per-process
+  sensors + `cache_size` sweep under 1 GB → raw `v6/labs/perf-runs.sqlite`(+csv).
+  It already produced `perf-runs.sqlite`. **Verify** the tracing is impl-level
+  (phase/round/DML, NOT trait-boundary) and overhead is negligible, then merge.
+- **G8** (`exp/g8-mmap-kv`, codex terra, DONE but **UNMERGED + SUSPECT**): the
+  `redb-count` mmap engine. TWO red flags caught, do not trust until explained:
+  (1) its `sqlite-count` baseline is ~1000x too slow (12,654 ms @100k vs the
+  store's ~30 ms) — a broken comparison; (2) `redb-count` resident RAM CLIMBS
+  ~97 B/node (194 MB @2M) — it FAILS the memory-first objective (was meant to be
+  flat/evictable). Re-measure against the real store sqlite-count before merging.
+
+**Open threads (prioritized):**
+1. **Rebuild the living map in D2, not Mermaid** ("mermaid sucks"). Feed the anim
+   atlas pipeline (`~/projects/anim`: D2 → `@terrastruct/d2` WASM → Model →
+   cytoscape, with `explorer.jsx` progressive drill-down + `AtlasPanel`
+   fold/unfold, and a CSS-anchor render backend). The current `v6/MAP.md` is
+   "turbo mid" and needs FAR more detail; drill-down is how the detail lands. Next
+   step was: write a natural-language map-content spec → haiku authors `v6/MAP.d2`.
+2. Verify+merge G10; re-measure G8 (redb) honestly.
+3. Consolidate narrative docs → `v6/labs/docs` (only 4 files ref DECISIONS/
+   ARCHITECTURE — cheap). Deferred so it didn't break in-flight path refs.
+4. Work the hypotheses in `v6/findings/HYPOTHESES.md` (H1 soft-delete/tombstone,
+   H4 SCC DAG early-out, H5 cache_size curve).
+
+**Delegation gotchas (hard-won, do not relearn):**
+- **codex exec MUST launch with `< /dev/null`** or it WEDGES on stdin at 0% CPU
+  forever. Three jobs stuck 15–45 min this session before this was found.
+- Models: codex `gpt-5.6-terra` (heavy Rust), `-sol` (perf, low), `-luna` (grunt,
+  low); haiku subagents for grunt fs/syntax with known tools.
+- **NEVER trust subagent/codex output.** Verify every citation, number, and
+  baseline yourself — a fabricated line number or a broken baseline (see G8) is
+  worse than nothing. Ask the user when genuinely ambiguous.
+- codex can't commit (pre-commit hook needs `dl`, not on PATH); coordinator
+  commits `--no-verify`. `dl` is not on PATH in this env either.
+
+---
+
 ## The reality this is measured against
 
 **The target machine has ~1 GB of RAM, not 12.** Every claim must hold under a
@@ -23,6 +84,18 @@ more disk I/O → slower. We want that trade curve under the microscope so we ca
 2. read the speed / read-write cost of that squeeze,
 3. then run experiments to **drive that cost down** (fewer statements, better
    access paths, on-disk layout) — measured, not asserted.
+
+## When the lab stops being a lab (the graduation criterion)
+
+The benchgraph's `(tag, id)` toy keys are a stand-in. The lab is DONE — stops
+being a lab — when the on-disk counting cascade + **dense integer foreign-key
+interning** (every entity/name interned to a packed `i64`, FKs as those ints, as
+God intended for efficiency) works for **any relational schema**, not just this
+lab's two-column graph. That means: an arbitrary set of relations with arbitrary
+FK edges gets the same weight-counted retraction, SCC fixpoint, and RSS-bounded
+on-disk behaviour we prove here on the toy. Until the interning + cascade is
+schema-general, it is still a lab. Measure toward that: the sensors and the
+storage layout must not assume the 2-column shape.
 
 ## Golden data — capture EVERYTHING, per process, per phase
 
@@ -62,6 +135,15 @@ each run, at minimum:
 - `stmts` — SQL statements in the retract.
 - `rows_retracted`, `survivors`, `throughput_rows_per_s` (= rows_retracted /
   t_retract_s).
+
+### Final state — how big are the tables when it's over (read/write is only half)
+- `db_bytes` total after retract, AND the per-table breakdown via `dbstat`:
+  `final_table_bytes`, `final_index_bytes`, `final_free_bytes` per table
+  (`SELECT name, SUM(pgsize) FROM dbstat GROUP BY name`). Report table-vs-index
+  split — index bloat is a standing v5 defect (indexes were 57% of the file).
+- rows-per-table live count at the end. For a soft-delete variant (H1), also the
+  tombstone count (`weight=0` rows still present) vs live — that ratio is the
+  whole cost of not hard-deleting, and it must be measured, not assumed.
 
 ### Correctness + query plans
 - `correct` (hash == oracle), `out_hash`.
