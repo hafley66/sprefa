@@ -1,5 +1,11 @@
 # v6 pinned decisions — STOP re-deriving these
 
+> **How this pin got made:** we mined our own session logs + raw Claude Code
+> transcripts to recover decisions we kept re-deriving. See
+> `v6/findings/SELF-RESEARCH.md` for the method (rg the `.jsonl` transcripts, 8
+> haiku passes over chat_log) and `v6/findings/SESSION-DIGEST.md` for the lineage.
+
+
 If you are about to re-open "counting vs DRed", "how do cycles work", "weight
 semantics", "acyclic fast-path", or "are these graph algos the same thing":
 DON'T. It is decided (6+ times). Pointers below.
