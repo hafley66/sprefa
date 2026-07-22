@@ -47,6 +47,20 @@ This doc is the counterpart to `HYPOTHESES.md` (untested ideas) and `DECISIONS.m
   set, one row per (engine×workload×scale×cache_size) into `perf-runs.sqlite`. If an
   experiment reads a sensor by hand instead of through the probe, its numbers are not
   comparable and do not go in the golden-data archive.
+- (2026-07-22, codex) `sqlite3_db_status` cache counters are recorded as `-1` because
+  sea-orm/sqlx does not expose the raw per-connection `sqlite3*` handle needed by
+  `sqlite3_db_status` (`v6/sprefa-store/src/relstore.rs:19-48`).
+- (2026-07-22, opus) FOLLOW-UP on the probe (`measure.rs`), two known inaccuracies to
+  fix before trusting absolute magnitudes: (1) `db_bytes` = `fs::metadata(db).len()` on
+  the main file, which under-reports in WAL mode (live pages sit in `-wal` until
+  checkpoint — seed run showed `db_bytes=4096` while dbstat `table_bytes=176128`). Add
+  the `-wal` size or `PRAGMA wal_checkpoint(TRUNCATE)` before sizing. `final_table_bytes`
+  /`final_index_bytes` come from `dbstat` and ARE accurate. (2) the archive writer
+  shells out to the `sqlite3` CLI (`Command::new("sqlite3")`), a PATH dependency; the
+  per-phase sensor VALUES are still captured in-process, only the sink write shells out.
+  `sqlite_hw_kb` is read via `dlsym(RTLD_DEFAULT, "sqlite3_memory_highwater")` (global,
+  no handle) — sound. `insert_ms≈0` in the seed run is real: the retract engines fold
+  insert into build, so the insert phase is a no-op for those cells.
 - _(add Rust findings here — allocator behavior, memcap interactions, macOS vs Linux
   rusage quirks, sea-orm/rusqlite overhead observed.)_
 
