@@ -1,0 +1,437 @@
+//! The perf harness. One `Engine` trait; five implementations; every run measured
+//! HERMETICALLY (one engine alone per child process) with a full metric set, and the
+//! parent autogenerates a markdown report.
+//!
+//! What it guarantees, per the standing asks:
+//!   * INPUT identical  — every child regenerates the SAME deterministic graph from
+//!     (layers,width,stride) and reports a blake3 of its sorted edge list; the driver
+//!     asserts all engines at a scale share one input hash.
+//!   * OUTPUT verified   — each child reports a blake3 of its sorted survivor set; the
+//!     driver marks an engine correct iff its output hash equals the oracle's.
+//!   * EVERYTHING measured — retract wall time, SQL statement count, Rust live heap
+//!     (memcap-capped), SQLite C-heap highwater (memcap-blind), peak RSS, on-disk db.
+//!   * GUN pointed        — every child sets the memcap allocator cap; an over-cap
+//!     engine aborts (SIGABRT) and is recorded as a breakpoint, never swaps.
+//!   * SETUP excluded     — only the retract is timed; staging + the whole generated
+//!     graph are dropped before the measured op so residence is never counted.
+//!
+//!   run the report:   cargo run --release --example perf_report
+//!   one child alone:  cargo run --release --example perf_report -- <engine> <l> <w> <stride>
+//!   knobs: DL_MEMCAP_MB (default 2048), DL_PERF_REPORT (output path)
+
+use std::time::Instant;
+
+use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseBackend, Statement};
+use sprefa_store::{benchgraph, benchgraph::MultiGraph, memcap, relstore::RelStore, stmt_counter};
+
+use differential_dataflow::input::Input;
+use differential_dataflow::operators::Iterate;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use timely::dataflow::operators::probe::Handle as ProbeHandle;
+
+#[global_allocator]
+static GLOBAL: memcap::CappedAlloc = memcap::CappedAlloc;
+
+// ---- metrics helpers ----------------------------------------------------------
+
+fn peak_rss_mb() -> f64 {
+    unsafe {
+        let mut ru: libc::rusage = std::mem::zeroed();
+        libc::getrusage(libc::RUSAGE_SELF, &mut ru);
+        let bytes = if cfg!(target_os = "linux") { ru.ru_maxrss as f64 * 1024.0 } else { ru.ru_maxrss as f64 };
+        bytes / 1048576.0
+    }
+}
+fn rust_live_mb() -> f64 {
+    memcap::live_bytes() as f64 / 1048576.0
+}
+/// SQLite's OWN C-allocator highwater (the memcap gun is blind to it). `reset=1`
+/// clears it so a later read isolates the next phase.
+fn sqlite_hw_mb(reset: bool) -> f64 {
+    unsafe { libsqlite3_sys::sqlite3_memory_highwater(if reset { 1 } else { 0 }) as f64 / 1048576.0 }
+}
+fn fingerprint(keys: &[i64]) -> String {
+    let mut h = blake3::Hasher::new();
+    for k in keys {
+        h.update(&k.to_le_bytes());
+    }
+    h.finalize().to_hex()[..16].to_string()
+}
+
+// ---- the trait ----------------------------------------------------------------
+
+/// One measured retraction of the seed root from the shared graph. `retract_ms` is
+/// the MEASURED op only; setup is untimed and the generated graph is dropped before
+/// it, so no metric counts corpus residence.
+#[derive(Default, Clone)]
+struct Outcome {
+    survivors: Vec<i64>,
+    retract_ms: f64,
+    statements: u64,
+    rust_live_mb: f64,
+    sqlite_hw_mb: f64,
+    peak_rss_mb: f64,
+    db_mb: f64,
+}
+
+/// Every experiment is an `Engine`: build state from the graph (untimed), run the
+/// measured retract, report the full metric set. Static methods, dispatched by name
+/// in the child — no trait objects, no async-trait dep.
+trait Engine {
+    fn name() -> &'static str;
+    async fn measure(g: MultiGraph) -> Outcome;
+}
+
+// ---- shared store setup -------------------------------------------------------
+
+async fn open_store() -> (RelStore, std::path::PathBuf) {
+    let path = std::env::temp_dir().join(format!("perf_{}_{}.sqlite", std::process::id(), rand_tag()));
+    let _ = std::fs::remove_file(&path);
+    let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
+    opt.max_connections(1).min_connections(1);
+    (RelStore::attach(Database::connect(opt).await.unwrap()).await.unwrap(), path)
+}
+fn rand_tag() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos() as u64
+}
+fn cleanup(path: &std::path::Path) {
+    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(format!("{}-wal", path.display()));
+    let _ = std::fs::remove_file(format!("{}-shm", path.display()));
+}
+
+/// Load the graph into a store, drop ALL staging + the graph, run `op` timed, and
+/// gather every store metric. Shared by the three cascade engines so they are
+/// measured identically. `op` returns the statement delta of the measured retract.
+async fn store_measure<F>(g: MultiGraph, op: F) -> Outcome
+where
+    F: for<'a> FnOnce(&'a RelStore, (i64, i64)) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'a>>,
+{
+    let rows: Vec<(i64, i64, i64)> = g.rows.iter().map(|(t, i, w)| (*t as i64, *i, *w)).collect();
+    let deps: Vec<(i64, i64, i64, i64)> =
+        g.edges.iter().map(|(pt, pi, ct, ci)| (*pt as i64, *pi, *ct as i64, *ci)).collect();
+    let seed = (g.seed.0 as i64, g.seed.1);
+    let (store, path) = open_store().await;
+    store.add_rows(&rows).await.unwrap();
+    store.add_deps(&deps).await.unwrap();
+    drop(rows);
+    drop(deps);
+    drop(g); // corpus lives on disk now; nothing below counts its residence
+
+    stmt_counter::reset();
+    sqlite_hw_mb(true); // clear highwater so the retract's C-heap is isolated
+    let t = Instant::now();
+    op(&store, seed).await;
+    let retract_ms = t.elapsed().as_secs_f64() * 1e3;
+    let statements = stmt_counter::get();
+    let rust_live = rust_live_mb();
+    let sqlite_hw = sqlite_hw_mb(false);
+    let survivors = store.alive_keys().await.unwrap();
+
+    store.conn().execute_unprepared("PRAGMA wal_checkpoint(TRUNCATE);").await.ok();
+    let db_mb = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0) as f64 / 1048576.0;
+    let out = Outcome {
+        survivors,
+        retract_ms,
+        statements,
+        rust_live_mb: rust_live,
+        sqlite_hw_mb: sqlite_hw,
+        peak_rss_mb: peak_rss_mb(),
+        db_mb,
+    };
+    drop(store);
+    cleanup(&path);
+    out
+}
+
+// ---- engines ------------------------------------------------------------------
+
+struct Oracle;
+impl Engine for Oracle {
+    fn name() -> &'static str { "oracle" }
+    async fn measure(g: MultiGraph) -> Outcome {
+        let t = Instant::now();
+        let survivors: Vec<i64> = benchgraph::oracle_survivors(&g, g.seed).into_iter().collect();
+        Outcome { retract_ms: t.elapsed().as_secs_f64() * 1e3, rust_live_mb: rust_live_mb(), peak_rss_mb: peak_rss_mb(), survivors, ..Default::default() }
+    }
+}
+
+struct Counting;
+impl Engine for Counting {
+    fn name() -> &'static str { "sqlite-count" }
+    async fn measure(g: MultiGraph) -> Outcome {
+        store_measure(g, |s, seed| Box::pin(async move { s.retract(&[seed]).await.unwrap(); })).await
+    }
+}
+
+struct DredLoop;
+impl Engine for DredLoop {
+    fn name() -> &'static str { "sqlite-dred-loop" }
+    async fn measure(g: MultiGraph) -> Outcome {
+        store_measure(g, |s, seed| Box::pin(async move { s.retract_dred(&[seed]).await.unwrap(); })).await
+    }
+}
+
+struct DredCte;
+impl Engine for DredCte {
+    fn name() -> &'static str { "sqlite-dred-cte" }
+    async fn measure(g: MultiGraph) -> Outcome {
+        store_measure(g, |s, seed| Box::pin(async move { s.retract_dred_cte(&[seed]).await.unwrap(); })).await
+    }
+}
+
+struct Dd;
+impl Engine for Dd {
+    fn name() -> &'static str { "dd" }
+    async fn measure(g: MultiGraph) -> Outcome {
+        let edges: Vec<(i64, i64)> =
+            g.edges.iter().map(|(pt, pi, ct, ci)| (benchgraph::encode(*pt, *pi), benchgraph::encode(*ct, *ci))).collect();
+        let roots = roots_from(&g);
+        let cut = benchgraph::encode(g.seed.0, g.seed.1);
+        drop(g);
+        let alive: Arc<Mutex<HashMap<i64, isize>>> = Arc::new(Mutex::new(HashMap::new()));
+        let alive_out = alive.clone();
+        let ms = Arc::new(Mutex::new(0.0f64));
+        let ms_out = ms.clone();
+        let live = Arc::new(Mutex::new(0.0f64));
+        let live_out = live.clone();
+        let edges = Arc::new(edges);
+        let roots = Arc::new(roots);
+        timely::execute_directly(move |worker| {
+            let acc = alive.clone();
+            let mut probe = ProbeHandle::new();
+            let (mut edges_in, mut roots_in) = worker.dataflow(|scope| {
+                let (edges_in, edges_c) = scope.new_collection::<(i64, i64), isize>();
+                let (roots_in, roots_c) = scope.new_collection::<i64, isize>();
+                let ec = edges_c.clone();
+                let rc = roots_c.clone();
+                let reach = roots_c.iterate(move |scope, inner| {
+                    let edges = ec.enter(scope);
+                    let roots = rc.enter(scope);
+                    edges.semijoin(inner).map(|(_p, c)| c).concat(roots).distinct()
+                });
+                reach.consolidate().inspect(move |(node, _t, diff)| { *acc.lock().unwrap().entry(*node).or_insert(0) += *diff; }).probe_with(&mut probe);
+                (edges_in, roots_in)
+            });
+            for (p, c) in edges.iter() { edges_in.insert((*p, *c)); }
+            for r in roots.iter() { roots_in.insert(*r); }
+            let (de, dr) = (edges.clone(), roots.clone());
+            drop(de);
+            drop(dr);
+            edges_in.advance_to(1); roots_in.advance_to(1); edges_in.flush(); roots_in.flush();
+            worker.step_while(|| probe.less_than(edges_in.time())); // SETUP (untimed)
+            let t = Instant::now();
+            roots_in.remove(cut);
+            edges_in.advance_to(2); roots_in.advance_to(2); edges_in.flush(); roots_in.flush();
+            worker.step_while(|| probe.less_than(roots_in.time()));
+            *ms_out.lock().unwrap() = t.elapsed().as_secs_f64() * 1e3;
+            *live_out.lock().unwrap() = rust_live_mb();
+        });
+        let mut survivors: Vec<i64> = {
+            let map = alive_out.lock().unwrap();
+            map.iter().filter(|(_, w)| **w > 0).map(|(d, _)| *d).collect()
+        };
+        survivors.sort_unstable();
+        let retract_ms = *ms.lock().unwrap();
+        let rust_live = *live.lock().unwrap();
+        Outcome { retract_ms, rust_live_mb: rust_live, peak_rss_mb: peak_rss_mb(), survivors, ..Default::default() }
+    }
+}
+
+fn roots_from(g: &MultiGraph) -> Vec<i64> {
+    use std::collections::HashSet;
+    let mut has_parent: HashSet<i64> = HashSet::new();
+    for (_pt, _pi, ct, ci) in &g.edges {
+        has_parent.insert(benchgraph::encode(*ct, *ci));
+    }
+    let mut roots: Vec<i64> =
+        g.rows.iter().map(|(t, i, _)| benchgraph::encode(*t, *i)).filter(|k| !has_parent.contains(k)).collect();
+    roots.sort_unstable();
+    roots
+}
+
+/// blake3 of the sorted edge list — the INPUT fingerprint every engine must share.
+fn input_hash(g: &MultiGraph) -> String {
+    let mut e: Vec<(i64, i64)> =
+        g.edges.iter().map(|(pt, pi, ct, ci)| (benchgraph::encode(*pt, *pi), benchgraph::encode(*ct, *ci))).collect();
+    e.sort_unstable();
+    let mut h = blake3::Hasher::new();
+    for (u, v) in &e {
+        h.update(&u.to_le_bytes());
+        h.update(&v.to_le_bytes());
+    }
+    h.finalize().to_hex()[..16].to_string()
+}
+
+const ENGINES: [&str; 5] = ["oracle", "sqlite-count", "sqlite-dred-loop", "sqlite-dred-cte", "dd"];
+
+async fn run_engine(name: &str, g: MultiGraph) -> Option<Outcome> {
+    match name {
+        "oracle" => Some(Oracle::measure(g).await),
+        "sqlite-count" => Some(Counting::measure(g).await),
+        "sqlite-dred-loop" => Some(DredLoop::measure(g).await),
+        "sqlite-dred-cte" => Some(DredCte::measure(g).await),
+        "dd" => Some(Dd::measure(g).await),
+        _ => None,
+    }
+}
+
+// ---- driver: matrix, hash checks, markdown report -----------------------------
+
+struct Cell {
+    ok: bool,          // process did not abort
+    correct: bool,     // output hash == oracle hash
+    out: Outcome,
+    out_hash: String,
+    in_hash: String,
+}
+
+fn run_child(exe: &std::path::Path, engine: &str, l: usize, w: usize, bs: usize, cap: u64) -> Cell {
+    let out = std::process::Command::new(exe)
+        .args([engine, &l.to_string(), &w.to_string(), &bs.to_string()])
+        .env("DL_MEMCAP_MB", cap.to_string())
+        .output()
+        .unwrap();
+    let mut c = Cell { ok: out.status.success(), correct: false, out: Outcome::default(), out_hash: String::new(), in_hash: String::new() };
+    let s = String::from_utf8_lossy(&out.stdout);
+    if let Some(line) = s.lines().find(|l| l.starts_with("RESULT")) {
+        for tok in line.split_whitespace().skip(1) {
+            let Some((k, v)) = tok.split_once('=') else { continue };
+            match k {
+                "count" => c.out.survivors = vec![0; v.parse().unwrap_or(0)], // len only, for the table
+                "out_hash" => c.out_hash = v.to_string(),
+                "in_hash" => c.in_hash = v.to_string(),
+                "ms" => c.out.retract_ms = v.parse().unwrap_or(0.0),
+                "stmts" => c.out.statements = v.parse().unwrap_or(0),
+                "rust_live_mb" => c.out.rust_live_mb = v.parse().unwrap_or(0.0),
+                "sqlite_hw_mb" => c.out.sqlite_hw_mb = v.parse().unwrap_or(0.0),
+                "rss_mb" => c.out.peak_rss_mb = v.parse().unwrap_or(0.0),
+                "db_mb" => c.out.db_mb = v.parse().unwrap_or(0.0),
+                _ => {}
+            }
+        }
+    }
+    c
+}
+
+#[tokio::main]
+async fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let cap_mb: u64 = std::env::var("DL_MEMCAP_MB").ok().and_then(|s| s.parse().ok()).unwrap_or(2048);
+    if cap_mb != 0 {
+        memcap::cap_address_space_mb(cap_mb);
+    }
+
+    // CHILD: one engine, alone. `<engine> <layers> <width> <stride>`.
+    if args.len() >= 5 && ENGINES.contains(&args[1].as_str()) {
+        let l: usize = args[2].parse().unwrap();
+        let w: usize = args[3].parse().unwrap();
+        let bs: usize = args[4].parse().unwrap();
+        let g = benchgraph::gen_multi_cyclic(l, w, bs); // bs=0 => plain DAG
+        let ih = input_hash(&g);
+        let name = args[1].clone();
+        let out = run_engine(&name, g).await.unwrap();
+        println!(
+            "RESULT engine={name} count={} out_hash={} in_hash={ih} ms={:.3} stmts={} rust_live_mb={:.2} sqlite_hw_mb={:.2} rss_mb={:.1} db_mb={:.2}",
+            out.survivors.len(), fingerprint(&out.survivors), out.retract_ms, out.statements, out.rust_live_mb, out.sqlite_hw_mb, out.peak_rss_mb, out.db_mb
+        );
+        return;
+    }
+
+    // DRIVER.
+    let cap = if cap_mb == 0 { 2048 } else { cap_mb };
+    let exe = std::env::current_exe().unwrap();
+    let report_path = std::env::var("DL_PERF_REPORT").unwrap_or_else(|_| {
+        format!("{}/PERF-REPORT.md", env!("CARGO_MANIFEST_DIR"))
+    });
+
+    // The matrix: (label, layers, width, stride). Ramp width up; a couple cyclic
+    // shapes to exercise the phantom-cycle path. Kept modest so the whole report
+    // finishes in a few minutes under the gun; the ramp finds breakpoints on its own.
+    let scales: Vec<(&str, usize, usize, usize)> = vec![
+        ("DAG 60k", 6, 10_000, 0),
+        ("DAG 240k", 6, 40_000, 0),
+        ("DAG 960k", 6, 160_000, 0),
+        ("DAG 2.9M", 6, 480_000, 0),
+        ("CYC 60k s7", 6, 10_000, 7),
+        ("CYC 960k s7", 6, 160_000, 7),
+    ];
+
+    let started = Instant::now();
+    let mut md = String::new();
+    md.push_str("# v6 store — retraction perf & completeness report\n\n");
+    md.push_str(&format!(
+        "Autogenerated by `examples/perf_report.rs`. Every engine runs HERMETICALLY (one \
+         process each), memcap gun = **{cap} MB**. Setup is untimed; the generated graph is \
+         dropped before the measured retract, so no metric counts corpus residence.\n\n"
+    ));
+    md.push_str("Columns: **ms** = measured retract wall time; **stmts** = SQL statements in \
+        the retract (0 for dd/oracle); **rust_live** = Rust heap after the op (what the gun \
+        caps); **sqlite_hw** = SQLite C-heap highwater (gun-blind); **rss** = process peak; \
+        **db** = on-disk db after the retract. `correct` = output hash equals the oracle's.\n\n");
+
+    let mut broke: Vec<String> = Vec::new();
+
+    for (label, l, w, bs) in &scales {
+        let nodes = 2 + l * w;
+        // oracle first = the reference hash + the shared input hash for this scale.
+        let oracle = run_child(&exe, "oracle", *l, *w, *bs, cap);
+        let ref_hash = oracle.out_hash.clone();
+        let ref_in = oracle.in_hash.clone();
+
+        md.push_str(&format!(
+            "## {label} — nodes≈{nodes}, {}\n\n",
+            if *bs == 0 { "DAG".to_string() } else { format!("cyclic stride={bs}") }
+        ));
+        md.push_str(&format!("_input hash `{ref_in}` (all engines must match)_\n\n"));
+        md.push_str("| engine | survivors | correct | ms | stmts | rust_live MB | sqlite_hw MB | rss MB | db MB |\n");
+        md.push_str("|---|---:|:---:|---:|---:|---:|---:|---:|---:|\n");
+
+        for name in ENGINES {
+            let cell = if name == "oracle" {
+                Cell { ok: oracle.ok, correct: true, out: oracle.out.clone(), out_hash: oracle.out_hash.clone(), in_hash: oracle.in_hash.clone() }
+            } else {
+                let mut c = run_child(&exe, name, *l, *w, *bs, cap);
+                c.correct = c.ok && c.out_hash == ref_hash;
+                c
+            };
+            // input-identity guard: a non-aborted engine MUST have seen the same graph.
+            if cell.ok && !cell.in_hash.is_empty() && cell.in_hash != ref_in {
+                md.push_str(&format!("| {name} | — | INPUT-MISMATCH | | | | | | |\n"));
+                continue;
+            }
+            if !cell.ok {
+                broke.push(format!("{name} @ {label} (nodes≈{nodes})"));
+                md.push_str(&format!("| {name} | — | **ABORT (gun {cap}MB)** | | | | | | |\n"));
+                continue;
+            }
+            let mark = if name == "oracle" { "ref".to_string() } else if cell.correct { "yes".to_string() } else { "**NO**".to_string() };
+            md.push_str(&format!(
+                "| {name} | {} | {mark} | {:.1} | {} | {:.2} | {:.2} | {:.1} | {:.2} |\n",
+                cell.out.survivors.len(), cell.out.retract_ms, cell.out.statements, cell.out.rust_live_mb, cell.out.sqlite_hw_mb, cell.out.peak_rss_mb, cell.out.db_mb
+            ));
+        }
+        md.push('\n');
+        eprintln!("[perf] {label} done ({:.0}s elapsed)", started.elapsed().as_secs_f64());
+    }
+
+    md.push_str("## Breakpoints\n\n");
+    if broke.is_empty() {
+        md.push_str(&format!("No engine aborted under the {cap} MB gun at the scales run.\n\n"));
+    } else {
+        md.push_str(&format!("Under the {cap} MB memcap gun, these engines hit the RAM wall (SIGABRT):\n\n"));
+        for b in &broke {
+            md.push_str(&format!("- {b}\n"));
+        }
+        md.push('\n');
+    }
+    md.push_str(&format!("\n_Report generated in {:.0}s._\n", started.elapsed().as_secs_f64()));
+
+    std::fs::write(&report_path, &md).unwrap();
+    eprintln!("[perf] wrote {report_path}");
+    if !broke.is_empty() {
+        eprintln!("[perf] breakpoints: {}", broke.join(", "));
+    }
+}

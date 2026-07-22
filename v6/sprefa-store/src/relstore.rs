@@ -51,9 +51,14 @@ impl RelStore {
     pub async fn retract(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
         cascade::retract(&self.db, seeds).await
     }
-    /// Cycle-safe retraction (Delete-and-Rederive). Returns rounds.
+    /// Cycle-safe retraction (Delete-and-Rederive), Rust-driven round loop. Returns rounds.
     pub async fn retract_dred(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
         cascade::retract_dred(&self.db, seeds).await
+    }
+    /// Cycle-safe retraction as two recursive CTEs (whole traversal in SQLite's C
+    /// engine, no per-round round-trip). Same result as `retract_dred`; use at scale.
+    pub async fn retract_dred_cte(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+        cascade::retract_dred_cte(&self.db, seeds).await
     }
     /// Count live rows (weight > 0) across all relations.
     pub async fn alive(&self) -> Result<i64, DbErr> {

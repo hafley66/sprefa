@@ -85,15 +85,25 @@ async fn scalar(db: &impl ConnectionTrait, sql: &str) -> Result<i64, DbErr> {
         .unwrap_or(0))
 }
 
-/// Create the generic cascade schema. Working tables (`cx_frontier`, `cx_next`)
-/// are regular tables (not TEMP) so they are visible regardless of which pooled
-/// connection runs a statement.
+/// Create the generic cascade schema and apply the traversal tuning.
+///
+/// The store pins to ONE connection (`min=max=1`), so the churny working tables
+/// are `TEMP`: with `temp_store=MEMORY` they live in RAM and are NEVER WAL-logged,
+/// which is the whole per-round cost of the cascade (the labkit DRed proved this —
+/// regular working tables WAL-log every `DELETE`/`INSERT` per round, a ~4x tax).
+/// A real page cache + mmap lets the cone walk read `cx_row`/`cx_dep` from RAM
+/// instead of the disk file. These match the proven feldera-lab DRed tuning.
 pub async fn create_schema(db: &DatabaseConnection) -> Result<(), DbErr> {
+    // 256 MB page cache (cache_size negative = KiB) + 1 GB read mmap. cache_size is
+    // SQLite's own C heap (the memcap gun is blind to it — measured separately in
+    // sqlite_reach's highwater); mmap is not a heap allocation at all.
+    db.execute_unprepared("PRAGMA cache_size=-262144; PRAGMA mmap_size=1073741824;").await?;
     // cx_row is a ROWID table clustered on `key` (INTEGER PRIMARY KEY = the
     // rowid alias): the key costs zero extra bytes and every lookup is a native
     // rowid search. tag/id ride along as plain output columns. cx_dep collapses
     // from a 4-column composite to a 2-column (parent_key, child_key) WITHOUT
-    // ROWID, still parent-prefix-ordered for the delta traversal.
+    // ROWID, still parent-prefix-ordered for the delta traversal. cx_row/cx_dep
+    // are the persistent corpus; cx_frontier/next/hits/cone are RAM-only churn.
     db.execute_unprepared(
         "CREATE TABLE cx_row (
             key    INTEGER PRIMARY KEY,
@@ -106,10 +116,10 @@ pub async fn create_schema(db: &DatabaseConnection) -> Result<(), DbErr> {
             child_key  INTEGER NOT NULL,
             PRIMARY KEY (parent_key, child_key)
          ) WITHOUT ROWID;
-         CREATE TABLE cx_frontier (key INTEGER PRIMARY KEY);
-         CREATE TABLE cx_next     (key INTEGER PRIMARY KEY);
-         CREATE TABLE cx_hits (key INTEGER PRIMARY KEY, dec INTEGER NOT NULL);
-         CREATE TABLE cx_cone (key INTEGER PRIMARY KEY);
+         CREATE TEMP TABLE cx_frontier (key INTEGER PRIMARY KEY);
+         CREATE TEMP TABLE cx_next     (key INTEGER PRIMARY KEY);
+         CREATE TEMP TABLE cx_hits (key INTEGER PRIMARY KEY, dec INTEGER NOT NULL);
+         CREATE TEMP TABLE cx_cone (key INTEGER PRIMARY KEY);
          CREATE INDEX ix_cx_dep_child ON cx_dep (child_key);",
     )
     .await?;
@@ -370,6 +380,70 @@ pub async fn retract_dred(db: &DatabaseConnection, seeds: &[(i64, i64)]) -> Resu
     Ok(rounds)
 }
 
+/// Cycle-safe retraction, Delete-and-Rederive expressed as TWO recursive CTEs so
+/// SQLite runs the whole cone traversal AND the rederive inside its C engine — one
+/// prepared statement each — instead of the Rust-driven round loop of `retract_dred`
+/// (~6 `execute` round-trips per BFS round, ~180 for a depth-15 graph). Identical
+/// semantics and result; the round-trip tax is gone. This is the form to use at
+/// scale. Returns 0 (rounds are not meaningful for the set-at-once CTE form).
+///
+/// Phase 1 (over-delete): the forward cone of currently-alive nodes reachable from
+/// the alive seeds, computed over unchanged weights in one recursive walk, then all
+/// killed. Phase 2 (rederive): cone nodes anchored to a surviving (weight>0, hence
+/// outside-cone) parent come back and propagate forward within the cone; a dead
+/// cycle has no such anchor and stays dead.
+pub async fn retract_dred_cte(db: &DatabaseConnection, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+    let txn = db.begin().await?;
+    let seed_in = {
+        let v: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
+        format!("({})", v.join(","))
+    };
+    exec(&txn, "DELETE FROM cx_cone").await?;
+    // Phase 1 — over-delete. `cone` = seeds ∪ everything forward-reachable from them
+    // over still-alive edges. UNION (not UNION ALL) dedups nodes, so work is O(cone),
+    // and the walk reads weights BEFORE the kill below, so every cone node qualifies.
+    exec(
+        &txn,
+        &format!(
+            "INSERT INTO cx_cone(key)
+             WITH RECURSIVE cone(key) AS (
+                SELECT key FROM cx_row WHERE key IN {seed_in} AND weight>0
+                UNION
+                SELECT d.child_key FROM cone
+                  JOIN cx_dep d ON d.parent_key = cone.key
+                  JOIN cx_row r ON r.key = d.child_key
+                 WHERE r.weight>0
+             )
+             SELECT key FROM cone",
+        ),
+    )
+    .await?;
+    exec(&txn, "UPDATE cx_row SET weight=0 WHERE key IN (SELECT key FROM cx_cone)").await?;
+    // Phase 2 — rederive. Base: cone nodes with a surviving (weight>0) parent — since
+    // every cone node is now weight=0, weight>0 means the parent is outside the cone.
+    // Step: propagate aliveness forward, staying inside the cone (JOIN cx_cone).
+    exec(&txn, "DELETE FROM cx_frontier").await?; // reused as the alive-set sink
+    exec(
+        &txn,
+        "INSERT INTO cx_frontier(key)
+         WITH RECURSIVE alive(key) AS (
+            SELECT c.key FROM cx_cone c
+              JOIN cx_dep d ON d.child_key = c.key
+              JOIN cx_row p ON p.key = d.parent_key
+             WHERE p.weight>0
+            UNION
+            SELECT d.child_key FROM alive
+              JOIN cx_dep d ON d.parent_key = alive.key
+              JOIN cx_cone c ON c.key = d.child_key
+         )
+         SELECT key FROM alive",
+    )
+    .await?;
+    exec(&txn, "UPDATE cx_row SET weight=1 WHERE key IN (SELECT key FROM cx_frontier)").await?;
+    txn.commit().await?;
+    Ok(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,6 +495,29 @@ mod tests {
         retract_dred(&db, &[(0, 0)]).await.unwrap();
         // R dies; R2 anchors B, and the cycle B->C->A keeps A,C alive. survivors = 4.
         assert_eq!(alive(&db).await, 4, "alternate anchor must rederive the cycle");
+    }
+
+    // The CTE form must match retract_dred exactly: cut the root, whole cone incl
+    // the cycle dies (no anchor).
+    #[tokio::test]
+    async fn retract_dred_cte_kills_a_cut_cycle() {
+        let db = open().await;
+        insert_rows(&db, &[(0, 0, 1), (0, 1, 1), (0, 2, 1), (0, 3, 1)]).await.unwrap();
+        insert_deps(&db, &[(0, 0, 0, 1), (0, 1, 0, 2), (0, 2, 0, 3), (0, 3, 0, 1)]).await.unwrap();
+        assert_eq!(alive(&db).await, 4);
+        retract_dred_cte(&db, &[(0, 0)]).await.unwrap();
+        assert_eq!(alive(&db).await, 0, "CTE: cutting the root must kill the whole cone, cycle included");
+    }
+
+    // CTE form: alternate anchor rederives the cycle (only R dies, survivors = 4).
+    #[tokio::test]
+    async fn retract_dred_cte_rederives_through_alternate_anchor() {
+        let db = open().await;
+        insert_rows(&db, &[(0, 0, 1), (0, 1, 1), (0, 2, 1), (0, 3, 1), (0, 4, 1)]).await.unwrap();
+        insert_deps(&db, &[(0, 0, 0, 1), (0, 1, 0, 2), (0, 2, 0, 3), (0, 3, 0, 1), (0, 4, 0, 2)]).await.unwrap();
+        assert_eq!(alive(&db).await, 5);
+        retract_dred_cte(&db, &[(0, 0)]).await.unwrap();
+        assert_eq!(alive(&db).await, 4, "CTE: alternate anchor must rederive the cycle");
     }
 
     // assert is the inverse: bring a dead node alive and propagate forward.
