@@ -129,6 +129,20 @@ async fn count_survivors(g: &MultiGraph) -> Vec<i64> {
     keys
 }
 
+async fn count_scc_survivors(g: &MultiGraph) -> Vec<i64> {
+    let (store, path) = open_store().await;
+    let rows: Vec<(i64, i64, i64)> = g.rows.iter().map(|(t, i, w)| (*t as i64, *i, *w)).collect();
+    let deps: Vec<(i64, i64, i64, i64)> =
+        g.edges.iter().map(|(pt, pi, ct, ci)| (*pt as i64, *pi, *ct as i64, *ci)).collect();
+    store.add_rows(&rows).await.unwrap();
+    store.add_deps(&deps).await.unwrap();
+    store.retract_scc(&[(g.seed.0 as i64, g.seed.1)]).await.unwrap();
+    let keys = store.alive_keys().await.unwrap();
+    drop(store);
+    cleanup(&path);
+    keys
+}
+
 /// The one check every shape runs: oracle == store-DRed == dd, byte-for-byte.
 async fn assert_agreement(g: &MultiGraph, label: &str) {
     let oracle: Vec<i64> = benchgraph::oracle_survivors(g, g.seed).into_iter().collect();
@@ -154,6 +168,7 @@ async fn dag_all_engines_agree() {
         // counting must ALSO be correct on a DAG.
         let oracle: Vec<i64> = benchgraph::oracle_survivors(&g, g.seed).into_iter().collect();
         assert_eq!(count_survivors(&g).await, oracle, "{label}: counting must be correct on a DAG");
+        assert_eq!(count_scc_survivors(&g).await, oracle, "{label}: SCC counting must be correct on a DAG");
     }
 }
 
@@ -165,6 +180,8 @@ async fn cyclic_dred_and_dd_agree() {
             let g = benchgraph::gen_multi_cyclic(layers, width, stride);
             let label = format!("CYCLIC l={layers} w={width} stride={stride}");
             assert_agreement(&g, &label).await;
+            let oracle: Vec<i64> = benchgraph::oracle_survivors(&g, g.seed).into_iter().collect();
+            assert_eq!(count_scc_survivors(&g).await, oracle, "{label}: SCC counting must match the oracle");
         }
     }
 }
