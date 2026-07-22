@@ -12,6 +12,8 @@
 pub mod benchgraph;
 pub mod cascade;
 pub mod memcap;
+pub mod reconcile;
+pub mod relstore;
 pub mod rels;
 pub mod spine;
 pub mod strings;

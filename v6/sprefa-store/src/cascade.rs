@@ -40,10 +40,12 @@ const CHUNK: usize = 4000;
 /// storage, fastest possible SQLite lookup) and `cx_dep` a 2-column key instead
 /// of a 4-column composite. `tag`/`id` stay as plain output columns on cx_row.
 /// Stride must exceed any local id (local ids are per-relation, < a few million).
-const KEY_STRIDE: i64 = 1_000_000_000;
+pub const KEY_STRIDE: i64 = 1_000_000_000;
 
+/// Dense E1 key: (rel, row) -> one i64 so cx_row is a rowid table clustered on an
+/// INTEGER PRIMARY KEY. `rel` (= tag) picks the relation, `row` (= id) the tuple.
 #[inline]
-fn key(tag: i64, id: i64) -> i64 {
+pub fn key(tag: i64, id: i64) -> i64 {
     tag * KEY_STRIDE + id
 }
 
@@ -106,7 +108,9 @@ pub async fn create_schema(db: &DatabaseConnection) -> Result<(), DbErr> {
          ) WITHOUT ROWID;
          CREATE TABLE cx_frontier (key INTEGER PRIMARY KEY);
          CREATE TABLE cx_next     (key INTEGER PRIMARY KEY);
-         CREATE TABLE cx_hits (key INTEGER PRIMARY KEY, dec INTEGER NOT NULL);",
+         CREATE TABLE cx_hits (key INTEGER PRIMARY KEY, dec INTEGER NOT NULL);
+         CREATE TABLE cx_cone (key INTEGER PRIMARY KEY);
+         CREATE INDEX ix_cx_dep_child ON cx_dep (child_key);",
     )
     .await?;
     Ok(())
@@ -233,4 +237,201 @@ pub async fn retract(db: &DatabaseConnection, seeds: &[(i64, i64)]) -> Result<u6
     }
     txn.commit().await?;
     Ok(rounds)
+}
+
+// ============================================================================
+// CYCLE-SAFE PAIR (backported from the v6 labkit). The counting `retract` above
+// is correct only on an ACYCLIC support graph — on a cycle the members mutually
+// support each other and never hit weight 0 (a phantom: cut the anchor and the
+// cycle stays "alive"). These two treat `weight` as a BOOLEAN alive flag (0/1)
+// and compute reachability-from-roots exactly, which is what retraction was
+// always trying to approximate. Use this pair when the graph can contain cycles.
+//   assert       = forward add (monotonic, cycle-safe by nature)
+//   retract_dred = Delete-and-Rederive: over-delete the forward cone, then
+//                  rederive any row still anchored to a surviving row.
+// ============================================================================
+
+/// Forward add: `seeds` become alive; propagate aliveness to everything reachable
+/// from them that was dead. The opposite of retract. Monotonic, so cycle-safe.
+/// Returns rounds (= depth of the newly-alive wavefront).
+pub async fn assert(db: &DatabaseConnection, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+    let txn = db.begin().await?;
+    exec(&txn, "DELETE FROM cx_frontier").await?;
+    exec(&txn, "DELETE FROM cx_next").await?;
+    let seed_in = {
+        let v: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
+        format!("({})", v.join(","))
+    };
+    // seed the wavefront from the seeds (alive or not), so an already-alive root still
+    // pushes reachability into any newly-added dead children.
+    exec(&txn, &format!("INSERT INTO cx_frontier SELECT key FROM cx_row WHERE key IN {seed_in}")).await?;
+    exec(&txn, &format!("UPDATE cx_row SET weight=1 WHERE key IN {seed_in}")).await?;
+    let mut rounds = 0u64;
+    loop {
+        exec(
+            &txn,
+            "DELETE FROM cx_next; \
+             INSERT INTO cx_next(key) \
+             SELECT DISTINCT d.child_key \
+             FROM cx_frontier f CROSS JOIN cx_dep d ON d.parent_key = f.key \
+               CROSS JOIN cx_row r ON r.key = d.child_key \
+             WHERE r.weight = 0",
+        )
+        .await?;
+        if scalar(&txn, "SELECT count(*) FROM cx_next").await? == 0 {
+            break;
+        }
+        rounds += 1;
+        exec(&txn, "UPDATE cx_row SET weight=1 WHERE key IN (SELECT key FROM cx_next)").await?;
+        exec(&txn, "DELETE FROM cx_frontier").await?;
+        exec(&txn, "INSERT INTO cx_frontier SELECT key FROM cx_next").await?;
+    }
+    txn.commit().await?;
+    Ok(rounds)
+}
+
+/// Cycle-safe retraction via Delete-and-Rederive. `seeds` are retracted; then the
+/// forward cone reachable from them is tentatively killed (over-delete), and any
+/// cone row still reachable from a SURVIVING row is brought back (rederive). A dead
+/// cycle has no surviving anchor, so it correctly stays dead. Returns total rounds.
+pub async fn retract_dred(db: &DatabaseConnection, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+    let txn = db.begin().await?;
+    exec(&txn, "DELETE FROM cx_frontier").await?;
+    exec(&txn, "DELETE FROM cx_next").await?;
+    exec(&txn, "DELETE FROM cx_cone").await?;
+
+    // over-delete: seeds (alive) start the cone; kill them, walk forward killing the
+    // reachable-and-alive cone. Every statement is driven from the small frontier into
+    // the big tables by PRIMARY KEY (CROSS JOIN pins the order), so work ∝ the cone.
+    let seed_in = {
+        let v: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
+        format!("({})", v.join(","))
+    };
+    exec(&txn, &format!("INSERT INTO cx_frontier SELECT key FROM cx_row WHERE key IN {seed_in} AND weight>0")).await?;
+    exec(&txn, "UPDATE cx_row SET weight=0 WHERE key IN (SELECT key FROM cx_frontier)").await?;
+    exec(&txn, "INSERT INTO cx_cone SELECT key FROM cx_frontier").await?;
+    let mut rounds = 0u64;
+    loop {
+        exec(
+            &txn,
+            "DELETE FROM cx_next; \
+             INSERT INTO cx_next(key) \
+             SELECT DISTINCT d.child_key \
+             FROM cx_frontier f CROSS JOIN cx_dep d ON d.parent_key = f.key \
+               CROSS JOIN cx_row r ON r.key = d.child_key \
+             WHERE r.weight > 0",
+        )
+        .await?;
+        if scalar(&txn, "SELECT count(*) FROM cx_next").await? == 0 {
+            break;
+        }
+        rounds += 1;
+        exec(&txn, "UPDATE cx_row SET weight=0 WHERE key IN (SELECT key FROM cx_next)").await?;
+        exec(&txn, "INSERT OR IGNORE INTO cx_cone SELECT key FROM cx_next").await?;
+        exec(&txn, "DELETE FROM cx_frontier").await?;
+        exec(&txn, "INSERT INTO cx_frontier SELECT key FROM cx_next").await?;
+    }
+
+    // rederive: cone rows with a SURVIVING parent (weight>0, i.e. outside the cone)
+    // come back; propagate forward within the cone. Uses ix_cx_dep_child (child->parent).
+    exec(&txn, "DELETE FROM cx_frontier").await?;
+    exec(&txn, "DELETE FROM cx_next").await?;
+    exec(
+        &txn,
+        "INSERT INTO cx_frontier(key) \
+         SELECT DISTINCT c.key \
+         FROM cx_cone c CROSS JOIN cx_dep d ON d.child_key = c.key \
+           CROSS JOIN cx_row p ON p.key = d.parent_key \
+         WHERE p.weight > 0",
+    )
+    .await?;
+    exec(&txn, "UPDATE cx_row SET weight=1 WHERE key IN (SELECT key FROM cx_frontier)").await?;
+    loop {
+        exec(
+            &txn,
+            "DELETE FROM cx_next; \
+             INSERT INTO cx_next(key) \
+             SELECT DISTINCT d.child_key \
+             FROM cx_frontier f CROSS JOIN cx_dep d ON d.parent_key = f.key \
+               CROSS JOIN cx_row r ON r.key = d.child_key \
+               CROSS JOIN cx_cone c ON c.key = d.child_key \
+             WHERE r.weight = 0",
+        )
+        .await?;
+        if scalar(&txn, "SELECT count(*) FROM cx_next").await? == 0 {
+            break;
+        }
+        rounds += 1;
+        exec(&txn, "UPDATE cx_row SET weight=1 WHERE key IN (SELECT key FROM cx_next)").await?;
+        exec(&txn, "DELETE FROM cx_frontier").await?;
+        exec(&txn, "INSERT INTO cx_frontier SELECT key FROM cx_next").await?;
+    }
+    txn.commit().await?;
+    Ok(rounds)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::{ConnectOptions, Database};
+
+    async fn open() -> DatabaseConnection {
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let uniq = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir()
+            .join(format!("cx_dred_test_{}_{uniq}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
+        opt.max_connections(1).min_connections(1);
+        let db = Database::connect(opt).await.unwrap();
+        db.execute_unprepared(crate::unfuck_sqlite::OPEN_PRAGMAS).await.unwrap();
+        create_schema(&db).await.unwrap();
+        db
+    }
+
+    async fn alive(db: &DatabaseConnection) -> i64 {
+        scalar(db, "SELECT count(*) FROM cx_row WHERE weight>0").await.unwrap()
+    }
+
+    // root R -> A, cycle A -> B -> C -> A. Cut R. Correct: everything dies (no anchor).
+    // Counting retract would leave A,B,C alive (phantom cycle); DRed must give 0.
+    #[tokio::test]
+    async fn retract_dred_kills_a_cut_cycle() {
+        let db = open().await;
+        // rows R=(0,0) A=(0,1) B=(0,2) C=(0,3), all alive (weight 1)
+        insert_rows(&db, &[(0, 0, 1), (0, 1, 1), (0, 2, 1), (0, 3, 1)]).await.unwrap();
+        // R->A, A->B, B->C, C->A
+        insert_deps(&db, &[(0, 0, 0, 1), (0, 1, 0, 2), (0, 2, 0, 3), (0, 3, 0, 1)]).await.unwrap();
+        assert_eq!(alive(&db).await, 4);
+
+        retract_dred(&db, &[(0, 0)]).await.unwrap();
+        assert_eq!(alive(&db).await, 0, "cutting the root must kill the whole cone, cycle included");
+    }
+
+    // Same graph but ALSO a second root R2 -> B. Cut R. Now B (and via cycle A,C) stay
+    // alive through R2. DRed must rederive them: survivors = R2,A,B,C = 4 (only R dies).
+    #[tokio::test]
+    async fn retract_dred_rederives_through_alternate_anchor() {
+        let db = open().await;
+        // R=(0,0) A=(0,1) B=(0,2) C=(0,3) R2=(0,4)
+        insert_rows(&db, &[(0, 0, 1), (0, 1, 1), (0, 2, 1), (0, 3, 1), (0, 4, 1)]).await.unwrap();
+        insert_deps(&db, &[(0, 0, 0, 1), (0, 1, 0, 2), (0, 2, 0, 3), (0, 3, 0, 1), (0, 4, 0, 2)]).await.unwrap();
+        assert_eq!(alive(&db).await, 5);
+
+        retract_dred(&db, &[(0, 0)]).await.unwrap();
+        // R dies; R2 anchors B, and the cycle B->C->A keeps A,C alive. survivors = 4.
+        assert_eq!(alive(&db).await, 4, "alternate anchor must rederive the cycle");
+    }
+
+    // assert is the inverse: bring a dead node alive and propagate forward.
+    #[tokio::test]
+    async fn assert_propagates_forward() {
+        let db = open().await;
+        // R alive, A/B dead; R->A->B. assert R's reach.
+        insert_rows(&db, &[(0, 0, 1), (0, 1, 0), (0, 2, 0)]).await.unwrap();
+        insert_deps(&db, &[(0, 0, 0, 1), (0, 1, 0, 2)]).await.unwrap();
+        assert_eq!(alive(&db).await, 1);
+        assert(&db, &[(0, 0)]).await.unwrap();
+        assert_eq!(alive(&db).await, 3, "R->A->B all alive after assert");
+    }
 }
