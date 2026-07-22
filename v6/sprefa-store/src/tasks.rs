@@ -31,9 +31,10 @@
 //! - Cascade   ✅ oracle+parity green (the genesis, most mature)
 //! - Reconcile ❌ salsa oracle not ported — the ONE graph-correctness gap
 //! - Temporal  substrate, not graph parity (see bottom)
-//! - GraphStore 🧪 Epic 1 LANDED: Layout + stamp + attach_with (lib.rs relstore) + measure_storage
-//!   (measure.rs). Split-vs-collapsed bytes are live (`just storage`); Epic 2 retarget is gated on
-//!   the StorageDelta decision in `GraphStorePlan` below.
+//! - GraphStore · storage CLOSED: collapse measured +4% at scale -> REJECTED; shape = the split
+//!   two-plane pair. Epic 1 landed (stamp + measure_storage). Forward = a namespace-generic engine
+//!   (`GraphNs` prefix; see `GraphStorePlan`). `Layout` is the Epic-1 measurement knob, retires
+//!   when the engine threads to `GraphNs`.
 #![allow(dead_code, unused_variables, async_fn_in_trait)]
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -112,24 +113,17 @@ pub trait Reconcile {
 // =============================================================================
 // Trait D · GraphStore: node+edge storage both planes sit on (NOT graph parity)
 // =============================================================================
-// Open MEASUREMENT, not a rewrite. Two assumptions to test:
-//   EDGES (SETTLED): cx_dep (engine.rs:119) and rx_dep (engine.rs:980) are
-//   already the same shape (2-col WITHOUT ROWID, both directions indexed). One
-//   `dep(from,to)` table serves both planes; only the arrow convention flips (cx
-//   parent->child vs rx reader->read). Edge representation is a solved problem.
-//   NODES (OPEN): collapsible to ONE table carrying the union of value columns
-//   (weight for counting; digest/changed_at/verified_at for digest). The semiring
-//   difference is COLUMNS, not a conflict. Friction is GRANULARITY: cx_row is
-//   per-tuple (key = tag*1e9+id, engine.rs:48); rx_memo is per-rel (id = rel id).
-//   Collapse unlocks when reconcile goes per-tuple (full salsa memoizes per
-//   (rel,args), same domain as cx_row).
-// DIRECTION: do NOT rewrite the lab into one unified table. Build a small STAMP
-// harness: a fn emitting a node table (rowid-clustered dense key + a vec of value
-// cols) and a dep table (WITHOUT ROWID + both-direction index + TEMP working
-// set), so each measurement gets its own variant and stays separable. Measure
-// split-vs-collapsed and per-tuple-vs-per-rel; gain is unknown, which is why we
-// measure before committing. Lab tunings (rowid cluster, WITHOUT ROWID, both-
-// direction index, TEMP working set) all survive a merge.
+// CLOSED 2026-07-22 (the storage question is answered, not open):
+//   EDGES were already settled — cx_dep (engine.rs:119) and rx_dep (engine.rs:980)
+//   are the same 2-col WITHOUT ROWID shape, both directions indexed.
+//   NODES: split-vs-collapsed MEASURED — collapse is +4% at every scale that matters
+//   (5.66 GB / 82M-node run; see measure::measure_storage_scaled). So the shape is
+//   the SPLIT two-plane pair; no unified table. The small-corpus "collapsed wins" was
+//   fixed table-overhead. The remaining node question is GRANULARITY (per-tuple vs
+//   per-rel reconcile), not columns — that is the frontier in `GraphStorePlan`,
+//   measured on the split shape, no collapse required.
+// This trait (a putative generic node/edge API) stays aspirational; it is not what
+// ships. The shipped store is `relstore::RelStore` over the split cx_/rx_ tables.
 pub trait GraphStore {
     async fn create(&self, node_value_cols: &[&str], per_tuple: bool) -> ();
     async fn upsert_node(&self, key: i64, values: &[i64]) -> ();
@@ -138,90 +132,66 @@ pub trait GraphStore {
     async fn parents(&self, key: i64) -> Vec<i64>;  // reverse traversal (rederive / dirty)
 }
 
-// ─── 2026-07-22 · the GraphStore plan, AS A TRAIT (modus ponens: a task's output type
-// is the premise the next task consumes; read it like a datalog/prolog rule set) ───
-// One intent home: edit this trait in place; do not splinter a plans/ file. Strike a
-// method by deleting it once its real impl lands. EPIC 1 is struck — it landed in
-// relstore + measure (pointers inline); this trait now holds only Epic 2/3 + frontier.
+// ─── 2026-07-22 · GraphStore: storage CLOSED; forward = a namespace-generic engine ───
+// The shape is settled (the split two-plane pair; collapse measured +4% -> rejected).
+// The open work is NOT a shape change: make the one shape NAMESPACE-GENERIC so the
+// same engine stamps + runs multiple independent graph stores in one db. Edit this
+// section in place; strike a line when its real impl lands.
 
-// Real inputs the chain consumes (the live types, not plan-local copies):
-//   Layout       = crate::relstore::Layout            (Split | Collapsed)
-//   StorageDelta = crate::measure::StorageDelta        (split_bytes, collapsed_bytes)
-//   Corpus       = crate::measure::benchgraph::MultiGraph
-pub struct TableNames { pub cascade_node: &'static str, pub cascade_dep: &'static str,
-                        pub reconcile_node: &'static str, pub reconcile_dep: &'static str }
+// Real types the plan consumes:
+//   GraphNs      = crate::relstore::GraphNs   — 14 table/index/TEMP names from a prefix
+//                                               (default "" = the live cx_/rx_ set)
+//   StorageDelta = crate::measure::StorageDelta — the verdict (collapse +4%)
+// Mechanism = NAME PREFIX, not schema-qualify: SQLite TEMP working tables live in
+// temp. and CANNOT be qualified to an ATTACH'd schema, so prefix is the only
+// namespace that covers the working set. Forced, not a fork.
 
-// Proof tokens still RELEASED by an unlanded task and REQUIRED by a later one. The
-// remaining chain:  StorageDelta ⊢ Decision ⊢ Retarget ⊢ Parity  (+ Evidence probes).
-pub struct Decision;                       // epic2_gate : go/no-go on the retarget
-pub struct Retarget { pub cascade_sites: usize, pub reconcile_sites: usize } // Epic 2/3 answer
-pub struct Parity { pub agreement_ok: bool, pub covering_ok: bool }          // Epic 2 answer
-pub struct Evidence;                       // frontier : a measurement that would close a question
+// Proof tokens RELEASED by an unlanded task:
+pub struct Namespaced;   // Epic 2 : the engine addresses GraphNs names end-to-end
+pub struct Independent;  // Epic 3 : two stores in one db retract without cross-talk
+pub struct Evidence;     // frontier : a measurement that would close a question
 
-// ── EPIC 1 · LANDED 2026-07-22 · stamp harness + storage-only measurement ──
-//   stamp          -> crate::relstore::stamp(db, layout)
-//                     Split delegates to cascade+reconcile create_schema VERBATIM; Collapsed
-//                     emits g_node + g_edge(src,dst) + ix_g_edge_dst + the TEMP working set.
-//   attach_with    -> crate::relstore::RelStore::attach_with(db, layout); attach now
-//                     delegates to attach_with(_, Split).
-//   1.1 split gold -> lib.rs relstore tests: stamp(Split) sqlite_master == the live
-//                     cascade+reconcile create_schema pair, object-for-object (+ 6 names).
-//   1.2 collapse   -> lib.rs relstore tests: g_node/g_edge round-trip, PK dedup.
-//   measure        -> crate::measure::measure_storage(corpus) -> StorageDelta
-//                     (`just storage` prints it on a 40x40 multi-relation corpus);
-//                     scaled variant measure_storage_scaled(layers,width) streams
-//                     multi-GB with Rust heap ~0.
-//   RESULT (scaled): collapsed/split = 1.040 at 5.66 GB (82M nodes / 164M edges,
-//                     +234 MB), and ~1.046 stable from 300K through 2M nodes.
-//                     Collapsed is +4% at EVERY scale that matters — the small-
-//                     corpus "collapsed wins" was fixed table-overhead. Storage
-//                     does NOT justify the Epic 2 retarget; collapse's case rests
-//                     on the per-tuple-reconcile granularity unlock (frontier:
-//                     per_tuple_unlock_evidence), not bytes.
-//   g_edge columns are src/dst, not the plan's from/to — `from` is a SQL reserved word
-//   and Epic 2 retargets every cascade statement onto these names.
+// ── EPIC 1 · LANDED · stamp harness + storage measurement -> verdict ──
+//   stamp / attach_with / measure_storage landed in relstore + measure. Scaled verdict
+//   (measure_storage_scaled, `just storage L W`): collapsed/split = 1.040 at 5.66 GB
+//   (82M nodes / 164M edges, +234 MB), ~1.046 stable 300K->2M nodes. Collapsed is +4%
+//   at EVERY scale that matters -> REJECTED on storage. measure_storage_scaled stays as
+//   the frozen evidence; `Layout` (relstore) is its measurement knob, to retire once the
+//   engine threads to GraphNs. Collapse's real aim was the per-tuple-reconcile
+//   granularity unlock — that is the frontier below, doable on the split shape.
 
-/// The REMAINING plan, as a trait. Epic 1 fed it the `StorageDelta` fact; Epic 2 is
-/// gated on whether that delta justifies the retarget. A method's ARGS are the body
-/// predicates (facts released earlier); its RETURN is the head predicate. Modus ponens:
-/// cannot fire `parity_under` without a `Retarget`, cannot get one without a `Decision`,
-/// cannot decide without a `StorageDelta`.
-///
-/// Recon: RelStore (lib.rs) already unifies both planes over (rel,row) keys, so the layout
-/// knob lives UNDER attach and the RelStore API + measure::run_cell stay fixed. cascade::
-/// create_schema engine.rs:101; reconcile::create_schema engine.rs:972. Parity tests
-/// through RelStore: tests/agreement.rs, tests/covering.rs.
+// ── EPIC 2 · OPEN · thread GraphNs through the engine (namespace-generic) ──
+//   stamp(db, &GraphNs) stamps cx_/rx_ (+ TEMP + indexes) under the prefix. Thread
+//   &GraphNs through cascade (insert_rows/insert_deps/retract/retract_scc/retract_dred/
+//   retract_dred_cte/assert), reconcile (seed/mark_changed/dirty/verify), reach
+//   (reaches_from/reached_by/multi_source_walk/scc_labels/count_pairs), + algo
+//   SqliteReach. RelStore owns its GraphNs. Default ns ("") = today's names, so every
+//   existing test stays green throughout; a custom prefix yields an independent store.
+//   Releases `Namespaced`.
+
+// ── EPIC 3 · OPEN · proof: two independent stores in one db ──
+//   Golden: stamp default + stamp "b_" in ONE db; load + retract in each; assert
+//   independent survivor sets (no cross-talk). Proves the engine is namespace-generic,
+//   not just the DDL. Releases `Independent`.
+
+// ── FRONTIER (the real remaining lever; measured on the split shape, no collapse) ──
+//   per-tuple reconcile: rx_memo is per-rel today; going per-tuple (same domain as
+//   cx_row — full salsa memoizes per (rel,args)) is the granularity unlock collapse was
+//   after. Measure it directly; collapse was never required for it.
+
+/// The remaining plan, as a trait. A method's ARGS are body predicates (facts
+/// released earlier); its RETURN is the head predicate. Epic 1 released the verdict;
+/// Epic 2 threads the namespace; Epic 3 proves independence.
 pub trait GraphStorePlan {
-    // ── EPIC 2 · retarget cascade+reconcile onto collapsed names (OPT-IN; gated) ──
-    /// gate · decide whether the retarget is worth it given the measured `StorageDelta`.
-    ///     The modus-ponens hinge: Epic 2 cannot fire without Epic 1's fact. Releases `Decision`.
-    fn epic2_gate(&self, delta: crate::measure::StorageDelta) -> Decision;
-    /// names_for(layout): Split cx_row/cx_dep/rx_memo/rx_dep; Collapsed g_node/g_edge x2.
-    fn names_for(&self, layout: crate::relstore::Layout) -> TableNames;
-    /// 2   retarget cascade.rs format! SQL (insert_rows/insert_deps/retract/retract_scc/
-    ///     retract_dred/retract_dred_cte/assert/alive) onto `names`. Requires the gate
-    ///     `Decision` (the "dont rewrite the whole lab" guard). Releases `Retarget`.
-    async fn retarget_cascade_sql(&self, names: &TableNames, gate: Decision) -> Result<Retarget, sea_orm::DbErr>;
-    /// 3   retarget reconcile.rs format! SQL (seed/mark_changed/dirty/verify) onto `names`.
-    ///     Chains on `Retarget`. Releases the combined `Retarget`.
-    async fn retarget_reconcile_sql(&self, names: &TableNames, prior: Retarget) -> Result<Retarget, sea_orm::DbErr>;
-    /// 4   Golden + Done: agreement.rs + covering.rs green under the retargeted layout.
-    ///     Releases `Parity`. Answers: does collapse hurt the op phase.
-    async fn parity_under(&self, retargeted: &Retarget) -> Parity;
-
-    // ── EPIC 3 · head-to-head sweep + the measurement record (no recommendation) ──
-    /// 1   run each workload under Split + Collapsed. Requires `Retarget` (collapsed is live).
-    async fn sweep(&self, cells: &[crate::measure::Cell], retargeted: &Retarget) -> Vec<crate::measure::RunRow>;
-    /// 2   Golden + Done: out_hash equal across layouts per workload (correctness parity).
-    async fn out_hashes_match(&self, rows: &[crate::measure::RunRow]) -> bool;
-
-    // ── FRONTIER (deferred; each consumes a prior fact, returns the Evidence it still needs) ──
-    /// per-tuple reconcile is the granularity unlock (rx_memo is per-rel today).
-    fn per_tuple_unlock_evidence(&self, parity: &Parity) -> Evidence;
-    /// INSTEAD-OF-trigger / view alias: keep SQL names, back one physical g_node (zero rename).
-    fn trigger_alias_probe(&self, delta: crate::measure::StorageDelta) -> Evidence;
+    /// 2  thread GraphNs through cascade + reconcile + reach (Epic 2). Default ns
+    ///    keeps every existing test green; a custom prefix yields an independent store.
+    async fn thread_namespace(&self, ns: &crate::relstore::GraphNs) -> Result<Namespaced, sea_orm::DbErr>;
+    /// 3  two stores (default + prefixed) in one db retract without cross-talk (Epic 3).
+    async fn two_stores_independent(&self, proof: &Namespaced) -> Independent;
+    /// frontier: does per-tuple reconcile beat per-rel on the split shape? the real lever.
+    fn per_tuple_unlock_evidence(&self) -> Evidence;
 }
-// ─── end 2026-07-22 GraphStore plan trait ───
+// ─── end 2026-07-22 GraphStore plan ───
 
 // =============================================================================
 // Substrate — NOT a graph-parity family. Documented here so we keep our mind.

@@ -614,17 +614,76 @@ pub use cascade::{key, KEY_STRIDE};
 // UNDER attach. The RelStore API + the measure harness stay fixed; only the
 // table set flips. See src/tasks.rs `GraphStorePlan` for the inference chain.
 // ─────────────────────────────────────────────────────────────────────────────
-/// Which table set [`RelStore::attach_with`] stamps. Nothing in the RelStore API
-/// depends on it; it selects the on-disk shape the storage measurement weighs.
+/// Which table set [`RelStore::attach_with`] stamps. EPIC-1 MEASUREMENT KNOB ONLY:
+/// `Split` is the live shape; `Collapsed` was the measured-and-REJECTED alternative
+/// (+4% at scale; see `measure::measure_storage_scaled`). Retires once the engine
+/// threads to [`GraphNs`] (Epic 2); kept now so the frozen collapse measurement
+/// still compiles.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Layout {
-    /// Two schemas: cx_row/cx_dep (cascade) + rx_memo/rx_dep (reconcile). The
-    /// live shape since the lab fold; the on-disk status quo.
+    /// cx_row/cx_dep (cascade) + rx_memo/rx_dep (reconcile). The live shape; the
+    /// only shape that ships.
     Split,
-    /// ONE node table g_node carrying the UNION of value columns (weight for the
-    /// Z-set plane; digest/changed_at/verified_at for the digest plane) + one
-    /// g_edge(src,dst) edge table. The semiring difference is COLUMNS, not tables.
+    /// g_node (every plane's value column) + g_edge. Measured +4% over Split at
+    /// every scale that matters -> rejected. Lives only in the storage measurement.
     Collapsed,
+}
+
+/// The namespace for one graph store: every persistent table, index, and TEMP
+/// working-table name, built from a prefix. `GraphNs::default()` (empty prefix) is
+/// the live `cx_`/`rx_` set; `GraphNs::new("b_")` is an independent store in the
+/// same db.
+///
+/// PREFIX, not schema-qualify, is the namespace mechanism: SQLite TEMP working
+/// tables live in `temp.` and CANNOT be qualified to an ATTACH'd schema, so prefix
+/// is the only namespace that covers the working set. Declared here; Epic 2
+/// (tasks.rs `GraphStorePlan`) threads it through cascade/reconcile/reach, after
+/// which `Layout` retires.
+#[derive(Clone, Debug)]
+pub struct GraphNs {
+    pub row: String,          // {p}cx_row    — cascade Z-set nodes
+    pub dep: String,          // {p}cx_dep    — cascade edges
+    pub memo: String,         // {p}rx_memo   — reconcile digests
+    pub rdep: String,         // {p}rx_dep    — reconcile edges
+    pub ix_dep_child: String, // {p}ix_cx_dep_child — reverse-traversal index
+    pub ix_rdep_read: String, // {p}ix_rx_read
+    pub frontier: String,     // TEMP working set ({p}cx_frontier, ...)
+    pub next: String,
+    pub hits: String,
+    pub cone: String,
+    pub scc_scope: String,
+    pub scc_frontier: String,
+    pub scc_next: String,
+    pub scc_live: String,
+}
+
+impl GraphNs {
+    /// `prefix` is prepended verbatim to every base name; pass `"b_"` for a
+    /// namespace, `""` for the live default (include any separator yourself).
+    pub fn new(prefix: &str) -> Self {
+        Self {
+            row: format!("{prefix}cx_row"),
+            dep: format!("{prefix}cx_dep"),
+            memo: format!("{prefix}rx_memo"),
+            rdep: format!("{prefix}rx_dep"),
+            ix_dep_child: format!("{prefix}ix_cx_dep_child"),
+            ix_rdep_read: format!("{prefix}ix_rx_read"),
+            frontier: format!("{prefix}cx_frontier"),
+            next: format!("{prefix}cx_next"),
+            hits: format!("{prefix}cx_hits"),
+            cone: format!("{prefix}cx_cone"),
+            scc_scope: format!("{prefix}cx_scc_scope"),
+            scc_frontier: format!("{prefix}cx_scc_frontier"),
+            scc_next: format!("{prefix}cx_scc_next"),
+            scc_live: format!("{prefix}cx_scc_live"),
+        }
+    }
+}
+
+impl Default for GraphNs {
+    fn default() -> Self {
+        Self::new("")
+    }
 }
 
 /// Stamp the node+edge DDL for `layout` onto `db` (pragmas first).
