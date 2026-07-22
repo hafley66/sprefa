@@ -32,6 +32,12 @@ libc = "0.2"
 # it through the ordinary lib build, which cannot see dev-dependencies.
 differential-dataflow = "0.25"
 timely = "0.31"
+
+# The one measurement path: plain tracing. Spans = which code ran + timing,
+# events = metrics (rss/disk/stmt count). Collected by src/trace.rs. No dlsym,
+# no sqlite3-CLI shell-out.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # The Feldera engine: the third Z-set/IVM implementation. OPTIONAL + feature-gated
 # because dbsp 0.323 triggers a rustc ICE on the repo's default nightly (its heavy
 # generics crash the next-trait-solver). Gating it keeps `cargo test` working on
