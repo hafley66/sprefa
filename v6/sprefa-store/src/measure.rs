@@ -16,7 +16,9 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use sea_orm::{ConnectOptions, ConnectionTrait, Database, DbErr};
+use libsqlite3_sys as ffi;
+use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbErr};
+use std::ffi::{c_int, c_void, CStr};
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id};
 use tracing::{Event, Subscriber};
@@ -86,9 +88,23 @@ struct SpanState {
     fields: BTreeMap<String, String>,
 }
 
-struct CollectLayer {
-    out: Arc<Mutex<Vec<Record>>>,
+// One PROCESS-GLOBAL collecting subscriber. Instrumented code runs on more than
+// one thread — the block_on thread emits rss/disk/spans, but sqlx runs SQLite on
+// its own worker thread where the sqlite3 PROFILE callback fires. A thread-local
+// subscriber would miss that trace, so the subscriber is global (captures every
+// thread) and `collect` swaps a fresh sink in for the duration of one workload,
+// serialized by a lock so concurrent runs never cross-contaminate.
+static COLLECT_SINK: Mutex<Option<Arc<Mutex<Vec<Record>>>>> = Mutex::new(None);
+static COLLECT_LOCK: Mutex<()> = Mutex::new(());
+static INSTALL: std::sync::Once = std::sync::Once::new();
+
+fn push_record(record: Record) {
+    if let Some(sink) = COLLECT_SINK.lock().unwrap().as_ref() {
+        sink.lock().unwrap().push(record);
+    }
 }
+
+struct CollectLayer;
 
 impl<S> Layer<S> for CollectLayer
 where
@@ -108,7 +124,7 @@ where
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
         let mut visitor = FieldVisitor::default();
         event.record(&mut visitor);
-        self.out.lock().unwrap().push(Record {
+        push_record(Record {
             kind: Kind::Event,
             target: event.metadata().target().to_string(),
             name: event.metadata().name().to_string(),
@@ -124,7 +140,7 @@ where
                 Some(state) => (state.started.elapsed().as_nanos() as u64, state.fields.clone()),
                 None => (0, BTreeMap::new()),
             };
-            self.out.lock().unwrap().push(Record {
+            push_record(Record {
                 kind: Kind::Span,
                 target: span.metadata().target().to_string(),
                 name: span.name().to_string(),
@@ -135,16 +151,22 @@ where
     }
 }
 
-/// Run `body` under a collecting subscriber installed as the thread-local
-/// default; return its result plus every span/event emitted on this thread.
-/// Scoped via `with_default`, so it composes and runs repeatedly. Async bodies
-/// must run on a current-thread runtime (see [`run_cell`]) so every `.await`
-/// stays on this thread and is captured.
+/// Run `body` under the global collecting subscriber and return its result plus
+/// every span/event emitted on ANY thread during it (including SQLite PROFILE
+/// events from sqlx's worker thread). Serialized: concurrent calls run one at a
+/// time so their records never mix.
 pub fn collect<T>(body: impl FnOnce() -> T) -> (T, Vec<Record>) {
-    let out = Arc::new(Mutex::new(Vec::new()));
-    let subscriber = tracing_subscriber::registry().with(CollectLayer { out: out.clone() });
-    let result = tracing::subscriber::with_default(subscriber, body);
-    let records = std::mem::take(&mut *out.lock().unwrap());
+    INSTALL.call_once(|| {
+        let _ = tracing::subscriber::set_global_default(
+            tracing_subscriber::registry().with(CollectLayer),
+        );
+    });
+    let _run = COLLECT_LOCK.lock().unwrap();
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    *COLLECT_SINK.lock().unwrap() = Some(sink.clone());
+    let result = body();
+    *COLLECT_SINK.lock().unwrap() = None;
+    let records = std::mem::take(&mut *sink.lock().unwrap());
     (result, records)
 }
 
@@ -192,6 +214,84 @@ fn diskio() -> (i64, i64) {
         }
     }
     (0, 0)
+}
+
+// ============================ SQLite x-ray ============================
+// SQLite's OWN tracing, reached through sqlx's raw handle. sqlite3_trace_v2 in
+// PROFILE mode fires per finished statement with the expanded SQL + nanosecond
+// runtime; sqlite3_db_status reads page-cache hit/miss. Both emit `target:
+// "sqlite"` events, collected by `collect`. This is how you SEE an N+1: N
+// identical statements show up in the trace, and `stmt` count spikes.
+
+/// PROFILE callback: `int(unsigned, void*, void* stmt, void* nanos)`.
+unsafe extern "C" fn profile_callback(
+    _mask: u32,
+    _ctx: *mut c_void,
+    stmt: *mut c_void,
+    elapsed: *mut c_void,
+) -> c_int {
+    let nanos = if elapsed.is_null() {
+        0
+    } else {
+        *(elapsed as *const i64)
+    };
+    let expanded = ffi::sqlite3_expanded_sql(stmt as *mut ffi::sqlite3_stmt);
+    let sql = if expanded.is_null() {
+        String::from("<no sql>")
+    } else {
+        let text = CStr::from_ptr(expanded).to_string_lossy().into_owned();
+        ffi::sqlite3_free(expanded as *mut c_void);
+        text
+    };
+    tracing::info!(target: "sqlite", sql = %sql, elapsed_ns = nanos, "statement");
+    0
+}
+
+/// Install the PROFILE trace on the store's pinned SQLite connection so every
+/// executed statement emits a `target: "sqlite"` event. Handle chain (all public
+/// in sqlx 0.9 / sea-orm 2.0): `get_sqlite_connection_pool -> acquire ->
+/// lock_handle -> as_raw_handle`. Store pins one connection (min=max=1), so the
+/// callback persists for its life.
+pub async fn install_sqlite_trace(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let pool = db.get_sqlite_connection_pool();
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(|error| DbErr::Custom(error.to_string()))?;
+    let mut locked = conn
+        .lock_handle()
+        .await
+        .map_err(|error| DbErr::Custom(error.to_string()))?;
+    let handle = locked.as_raw_handle().as_ptr() as *mut ffi::sqlite3;
+    unsafe {
+        ffi::sqlite3_trace_v2(
+            handle,
+            ffi::SQLITE_TRACE_PROFILE,
+            Some(profile_callback),
+            std::ptr::null_mut(),
+        );
+    }
+    Ok(())
+}
+
+/// Read cumulative page-cache hit/miss for the connection via sqlite3_db_status.
+pub async fn sqlite_cache_stats(db: &DatabaseConnection) -> Result<(i64, i64), DbErr> {
+    let pool = db.get_sqlite_connection_pool();
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(|error| DbErr::Custom(error.to_string()))?;
+    let mut locked = conn
+        .lock_handle()
+        .await
+        .map_err(|error| DbErr::Custom(error.to_string()))?;
+    let handle = locked.as_raw_handle().as_ptr() as *mut ffi::sqlite3;
+    let (mut hit, mut miss, mut high_water) = (0i32, 0i32, 0i32);
+    unsafe {
+        ffi::sqlite3_db_status(handle, ffi::SQLITE_DBSTATUS_CACHE_HIT, &mut hit, &mut high_water, 0);
+        ffi::sqlite3_db_status(handle, ffi::SQLITE_DBSTATUS_CACHE_MISS, &mut miss, &mut high_water, 0);
+    }
+    Ok((hit as i64, miss as i64))
 }
 
 /// Emit one metric sample as a tracing event. Fields land in the collected
@@ -282,6 +382,8 @@ where
             db.execute_unprepared(&format!("PRAGMA cache_size=-{cache_size_kib};"))
                 .await
                 .unwrap();
+            // Every statement from here on emits a `target: "sqlite"` trace event.
+            install_sqlite_trace(&db).await.ok();
 
             let started = Instant::now();
             let build_result = build(&store).await;
@@ -294,6 +396,9 @@ where
             let op_started = Instant::now();
             let op_result = op(&store).await;
             sample("op", op_started.elapsed().as_secs_f64() * 1000.0);
+            if let Ok((cache_hit, cache_miss)) = sqlite_cache_stats(&db).await {
+                tracing::info!(target: "sqlite", phase = "op", cache_hit, cache_miss, "cache");
+            }
 
             let ok = build_result.is_ok() && op_result.is_ok();
             let mut answer = op_result.unwrap_or_default();
@@ -445,6 +550,46 @@ mod harness_tests {
         let phase = phase_sample("op", &records);
         assert_eq!(phase.t_ms, 12.5);
         assert!(phase.rss_kb > 0, "RSS should be a real positive number");
+    }
+
+    #[test]
+    fn sqlite_trace_emits_the_real_sql_per_statement() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "sqlite_trace_test_{}.sqlite",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let connect = path.clone();
+        let (_out, records) = collect(|| {
+            runtime.block_on(async move {
+                let mut options =
+                    ConnectOptions::new(format!("sqlite://{}?mode=rwc", connect.display()));
+                options.max_connections(1).min_connections(1);
+                let db = Database::connect(options).await.unwrap();
+                install_sqlite_trace(&db).await.unwrap();
+                db.execute_unprepared("CREATE TABLE t(x INTEGER)").await.unwrap();
+                db.execute_unprepared("INSERT INTO t VALUES (1),(2),(3)").await.unwrap();
+                let _ = db.execute_unprepared("SELECT x FROM t").await;
+            })
+        });
+        let _ = std::fs::remove_file(&path);
+
+        let sqlite_events: Vec<_> = records.iter().filter(|r| r.target == "sqlite").collect();
+        assert!(
+            !sqlite_events.is_empty(),
+            "expected SQLite PROFILE trace events, got none"
+        );
+        assert!(
+            sqlite_events
+                .iter()
+                .any(|r| r.fields.get("sql").is_some_and(|sql| sql.contains("INSERT INTO t"))),
+            "expected the real INSERT statement text in the trace, got: {:?}",
+            sqlite_events.iter().map(|r| &r.fields).collect::<Vec<_>>()
+        );
     }
 }
 

@@ -42,6 +42,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # run_cell (the perf harness) owns a current-thread runtime to drive the async
 # store under the tracing collector. Already present transitively via sqlx.
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+
+# SQLite's own tracing, reached through sqlx's raw handle: sqlite3_trace_v2
+# (per-statement SQL + nanosecond timing) and sqlite3_db_status (cache hit/miss),
+# emitted as `target: "sqlite"` events. Pinned to the version sqlx links so the
+# raw `*mut sqlite3` handle type unifies.
+libsqlite3-sys = "0.37"
 # The Feldera engine: the third Z-set/IVM implementation. OPTIONAL + feature-gated
 # because dbsp 0.323 triggers a rustc ICE on the repo's default nightly (its heavy
 # generics crash the next-trait-solver). Gating it keeps `cargo test` working on
@@ -53,8 +59,3 @@ dbsp = { version = "0.323", optional = true }
 with-dbsp = ["dep:dbsp"]
 
 [dev-dependencies]
-# Direct handle on the SAME bundled SQLite sqlx links (version pinned to the one
-# in Cargo.lock) so the examples can read sqlite3_memory_used/_highwater — the C
-# allocator the Rust memcap #[global_allocator] CANNOT see. Closes the "is SQLite
-# secretly using RAM while we say Rust is fine" hole. Features union with sqlx's.
-libsqlite3-sys = "0.37"
