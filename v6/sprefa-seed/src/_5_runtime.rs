@@ -31,10 +31,11 @@ pub struct Read {
     pub digest: u64,     // value-at-read; re-run iff the live digest differs
 }
 
+/// Read targets are STREAMS (things that change), never interned strings (values
+/// that don't). A file stream, a relation stream — both are a StreamId underneath.
 pub enum ReadTarget {
     File(FileId),
     Rel(RelId),
-    Sym(SymId),
 }
 
 /// Forward authoring (React hooks, Solid signals, Salsa queries) — NOT backward
@@ -46,9 +47,9 @@ pub enum ReadTarget {
 /// next read is the monadic case (can't flatten) — so PREFER applicative. This is
 /// the fine-grained (file/row) DYNAMIC twin of analyze's coarse (rel) STATIC graph.
 pub trait Hooks {
-    fn use_file(&mut self, path: SymId) -> FileId;   // pushes Read{File(..)}
-    fn use_rel(&mut self, rel: RelId);               // pushes Read{Rel(..)}; returns rows in the real crate
-    fn use_sym(&mut self, sym: SymId) -> SymId;      // pushes Read{Sym(..)}
+    fn read_file(&mut self, path: SymId) -> FileId;  // tracks a read of this file
+    fn read_rel(&mut self, rel: RelId);              // tracks a read of this rel (rows in the real crate)
+    // interned strings are VALUES not streams -> intern(&str), NOT a tracked read.
     // the collected dep-set drives invalidation AND feeds _4_analyze's RefGraph.
 }
 

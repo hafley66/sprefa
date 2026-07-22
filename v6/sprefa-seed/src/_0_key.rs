@@ -12,7 +12,7 @@ macro_rules! dense_id {
 }
 
 dense_id!(
-    SymId,   // interned string / any dl name (Souffle-style record interning)
+    SymId,   // interned string / any dl name (Souffle-style record interning)  [rename pending]
     RepoId, RevId, FileId, LocId,   // the normalized coordinate chain
     RelId, ColId, VarId, FieldId,   // program identities
 );
