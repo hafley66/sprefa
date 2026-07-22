@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use libsqlite3_sys as ffi;
-use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbErr};
+use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbErr, TransactionTrait};
 use std::ffi::{c_int, c_void, CStr};
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id};
@@ -698,6 +698,118 @@ async fn storage_bytes(layout: Layout, corpus: &benchgraph::MultiGraph) -> i64 {
     bytes
 }
 
+// ── scaled variant ──────────────────────────────────────────────────────────
+// measure_storage above holds the whole corpus in Rust (fine at lab size, a RAM
+// crime at multi-GB scale — the v6 heap-≈0 law). The scaled variant STREAMS the
+// benchgraph layered-DAG shape (identical node + edge counts to gen_multi(layers,
+// width)) straight into the tables chunked under one txn per layout, so nothing
+// resident exceeds a chunk. Keys are the node's GLOBAL id, not tag*STRIDE+local:
+// storage bytes are key-VALUE-independent (a varint is a varint either way), and
+// the multi-relation polymorphic keying is a correctness-test concern, not a
+// storage one. The Split insert SQL is byte-identical to cascade::insert_rows.
+
+/// The parents of global node `g` in the layered DAG. Roots (0,1) have none;
+/// layer-0 nodes parent root 0 (and root 1 every third); deeper nodes parent two
+/// nodes in the prior layer. Pure function of `g` + `width` — no resident
+/// structure needed (the total layer count is implied by `g`'s range).
+pub fn parents_of(g: i64, width: usize) -> Vec<i64> {
+    if g < 2 {
+        return Vec::new();
+    }
+    let layer = ((g - 2) / width as i64) as usize;
+    let w = ((g - 2) % width as i64) as usize;
+    if layer == 0 {
+        if w % 3 == 0 { vec![0, 1] } else { vec![0] }
+    } else {
+        let prev = 2 + (layer - 1) * width;
+        vec![(prev + w) as i64, (prev + (w + 1) % width) as i64]
+    }
+}
+
+/// Streaming split-vs-collapsed storage measurement at `(layers, width)` scale.
+/// Same corpus shape as `measure_storage(gen_multi(layers, width))`, but the Rust
+/// heap stays near zero. This is the form for multi-GB runs.
+pub async fn measure_storage_scaled(layers: usize, width: usize) -> StorageDelta {
+    let split_bytes = storage_bytes_streaming(Layout::Split, layers, width).await;
+    let collapsed_bytes = storage_bytes_streaming(Layout::Collapsed, layers, width).await;
+    StorageDelta { split_bytes, collapsed_bytes }
+}
+
+async fn flush_nodes(db: &impl ConnectionTrait, buf: &[(i64, i64)], layout: Layout) {
+    if buf.is_empty() {
+        return;
+    }
+    let table = match layout {
+        Layout::Split => "cx_row",
+        Layout::Collapsed => "g_node",
+    };
+    let vals: Vec<String> = buf.iter().map(|(k, w)| format!("({k},{w})")).collect();
+    db.execute_unprepared(&format!("INSERT INTO {table}(key,weight) VALUES {}", vals.join(",")))
+        .await
+        .unwrap();
+}
+
+async fn flush_edges(db: &impl ConnectionTrait, buf: &[(i64, i64)], layout: Layout) {
+    if buf.is_empty() {
+        return;
+    }
+    let (table, c1, c2) = match layout {
+        Layout::Split => ("cx_dep", "parent_key", "child_key"),
+        Layout::Collapsed => ("g_edge", "src", "dst"),
+    };
+    let vals: Vec<String> = buf.iter().map(|(a, b)| format!("({a},{b})")).collect();
+    db.execute_unprepared(&format!("INSERT INTO {table}({c1},{c2}) VALUES {}", vals.join(",")))
+        .await
+        .unwrap();
+}
+
+async fn storage_bytes_streaming(layout: Layout, layers: usize, width: usize) -> i64 {
+    let n: i64 = 2 + (layers * width) as i64;
+    let path = std::env::temp_dir().join(format!(
+        "sprefa_storage_scaled_{}_{:x}.sqlite",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
+    let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
+    opt.max_connections(1).min_connections(1);
+    let db = Database::connect(opt).await.unwrap();
+    stamp(&db, layout).await.unwrap();
+
+    const CHUNK: usize = 4000;
+    let txn = db.begin().await.unwrap();
+    let mut node_buf: Vec<(i64, i64)> = Vec::with_capacity(CHUNK);
+    let mut edge_buf: Vec<(i64, i64)> = Vec::with_capacity(CHUNK);
+    for g in 0..n {
+        let parents = parents_of(g, width);
+        let weight = if parents.is_empty() { 1 } else { parents.len() as i64 };
+        node_buf.push((g, weight));
+        for parent in parents {
+            edge_buf.push((parent, g));
+        }
+        if node_buf.len() >= CHUNK || edge_buf.len() >= CHUNK {
+            flush_nodes(&txn, &node_buf, layout).await;
+            flush_edges(&txn, &edge_buf, layout).await;
+            node_buf.clear();
+            edge_buf.clear();
+        }
+    }
+    flush_nodes(&txn, &node_buf, layout).await;
+    flush_edges(&txn, &edge_buf, layout).await;
+    txn.commit().await.unwrap();
+
+    db.execute_unprepared("PRAGMA wal_checkpoint(TRUNCATE)").await.ok();
+    let bytes = std::fs::metadata(&path).map(|m| m.len() as i64).unwrap_or(0);
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
+    let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
+    bytes
+}
+
 #[cfg(test)]
 mod storage_tests {
     use super::*;
@@ -708,6 +820,30 @@ mod storage_tests {
         let delta = measure_storage(&g).await;
         assert!(delta.split_bytes > 0, "split bytes should be positive: {delta:?}");
         assert!(delta.collapsed_bytes > 0, "collapsed bytes should be positive: {delta:?}");
+    }
+
+    // The streaming generator must reproduce gen_multi's SHAPE exactly — same node
+    // and edge counts. (Byte-equality with the resident variant is NOT asserted:
+    // the streamer keys by monotonic global id while gen_multi keys jump across the
+    // tag*STRIDE namespaces, and b-tree fill differs by key order. Both layouts in
+    // the streamer use identical keys, so split-vs-collapsed stays comparable.)
+    #[test]
+    fn streaming_shape_matches_gen_multi() {
+        let (layers, width) = (7, 5);
+        let g = benchgraph::gen_multi(layers, width);
+        let n = 2 + layers * width;
+        assert_eq!(g.rows.len(), n, "node count differs");
+        let streamed_edges: usize = (0..n as i64)
+            .map(|gid| parents_of(gid, width).len())
+            .sum();
+        assert_eq!(g.edges.len(), streamed_edges, "edge count differs");
+    }
+
+    #[tokio::test]
+    async fn scaled_runs_at_modest_size() {
+        let delta = measure_storage_scaled(20, 30).await;
+        assert!(delta.split_bytes > 0, "scaled split bytes should be positive: {delta:?}");
+        assert!(delta.collapsed_bytes > 0, "scaled collapsed bytes should be positive: {delta:?}");
     }
 }
 
