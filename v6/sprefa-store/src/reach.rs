@@ -228,13 +228,81 @@ pub async fn build_condensed(db: &DatabaseConnection) -> Result<Condensed, DbErr
     })
 }
 
-/// Reachable ordered-pair count; matches scc::count_pairs. i128 (exceeds i64 at scale).
+/// Reachable ordered-pair count; matches scc::count_pairs byte-for-byte. Counts over
+/// the CONDENSATION (ncomp components, bitset reach) exactly like v5's scc.rs:103 —
+/// it does NOT materialize the Θ(V²) node-pair table. The answer can be Θ(V²) but is
+/// COMPUTED in ncomp²/64 words in Rust; the on-disk graph stays on disk, only the
+/// small condensed structure comes to Rust. (SCC labeling inside build_condensed is
+/// the remaining lever — see INSIGHTS §3.)
 pub async fn count_pairs(db: &DatabaseConnection) -> Result<i128, DbErr> {
-    let row = db
-        .query_one_raw(statement(format!("{REACH_CTE} SELECT count(*) FROM reach")))
-        .await?;
-    Ok(row
-        .map(|result| result.try_get_by_index::<i64>(0))
-        .transpose()?
-        .unwrap_or(0) as i128)
+    let cond = build_condensed(db).await?;
+
+    // dense-index the min-member component reps to 0..ncomp
+    let reprs: BTreeSet<i64> = cond.size.iter().map(|&(repr, _)| repr).collect();
+    let idx: BTreeMap<i64, usize> = reprs.iter().enumerate().map(|(i, &r)| (r, i)).collect();
+    let ncomp = reprs.len();
+    if ncomp == 0 {
+        return Ok(0);
+    }
+    let mut size = vec![0u128; ncomp];
+    for &(repr, n) in &cond.size {
+        size[idx[&repr]] = n as u128;
+    }
+    let mut cyclic = vec![false; ncomp];
+    for &(repr, is_cyclic) in &cond.cyclic {
+        cyclic[idx[&repr]] = is_cyclic;
+    }
+    let mut cadj = vec![Vec::new(); ncomp];
+    for &(parent, child) in &cond.cadj {
+        cadj[idx[&parent]].push(idx[&child]);
+    }
+
+    // v5 scc.rs:103 verbatim in ncomp space: topo order, bitset-propagate reach,
+    // total = Σ cyclic·size² + Σ size·(reachable component sizes).
+    let mut indeg = vec![0u32; ncomp];
+    for cc in 0..ncomp {
+        for &s in &cadj[cc] {
+            indeg[s] += 1;
+        }
+    }
+    let mut topo: Vec<usize> = (0..ncomp).filter(|&x| indeg[x] == 0).collect();
+    let mut qi = 0;
+    while qi < topo.len() {
+        let x = topo[qi];
+        qi += 1;
+        for &s in &cadj[x] {
+            indeg[s] -= 1;
+            if indeg[s] == 0 {
+                topo.push(s);
+            }
+        }
+    }
+    let words = (ncomp + 63) / 64;
+    let mut reach = vec![0u64; ncomp * words];
+    for &cc in topo.iter().rev() {
+        for si in 0..cadj[cc].len() {
+            let s = cadj[cc][si];
+            reach[cc * words + s / 64] |= 1u64 << (s % 64);
+            for w in 0..words {
+                reach[cc * words + w] |= reach[s * words + w];
+            }
+        }
+    }
+    let mut total: i128 = 0;
+    for cc in 0..ncomp {
+        if cyclic[cc] {
+            total += (size[cc] * size[cc]) as i128;
+        }
+        let mut wsum: u128 = 0;
+        for w in 0..words {
+            let mut bits = reach[cc * words + w];
+            while bits != 0 {
+                let b = w * 64 + bits.trailing_zeros() as usize;
+                wsum += size[b];
+                bits &= bits - 1;
+            }
+        }
+        total += (size[cc] * wsum) as i128;
+    }
+    Ok(total)
 }
