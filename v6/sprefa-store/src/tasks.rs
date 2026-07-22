@@ -168,7 +168,16 @@ pub struct Evidence;                       // frontier : a measurement that woul
 //                     cascade+reconcile create_schema pair, object-for-object (+ 6 names).
 //   1.2 collapse   -> lib.rs relstore tests: g_node/g_edge round-trip, PK dedup.
 //   measure        -> crate::measure::measure_storage(corpus) -> StorageDelta
-//                     (`just storage` prints it on a 40x40 multi-relation corpus).
+//                     (`just storage` prints it on a 40x40 multi-relation corpus);
+//                     scaled variant measure_storage_scaled(layers,width) streams
+//                     multi-GB with Rust heap ~0.
+//   RESULT (scaled): collapsed/split = 1.040 at 5.66 GB (82M nodes / 164M edges,
+//                     +234 MB), and ~1.046 stable from 300K through 2M nodes.
+//                     Collapsed is +4% at EVERY scale that matters — the small-
+//                     corpus "collapsed wins" was fixed table-overhead. Storage
+//                     does NOT justify the Epic 2 retarget; collapse's case rests
+//                     on the per-tuple-reconcile granularity unlock (frontier:
+//                     per_tuple_unlock_evidence), not bytes.
 //   g_edge columns are src/dst, not the plan's from/to — `from` is a SQL reserved word
 //   and Epic 2 retargets every cascade statement onto these names.
 
