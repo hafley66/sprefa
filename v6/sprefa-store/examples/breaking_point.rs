@@ -65,6 +65,12 @@ fn child_dd(width: usize) {
 
     use std::sync::atomic::{AtomicUsize, Ordering};
     static SURV: AtomicUsize = AtomicUsize::new(0);
+    static LIVE_HELD: AtomicUsize = AtomicUsize::new(0);
+    // Free the setup staging BEFORE running dd, so the live-heap read isolates dd's
+    // OWN resident footprint (arrangements), not the edge_list Vec we built it from.
+    let edges = std::sync::Arc::new(edges);
+    let dd_edges = edges.clone();
+    let dd_roots = roots.clone();
     timely::execute_directly(move |worker| {
         let mut probe = ProbeHandle::new();
         let (mut edges_in, mut roots_in) = worker.dataflow(|scope| {
@@ -80,15 +86,24 @@ fn child_dd(width: usize) {
             reach.consolidate().inspect(|(_n, _t, diff)| { if *diff > 0 { SURV.fetch_add(1, Ordering::Relaxed); } }).probe_with(&mut probe);
             (edges_in, roots_in)
         });
-        for (p, c) in &edges { edges_in.insert((*p, *c)); }
-        for r in &roots { roots_in.insert(*r); }
+        for (p, c) in dd_edges.iter() { edges_in.insert((*p, *c)); }
+        for r in dd_roots.iter() { roots_in.insert(*r); }
+        // dd has copied the input into its own batches; free the staging Arcs so
+        // dd_live reflects dd's ARRANGEMENTS, not the input edge Vec we fed it.
+        drop(dd_edges);
+        drop(dd_roots);
         edges_in.advance_to(1); roots_in.advance_to(1); edges_in.flush(); roots_in.flush();
         worker.step_while(|| probe.less_than(edges_in.time()));
         roots_in.remove(cut);
         edges_in.advance_to(2); roots_in.advance_to(2); edges_in.flush(); roots_in.flush();
         worker.step_while(|| probe.less_than(roots_in.time()));
+        // Reach is now fully maintained: sample the Rust live heap (dd's arrangements
+        // + traces held resident). This is the ENGINE number, comparable to the
+        // store's rust_live-after-retract — both exclude freed setup staging.
+        LIVE_HELD.store(memcap::live_bytes(), Ordering::Relaxed);
     });
-    println!("OK width={width} nodes={n} edges={n_edges} peak_rss={:.0}MB", peak_rss_mb());
+    let dd_live_mb = LIVE_HELD.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0);
+    println!("OK width={width} nodes={n} edges={n_edges} dd_live={dd_live_mb:.0}MB peak_rss={:.0}MB", peak_rss_mb());
 }
 
 // ---- child: store retract_dred (ON DISK) — expect RAM bounded, time climbs ----
@@ -107,13 +122,23 @@ async fn child_dred(width: usize) {
     let store = RelStore::attach(Database::connect(opt).await.unwrap()).await.unwrap();
     store.add_rows(&rows).await.unwrap();
     store.add_deps(&deps).await.unwrap();
-    // drop the Rust-side staging: the measured retract works against the db alone.
+    // drop ALL Rust-side staging (the converted Vecs AND the whole generated graph)
+    // so the measured retract works against the db alone and dred_live reflects the
+    // RETRACT's heap, not the resident corpus. `g` was held only for `g.seed`.
+    let seed_pair = (g.seed.0 as i64, g.seed.1);
     drop(rows);
     drop(deps);
+    drop(g);
 
     let t = Instant::now();
-    let rounds = store.retract_dred(&[(g.seed.0 as i64, g.seed.1)]).await.unwrap();
+    let rounds = store.retract_dred(&[seed_pair]).await.unwrap();
     let ms = t.elapsed().as_secs_f64() * 1e3;
+    // HONEST split: rust_live is the Rust heap the memcap gun actually caps, read
+    // right after the retract (staging already dropped). This isolates the RETRACT's
+    // memory from peak_rss, which is a monotonic high-water polluted by the O(graph)
+    // setup staging (the Vecs + gen's Vec<Vec<i64>> built before the inserts). The
+    // retract runs on disk, so rust_live stays small while peak_rss tracks setup.
+    let rust_live_mb = memcap::live_bytes() as f64 / (1024.0 * 1024.0);
     let survivors = store.alive().await.unwrap();
 
     store.conn().execute_unprepared("PRAGMA wal_checkpoint(TRUNCATE);").await.ok();
@@ -121,7 +146,7 @@ async fn child_dred(width: usize) {
     let db_mb = db_bytes as f64 / (1024.0 * 1024.0);
 
     println!(
-        "OK width={width} nodes={n} edges={n_edges} killed={} rounds={rounds} retract_ms={ms:.0} peak_rss={:.0}MB db={db_mb:.0}MB",
+        "OK width={width} nodes={n} edges={n_edges} killed={} rounds={rounds} retract_ms={ms:.0} dred_live={rust_live_mb:.0}MB peak_rss={:.0}MB db={db_mb:.0}MB",
         n as i64 - survivors, peak_rss_mb()
     );
     drop(store);
