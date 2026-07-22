@@ -10,38 +10,15 @@
 |---|--:|---|
 | [.agents/skills/v6-deps/SKILL.md](.agents/skills/v6-deps/SKILL.md) | 145 | V6 dependency dossier (researched 2026-07-19) |
 | [.agents/skills/v6-plan/SKILL.md](.agents/skills/v6-plan/SKILL.md) | 85 | V6 primed context |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | 165 | v6 architecture — every graph algorithm, and why |
-| [DECISIONS.md](DECISIONS.md) | 72 | v6 pinned decisions — STOP re-deriving these |
-| [MAP-SOURCES.md](MAP-SOURCES.md) | 39 | MAP backlinks — source sessions for major v6 decisions |
+| [AGENTS.md](AGENTS.md) | 75 | v6 — AGENTS.md (start here; stay out of everything else) |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | 162 | v6 architecture — every graph algorithm, and why |
+| [DECISIONS.md](DECISIONS.md) | 73 | v6 pinned decisions — STOP re-deriving these |
 | [MAP.md](MAP.md) | 245 | v6 — the living map (algorithms · unification · exploration · DONE) |
 | [README.md](README.md) | 103 | V6 |
 | [findings/HYPOTHESES.md](findings/HYPOTHESES.md) | 27 | v6 HYPOTHESES — the idea ledger (don't lose a good one) |
 | [findings/INSIGHTS.md](findings/INSIGHTS.md) | 175 | v6 INSIGHTS — SQL · Rust · Graph (one living ledger) |
 | [findings/PINS.md](findings/PINS.md) | 6 | Pins |
-| [findings/SELF-RESEARCH.md](findings/SELF-RESEARCH.md) | 62 | SELF-RESEARCH — we mined our own conversation history (READ FIRST, then don't redo) |
-| [findings/SESSION-DIGEST.md](findings/SESSION-DIGEST.md) | 366 | Session digest — the reactive/incremental/graph-algorithm lineage |
-| [findings/parts/00.md](findings/parts/00.md) | 41 |  |
-| [findings/parts/01.md](findings/parts/01.md) | 47 |  |
-| [findings/parts/02.md](findings/parts/02.md) | 53 |  |
-| [findings/parts/03.md](findings/parts/03.md) | 33 |  |
-| [findings/parts/04.md](findings/parts/04.md) | 55 |  |
-| [findings/parts/05.md](findings/parts/05.md) | 29 |  |
-| [findings/parts/06.md](findings/parts/06.md) | 64 |  |
-| [findings/parts/07.md](findings/parts/07.md) | 38 |  |
-| [findings/soft-delete-durable-scan.md](findings/soft-delete-durable-scan.md) | 115 | Soft-delete / tombstone scan — is weight>0 filtering in the counting cascade? |
-| [labs/AGENTS.md](labs/AGENTS.md) | 212 | v6/labs — AGENTS.md · the golden-data contract for every benchmark |
-| [labs/frp-lab/README.md](labs/frp-lab/README.md) | 212 | frp-lab — is "FRP the edge, batch the core" real, or just an assertion? |
-| [labs/labkit/CAPABILITY-MAP.md](labs/labkit/CAPABILITY-MAP.md) | 98 | sqlite vs dd/salsa — where it breaks, and what it can't do |
-| [labs/labkit/ENGINES.md](labs/labkit/ENGINES.md) | 155 | labkit — every engine, painfully clear (and where "sqlite dd" is) |
-| [labs/labkit/EXPERIMENT-G4V2-RESULT.md](labs/labkit/EXPERIMENT-G4V2-RESULT.md) | 21 |  |
-| [labs/labkit/EXPERIMENT-G4V2-UNIFY.md](labs/labkit/EXPERIMENT-G4V2-UNIFY.md) | 76 | G4v2 — port the EXISTING labkit onto sprefa-store + add a hermetic runner |
-| [labs/labkit/EXPERIMENT-G7-RESULT.md](labs/labkit/EXPERIMENT-G7-RESULT.md) | 37 | G7 wire result |
-| [labs/labkit/EXPERIMENT-G7-WIRE.md](labs/labkit/EXPERIMENT-G7-WIRE.md) | 51 | G7 — wire ALL 11 engines into the hermetic 0_unified matrix |
-| [labs/labkit/README.md](labs/labkit/README.md) | 102 | labkit — the golden harness (traitify every experiment) |
-| [labs/labkit/UNIFIED-REPORT.md](labs/labkit/UNIFIED-REPORT.md) | 25 | Unified G4v2 report |
-| [labs/labkit/WHY-DRED.md](labs/labkit/WHY-DRED.md) | 263 | Why DRed — from scratch |
-| [labs/reactor-lab/README.md](labs/reactor-lab/README.md) | 65 | reactor-lab — is salsa resident, and does it eat the RAM budget? |
-| [labs/temporal-lab/README.md](labs/temporal-lab/README.md) | 46 | temporal-lab — append-only bitemporal on SQLite + retraction, proven |
+| [findings/soft-delete-durable-scan.md](findings/soft-delete-durable-scan.md) | 116 | Soft-delete / tombstone scan — is weight>0 filtering in the counting cascade? |
 | [plans/2026-07-19-reactive-style-port.md](plans/2026-07-19-reactive-style-port.md) | 429 | Reactive style port — design doc |
 | [plans/2026-07-19-v6-crate-map.md](plans/2026-07-19-v6-crate-map.md) | 382 | V6 crate map — boundaries, the math, and the size budget |
 | [plans/2026-07-19-v6-daemon.md](plans/2026-07-19-v6-daemon.md) | 122 | V6 daemon — one process, every protocol, library-first |
@@ -55,12 +32,6 @@
 | [plans/2026-07-21-spine-orm.md](plans/2026-07-21-spine-orm.md) | 200 | V6 spine — the 6 tables, one ORM, hard boundaries |
 | [plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md](plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md) | 184 | v6 core: the lab arc — oracles, why, efficiency, measured Big-O + empirical ratios |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
-| [sprefa-store/EXPERIMENT-G1-RESULT.md](sprefa-store/EXPERIMENT-G1-RESULT.md) | 62 | Experiment G1 result |
-| [sprefa-store/EXPERIMENT-G5-RESULT.md](sprefa-store/EXPERIMENT-G5-RESULT.md) | 29 | G5 SCC result |
-| [sprefa-store/EXPERIMENT-G5-SCC.md](sprefa-store/EXPERIMENT-G5-SCC.md) | 74 | G5 — productionize the counting engine (cycle-correct SCC nested fixpoint) + drive its cost down |
-| [sprefa-store/EXPERIMENT-G6-FLOOR.md](sprefa-store/EXPERIMENT-G6-FLOOR.md) | 63 | G6 — drive retract_scc BELOW DRed (the perf floor) |
-| [sprefa-store/EXPERIMENT-G6-RESULT.md](sprefa-store/EXPERIMENT-G6-RESULT.md) | 28 | G6 result |
-| [sprefa-store/EXPERIMENTS.md](sprefa-store/EXPERIMENTS.md) | 172 | v6 cascade tuning log |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
 | [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 51 | Z-set / IVM head-to-head — feasibility lab |
@@ -91,6 +62,17 @@
 79:## Verification rails to honor when implementing
 ```
 
+### AGENTS.md
+```
+1:# v6 — AGENTS.md (start here; stay out of everything else)
+7:## just — run for info (`cd v6/sprefa-store`)
+20:## The one pattern (do not re-derive — DECISIONS.md is the pin)
+35:## Crate layout (5 src modules)
+40:## Commit format (every commit)
+49:## History — task → single-line insight (append, never rewrite)
+71:## Known gaps (drive these down)
+```
+
 ### ARCHITECTURE.md
 ```
 1:# v6 architecture — every graph algorithm, and why
@@ -98,8 +80,8 @@
 29:## One tick, two planes (this is the part you were missing)
 71:## The one algorithm under all three graphs
 119:## Why each algorithm, tied to the goal
-134:## How the labkit engines map to this (the running proof)
-153:## What ships vs what is a teacher
+134:## How the oracles map to this (the running proof)
+150:## What ships vs what is a teacher
 ```
 
 ### DECISIONS.md
@@ -107,19 +89,11 @@
 1:# v6 pinned decisions — STOP re-deriving these
 13:## THE UNIFICATION (the thesis, settled — do not re-argue it)
 34:## The retraction / recursion model (DECIDED)
-59:## How to re-find any past decision (the commands that work)
-62:# raw Claude Code transcripts (the real conversation, ranked by hit count):
-65:# then pull phrases without dumping the 500MB file:
-68:# session summaries + design decisions:
-71:# decision docs live in plans/ and v6/plans/ (dated YYYY-MM-DD-topic.md)
-```
-
-### MAP-SOURCES.md
-```
-1:# MAP backlinks — source sessions for major v6 decisions
-27:## How to extend this table
-32:# Find the decision's source session(s)
-35:# Then extract and cite the exact path:line and snippet
+60:## How to re-find any past decision (the commands that work)
+63:# raw Claude Code transcripts (the real conversation, ranked by hit count):
+66:# then pull phrases without dumping the 500MB file:
+69:# session summaries + design decisions:
+72:# decision docs live in plans/ and v6/plans/ (dated YYYY-MM-DD-topic.md)
 ```
 
 ### MAP.md
@@ -169,367 +143,22 @@
 5:## Search results
 ```
 
-### findings/SELF-RESEARCH.md
-```
-1:# SELF-RESEARCH — we mined our own conversation history (READ FIRST, then don't redo)
-9:## The problem this solves
-16:## The method (the literal research, reproducible)
-41:## What it recovered (so you don't re-derive it)
-52:## The forward capability (what this should BECOME)
-```
-
-### findings/SESSION-DIGEST.md
-```
-1:# Session digest — the reactive/incremental/graph-algorithm lineage
-16:### 20260501.0 — dd-adoption-effects-control-flow-types-perf
-25:### 20260503.2 — v4-dd-store-interner-strings-indexer-substrate
-31:### 20260503.3 — v4-sqlite-poc-fact-rule-two-tick-content-hash
-37:### 20260504.10 — fact-wide-tables-and-fine-grain-invalidation
-43:### 20260505.0 — linux-bench-tail-sync-cap-fix
-48:### 20260505.3 — evolution-log-v1-v2-v3-v4
-56:### 20260507.2 — v4 rule-engine respec and memory audit
-59:### 20260515.4 — Runtime-graph next steps reconciled
-62:### 20260515.4 — Runtime-graph next steps reconciled (DD adoption)
-65:### 20260501.0 — dd-adoption effects control-flow types perf
-68:### 20260501.0 — dd-adoption effects control-flow types perf (Retraction)
-71:### 20260501.0 — dd-adoption effects control-flow types perf (Pure operators)
-74:### 20260501.0 — dd-adoption effects control-flow types perf (Memory and fixpoint)
-77:### 20260501.0 — dd-adoption effects control-flow types perf (Events and frontier)
-80:### 20260503.2 — v4 DdStore + Interner + perf model for strings-indexer substrate
-83:### 20260503.2 — v4 DdStore (Big-O and memory)
-86:### 20260505.3 — Evolution log v1-v4
-89:### 20260514.0 — v4 lazy semantic graph frontier plan
-92:### 20260515.3 — graph-audit pipey-rx-reconcile
-95:### 20260516.4 — sprefa-v4-audit-runtime-theory
-102:### 20260516.4 — v4 audit runtime theory
-107:### 20260517 — query memoization ramifications
-111:### 20260518.3 — memo content stale into main
-115:### 20260518.6 — recursion reactor graph examples
-119:### 20260520.0 — n-plus-1 rule factwrite budget test
-122:### 20260520.1 — v4 n-plus-1 fixes budget tests reactor plans
-126:### 20260521.0 — v5 dl reactive datalog engine
-131:### 20260521.3 — v5 scc stratify cgrammar autoindex
-136:### 20260530.0 — v5 lsp diag ban gate and relation digest plan
-140:### 20260531.3 — net-lab solid engine design
-143:### 20260531.4 — v5 architecture glean plus plus and db seam
-154:### 20260602.0 — glean-showpiece + portable-reactive-core + DD peak-RSS
-160:### 20260619.2 — oracle-grounded-lattice
-165:### 20260619.3 — cursor + rails + CST-architecture
-168:### 20260721.1 — v6-store-sqlite-cascade-ivm-lab
-173:### 20260721.3 — v6-core-frp-edge-vs-batch-decision
-178:### 20260721.4 — v6-sqlite-dd-dred-cycle-safe-relstore-backport
-186:### 20260625.2 — cst-node-child-perf-nested-set-ancestry-experiment
-191:### 20260625.3 — cst-merged-dogfood-cutover-ancestry-experiment
-196:### 20260625.5 — christmas1-data-driven-scan-repo-sink-tracing-4b
-200:### 20260626.0 — scc-builtin-auto-refactor-discovery
-204:### 20260626.2 — scip-fn-level-oracle-and-coupling-sota
-209:### 20260627.1 — from-clone-kernels-to-type-intelligence
-214:### 20260628.2 — openapi-flows-crosslang-nav-dl-guardrails
-218:### 20260629.0 — scip-impl-dispatch-go-py-tier1
-222:### 20260629.1 — sprefa-temporal-next-async-ghcacher
-227:### 20260629.2 — sprefa-interproc-flow-typed-ret-dfparam
-231:### 20260629.3 — sprefa-node2vec-graph-embed
-240:### 20260630.0 — sprefa-dl-self-validation-docs-scip-incremental
-243:### 20260630.1 — dl-turnkey-ai-setup-examples-embed
-246:### 20260630.6 — sprefa-v3-v4-v5-research-type-edge-repo-fix
-250:### 20260630.7 — dl-mcp-lattice-types-paradigm-theory
-253:### 20260702.0 — dl-perf-audit-closure-guard-one-pass-fixpoint
-260:### 20260702.5 — FABLE-null-pad-guard-warts-namespaces-checked-docs
-263:### 20260703.0 — v041-daemon-hotreload-madge-preset-test-hygiene
-268:### 20260709.1 — fable-babysit-opus-0623-release-type-shapes-scip-typedeclrow
-272:### 20260715.1 — family-derive-call-projection-flag
-275:### 20260716.0 — family-router-incremental-reconcile-cutover-debt
-279:### 20260716.2 — capstone-retraction-cpu-hog-kimi-delegation
-283:### 20260716.3 — daemon-sla-blitz-http-jobq-tokio
-286:### 20260716.4 — daemon-why-trail-write-storm-rootcause
-290:### 20260717.0 — exe-storm-cracked-rails-and-measures
-294:### 20260717.2 — freeze-forensics-loop-fix-chaos-soak
-297:### 20260717.3 — big-wins-13-14-15-arch-expr-lab-freeze-rca
-300:### 20260718.0 — path-analysis-rails-scip-freshness-loop-np1
-304:### 20260718.1 — planning-morning-delegation-wave-vision
-309:### 20260718.3 — fleet-seam-instant-revival
-312:### 20260718.5 — merge-chain-render-storm-arcs
-315:### 20260718.6 — phantom-diff-freeze-rca-storage-endgame
-318:### 20260718.7 — integrator-wave-clock-efficiency-main-push
-323:### 20260719.1 — sqlite-health-command-storage-diet-eager-lazy
-331:### 20260721.3 — v6-core-frp-edge-vs-batch-decision
-336:### 20260721.4 — v6-sqlite-dd-dred-cycle-safe-relstore-backport
-341:### 20260722.0 — v6-store-hermetic-perf-harness-dred-vs-dd-honest
-346:### 20260721.1 — v6-store-sqlite-cascade-ivm-lab
-351:### 20260720.0 — v6-schema-design-graph-lib-empirical-labs
-356:### 20260720.1 — graph-lib-adversarial-rounds-v6-decision
-361:### 20260721.2 — v6-cascade-tuning-ram-audit-bigO-core-crate
-```
-
-### findings/parts/00.md
-```
-1:## Batch 00
-3:### 20260501.0 — dd-adoption-effects-control-flow-types-perf
-12:### 20260503.2 — v4-dd-store-interner-strings-indexer-substrate
-18:### 20260503.3 — v4-sqlite-poc-fact-rule-two-tick-content-hash
-24:### 20260504.10 — fact-wide-tables-and-fine-grain-invalidation
-30:### 20260505.0 — linux-bench-tail-sync-cap-fix
-35:### 20260505.3 — evolution-log-v1-v2-v3-v4
-```
-
-### findings/parts/01.md
-```
-1:## Batch 01
-3:### 20260507.2 — v4 rule-engine respec and memory audit
-6:### 20260515.4 — Runtime-graph next steps reconciled
-9:### 20260515.4 — Runtime-graph next steps reconciled (DD adoption)
-12:### 20260501.0 — dd-adoption effects control-flow types perf
-15:### 20260501.0 — dd-adoption effects control-flow types perf (Retraction)
-18:### 20260501.0 — dd-adoption effects control-flow types perf (Pure operators)
-21:### 20260501.0 — dd-adoption effects control-flow types perf (Memory and fixpoint)
-24:### 20260501.0 — dd-adoption effects control-flow types perf (Events and frontier)
-27:### 20260503.2 — v4 DdStore + Interner + perf model for strings-indexer substrate
-30:### 20260503.2 — v4 DdStore (Big-O and memory)
-33:### 20260505.3 — Evolution log v1-v4
-36:### 20260514.0 — v4 lazy semantic graph frontier plan
-39:### 20260515.3 — graph-audit pipey-rx-reconcile
-42:### 20260516.4 — sprefa-v4-audit-runtime-theory
-```
-
-### findings/parts/02.md
-```
-1:## Batch 02
-3:### 20260516.4 — v4 audit runtime theory
-8:### 20260517 — query memoization ramifications
-12:### 20260518.3 — memo content stale into main
-16:### 20260518.6 — recursion reactor graph examples
-20:### 20260520.0 — n-plus-1 rule factwrite budget test
-23:### 20260520.1 — v4 n-plus-1 fixes budget tests reactor plans
-27:### 20260521.0 — v5 dl reactive datalog engine
-32:### 20260521.3 — v5 scc stratify cgrammar autoindex
-37:### 20260530.0 — v5 lsp diag ban gate and relation digest plan
-41:### 20260531.3 — net-lab solid engine design
-44:### 20260531.4 — v5 architecture glean plus plus and db seam
-```
-
-### findings/parts/03.md
-```
-1:## Batch 03
-3:### 20260602.0 — glean-showpiece + portable-reactive-core + DD peak-RSS
-9:### 20260619.2 — oracle-grounded-lattice
-14:### 20260619.3 — cursor + rails + CST-architecture
-17:### 20260721.1 — v6-store-sqlite-cascade-ivm-lab
-22:### 20260721.3 — v6-core-frp-edge-vs-batch-decision
-27:### 20260721.4 — v6-sqlite-dd-dred-cycle-safe-relstore-backport
-```
-
-### findings/parts/04.md
-```
-1:## Batch 04
-3:### 20260625.2 — cst-node-child-perf-nested-set-ancestry-experiment
-8:### 20260625.3 — cst-merged-dogfood-cutover-ancestry-experiment
-13:### 20260625.5 — christmas1-data-driven-scan-repo-sink-tracing-4b
-17:### 20260626.0 — scc-builtin-auto-refactor-discovery
-21:### 20260626.2 — scip-fn-level-oracle-and-coupling-sota
-26:### 20260627.1 — from-clone-kernels-to-type-intelligence
-31:### 20260628.2 — openapi-flows-crosslang-nav-dl-guardrails
-35:### 20260629.0 — scip-impl-dispatch-go-py-tier1
-39:### 20260629.1 — sprefa-temporal-next-async-ghcacher
-44:### 20260629.2 — sprefa-interproc-flow-typed-ret-dfparam
-48:### 20260629.3 — sprefa-node2vec-graph-embed
-```
-
-### findings/parts/05.md
-```
-1:## Batch 05
-3:### 20260630.0 — sprefa-dl-self-validation-docs-scip-incremental
-6:### 20260630.1 — dl-turnkey-ai-setup-examples-embed
-9:### 20260630.6 — sprefa-v3-v4-v5-research-type-edge-repo-fix
-13:### 20260630.7 — dl-mcp-lattice-types-paradigm-theory
-16:### 20260702.0 — dl-perf-audit-closure-guard-one-pass-fixpoint
-23:### 20260702.5 — FABLE-null-pad-guard-warts-namespaces-checked-docs
-26:### 20260703.0 — v041-daemon-hotreload-madge-preset-test-hygiene
-```
-
-### findings/parts/06.md
-```
-1:## Batch 06
-3:### 20260709.1 — fable-babysit-opus-0623-release-type-shapes-scip-typedeclrow
-7:### 20260715.1 — family-derive-call-projection-flag
-10:### 20260716.0 — family-router-incremental-reconcile-cutover-debt
-14:### 20260716.2 — capstone-retraction-cpu-hog-kimi-delegation
-18:### 20260716.3 — daemon-sla-blitz-http-jobq-tokio
-21:### 20260716.4 — daemon-why-trail-write-storm-rootcause
-25:### 20260717.0 — exe-storm-cracked-rails-and-measures
-29:### 20260717.2 — freeze-forensics-loop-fix-chaos-soak
-32:### 20260717.3 — big-wins-13-14-15-arch-expr-lab-freeze-rca
-35:### 20260718.0 — path-analysis-rails-scip-freshness-loop-np1
-39:### 20260718.1 — planning-morning-delegation-wave-vision
-44:### 20260718.3 — fleet-seam-instant-revival
-47:### 20260718.5 — merge-chain-render-storm-arcs
-50:### 20260718.6 — phantom-diff-freeze-rca-storage-endgame
-53:### 20260718.7 — integrator-wave-clock-efficiency-main-push
-58:### 20260719.1 — sqlite-health-command-storage-diet-eager-lazy
-```
-
-### findings/parts/07.md
-```
-1:## Batch 07
-3:### 20260721.3 — v6-core-frp-edge-vs-batch-decision
-8:### 20260721.4 — v6-sqlite-dd-dred-cycle-safe-relstore-backport
-13:### 20260722.0 — v6-store-hermetic-perf-harness-dred-vs-dd-honest
-18:### 20260721.1 — v6-store-sqlite-cascade-ivm-lab
-23:### 20260720.0 — v6-schema-design-graph-lib-empirical-labs
-28:### 20260720.1 — graph-lib-adversarial-rounds-v6-decision
-33:### 20260721.2 — v6-cascade-tuning-ram-audit-bigO-core-crate
-```
-
 ### findings/soft-delete-durable-scan.md
 ```
 1:# Soft-delete / tombstone scan — is weight>0 filtering in the counting cascade?
 6:## Summary
 16:## A. Bitemporal/Temporal durability (the separate mechanism)
-21:### Reference 1: Layer 1 FACTS definition
-30:### Reference 2: Append-only bitemporal + close-on-retract (row 9)
-40:### Reference 3: Bitemporal cross-rev fact (row 11)
-49:### Reference 4: Not ported to the store
-58:## B. Weight=0 delete-at-zero (the cascade retraction, current choice)
-63:### Reference 5: DECISIONS.md — retraction model
-72:### Reference 6: Boolean-bit weight REJECTED
-82:### Reference 7: Session pin
-92:## C. Soft-delete / weight>0 filtering — UNTESTED HYPOTHESIS
-96:### Reference 8: H1 — Soft-delete / tombstone
-109:## Conclusion
-```
-
-### labs/AGENTS.md
-```
-1:# v6/labs — AGENTS.md · the golden-data contract for every benchmark
-10:## SESSION HANDOFF — 2026-07-22 (READ FIRST after a context reset)
-69:## The reality this is measured against
-77:## The question every run exists to answer
-88:## When the lab stops being a lab (the graduation criterion)
-100:## Golden data — capture EVERYTHING, per process, per phase
-107:### Cost of the INPUT (the thing the user asked for explicitly)
-114:### Memory (over time, not just peak)
-124:### Disk read/write (the other half of "RAM and total read/write")
-133:### Compute / throughput
-139:### Final state — how big are the tables when it's over (read/write is only half)
-148:### Correctness + query plans
-153:### Outcome
-156:## Storage — RAW first, aggregate second (do NOT hand-write tables)
-168:## The sweep
-176:## Where the standing context lives (READ before you re-derive anything)
-201:## Standing discipline (non-negotiable, applies to every agent)
-```
-
-### labs/frp-lab/README.md
-```
-1:# frp-lab — is "FRP the edge, batch the core" real, or just an assertion?
-19:## Reproduce
-30:## The break point — the first lab strawmanned "batch" as full recompute
-66:## The oracle (because hand-picked asserts are not a spec)
-87:## Scale — the break is memory, not correctness or time
-120:## The one fact everything rotates on
-133:## Receipt — CORE as a stream fails, mechanically
-167:## Receipt — EDGE as a stream is clean
-194:## Verdict
-```
-
-### labs/labkit/CAPABILITY-MAP.md
-```
-1:# sqlite vs dd/salsa — where it breaks, and what it can't do
-9:## 1 · When sqlite breaks (three walls, measured)
-23:## 2 · What dd / salsa do vs what sqlite covers
-55:## 3 · Is it the covering set?
-89:## Verdict
-```
-
-### labs/labkit/ENGINES.md
-```
-1:# labkit — every engine, painfully clear (and where "sqlite dd" is)
-37:## LAB A — RECONCILE (salsa's job)
-53:## LAB B — REACH (the product query: blast radius)
-92:## Where is "sqlite dd"? → `cascade-reach`, and it is NOT working yet
-127:## So, what I think you asked us to do
-```
-
-### labs/labkit/EXPERIMENT-G4V2-RESULT.md
-```
-```
-
-### labs/labkit/EXPERIMENT-G4V2-UNIFY.md
-```
-1:# G4v2 — port the EXISTING labkit onto sprefa-store + add a hermetic runner
-3:## HARD RULES (read twice)
-17:## What is here (confirm before touching)
-24:## Part A — SQLite in ONE crate (remove rusqlite)
-44:## Part B — hermetic per-process runner
-59:## Validate (paste real output into the result file)
-68:## Commit
-73:## Result file
-```
-
-### labs/labkit/EXPERIMENT-G7-RESULT.md
-```
-1:# G7 wire result
-```
-
-### labs/labkit/EXPERIMENT-G7-WIRE.md
-```
-1:# G7 — wire ALL 11 engines into the hermetic 0_unified matrix
-6:## State
-14:## Task
-28:## Discipline (the user is emphatic)
-37:## Validate
-44:## Commit
-48:## Result file
-```
-
-### labs/labkit/README.md
-```
-1:# labkit — the golden harness (traitify every experiment)
-11:## The trait
-41:## The golden table (file-backed SQLite, 5 GB gun, 200 ticks × 100 edits)
-62:## The gun (5 GB, always to the head of alloc)
-70:## Rational setup — every test states one
-81:## The reachability table (the real query, `cargo run --release --example reach_table`)
-96:## Slots ready, not yet filled
-```
-
-### labs/labkit/UNIFIED-REPORT.md
-```
-1:# Unified G4v2 report
-```
-
-### labs/labkit/WHY-DRED.md
-```
-1:# Why DRed — from scratch
-3:## 0 · The job
-18:## 1 · Adds are easy
-35:## 2 · Deletes are the hard problem
-44:## 3 · Way A — Counting (weights). Cheap. **Wrong on cycles.**
-59:### The catch: a cycle feeds itself
-100:## 4 · Way B — DRed (Delete and Rederive). Correct on cycles.
-140:## 5 · The decision — which one to use
-163:## 6 · What DRed costs (measured)
-182:## 7 · Does dd+salsa fix it, or is it universal? (both — different "its")
-201:### Problem 1 (cycles) — dd fixes it by its algorithm, NOT because it's magic
-210:### Problem 2 (wavefront) — universal, hits dd and sqlite equally
-225:### The only real escape — and it's salsa's property, not dd's
-245:### So, precisely
-255:## TL;DR
-```
-
-### labs/reactor-lab/README.md
-```
-1:# reactor-lab — is salsa resident, and does it eat the RAM budget?
-12:## Is salsa resident? YES. Always. It never touches disk.
-39:## How salsa behaves — the event log IS the perf instrument
-59:## Verdict
-```
-
-### labs/temporal-lab/README.md
-```
-1:# temporal-lab — append-only bitemporal on SQLite + retraction, proven
-18:## Four phases, all green
-27:## The two worries, answered
-40:## Independent oracle
+22:### Reference 1: Layer 1 FACTS definition
+31:### Reference 2: Append-only bitemporal + close-on-retract (row 9)
+41:### Reference 3: Bitemporal cross-rev fact (row 11)
+50:### Reference 4: Not ported to the store
+59:## B. Weight=0 delete-at-zero (the cascade retraction, current choice)
+64:### Reference 5: DECISIONS.md — retraction model
+73:### Reference 6: Boolean-bit weight REJECTED
+83:### Reference 7: Session pin
+93:## C. Soft-delete / weight>0 filtering — UNTESTED HYPOTHESIS
+97:### Reference 8: H1 — Soft-delete / tombstone
+110:## Conclusion
 ```
 
 ### plans/2026-07-19-reactive-style-port.md
@@ -736,70 +365,6 @@
 37:## Copy-paste skeleton
 64:## Mermaid's real limits (when to reach for D2 instead)
 89:## Validate the render (don't trust the source)
-```
-
-### sprefa-store/EXPERIMENT-G1-RESULT.md
-```
-1:# Experiment G1 result
-3:## Outcome
-17:## xorhash decision
-24:## Validation
-54:## Snags and open questions
-```
-
-### sprefa-store/EXPERIMENT-G5-RESULT.md
-```
-1:# G5 SCC result
-```
-
-### sprefa-store/EXPERIMENT-G5-SCC.md
-```
-1:# G5 — productionize the counting engine (cycle-correct SCC nested fixpoint) + drive its cost down
-6:## The settled design you are building toward (do NOT re-litigate)
-14:## The gap you are closing
-23:## Deliverables
-43:## MEASUREMENT DISCIPLINE (the coordinator is emphatic about this)
-59:## Validate
-67:## Commit
-71:## Result file
-```
-
-### sprefa-store/EXPERIMENT-G6-FLOOR.md
-```
-1:# G6 — drive retract_scc BELOW DRed (the perf floor)
-8:## The result to beat (measured, in PERF-REPORT.md)
-15:## Why it is slow (read cascade.rs retract_scc, ~line 266)
-22:## Levers (measure each hermetically; keep only wins, revert losers)
-37:## MEASUREMENT DISCIPLINE (non-negotiable — the user is emphatic)
-48:## Validate
-56:## Commit
-60:## Result file
-```
-
-### sprefa-store/EXPERIMENT-G6-RESULT.md
-```
-1:# G6 result
-3:## Retained
-9:## Firsthand reads
-16:## Rejected
-22:## Falsification reruns
-```
-
-### sprefa-store/EXPERIMENTS.md
-```
-1:# v6 cascade tuning log
-11:## E0 — baseline (composite WITHOUT ROWID key)
-17:## E1 — single dense-int key (rowid table) — KEEP
-30:## E2 — drop redundant tag/id, make them VIRTUAL generated columns — KEEP
-43:## E3 — mmap_size=512MB for retract reads — REJECTED
-52:## Per-statement breakdown (DL_CASCADE_TRACE=1, added to cascade.rs) — the map
-62:## E4 — UPDATE..FROM cx_hits instead of correlated subquery — REJECTED
-70:## E5 — bigger page cache (cache_size 32 -> 512 MB) — REJECTED
-78:## AUDIT — is SQLite secretly using RAM the memcap can't see? YES, now measured
-111:## SCALING — Big-O of the retract, with receipts
-139:## E6 — PRAGMA threads=4/8 to parallelize the GROUP BY sort — REJECTED
-145:## E7 — accumulator: defer all cx_row writes to one final key-ordered UPDATE — REJECTED
-162:## Standing conclusion (after E1-E7)
 ```
 
 ### sprefa-store/FINDINGS-AND-GAPS.md

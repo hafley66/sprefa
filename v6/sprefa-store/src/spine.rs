@@ -471,3 +471,200 @@ fn secondary_indexes() -> Vec<String> {
         one_work_per_root,
     ]
 }
+
+// ---- folded from rels.rs / transforms.rs / unfuck_sqlite.rs ----
+pub mod rels {
+//! The OPEN core: mint new rel tables at runtime with the sea-query builder.
+//!
+//! The nine spine tables are CLOSED — the model. A *rel* is a materialized query
+//! result whose table is created on demand; this is where a user program extends
+//! storage without touching the model. Every rel table is `WITHOUT ROWID` with a
+//! composite PK over its key columns (set semantics, no duplicate autoindex —
+//! the all-columns-PK fix). Columns are integers (dense ids into the spine) or
+//! text, never a smuggled coordinate.
+
+use sea_orm::sea_query::{Alias, ColumnDef, Index, SqliteQueryBuilder, Table};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbErr};
+
+/// A column in a dynamically-created rel table.
+pub enum RelCol {
+    /// `NOT NULL` integer — a dense id into the spine, or a small ordinal.
+    Int(&'static str),
+    /// Nullable integer.
+    IntNull(&'static str),
+    /// `NOT NULL` text — the rare rel that carries a literal, not an id.
+    Text(&'static str),
+}
+
+impl RelCol {
+    fn name(&self) -> &'static str {
+        match self {
+            RelCol::Int(n) | RelCol::IntNull(n) | RelCol::Text(n) => n,
+        }
+    }
+}
+
+/// Create rel table `name` with `cols`; the PK is the named `pk` columns and the
+/// table is `WITHOUT ROWID`. Idempotent (`IF NOT EXISTS`).
+pub async fn create_rel_table(
+    db: &DatabaseConnection,
+    name: &str,
+    cols: &[RelCol],
+    pk: &[&str],
+) -> Result<(), DbErr> {
+    let mut t = Table::create();
+    t.table(Alias::new(name)).if_not_exists();
+    for c in cols {
+        let mut def = ColumnDef::new(Alias::new(c.name()));
+        match c {
+            RelCol::Int(_) => {
+                def.integer().not_null();
+            }
+            RelCol::IntNull(_) => {
+                def.integer();
+            }
+            RelCol::Text(_) => {
+                def.text().not_null();
+            }
+        }
+        t.col(&mut def);
+    }
+    if !pk.is_empty() {
+        let mut idx = Index::create();
+        for k in pk {
+            idx.col(Alias::new(*k));
+        }
+        t.primary_key(&mut idx);
+    }
+    let mut sql = t.to_string(SqliteQueryBuilder);
+    if !pk.is_empty() {
+        sql.push_str(" WITHOUT ROWID");
+    }
+    db.execute_unprepared(&sql).await?;
+    Ok(())
+}
+
+/// Drop a rel table (an evicted / no-longer-subscribed rel leaves zero bytes).
+pub async fn drop_rel_table(db: &DatabaseConnection, name: &str) -> Result<(), DbErr> {
+    let sql = Table::drop()
+        .table(Alias::new(name))
+        .if_exists()
+        .to_string(SqliteQueryBuilder);
+    db.execute_unprepared(&sql).await?;
+    Ok(())
+}
+
+}
+pub mod transforms {
+//! Pure pre-storage transforms, done RIGHT. No DB, no state — deterministic
+//! functions the Store calls before writing. Each entry names the v5 hack it
+//! replaces so the hacks stay dead.
+
+/// Strip to ASCII alphanumeric, lowercase. The ONE v5 transform that was already
+/// correct (spine.rs:297). Used for case/punct-insensitive name matching,
+/// computed on read — never stored as a duplicate normalized column.
+pub fn normalize(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+/// Content hash for a file: blake3 truncated to 16 bytes, the UNIQUE natural key
+/// on `files` that dedups byte-identical content to ONE row.
+///
+/// v5 hack replaced: `FileId = hash64(path+content)` used AS the id (spine.rs:23)
+/// — an 8-byte hash that both defeated varint AND could not dedup identical
+/// bytes across two paths. Here the surrogate is the dense DB rowid and the hash
+/// is only the natural key.
+pub fn content_hash(bytes: &[u8]) -> [u8; 16] {
+    let h = blake3::hash(bytes);
+    let mut out = [0u8; 16];
+    out.copy_from_slice(&h.as_bytes()[..16]);
+    out
+}
+
+/// A 40-char git sha hex string -> 20 raw bytes for `repo_revs.git_sha`.
+///
+/// v5 hack replaced: the 40-char hex was stored as TEXT and, worse, smuggled
+/// into interned id strings via `salt_rev` (`format!("{rev}\u{1}{id}")`). Here
+/// it is 20 raw bytes in exactly one column and nowhere else.
+pub fn git_sha_bytes(hex: &str) -> Option<[u8; 20]> {
+    if hex.len() != 40 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut out = [0u8; 20];
+    for (i, slot) in out.iter_mut().enumerate() {
+        *slot = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    Some(out)
+}
+
+/// Byte offset -> (line, col), 0-based, derived from content on demand.
+///
+/// v5 hack replaced: `file:line:col` was baked INTO dictionary strings (10.2% of
+/// the dict) and even hashed into node ids (`StringId::of(format!("{file}:{line}:
+/// {col}:{kind}"))`). Here a node is `(file_id, byte_start)` and line/col are
+/// DERIVED here when a human needs to read them — never stored.
+pub fn byte_to_linecol(content: &[u8], offset: usize) -> (u32, u32) {
+    let end = offset.min(content.len());
+    let mut line = 0u32;
+    let mut col = 0u32;
+    for &b in &content[..end] {
+        if b == b'\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
+}
+pub mod unfuck_sqlite {
+//! Every SQLite-specific unfuckening, behind a trait so nothing else in the
+//! crate touches a raw pragma or a dialect quirk. "A trait over whatever it
+//! needs to be a trait" — implemented on `DatabaseBackend`.
+
+use sea_orm::sea_query::{SqliteQueryBuilder, TableCreateStatement};
+use sea_orm::DatabaseBackend;
+
+/// Pragmas a fresh store opens with:
+///  - `foreign_keys=ON`  — FKs are enforced, not decorative (owner law: wrong
+///                          FK usage = unplugged).
+///  - `journal_mode=WAL` — concurrent readers while the writer ticks.
+///  - `synchronous=NORMAL`, `temp_store=MEMORY` — the ast-grep/biome-speed knobs.
+pub const OPEN_PRAGMAS: &str = "PRAGMA journal_mode=WAL;\
+PRAGMA synchronous=NORMAL;\
+PRAGMA foreign_keys=ON;\
+PRAGMA temp_store=MEMORY;";
+
+pub trait UnfuckSqlite {
+    /// DDL for a table-create statement, unfucked for SQLite:
+    ///
+    ///  1. **AUTOINCREMENT stripped.** A plain `INTEGER PRIMARY KEY` is the
+    ///     rowid alias — dense, free, no extra B-tree. `AUTOINCREMENT` only adds
+    ///     the `sqlite_sequence` bookkeeping table to prevent rowid reuse, which
+    ///     we never need. (v5 never hit this because v5 never used a DB-assigned
+    ///     id — it hashed content into the id. This is the fix for doing it right.)
+    ///  2. **`WITHOUT ROWID` appended** for composite-key junctions. The table
+    ///     becomes its own PK index instead of paying for a rowid heap PLUS a
+    ///     full-width duplicate autoindex — the 256.6 MB duplicate-copy bucket
+    ///     that all-columns PKs cost v5.
+    fn ddl_for(&self, stmt: TableCreateStatement, without_rowid: bool) -> String;
+}
+
+impl UnfuckSqlite for DatabaseBackend {
+    fn ddl_for(&self, stmt: TableCreateStatement, without_rowid: bool) -> String {
+        let mut sql = stmt.to_string(SqliteQueryBuilder);
+        sql = sql.replace(" AUTOINCREMENT", "");
+        if without_rowid {
+            sql.push_str(" WITHOUT ROWID");
+        }
+        sql
+    }
+}
+
+}

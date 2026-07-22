@@ -25,6 +25,13 @@ lasso = "0.7"
 # Only for the OS-protective self-cap (memcap): setrlimit/getrusage. Leaf crate,
 # no build-graph weight. Guards the example binaries from driving the OS to swap.
 libc = "0.2"
+# The independent reachability oracle in src/oracle.rs (`oracle::dd_reach`) cross-
+# checks the SQLite engine against a resident incremental engine that shares no
+# code with it. Promoted out of [dev-dependencies] (was dev-only, used only by
+# examples/tests) because the oracle now lives in src/ and tests/engine.rs links
+# it through the ordinary lib build, which cannot see dev-dependencies.
+differential-dataflow = "0.25"
+timely = "0.31"
 # The Feldera engine: the third Z-set/IVM implementation. OPTIONAL + feature-gated
 # because dbsp 0.323 triggers a rustc ICE on the repo's default nightly (its heavy
 # generics crash the next-trait-solver). Gating it keeps `cargo test` working on
@@ -35,10 +42,6 @@ dbsp = { version = "0.323", optional = true }
 [features]
 with-dbsp = ["dep:dbsp"]
 
-[[example]]
-name = "dbsp_reach"
-required-features = ["with-dbsp"]
-
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 # Direct handle on the SAME bundled SQLite sqlx links (version pinned to the one
@@ -46,7 +49,3 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 # allocator the Rust memcap #[global_allocator] CANNOT see. Closes the "is SQLite
 # secretly using RAM while we say Rust is fine" hole. Features union with sqlx's.
 libsqlite3-sys = "0.37"
-# Head-to-head baseline: the resident incremental engine we are NOT adopting for
-# the corpus, run byte-for-byte against our on-disk weight cascade.
-differential-dataflow = "0.25"
-timely = "0.31"

@@ -15,8 +15,9 @@ cascade.
 
 ## A. Bitemporal/Temporal durability (the separate mechanism)
 
-This is a distinct append-only fact table with close-intervals, fully implemented in the
-temporal-lab. It tracks *when* facts were alive—a history mechanism, not an in-cascade filter.
+This is a distinct append-only fact table with close-intervals, implemented in
+`sprefa-store/src/engine.rs` (temporal). It tracks *when* facts were alive—a history
+mechanism, not an in-cascade filter.
 
 ### Reference 1: Layer 1 FACTS definition
 
@@ -50,8 +51,8 @@ interval overlap, not by filtering at weight zero.
 
 **Source:** `v6/sprefa-store/FINDINGS-AND-GAPS.md` (grep for SqliteTemporal)
 
-The bitemporal engine (`SqliteTemporal`) from v6/temporal-lab was proven correct at 2000
-revisions but is not yet ported into the production store. It is a separate, orthogonal layer.
+The bitemporal engine (`SqliteTemporal`) was proven correct at 2000 revisions and folded
+into `sprefa-store/src/engine.rs` (temporal). It is a separate, orthogonal layer.
 
 ---
 

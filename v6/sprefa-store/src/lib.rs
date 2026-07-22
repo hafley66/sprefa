@@ -9,19 +9,20 @@
 //! `Store` is the one object that speaks the ORM; callers get ids/rows, never a
 //! SeaORM type or SQL text. Writes are batched (the N+1 law) and FK-ordered.
 
-pub mod benchgraph;
-pub mod cascade;
-pub mod measure;
-pub mod memcap;
-pub mod reach;
-pub mod reconcile;
-pub mod relstore;
-pub mod rels;
+// The v6 store is FIVE modules: lib (Store + string/relstore helpers), spine
+// (data model), engine (the one cascade), measure (golden harness), oracle
+// (dd/salsa/rust correctness oracles). `strings` (Interner) and `relstore` are
+// inlined at the bottom of this file. Back-compat re-exports below keep every
+// existing `crate::cascade`/`crate::unfuck_sqlite`/… path resolving, so no
+// test or example needs a path edit after the fold.
 pub mod spine;
-pub mod strings;
-pub mod temporal;
-pub mod transforms;
-pub mod unfuck_sqlite;
+pub mod engine;
+pub mod measure;
+pub mod oracle;
+
+pub use engine::{cascade, reach, reconcile, temporal};
+pub use measure::{benchgraph, memcap};
+pub use spine::{rels, transforms, unfuck_sqlite};
 
 use sea_orm::sea_query::OnConflict;
 use sea_orm::ActiveValue::{NotSet, Set};
@@ -486,4 +487,264 @@ impl FindOrdered for spine::strings::Entity {
             .map(|m| (m.string_id, m.content))
             .collect())
     }
+}
+
+// ---- folded from strings.rs (Interner) / relstore.rs ----
+pub mod strings {
+//! Resident string interning, on blast. THE v5 pain point, replaced by a
+//! library (lasso). What v5 did for its string table, itemized so it never
+//! comes back:
+//!
+//!   - `StringId = hash64(text)` (spine.rs:52-57): ids were 64-bit content
+//!     hashes. 8 flat bytes each, defeating SQLite varint, in the `_strings`
+//!     table AND in every rel index that referenced a `sym` column.
+//!   - `SymAlloc` (db.rs): a bespoke in-memory hash->dense-id allocator with
+//!     load-once / single-writer / persist-at-flush. That is exactly what an
+//!     interner IS — reimplemented here by `lasso::Rodeo`.
+//!   - `persisted_strings` + `inflight_strings`: two `RefCell<HashSet<i64>>`
+//!     tracking which hashes had already been committed, because re-interning
+//!     an unchanged corpus offered 1,207,064 rows to accept 146 (db.rs:97-124).
+//!     That whole dance existed only because a hash id had no cheap "have I seen
+//!     this string" — an interner answers that in O(1) by construction.
+//!   - `flush_syms` collision guard: needed because two different texts could
+//!     share one 64-bit hash. Dense sequential assignment cannot collide, so the
+//!     guard is deleted outright.
+//!   - `salt_rev` / `\u{1}` concatenation: rev/repo smuggled into id strings so
+//!     hashed coordinates stayed disjoint across revs. Gone — a rev is a column
+//!     (repo_revs), a node is content-scoped, nothing salts a string.
+//!
+//! v6: `lasso::Rodeo` is the resident arena AND the id authority. `string_id` is
+//! the dense `Spur` index (0-based, contiguous). The `strings` table is the
+//! durable MIRROR of the arena, never the source. New interns queue in `dirty`
+//! for ONE batched insert (the N+1 law). Freeze to `RodeoReader` when a
+//! read-only resident view with no lock is wanted.
+
+use lasso::{Key, Rodeo, Spur};
+
+/// The resident interner. Owns the string arena and assigns dense ids.
+pub struct Interner {
+    rodeo: Rodeo,
+    dirty: Vec<(i64, String)>,
+}
+
+impl Interner {
+    pub fn new() -> Self {
+        Self {
+            rodeo: Rodeo::default(),
+            dirty: Vec::new(),
+        }
+    }
+
+    /// Intern `text`, returning its dense `string_id`. Queues `(id, text)` for
+    /// the durable flush the first time a string is seen; a repeat returns the
+    /// same id and queues nothing.
+    pub fn intern(&mut self, text: &str) -> i64 {
+        let seen = self.rodeo.get(text).is_some();
+        let spur = self.rodeo.get_or_intern(text);
+        let id = spur.into_usize() as i64;
+        if !seen {
+            self.dirty.push((id, text.to_string()));
+        }
+        id
+    }
+
+    /// `string_id -> text`, straight from the resident arena, no DB round-trip.
+    pub fn resolve(&self, id: i64) -> Option<&str> {
+        let key = Spur::try_from_usize(usize::try_from(id).ok()?)?;
+        self.rodeo.try_resolve(&key)
+    }
+
+    /// Rebuild the arena from the durable mirror on open. Rows MUST arrive in
+    /// ascending `string_id` order so the reconstructed `Spur` equals the stored
+    /// id — asserted, because a mismatch means the mirror and the arena disagree
+    /// on identity, which would silently corrupt every FK into `strings`.
+    pub fn load_row(&mut self, id: i64, content: &str) {
+        let spur = self.rodeo.get_or_intern(content);
+        let got = spur.into_usize() as i64;
+        assert_eq!(
+            got, id,
+            "interner reload out of order: got id {got} for {content:?}, expected {id}"
+        );
+    }
+
+    /// Drain the queued new interns for a batched `strings` insert.
+    pub fn take_dirty(&mut self) -> Vec<(i64, String)> {
+        std::mem::take(&mut self.dirty)
+    }
+
+    pub fn len(&self) -> usize {
+        self.rodeo.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rodeo.is_empty()
+    }
+}
+
+impl Default for Interner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+}
+pub mod relstore {
+//! RelStore — the generic incremental relation store. Lifts the cascade + reconcile
+//! off the bespoke `cx_`/`rx_` scaffolding into one handle keyed by DENSE `(rel, row)`
+//! integer ids (E1: `key = rel*KEY_STRIDE + row`, a rowid-clustered table). One store
+//! holds ANY number of relations; `rel` is the relation discriminator, `row` the tuple.
+//!
+//! Two planes, both generic:
+//!   FACT (Z-set):  add_rows / add_deps / assert / retract / retract_dred / alive
+//!   CONTROL (salsa-in-sql): seed_memo / mark_changed / dirty / verify
+//!
+//! The `cx_*` / `rx_*` tables are just the default on-disk impl; callers speak only in
+//! `(rel, row)` pairs. This is what the harness measures now, instead of a bespoke copy.
+
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbErr};
+
+use crate::{cascade, reconcile};
+
+pub use cascade::{key, KEY_STRIDE};
+
+pub struct RelStore {
+    db: DatabaseConnection,
+}
+
+impl RelStore {
+    /// Open (or create) a store at `db` with the store's tuning + both schemas.
+    pub async fn attach(db: DatabaseConnection) -> Result<Self, DbErr> {
+        db.execute_unprepared(crate::unfuck_sqlite::OPEN_PRAGMAS).await?;
+        cascade::create_schema(&db).await?;
+        reconcile::create_schema(&db).await?;
+        Ok(Self { db })
+    }
+
+    pub fn conn(&self) -> &DatabaseConnection {
+        &self.db
+    }
+
+    // ---- FACT plane (generic Z-set over (rel,row)) ----------------------------
+
+    /// Insert `(rel, row, weight)` tuples.
+    pub async fn add_rows(&self, rows: &[(i64, i64, i64)]) -> Result<(), DbErr> {
+        cascade::insert_rows(&self.db, rows).await
+    }
+    /// Insert dependency edges `(parent_rel, parent_row, child_rel, child_row)`.
+    pub async fn add_deps(&self, edges: &[(i64, i64, i64, i64)]) -> Result<(), DbErr> {
+        cascade::insert_deps(&self.db, edges).await
+    }
+    /// Forward add: propagate aliveness from `seeds`. Returns rounds.
+    pub async fn assert(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+        cascade::assert(&self.db, seeds).await
+    }
+    /// Counting retraction (fast, correct on ACYCLIC support graphs). Returns rounds.
+    pub async fn retract(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+        cascade::retract(&self.db, seeds).await
+    }
+    /// Counting retraction with an on-disk SCC-scoped nested fixpoint. Returns rounds.
+    pub async fn retract_scc(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+        cascade::retract_scc(&self.db, seeds).await
+    }
+    /// Cycle-safe retraction (Delete-and-Rederive), Rust-driven round loop. Returns rounds.
+    pub async fn retract_dred(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+        cascade::retract_dred(&self.db, seeds).await
+    }
+    /// Cycle-safe retraction as two recursive CTEs (whole traversal in SQLite's C
+    /// engine, no per-round round-trip). Same result as `retract_dred`; use at scale.
+    pub async fn retract_dred_cte(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+        cascade::retract_dred_cte(&self.db, seeds).await
+    }
+    /// Count live rows (weight > 0) across all relations.
+    pub async fn alive(&self) -> Result<i64, DbErr> {
+        use sea_orm::{DatabaseBackend, Statement};
+        Ok(self
+            .db
+            .query_one_raw(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT count(*) FROM cx_row WHERE weight>0".to_owned(),
+            ))
+            .await?
+            .map(|r| r.try_get_by_index::<i64>(0).unwrap_or(0))
+            .unwrap_or(0))
+    }
+
+    /// The live-row survivor SET as sorted encoded keys (`key = rel*KEY_STRIDE + row`).
+    /// This is the answer bytes the head-to-head diffs against the oracle and dd. `key`
+    /// IS the rowid and is stored ordered, so `ORDER BY key` is a no-sort ordered scan.
+    pub async fn alive_keys(&self) -> Result<Vec<i64>, DbErr> {
+        use sea_orm::{DatabaseBackend, Statement};
+        Ok(self
+            .db
+            .query_all_raw(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT key FROM cx_row WHERE weight>0 ORDER BY key".to_owned(),
+            ))
+            .await?
+            .iter()
+            .map(|r| r.try_get_by_index::<i64>(0).unwrap_or(0))
+            .collect())
+    }
+
+    // ---- CONTROL plane (salsa-in-sql over (rel,row) memos) --------------------
+
+    pub async fn seed_memo(&self, rel: i64, row: i64, digest: i64, deps: &[(i64, i64)], rev: i64) -> Result<(), DbErr> {
+        let dep_keys: Vec<i64> = deps.iter().map(|&(r, w)| key(r, w)).collect();
+        reconcile::seed(&self.db, key(rel, row), digest, &dep_keys, rev).await
+    }
+    pub async fn mark_changed(&self, cells: &[(i64, i64)], rev: i64) -> Result<(), DbErr> {
+        let ks: Vec<i64> = cells.iter().map(|&(r, w)| key(r, w)).collect();
+        reconcile::mark_changed(&self.db, &ks, rev).await
+    }
+    /// The stale frontier as `(rel, row)` pairs.
+    pub async fn dirty(&self) -> Result<Vec<(i64, i64)>, DbErr> {
+        Ok(reconcile::dirty(&self.db)
+            .await?
+            .into_iter()
+            .map(|k| (k / KEY_STRIDE, k % KEY_STRIDE))
+            .collect())
+    }
+    /// Record a recomputed rel's digest; returns whether it moved (early cutoff).
+    pub async fn verify(&self, rel: i64, row: i64, digest: i64, rev: i64) -> Result<bool, DbErr> {
+        reconcile::verify(&self.db, key(rel, row), digest, rev).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::{ConnectOptions, Database};
+
+    async fn open() -> RelStore {
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let uniq = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("relstore_test_{}_{uniq}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
+        opt.max_connections(1).min_connections(1);
+        RelStore::attach(Database::connect(opt).await.unwrap()).await.unwrap()
+    }
+
+    // TWO relations in one store: rel 0 (roots/"files"), rel 1 ("derived"). A cross-rel
+    // dep 0:0 -> 1:0, and a cycle inside rel 1 (1:0 ->1:1 ->1:2 ->1:0). Cut the root.
+    // Cycle-safe retraction must kill the whole rel-1 cycle. Proves it's generic + cyclic.
+    #[tokio::test]
+    async fn generic_two_relation_cycle() {
+        let s = open().await;
+        s.add_rows(&[(0, 0, 1), (1, 0, 1), (1, 1, 1), (1, 2, 1)]).await.unwrap();
+        s.add_deps(&[
+            (0, 0, 1, 0), // file 0:0 supports derived 1:0
+            (1, 0, 1, 1), // cycle in rel 1
+            (1, 1, 1, 2),
+            (1, 2, 1, 0),
+        ])
+        .await
+        .unwrap();
+        assert_eq!(s.alive().await.unwrap(), 4);
+
+        s.retract_dred(&[(0, 0)]).await.unwrap();
+        assert_eq!(s.alive().await.unwrap(), 0, "cutting the cross-rel anchor kills the rel-1 cycle");
+    }
+}
+
 }

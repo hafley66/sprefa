@@ -49,12 +49,13 @@ Source of truth: **`v6/plans/2026-07-19-v6-table-design.md:344-368`**.
 - Weight is INTEGER support-count; `weight>0` = alive. Boolean-bit REJECTED
   (`chat_log/20260721.1...md:58`).
 
-DRed / `retract_dred` / `retract_dred_cte` in `v6/sprefa-store/src/cascade.rs` are
-the LAB COMPARISON engines, not production. Do not optimize them for production.
+DRed / `retract_dred` / `retract_dred_cte` in `v6/sprefa-store/src/engine.rs` are
+the ORACLE comparison engines, not production. Do not optimize them for production.
 The production retract is the counting upsert + SCC nested fixpoint.
 
-Supporting: `v6/ARCHITECTURE.md:73,108,144` (one semi-naive cascade, prune =
-digest·A / weight·B / reached·C), `v6/labkit/WHY-DRED.md` (the experiment).
+Supporting: `v6/ARCHITECTURE.md` (one semi-naive cascade, prune =
+digest·A / weight·B / reached·C). DRed derivation was in the deleted
+`v6/labs/labkit/WHY-DRED.md` — `git log --follow` it if needed.
 
 ## How to re-find any past decision (the commands that work)
 
@@ -66,7 +67,7 @@ rg -i -c 'PATTERN' ~/.claude/projects/-Users-chrishafley-projects-sprefa/*.jsonl
 rg -i -o '"[^"]*PATTERN[^"]*"' ~/.claude/projects/-Users-chrishafley-projects-sprefa/<uuid>.jsonl | head
 
 # session summaries + design decisions:
-grep -rniE 'PATTERN' chat_log/*.md plans/ v6/plans/ v6/*.md v6/labkit/*.md
+grep -rniE 'PATTERN' chat_log/*.md plans/ v6/plans/ v6/*.md
 
 # decision docs live in plans/ and v6/plans/ (dated YYYY-MM-DD-topic.md)
 ```

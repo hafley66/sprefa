@@ -118,7 +118,7 @@ flowchart LR
 
 ## Why each algorithm, tied to the goal
 
-| algorithm | graph | why we need it | efficient form | measured (labkit) |
+| algorithm | graph | why we need it | efficient form | measured |
 |---|---|---|---|---|
 | **reconciliation** (salsa red-green) | A | so a file edit re-runs *only the stale rels*, not every rule | recursive CTE + digest cutoff, O(affected subgraph) | reconciliation IS a TC over the dep DAG → measured by the reach table |
 | **retraction** (Z-set / DRed) | B | so removing an input fact *withdraws* the derived facts it supported — without a full rebuild | weighted-delta close-interval, O(Δ·log n) | `sqlite-temporal` slope **0.18**, writes flat ~1300 (N+1 safe) |
@@ -131,22 +131,19 @@ need salsa-the-crate resident — the dep graph reconciles on the same cascade t
 
 ---
 
-## How the labkit engines map to this (the running proof)
+## How the oracles map to this (the running proof)
 
-Every labkit `Experiment` is one **implementation of the cascade**, measured on the same
-deterministic edit stream under the 5 GB gun, cross-checked for byte-identical digests:
+Production cascade = `sprefa-store/src/engine.rs`. Correctness oracles (dd differential,
+salsa red-green, hand-rolled Rust) = `sprefa-store/src/oracle.rs`. Every variant is
+cross-checked against them for byte-identical digests under the memory gun. Run
+`just cover` / `just agree`.
 
-| labkit engine | graph it runs on | cascade variant | what it proves |
-|---|---|---|---|
-| `RamReach` | C | BFS recompute from scratch | the baseline cost incrementality must beat (slope 1.81) |
-| `SqliteReach` | C | recursive-CTE recompute | on-disk recompute is worse per-tick (slope 2.10, 23×) |
-| `DdReach` *(building)* | C | differential `iterate()`, incremental | O(Δ) flat slope — and it hits the gun wall (resident) |
-| `CascadeReach` *(building)* | C, dep-style | semi-naive DRed frontier + digest cutoff | **salsa-in-SQL** on disk, incremental, survives past the gun wall |
-
-`CascadeReach` is literally the Plane-1 reconciliation loop, pointed at the call graph so it
-is directly comparable to the others. When it matches `RamReach`'s digest at every scale
-*and* flattens the slope while `DdReach` aborts past 5 GB, the "salsa reconciliation belongs
-in SQL, one system" claim stops being a claim.
+| variant | graph | proves |
+|---|---|---|
+| ram recompute (oracle) | C | the baseline incrementality must beat (slope 1.81) |
+| sqlite recursive-CTE | C | on-disk recompute cost per tick (slope 2.10, 23×) |
+| dd differential (oracle) | C | O(Δ) flat slope — and the resident gun wall |
+| sqlite cascade | C, dep | salsa-in-SQL on disk, incremental, survives past the gun wall |
 
 ---
 
@@ -155,11 +152,11 @@ in SQL, one system" claim stops being a claim.
 | role | ships | not shipped (why it's here) |
 |---|---|---|
 | triggers → revision | SQLite `update_hook` + revision | — |
-| reconcile dep graph (salsa's job) | **SQL: recursive CTE + digest cutoff** | **salsa the crate** = blueprint; reactor-lab proved the red-green mechanism so we know the SQL to write |
+| reconcile dep graph (salsa's job) | **SQL: recursive CTE + digest cutoff** | **salsa the crate** = blueprint; the salsa oracle (`oracle.rs`) proved the red-green mechanism so we know the SQL to write |
 | retract facts | **SQLite cascade** (Z-set, close-interval) | — |
 | product TC | **SQLite cascade** (same engine) | **dd / dbsp** = yardstick; proves O(Δ) and marks where a resident engine dies (the gun wall the on-disk cascade completes past) |
 
 One durable system: **SQLite**. Salsa and dd are the two teachers standing off to the side.
 
-Receipts for every number: `plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md` and the
-`frp-lab` / `reactor-lab` / `temporal-lab` / `labkit` crates.
+Receipts for every number: `plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md` (dated
+archive) and `just results`. The lab crates are deleted; `git log --follow` recovers a rerun.
