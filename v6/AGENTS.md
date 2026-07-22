@@ -4,18 +4,26 @@
 `plans/` or `findings/` into context — `git log`/`git show` them on demand. For
 current numbers, **run a command**, do not read a report.
 
-## just — run for info (`cd v6/sprefa-store`)
+**The mind is `src/tasks.rs`** — the parity trait surface (Reach / Cascade /
+Reconcile / GraphStore) and the `GraphStorePlan` inference chain. `just plan`
+reads its open cells. Go there for what is done and what is next.
 
-| command | tells you |
+## just — run the lab (`cd v6/sprefa-store`, then `just` for the full list)
+
+| command | does |
 |---|---|
-| `just map` | the mermaid living map of the crate |
-| `just vibes` | current state / what is in flight |
-| `just plan` | the next dispatchable steps |
+| `just check` | type-check (the 0 errors / 0 warnings bar) |
+| `just test` | the full test suite |
 | `just cover` | graph covering set matches the dd / salsa / rust oracles |
-| `just agree` | oracle agreement matrix |
-| `just perf` | golden perf sweep → `perf-runs.csv` |
-| `just perf-1gb` | same sweep under the 1 GB cache gun |
-| `just results` | latest perf table |
+| `just agree` | oracle agreement matrix: oracle == counting == DRed == dd |
+| `just oracle` | dd single-source reach oracle |
+| `just perf` | golden perf sweep → `perf-runs.csv` (release) |
+| `just perf-1gb` | same sweep under a 1 GB page cache (`DL_CACHE_KIB`) |
+| `just results` | latest perf table (pretty-printed) |
+| `just storage` | GraphStore Epic 1: split-vs-collapsed on-disk bytes |
+| `just map` | crate map: modules / src / tests / examples |
+| `just vibes` | current state: working tree + recent commits |
+| `just plan` | next dispatchable steps, read out of `src/tasks.rs` |
 
 ## The one pattern (do not re-derive — DECISIONS.md is the pin)
 
@@ -32,10 +40,12 @@ yardstick. Rust/CSR is used ONLY where dd/salsa can't express it either (SCC,
 count_pairs). State lives on disk; RSS = page cache, Rust heap ≈ 0 (kills v5's
 resident 36 GB swap). Keys are surrogate ints, never hashed strings (D1).
 
-## Crate layout (5 src modules)
+## Crate layout (7 src modules)
 
 `lib.rs` Store+ingest · `spine.rs` data model · `engine.rs` the cascade ·
-`measure.rs` golden harness · `oracle.rs` dd/salsa/rust oracles.
+`measure.rs` golden harness · `oracle.rs` dd/salsa/rust oracles ·
+`algo.rs` the real `Reach` trait (parity with the oracle, production) ·
+`tasks.rs` **the mind**: parity surface + the `GraphStorePlan` inference chain.
 
 ## Commit format (every commit)
 
@@ -59,7 +69,7 @@ check: <the command/receipt that decided it, or N/A>
 | D-G2 | keep v5 `scc.rs`/`walk.rs` as-is; all six callers use small rule graphs |
 | D-G3 | tier on mean reachable-set size, not graph size (crossover 1.5–297 queries) |
 | D-G4 | recursive CTE covers traversal; 3 limits: multi-seed loses index seek, cost tracks edges, reverse index mandatory (4000×) |
-| D-G5 | SQL SCC quadratic (25min no-finish); count_pairs 4.3hr → Rust/CSR, not SQL |
+| D-G5 | SQL SCC quadratic (25min no-finish); count_pairs 4.3hr → Rust/CSR, not SQL (count_pairs since DONE `9dacb0d7`; see Known gaps) |
 | D-G6 | real max DFS depth 690 (not 1M); depth-cap 64 silently truncates flow_edge p99=79 |
 | frp-lab | "FRP the edge, batch the core" holds; the break is memory, not correctness |
 | reactor-lab | salsa is resident always, never touches disk — it eats the RAM budget |
@@ -67,9 +77,14 @@ check: <the command/receipt that decided it, or N/A>
 | unification | salsa · SCC · dd are the SAME cascade, prune = digest/weight/reached |
 | retract tombstones | `weight>0` filter already tombstones; "delete-at-0" was doc drift |
 | 2026-07-22 labs fold | four lab crates → one `sprefa-store`; dd/salsa demoted to `oracle.rs` |
+| GraphStore Epic 1 | `Layout`+`stamp` (Split delegates VERBATIM to the two create_schema; Collapsed = g_node/g_edge) + `attach_with` + `measure_storage`; collapsed g_node carries every plane's value col (the dead-byte tax) |
 
 ## Known gaps (drive these down)
 
 - `measure.rs` golden list incomplete: cache counters stubbed `-1`, RSS monotonic
   (not per-phase), db_bytes WAL-underreports, missing stmt-count/page-faults/query-plan.
-- `engine.rs` still carries the dead SQL-SCC/count_pairs (D-G5) — demote to oracle-only.
+- `count_pairs` is done (condensation rework, `9dacb0d7`; byte-identical to
+  `src/graph/scc.rs:103`). The remaining quadratic SQL step is SCC labeling
+  inside `build_condensed` (`scc_labels`) — the next measurement target. The
+  `reach` module is LIVE production (bound by `tests/covering.rs`); Rust
+  `scc.rs`/`walk.rs` are its oracles. Do NOT "demote" it — D-G5 is settled.

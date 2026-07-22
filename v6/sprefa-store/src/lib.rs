@@ -19,6 +19,8 @@ pub mod spine;
 pub mod engine;
 pub mod measure;
 pub mod oracle;
+pub mod algo;
+pub mod tasks;
 
 pub use engine::{cascade, reach, reconcile, temporal};
 pub use measure::{benchgraph, memcap};
@@ -607,17 +609,94 @@ use crate::{cascade, reconcile};
 
 pub use cascade::{key, KEY_STRIDE};
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Layout knob (GraphStore Epic 1): the on-disk shape of the two planes lives
+// UNDER attach. The RelStore API + the measure harness stay fixed; only the
+// table set flips. See src/tasks.rs `GraphStorePlan` for the inference chain.
+// ─────────────────────────────────────────────────────────────────────────────
+/// Which table set [`RelStore::attach_with`] stamps. Nothing in the RelStore API
+/// depends on it; it selects the on-disk shape the storage measurement weighs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    /// Two schemas: cx_row/cx_dep (cascade) + rx_memo/rx_dep (reconcile). The
+    /// live shape since the lab fold; the on-disk status quo.
+    Split,
+    /// ONE node table g_node carrying the UNION of value columns (weight for the
+    /// Z-set plane; digest/changed_at/verified_at for the digest plane) + one
+    /// g_edge(src,dst) edge table. The semiring difference is COLUMNS, not tables.
+    Collapsed,
+}
+
+/// Stamp the node+edge DDL for `layout` onto `db` (pragmas first).
+///
+/// `Split` delegates VERBATIM to the two live `create_schema` (cascade +
+/// reconcile), so the Split on-disk shape can never drift from production — the
+/// 1.1 golden locks that equality. `Collapsed` emits g_node + g_edge +
+/// ix_g_edge_dst + the TEMP working set the collapsed cascade retargets onto in
+/// Epic 2.
+///
+/// g_edge columns are `src`/`dst`, not the plan's `from`/`to`: `from` is a SQL
+/// reserved word and Epic 2 retargets every cascade statement onto these names.
+/// `g_node`/`g_edge` mirror the spine's `node`/`edge` (the unified graph); the
+/// `g_` prefix keeps a collapsed store from clashing with `cx_`/`rx_` in one db.
+///
+/// Build-vs-buy: hand-rolled DDL. The lab need is ephemeral schema for a fresh
+/// temp db per run (create_schema already `format!`s); sea-query / refinery /
+/// sqlx-migrations version a LIVE db, which is not this.
+pub async fn stamp(db: &DatabaseConnection, layout: Layout) -> Result<(), DbErr> {
+    db.execute_unprepared(crate::unfuck_sqlite::OPEN_PRAGMAS).await?;
+    match layout {
+        Layout::Split => {
+            cascade::create_schema(db).await?;
+            reconcile::create_schema(db).await?;
+        }
+        Layout::Collapsed => {
+            // Same cache/mmap tuning cascade::create_schema applies, then the
+            // collapsed schema. g_node holds every plane's value column so EITHER
+            // plane can live on it; the unused columns are the dead-byte cost the
+            // measurement quantifies. TEMP tables mirror cx_'s RAM-only working set.
+            db.execute_unprepared(
+                "PRAGMA cache_size=-262144; PRAGMA mmap_size=1073741824;
+                 CREATE TABLE g_node (
+                    key         INTEGER PRIMARY KEY,
+                    weight      INTEGER NOT NULL DEFAULT 1,
+                    digest      INTEGER NOT NULL DEFAULT 0,
+                    changed_at  INTEGER NOT NULL DEFAULT 0,
+                    verified_at INTEGER NOT NULL DEFAULT 0
+                 );
+                 CREATE TABLE g_edge (
+                    src INTEGER NOT NULL,
+                    dst INTEGER NOT NULL,
+                    PRIMARY KEY (src, dst)
+                 ) WITHOUT ROWID;
+                 CREATE INDEX ix_g_edge_dst ON g_edge (dst);
+                 CREATE TEMP TABLE g_frontier (key INTEGER PRIMARY KEY);
+                 CREATE TEMP TABLE g_next     (key INTEGER PRIMARY KEY);
+                 CREATE TEMP TABLE g_hits (key INTEGER PRIMARY KEY, dec INTEGER NOT NULL);
+                 CREATE TEMP TABLE g_cone (key INTEGER PRIMARY KEY);",
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
 pub struct RelStore {
     db: DatabaseConnection,
 }
 
 impl RelStore {
-    /// Open (or create) a store at `db` with the store's tuning + both schemas.
-    pub async fn attach(db: DatabaseConnection) -> Result<Self, DbErr> {
-        db.execute_unprepared(crate::unfuck_sqlite::OPEN_PRAGMAS).await?;
-        cascade::create_schema(&db).await?;
-        reconcile::create_schema(&db).await?;
+    /// Open (or create) a store at `db` stamped for `layout`. The layout knob
+    /// lives here; everything above it (RelStore API, measure harness) is fixed.
+    pub async fn attach_with(db: DatabaseConnection, layout: Layout) -> Result<Self, DbErr> {
+        stamp(&db, layout).await?;
         Ok(Self { db })
+    }
+
+    /// Open (or create) a store at `db` with the store's tuning + both schemas.
+    /// The status quo: Split layout (cx_ + rx_). Delegates to [`attach_with`].
+    pub async fn attach(db: DatabaseConnection) -> Result<Self, DbErr> {
+        Self::attach_with(db, Layout::Split).await
     }
 
     pub fn conn(&self) -> &DatabaseConnection {
@@ -744,6 +823,133 @@ mod tests {
 
         s.retract_dred(&[(0, 0)]).await.unwrap();
         assert_eq!(s.alive().await.unwrap(), 0, "cutting the cross-rel anchor kills the rel-1 cycle");
+    }
+
+    // ── GraphStore Epic 1 · stamp goldens ──
+
+    async fn raw_db(tag: &str) -> DatabaseConnection {
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let uniq = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "stamp_{tag}_{}_{uniq}.sqlite",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
+        let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
+        opt.max_connections(1).min_connections(1);
+        Database::connect(opt).await.unwrap()
+    }
+
+    // (type, name, sql) for every persistent schema object (TEMP tables live in
+    // sqlite_temp_master, so this sees only the durable tables + indexes).
+    async fn persistent_master(db: &DatabaseConnection) -> Vec<(String, String, String)> {
+        use sea_orm::{DatabaseBackend, Statement};
+        let rows = db
+            .query_all_raw(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT type, name, sql FROM sqlite_master \
+                 WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE '\\_%' ESCAPE '\\' \
+                 ORDER BY type, name"
+                    .to_owned(),
+            ))
+            .await
+            .unwrap();
+        rows.iter()
+            .map(|r| {
+                (
+                    r.try_get_by_index::<String>(0).unwrap_or_default(),
+                    r.try_get_by_index::<String>(1).unwrap_or_default(),
+                    r.try_get_by_index::<String>(2).unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
+
+    // 1.1 — stamp(Split) reproduces the live schemas byte-for-byte. A db stamped
+    // via RelStore::attach (Split) has the SAME persistent sqlite_master as one
+    // built by cascade::create_schema + reconcile::create_schema directly, and
+    // the object set is exactly the six the engine has shipped since the fold.
+    #[tokio::test]
+    async fn stamp_split_reproduces_the_live_schemas() {
+        let via_attach = raw_db("split_attach").await;
+        RelStore::attach(via_attach.clone()).await.unwrap();
+
+        let via_direct = raw_db("split_direct").await;
+        via_direct
+            .execute_unprepared(crate::unfuck_sqlite::OPEN_PRAGMAS)
+            .await
+            .unwrap();
+        crate::cascade::create_schema(&via_direct).await.unwrap();
+        crate::reconcile::create_schema(&via_direct).await.unwrap();
+
+        let master_attach = persistent_master(&via_attach).await;
+        let master_direct = persistent_master(&via_direct).await;
+        assert_eq!(
+            master_attach, master_direct,
+            "stamp(Split) must equal the live create_schema pair, object-for-object"
+        );
+
+        let names: Vec<&str> = master_attach.iter().map(|(_, n, _)| n.as_str()).collect();
+        for required in [
+            "cx_row", "cx_dep", "ix_cx_dep_child", "rx_memo", "rx_dep", "ix_rx_read",
+        ] {
+            assert!(names.contains(&required), "schema object {required} missing: {names:?}");
+        }
+    }
+
+    // 1.2 — stamp(Collapsed) makes g_node + g_edge + ix_g_edge_dst; a node carrying
+    // all five value columns and a dedup edge round-trip through it. g_node's
+    // digest/changed_at/verified_at are the dead-column cost the measurement weighs.
+    #[tokio::test]
+    async fn stamp_collapsed_round_trips() {
+        let db = raw_db("collapsed").await;
+        stamp(&db, Layout::Collapsed).await.unwrap();
+
+        let names = persistent_master(&db).await;
+        let name_set: Vec<&str> = names.iter().map(|(_, n, _)| n.as_str()).collect();
+        for required in ["g_node", "g_edge", "ix_g_edge_dst"] {
+            assert!(name_set.contains(&required), "{required} missing: {name_set:?}");
+        }
+
+        // round-trip a node with every plane's value column + two edges
+        db.execute_unprepared(
+            "INSERT INTO g_node(key,weight,digest,changed_at,verified_at) \
+             VALUES (1000000000,2,77,3,4); \
+             INSERT INTO g_edge(src,dst) VALUES (1000000000,2000000000),(1000000000,3000000000)",
+        )
+        .await
+        .unwrap();
+        // g_edge PK dedups: re-inserting the same edge is a no-op (OR IGNORE shape)
+        db.execute_unprepared("INSERT OR IGNORE INTO g_edge(src,dst) VALUES (1000000000,2000000000)")
+            .await
+            .unwrap();
+
+        use sea_orm::{DatabaseBackend, Statement};
+        let node = db
+            .query_one_raw(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT weight,digest,changed_at,verified_at FROM g_node WHERE key=1000000000"
+                    .to_owned(),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(node.try_get_by_index::<i64>(0).unwrap(), 2, "weight round-trip");
+        assert_eq!(node.try_get_by_index::<i64>(1).unwrap(), 77, "digest round-trip");
+        assert_eq!(node.try_get_by_index::<i64>(2).unwrap(), 3, "changed_at round-trip");
+        assert_eq!(node.try_get_by_index::<i64>(3).unwrap(), 4, "verified_at round-trip");
+
+        let edge_count = db
+            .query_one_raw(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT count(*) FROM g_edge WHERE src=1000000000".to_owned(),
+            ))
+            .await
+            .unwrap()
+            .map(|r| r.try_get_by_index::<i64>(0).unwrap_or(0))
+            .unwrap_or(0);
+        assert_eq!(edge_count, 2, "duplicate edge was deduped by the PK");
     }
 }
 

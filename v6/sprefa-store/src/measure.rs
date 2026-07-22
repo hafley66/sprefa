@@ -26,7 +26,7 @@ use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::registry::LookupSpan;
 
-use crate::relstore::RelStore;
+use crate::relstore::{stamp, Layout, RelStore};
 
 // ============================ the collector ============================
 // (plain tracing → Vec<Record>; the one collection mechanism)
@@ -590,6 +590,124 @@ mod harness_tests {
             "expected the real INSERT statement text in the trace, got: {:?}",
             sqlite_events.iter().map(|r| &r.fields).collect::<Vec<_>>()
         );
+    }
+}
+
+// ============================ GraphStore storage (Epic 1) =====================
+// The split-vs-collapsed storage answer. Same corpus, same dense keys, two table
+// sets — the only difference is how many tables carry the rows and how many dead
+// value columns ride along. No cascade SQL runs on Collapsed (storage cost only);
+// the dead g_node columns (digest/changed_at/verified_at) ARE written, which is
+// the cost this measurement exists to weigh.
+
+#[derive(Clone, Debug)]
+pub struct StorageDelta {
+    pub split_bytes: i64,
+    pub collapsed_bytes: i64,
+}
+
+impl StorageDelta {
+    /// Collapsed minus Split. Negative = collapsed wins on bytes.
+    pub fn delta(&self) -> i64 {
+        self.collapsed_bytes - self.split_bytes
+    }
+}
+
+/// Load `corpus` under each layout, checkpoint, and read the on-disk bytes. The
+/// Split path is the live RelStore (cx_row/cx_dep + rx_memo/rx_dep); the Collapsed
+/// path inserts the same (key, weight) + edges straight into g_node/g_edge. Both
+/// use the SAME dense key space (tag*STRIDE + id, STRIDE = 1e9), so the comparison
+/// is fair — identical logical rows, only the table set differs.
+pub async fn measure_storage(corpus: &benchgraph::MultiGraph) -> StorageDelta {
+    let split_bytes = storage_bytes(Layout::Split, corpus).await;
+    let collapsed_bytes = storage_bytes(Layout::Collapsed, corpus).await;
+    StorageDelta { split_bytes, collapsed_bytes }
+}
+
+async fn storage_bytes(layout: Layout, corpus: &benchgraph::MultiGraph) -> i64 {
+    let path = std::env::temp_dir().join(format!(
+        "sprefa_storage_{}_{:x}.sqlite",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
+    let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
+    opt.max_connections(1).min_connections(1);
+    let db = Database::connect(opt).await.unwrap();
+
+    const STRIDE: i64 = benchgraph::TAG_STRIDE;
+    const CHUNK: usize = 4000;
+    let key_of = |tag: u32, id: i64| -> i64 { (tag as i64) * STRIDE + id };
+
+    match layout {
+        Layout::Split => {
+            let store = RelStore::attach_with(db.clone(), Layout::Split).await.unwrap();
+            let rows: Vec<(i64, i64, i64)> = corpus
+                .rows
+                .iter()
+                .map(|(tag, id, w)| (*tag as i64, *id, *w))
+                .collect();
+            let deps: Vec<(i64, i64, i64, i64)> = corpus
+                .edges
+                .iter()
+                .map(|(pt, pi, ct, ci)| (*pt as i64, *pi as i64, *ct as i64, *ci as i64))
+                .collect();
+            store.add_rows(&rows).await.unwrap();
+            store.add_deps(&deps).await.unwrap();
+        }
+        Layout::Collapsed => {
+            stamp(&db, Layout::Collapsed).await.unwrap();
+            // g_node(key, weight): the dead value columns keep their DEFAULT 0 —
+            // present in the row format (the byte cost we weigh) but not written.
+            for chunk in corpus.rows.chunks(CHUNK) {
+                let vals: Vec<String> = chunk
+                    .iter()
+                    .map(|(tag, id, w)| format!("({},{})", key_of(*tag, *id), w))
+                    .collect();
+                db.execute_unprepared(&format!(
+                    "INSERT INTO g_node(key,weight) VALUES {}",
+                    vals.join(",")
+                ))
+                .await
+                .unwrap();
+            }
+            for chunk in corpus.edges.chunks(CHUNK) {
+                let vals: Vec<String> = chunk
+                    .iter()
+                    .map(|(pt, pi, ct, ci)| format!("({},{})", key_of(*pt, *pi), key_of(*ct, *ci)))
+                    .collect();
+                db.execute_unprepared(&format!(
+                    "INSERT INTO g_edge(src,dst) VALUES {}",
+                    vals.join(",")
+                ))
+                .await
+                .unwrap();
+            }
+        }
+    }
+    // Fold WAL frames into the main file so the byte count is the durable size.
+    db.execute_unprepared("PRAGMA wal_checkpoint(TRUNCATE)").await.ok();
+    let bytes = std::fs::metadata(&path).map(|m| m.len() as i64).unwrap_or(0);
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
+    let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
+    bytes
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn measure_storage_weighs_both_layouts() {
+        let g = benchgraph::gen_multi(3, 4);
+        let delta = measure_storage(&g).await;
+        assert!(delta.split_bytes > 0, "split bytes should be positive: {delta:?}");
+        assert!(delta.collapsed_bytes > 0, "collapsed bytes should be positive: {delta:?}");
     }
 }
 

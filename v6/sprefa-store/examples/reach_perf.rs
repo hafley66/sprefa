@@ -4,9 +4,14 @@ use sprefa_store::{benchgraph, measure::{run_cell, Cell}, memcap, relstore::RelS
 static GLOBAL: memcap::CappedAlloc = memcap::CappedAlloc;
 
 fn main() {
+    // cache sizes (KiB): override via DL_CACHE_KIB (comma list); default = the lab sweep.
+    let cache_sizes: Vec<i64> = std::env::var("DL_CACHE_KIB")
+        .ok()
+        .map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect())
+        .unwrap_or_else(|| vec![2_000, 32_000]);
     let mut sweep = Vec::new();
     for workload in ["DAG", "CYC"] {
-        for cache_size_kib in [2_000, 32_000] {
+        for &cache_size_kib in &cache_sizes {
             sweep.push(Cell {
                 engine: if workload == "DAG" { "sqlite-count" } else { "sqlite-count-scc" },
                 workload,

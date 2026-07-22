@@ -1,0 +1,79 @@
+# v6/sprefa-store — the lab's home. Run from here: `cd v6/sprefa-store && just`.
+# `just` with no argument lists the recipes. Every recipe is one real cargo command.
+
+default:
+	@just --list
+
+# ── build / check ──
+# type-check (the 0 errors / 0 warnings bar)
+check:
+	cargo check
+
+# build the crate
+build:
+	cargo build
+
+# the full test suite
+test:
+	cargo test
+
+# ── oracles / parity ──
+# graph covering set matches the dd / salsa / rust oracles (byte-identical parity)
+cover:
+	cargo test --test covering
+
+# oracle agreement matrix: oracle == counting == DRed == dd
+agree:
+	cargo test --test agreement
+
+# dd single-source reach oracle
+oracle:
+	cargo test --test oracle_dd
+
+# CappedAlloc memcap behavior
+memcap:
+	cargo test --test memcap
+
+# ── perf sweep ──
+# golden perf sweep -> perf-runs.csv (release for real numbers)
+perf:
+	cargo run --release --example reach_perf
+
+# same sweep under a 1 GB page cache (DL_CACHE_KIB = 1048576 KiB)
+perf-1gb:
+	DL_CACHE_KIB=1048576 cargo run --release --example reach_perf
+
+# latest perf table (pretty-printed)
+results:
+	@column -t -s, perf-runs.csv 2>/dev/null || cat perf-runs.csv 2>/dev/null || echo "(no perf-runs.csv yet; run `just perf`)"
+
+# drop the perf csv so the next sweep starts clean
+clean:
+	rm -f perf-runs.csv
+
+# ── GraphStore Epic 1 ──
+# split-vs-collapsed on-disk bytes for one corpus (the StorageDelta answer)
+storage:
+	cargo run --release --example storage_delta
+
+# ── orientation ──
+# crate map: modules, src, tests, examples
+map:
+	@echo "== modules (src/lib.rs) =="
+	@grep -nE '^pub mod' src/lib.rs
+	@echo "== src ==" && ls src
+	@echo "== tests ==" && ls tests
+	@echo "== examples ==" && ls examples
+
+# current state: working tree + recent commits
+vibes:
+	@git status -s
+	@echo "--- recent commits ---"
+	@git log --oneline -8
+
+# next dispatchable steps: the DONE bar + open cells in tasks.rs (the mind)
+plan:
+	@echo "== DONE bar (tasks.rs) =="
+	@grep -A6 'DONE bar' src/tasks.rs
+	@echo "== open cells =="
+	@grep -nE '❌|🧪|GAP|TODO' src/tasks.rs || echo "(none open)"
