@@ -10,7 +10,7 @@
 |---|--:|---|
 | [.agents/skills/v6-deps/SKILL.md](.agents/skills/v6-deps/SKILL.md) | 145 | V6 dependency dossier (researched 2026-07-19) |
 | [.agents/skills/v6-plan/SKILL.md](.agents/skills/v6-plan/SKILL.md) | 85 | V6 primed context |
-| [AGENTS.md](AGENTS.md) | 90 | v6 — AGENTS.md (start here; stay out of everything else) |
+| [AGENTS.md](AGENTS.md) | 96 | v6 — AGENTS.md (start here; stay out of everything else) |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 162 | v6 architecture — every graph algorithm, and why |
 | [DECISIONS.md](DECISIONS.md) | 73 | v6 pinned decisions — STOP re-deriving these |
 | [MAP.md](MAP.md) | 245 | v6 — the living map (algorithms · unification · exploration · DONE) |
@@ -70,7 +70,7 @@
 43:## Crate layout (7 src modules)
 50:## Commit format (every commit)
 59:## History — task → single-line insight (append, never rewrite)
-82:## Known gaps (drive these down)
+84:## Known gaps (drive these down)
 ```
 
 ### ARCHITECTURE.md

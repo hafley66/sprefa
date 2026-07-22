@@ -20,7 +20,7 @@ reads its open cells. Go there for what is done and what is next.
 | `just perf` | golden perf sweep → `perf-runs.csv` (release) |
 | `just perf-1gb` | same sweep under a 1 GB page cache (`DL_CACHE_KIB`) |
 | `just results` | latest perf table (pretty-printed) |
-| `just storage` | GraphStore Epic 1: split-vs-collapsed on-disk bytes |
+| `just storage` | split-vs-collapsed on-disk bytes (the verdict run; `L W` args scale it, multi-GB, heap ≈ 0) |
 | `just map` | crate map: modules / src / tests / examples |
 | `just vibes` | current state: working tree + recent commits |
 | `just plan` | next dispatchable steps, read out of `src/tasks.rs` |
@@ -78,6 +78,8 @@ check: <the command/receipt that decided it, or N/A>
 | retract tombstones | `weight>0` filter already tombstones; "delete-at-0" was doc drift |
 | 2026-07-22 labs fold | four lab crates → one `sprefa-store`; dd/salsa demoted to `oracle.rs` |
 | GraphStore Epic 1 | `Layout`+`stamp` (Split delegates VERBATIM to the two create_schema; Collapsed = g_node/g_edge) + `attach_with` + `measure_storage`; collapsed g_node carries every plane's value col (the dead-byte tax) |
+| GraphStore storage verdict | scaled to 5.66 GB (82M nodes): collapsed/split = 1.040 (+234 MB); ~1.046 stable 300K→2M → collapse REJECTED on storage; shape = the split two-plane pair. The small-corpus "collapsed wins" was fixed table-overhead |
+| GraphStore namespace pivot | forward = a namespace-generic engine: `GraphNs` (a table-name prefix; SQLite TEMP working tables can't be schema-qualified, so prefix is FORCED, not a fork). Epic 2 = thread `GraphNs` through cascade/reconcile/reach; `Layout` retires then. Per-tuple reconcile is the real remaining lever (frontier), on the split shape |
 
 ## Known gaps (drive these down)
 
@@ -88,3 +90,7 @@ check: <the command/receipt that decided it, or N/A>
   inside `build_condensed` (`scc_labels`) — the next measurement target. The
   `reach` module is LIVE production (bound by `tests/covering.rs`); Rust
   `scc.rs`/`walk.rs` are its oracles. Do NOT "demote" it — D-G5 is settled.
+- GraphStore storage is SETTLED (collapse rejected; see history). Open GraphStore
+  work is the namespace-generic engine (thread `GraphNs` through cascade/reconcile/
+  reach — Epic 2) and, beyond it, per-tuple reconcile (the granularity unlock, on the
+  split shape). `Layout` is the Epic-1 measurement knob, still used by `measure.rs`.
