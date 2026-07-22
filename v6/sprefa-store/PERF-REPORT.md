@@ -12,12 +12,12 @@ _input hash `e711731b974e1703` (all engines must match)_
 
 | engine | survivors | correct | ms | stmts | rust_peak MB | sqlite_hw MB | rss MB | db MB |
 |---|---:|:---:|---:|---:|---:|---:|---:|---:|
-| oracle | 50002 | ref | 15.3 | 0 | 10.38 | 0.00 | 15.2 | 0.00 |
-| sqlite-count | 50002 | yes | 32.1 | 29 | 0.12 | 5.08 | 36.5 | 3.76 |
-| sqlite-count-scc | 50002 | yes | 158.2 | 56 | 0.12 | 6.20 | 41.6 | 3.76 |
-| sqlite-dred-loop | 50002 | yes | 130.6 | 75 | 0.12 | 5.50 | 38.3 | 3.76 |
-| sqlite-dred-cte | 50002 | yes | 155.5 | 6 | 0.12 | 6.72 | 38.5 | 3.76 |
-| dd | 50002 | yes | 10.1 | 0 | 12.02 | 0.00 | 27.2 | 0.00 |
+| oracle | 50002 | ref | 23.8 | 0 | 10.38 | 0.00 | 18.2 | 0.00 |
+| sqlite-count | 50002 | yes | 30.1 | 29 | 0.12 | 5.08 | 34.2 | 3.76 |
+| sqlite-count-scc | 50002 | yes | 116.4 | 39 | 0.12 | 5.46 | 32.7 | 3.76 |
+| sqlite-dred-loop | 50002 | yes | 125.2 | 75 | 0.12 | 5.50 | 36.0 | 3.76 |
+| sqlite-dred-cte | 50002 | yes | 147.5 | 6 | 0.12 | 6.72 | 33.5 | 3.76 |
+| dd | 50002 | yes | 9.2 | 0 | 12.02 | 0.00 | 32.2 | 0.00 |
 
 ## DAG 240k — nodes≈240002, DAG
 
@@ -25,12 +25,12 @@ _input hash `db02ab7cd976622b` (all engines must match)_
 
 | engine | survivors | correct | ms | stmts | rust_peak MB | sqlite_hw MB | rss MB | db MB |
 |---|---:|:---:|---:|---:|---:|---:|---:|---:|
-| oracle | 200002 | ref | 66.3 | 0 | 41.29 | 0.00 | 58.5 | 0.00 |
-| sqlite-count | 200002 | yes | 106.7 | 29 | 0.12 | 19.99 | 118.6 | 15.21 |
-| sqlite-count-scc | 200002 | yes | 643.6 | 56 | 0.12 | 24.39 | 137.5 | 15.21 |
-| sqlite-dred-loop | 200002 | yes | 510.1 | 75 | 0.12 | 21.59 | 127.0 | 15.21 |
-| sqlite-dred-cte | 200002 | yes | 632.5 | 6 | 0.12 | 26.59 | 152.0 | 15.21 |
-| dd | 200002 | yes | 42.3 | 0 | 47.09 | 0.00 | 128.5 | 0.00 |
+| oracle | 200002 | ref | 68.8 | 0 | 41.29 | 0.00 | 63.1 | 0.00 |
+| sqlite-count | 200002 | yes | 102.5 | 29 | 0.12 | 19.99 | 116.6 | 15.21 |
+| sqlite-count-scc | 200002 | yes | 465.3 | 39 | 0.12 | 21.54 | 119.6 | 15.21 |
+| sqlite-dred-loop | 200002 | yes | 497.4 | 75 | 0.12 | 21.59 | 126.0 | 15.21 |
+| sqlite-dred-cte | 200002 | yes | 603.4 | 6 | 0.12 | 26.59 | 143.6 | 15.21 |
+| dd | 200002 | yes | 39.4 | 0 | 47.09 | 0.00 | 99.7 | 0.00 |
 
 ## DAG 960k — nodes≈960002, DAG
 
@@ -38,12 +38,12 @@ _input hash `ef153ee39296ef0f` (all engines must match)_
 
 | engine | survivors | correct | ms | stmts | rust_peak MB | sqlite_hw MB | rss MB | db MB |
 |---|---:|:---:|---:|---:|---:|---:|---:|---:|
-| oracle | 800002 | ref | 365.9 | 0 | 164.93 | 0.00 | 249.9 | 0.00 |
-| sqlite-count | 800002 | yes | 458.5 | 29 | 0.12 | 80.16 | 410.5 | 61.46 |
-| sqlite-count-scc | 800002 | yes | 2690.1 | 56 | 0.12 | 97.82 | 483.2 | 61.46 |
-| sqlite-dred-loop | 800002 | yes | 2121.6 | 75 | 0.12 | 86.56 | 430.1 | 61.46 |
-| sqlite-dred-cte | 800002 | yes | 2616.3 | 6 | 0.12 | 106.26 | 498.8 | 61.46 |
-| dd | 800002 | yes | 182.4 | 0 | 187.38 | 0.00 | 460.7 | 0.00 |
+| oracle | 800002 | ref | 343.1 | 0 | 164.93 | 0.00 | 269.7 | 0.00 |
+| sqlite-count | 800002 | yes | 438.3 | 29 | 0.12 | 80.16 | 406.2 | 61.46 |
+| sqlite-count-scc | 800002 | yes | 1935.2 | 39 | 0.12 | 86.41 | 427.0 | 61.46 |
+| sqlite-dred-loop | 800002 | yes | 2053.6 | 75 | 0.12 | 86.56 | 416.1 | 61.46 |
+| sqlite-dred-cte | 800002 | yes | 2483.9 | 6 | 0.12 | 106.26 | 497.0 | 61.46 |
+| dd | 800002 | yes | 166.6 | 0 | 187.38 | 0.00 | 457.3 | 0.00 |
 
 ## DAG 2.9M — nodes≈2880002, DAG
 
@@ -51,12 +51,12 @@ _input hash `6a681af47c9d3384` (all engines must match)_
 
 | engine | survivors | correct | ms | stmts | rust_peak MB | sqlite_hw MB | rss MB | db MB |
 |---|---:|:---:|---:|---:|---:|---:|---:|---:|
-| oracle | 2400001 | ref | 1265.5 | 0 | 554.51 | 0.00 | 688.5 | 0.00 |
-| sqlite-count | 2400001 | yes | 1404.7 | 29 | 0.17 | 240.38 | 884.9 | 184.47 |
-| sqlite-count-scc | 2400001 | yes | 8274.8 | 56 | 0.17 | 293.12 | 1141.3 | 184.47 |
-| sqlite-dred-loop | 2400001 | yes | 6523.1 | 75 | 0.17 | 259.82 | 937.6 | 184.47 |
-| sqlite-dred-cte | 2400001 | yes | 7894.5 | 6 | 0.17 | 318.20 | 1094.8 | 184.47 |
-| dd | 2400001 | yes | 643.0 | 0 | 617.97 | 0.00 | 1178.0 | 0.00 |
+| oracle | 2400001 | ref | 1278.1 | 0 | 554.51 | 0.00 | 681.5 | 0.00 |
+| sqlite-count | 2400001 | yes | 1397.9 | 29 | 0.17 | 240.38 | 874.2 | 184.47 |
+| sqlite-count-scc | 2400001 | yes | 6054.1 | 39 | 0.17 | 259.08 | 924.9 | 184.47 |
+| sqlite-dred-loop | 2400001 | yes | 6303.7 | 75 | 0.17 | 259.82 | 951.4 | 184.47 |
+| sqlite-dred-cte | 2400001 | yes | 7550.6 | 6 | 0.17 | 318.20 | 1167.2 | 184.47 |
+| dd | 2400001 | yes | 621.5 | 0 | 617.97 | 0.00 | 1026.0 | 0.00 |
 
 ## CYC 60k s7 — nodes≈60002, cyclic stride=7
 
@@ -64,12 +64,12 @@ _input hash `4ce3fce20608f808` (all engines must match)_
 
 | engine | survivors | correct | ms | stmts | rust_peak MB | sqlite_hw MB | rss MB | db MB |
 |---|---:|:---:|---:|---:|---:|---:|---:|---:|
-| oracle | 51430 | ref | 15.9 | 0 | 10.42 | 0.00 | 19.6 | 0.00 |
-| sqlite-count | 52384 | **NO** | 26.6 | 29 | 0.10 | 5.03 | 36.8 | 3.79 |
-| sqlite-count-scc | 51430 | yes | 167.8 | 56 | 0.10 | 6.22 | 44.5 | 3.79 |
-| sqlite-dred-loop | 51430 | yes | 145.1 | 75 | 0.10 | 5.60 | 40.1 | 3.79 |
-| sqlite-dred-cte | 51430 | yes | 170.2 | 6 | 0.10 | 6.76 | 43.9 | 3.79 |
-| dd | 51430 | yes | 12.3 | 0 | 13.51 | 0.00 | 37.0 | 0.00 |
+| oracle | 51430 | ref | 15.2 | 0 | 10.42 | 0.00 | 20.4 | 0.00 |
+| sqlite-count | 52384 | **NO** | 26.0 | 29 | 0.10 | 5.03 | 34.5 | 3.79 |
+| sqlite-count-scc | 51430 | yes | 125.3 | 39 | 0.10 | 5.60 | 39.6 | 3.79 |
+| sqlite-dred-loop | 51430 | yes | 136.7 | 75 | 0.10 | 5.60 | 38.3 | 3.79 |
+| sqlite-dred-cte | 51430 | yes | 158.0 | 6 | 0.10 | 6.76 | 35.9 | 3.79 |
+| dd | 51430 | yes | 11.5 | 0 | 13.51 | 0.00 | 41.5 | 0.00 |
 
 ## CYC 960k s7 — nodes≈960002, cyclic stride=7
 
@@ -77,12 +77,12 @@ _input hash `a10c4ce974755186` (all engines must match)_
 
 | engine | survivors | correct | ms | stmts | rust_peak MB | sqlite_hw MB | rss MB | db MB |
 |---|---:|:---:|---:|---:|---:|---:|---:|---:|
-| oracle | 815240 | ref | 401.0 | 0 | 165.63 | 0.00 | 285.5 | 0.00 |
-| sqlite-count | 830478 | **NO** | 408.7 | 29 | 0.16 | 79.68 | 425.9 | 62.15 |
-| sqlite-count-scc | 815240 | yes | 2890.0 | 56 | 0.16 | 98.69 | 503.2 | 62.15 |
-| sqlite-dred-loop | 815240 | yes | 2361.0 | 75 | 0.16 | 89.04 | 453.3 | 62.15 |
-| sqlite-dred-cte | 815240 | yes | 2789.6 | 6 | 0.16 | 107.13 | 515.8 | 62.15 |
-| dd | 815240 | yes | 204.1 | 0 | 210.01 | 0.00 | 488.4 | 0.00 |
+| oracle | 815240 | ref | 359.0 | 0 | 165.63 | 0.00 | 246.5 | 0.00 |
+| sqlite-count | 830478 | **NO** | 391.8 | 29 | 0.16 | 79.68 | 436.4 | 62.15 |
+| sqlite-count-scc | 815240 | yes | 2123.0 | 39 | 0.16 | 89.04 | 447.4 | 62.15 |
+| sqlite-dred-loop | 815240 | yes | 2266.7 | 75 | 0.16 | 89.04 | 442.1 | 62.15 |
+| sqlite-dred-cte | 815240 | yes | 2646.2 | 6 | 0.16 | 107.13 | 535.2 | 62.15 |
+| dd | 815240 | yes | 195.7 | 0 | 210.01 | 0.00 | 477.9 | 0.00 |
 
 ## Breakpoint ramp — tight gun 700 MB
 
@@ -90,9 +90,9 @@ Same task, ramping nodes under a 700 MB memcap. dd is resident so it hits the wa
 
 | nodes | dd | sqlite-count | sqlite-dred-loop |
 |---:|:---:|:---:|:---:|
-| 960002 | 177 ms / 506 MB rss | 444 ms / 410 MB rss | 2095 ms / 426 MB rss |
-| 2880002 | 634 ms / 1020 MB rss | 1399 ms / 895 MB rss | 7185 ms / 774 MB rss |
+| 960002 | 172 ms / 477 MB rss | 437 ms / 426 MB rss | 2046 ms / 416 MB rss |
+| 2880002 | 612 ms / 1051 MB rss | 1346 ms / 896 MB rss | 6346 ms / 941 MB rss |
 | 5760002 | **ABORT** (>700 MB) | **ABORT** (>700 MB) | **ABORT** (>700 MB) |
 
 
-_Report generated in 134s._
+_Report generated in 123s._
