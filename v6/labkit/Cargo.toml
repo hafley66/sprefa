@@ -11,12 +11,16 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
-# The shipping SQLite engine (reach_dred.rs / cascade.rs) needs ONLY rusqlite. salsa
-# and differential-dataflow/timely are comparison ORACLES, both optional — a default
-# build pulls just rusqlite + libc.
+# The shipping SQLite engines (reach_dred.rs / cascade.rs) reach SQLite through
+# sprefa-store (sea-orm) — SQLite lives in ONE crate now, no rusqlite here. salsa
+# and differential-dataflow/timely are comparison ORACLES, both optional; a default
+# build pulls just sprefa-store + sea-orm + libc.
 [dependencies]
 libc = "0.2"
-rusqlite = { version = "0.32", features = ["bundled", "functions"] }
+sprefa-store = { path = "../sprefa-store" }
+sea-orm = { version = "2.0", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
+tokio = { version = "1", features = ["rt"] }
+libsqlite3-sys = "0.37"
 
 # oracles, off by default:
 salsa = { version = "0.28", optional = true }
@@ -28,7 +32,7 @@ with-salsa = ["dep:salsa"]
 with-dd = ["dep:differential-dataflow", "dep:timely"]
 
 # the two examples that use the salsa oracle need the feature; everything else (the
-# SQLite engines) builds on a default rusqlite-only build.
+# SQLite engines) builds on a default (sprefa-store + sea-orm) build.
 [[example]]
 name = "reconcile_table"
 required-features = ["with-salsa"]

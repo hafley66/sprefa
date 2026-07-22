@@ -19,7 +19,7 @@
 //! exploit: a single ascending sweep suffices.
 
 use crate::mix;
-use rusqlite::Connection;
+use crate::store_db::StoreDb;
 
 pub const WIN: u32 = 8; // a rel reads deps within the previous WIN ids
 pub const DEG: usize = 3; // up to DEG deps per rel
@@ -222,7 +222,7 @@ pub use salsa_impl::SalsaReconciler;
 // `readers` query drives propagation). Ascending id order = topo, so one sweep converges.
 
 pub struct SqlReconciler {
-    conn: Connection,
+    db: StoreDb,
     deps: Vec<Vec<u32>>,     // forward: deps[i] = what i reads (for recompute)
     readers: Vec<Vec<u32>>,  // reverse: readers[j] = who reads j (for invalidation)
     value: Vec<i64>,
@@ -232,16 +232,12 @@ pub struct SqlReconciler {
 }
 impl Default for SqlReconciler {
     fn default() -> Self {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(
-            "PRAGMA soft_heap_limit=4294967296;
-             CREATE TABLE dep(reader INTEGER NOT NULL, read INTEGER NOT NULL);
+        let db = StoreDb::memory();
+        db.exec("CREATE TABLE dep(reader INTEGER NOT NULL, read INTEGER NOT NULL);
              CREATE INDEX ix_read ON dep(read);
-             CREATE TABLE memo(id INTEGER PRIMARY KEY, digest INTEGER NOT NULL) WITHOUT ROWID;",
-        )
-        .unwrap();
+             CREATE TABLE memo(id INTEGER PRIMARY KEY, digest INTEGER NOT NULL) WITHOUT ROWID;");
         Self {
-            conn,
+            db,
             deps: Vec::new(),
             readers: Vec::new(),
             value: Vec::new(),
@@ -280,28 +276,13 @@ impl Reconciler for SqlReconciler {
             }
         }
         // persist dep edges (batched, one insert of a json array — N+1 law)
-        let tx = self.conn.transaction().unwrap();
-        {
-            let mut ins = tx.prepare("INSERT INTO dep(reader,read) VALUES(?1,?2)").unwrap();
-            for (i, ds) in self.deps.iter().enumerate() {
-                for &j in ds {
-                    ins.execute(rusqlite::params![i as i64, j as i64]).unwrap();
-                }
-            }
-        }
-        tx.commit().unwrap();
+        let edges = self.deps.iter().enumerate().flat_map(|(i, ds)| ds.iter().map(move |j| format!("({i},{j})"))).collect::<Vec<_>>();
+        if !edges.is_empty() { self.db.exec(format!("INSERT INTO dep(reader,read) VALUES {}", edges.join(","))); }
         // initial memos, ascending (topo)
         self.memo = vec![0i64; self.n];
-        let tx = self.conn.transaction().unwrap();
-        {
-            let mut ins = tx.prepare("INSERT INTO memo(id,digest) VALUES(?1,?2)").unwrap();
-            for i in 0..self.n {
-                let d = node_digest(self.value[i], self.deps[i].iter().map(|&j| self.memo[j as usize]));
-                self.memo[i] = d;
-                ins.execute(rusqlite::params![i as i64, d]).unwrap();
-            }
-        }
-        tx.commit().unwrap();
+        let mut rows = Vec::new();
+        for i in 0..self.n { let d = node_digest(self.value[i], self.deps[i].iter().map(|&j| self.memo[j as usize])); self.memo[i] = d; rows.push(format!("({i},{d})")); }
+        if !rows.is_empty() { self.db.exec(format!("INSERT INTO memo(id,digest) VALUES {}", rows.join(","))); }
     }
     fn edit(&mut self, changes: &[(u32, i64)]) {
         use std::collections::BTreeSet;
@@ -327,14 +308,9 @@ impl Reconciler for SqlReconciler {
             }
         }
         if !moved.is_empty() {
-            let tx = self.conn.transaction().unwrap();
-            {
-                let mut up = tx.prepare_cached("UPDATE memo SET digest=?1 WHERE id=?2").unwrap();
-                for &(id, d) in &moved {
-                    up.execute(rusqlite::params![d, id]).unwrap();
-                }
-            }
-            tx.commit().unwrap();
+            let cases = moved.iter().map(|(id,d)| format!("WHEN {id} THEN {d}")).collect::<Vec<_>>().join(" ");
+            let ids = moved.iter().map(|(id,_)| id.to_string()).collect::<Vec<_>>().join(",");
+            self.db.exec(format!("UPDATE memo SET digest=CASE id {cases} END WHERE id IN ({ids})"));
         }
     }
     fn recomputes(&self) -> u64 {
@@ -343,11 +319,6 @@ impl Reconciler for SqlReconciler {
     fn answer(&mut self) -> i64 {
         // read the digests back FROM the table (proves the durable memo is the truth),
         // fold in Rust so no custom aggregate is needed.
-        let mut st = self.conn.prepare_cached("SELECT digest FROM memo").unwrap();
-        let acc = st
-            .query_map([], |r| r.get::<_, i64>(0))
-            .unwrap()
-            .fold(0i64, |a, d| a ^ d.unwrap());
-        acc
+        self.db.rows("SELECT digest FROM memo").into_iter().fold(0i64, |a, r| a ^ r.try_get_by_index::<i64>(0).unwrap())
     }
 }
