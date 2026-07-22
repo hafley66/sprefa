@@ -1,4 +1,4 @@
-//! The perf harness. One `Engine` trait; five implementations; every run measured
+//! The perf harness. One `Engine` trait; six implementations; every run measured
 //! HERMETICALLY (one engine alone per child process) with a full metric set, and the
 //! parent autogenerates a markdown report.
 //!
@@ -169,6 +169,14 @@ impl Engine for Counting {
     }
 }
 
+struct CountingScc;
+impl Engine for CountingScc {
+    fn name() -> &'static str { "sqlite-count-scc" }
+    async fn measure(g: MultiGraph) -> Outcome {
+        store_measure(g, |s, seed| Box::pin(async move { s.retract_scc(&[seed]).await.unwrap(); })).await
+    }
+}
+
 struct DredLoop;
 impl Engine for DredLoop {
     fn name() -> &'static str { "sqlite-dred-loop" }
@@ -269,12 +277,13 @@ fn input_hash(g: &MultiGraph) -> String {
     h.finalize().to_hex()[..16].to_string()
 }
 
-const ENGINES: [&str; 5] = ["oracle", "sqlite-count", "sqlite-dred-loop", "sqlite-dred-cte", "dd"];
+const ENGINES: [&str; 6] = ["oracle", "sqlite-count", "sqlite-count-scc", "sqlite-dred-loop", "sqlite-dred-cte", "dd"];
 
 async fn run_engine(name: &str, g: MultiGraph) -> Option<Outcome> {
     match name {
         "oracle" => Some(Oracle::measure(g).await),
         "sqlite-count" => Some(Counting::measure(g).await),
+        "sqlite-count-scc" => Some(CountingScc::measure(g).await),
         "sqlite-dred-loop" => Some(DredLoop::measure(g).await),
         "sqlite-dred-cte" => Some(DredCte::measure(g).await),
         "dd" => Some(Dd::measure(g).await),

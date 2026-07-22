@@ -12,6 +12,7 @@ maintenance. Everything below is real, tested, hermetically measured code here:
 | module | what it is | tests |
 |---|---|---|
 | `cascade::retract` | counting Z-set retraction (weight = # supports). Correct on ACYCLIC support graphs only. | 3 unit + agreement |
+| `cascade::retract_scc` | counting cascade plus an SQLite-resident affected-cone nested fixpoint; correct on the cyclic agreement matrix. | agreement |
 | `cascade::retract_dred` | cycle-safe Delete-and-Rederive, Rust-driven round loop (~75 stmts). | 2 unit + agreement |
 | `cascade::retract_dred_cte` | DRed as two recursive CTEs (6 stmts, whole walk in SQLite's C engine). | 2 unit + agreement |
 | `cascade::assert` | forward add (monotonic, cycle-safe). | 1 unit |
@@ -44,6 +45,13 @@ Harness (all in `examples/`):
   (12→47→187→618 MB at 60k→240k→960k→2.9M). The store's `rust_live` is **0.09 MB
   flat** — state on disk. That is the whole tradeoff, and the breakpoint ramp forces
   dd's abort while the store keeps going.
+- **SCC counting landed.** `retract_scc` keeps the counting pass for cross-component
+  deltas, then persists the affected cone and runs a PK-frontier nested least
+  fixpoint from surviving external support. At CYC 960k it produced the oracle's
+  815,240 keys in 2.89s / 56 harness statements, versus counting's incorrect
+  830,478 in 0.41s / 29 and DRed-loop's 815,240 in 2.36s / 75. Its SQLite
+  high-water was 98.69 MB and Rust peak 0.16 MB; the latter stays low because
+  the scope and frontier remain SQLite tables.
 
 ## 3. Lab findings inventory — brought over vs still to port
 

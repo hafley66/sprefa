@@ -51,6 +51,10 @@ impl RelStore {
     pub async fn retract(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
         cascade::retract(&self.db, seeds).await
     }
+    /// Counting retraction with an on-disk SCC-scoped nested fixpoint. Returns rounds.
+    pub async fn retract_scc(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+        cascade::retract_scc(&self.db, seeds).await
+    }
     /// Cycle-safe retraction (Delete-and-Rederive), Rust-driven round loop. Returns rounds.
     pub async fn retract_dred(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
         cascade::retract_dred(&self.db, seeds).await

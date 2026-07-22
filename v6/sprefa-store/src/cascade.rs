@@ -120,6 +120,10 @@ pub async fn create_schema(db: &DatabaseConnection) -> Result<(), DbErr> {
          CREATE TEMP TABLE cx_next     (key INTEGER PRIMARY KEY);
          CREATE TEMP TABLE cx_hits (key INTEGER PRIMARY KEY, dec INTEGER NOT NULL);
          CREATE TEMP TABLE cx_cone (key INTEGER PRIMARY KEY);
+         CREATE TEMP TABLE cx_scc_scope (key INTEGER PRIMARY KEY);
+         CREATE TEMP TABLE cx_scc_frontier (key INTEGER PRIMARY KEY);
+         CREATE TEMP TABLE cx_scc_next (key INTEGER PRIMARY KEY);
+         CREATE TEMP TABLE cx_scc_live (key INTEGER PRIMARY KEY);
          CREATE INDEX ix_cx_dep_child ON cx_dep (child_key);",
     )
     .await?;
@@ -247,6 +251,108 @@ pub async fn retract(db: &DatabaseConnection, seeds: &[(i64, i64)]) -> Result<u6
     }
     txn.commit().await?;
     Ok(rounds)
+}
+
+/// Cycle-correct counting retraction. The first phase is the ordinary weighted
+/// cascade, which settles every cross-SCC edge. Its remaining positive rows in
+/// the forward cone can only be supported from outside that cone or by a cycle.
+/// The second phase is a nested least fixpoint scoped to that cone: seed rows
+/// with surviving external support, then walk forward through the rows that the
+/// counting phase left positive. A cycle with no external seed is therefore not
+/// published as alive.
+///
+/// All graph state, scope, and frontiers live in SQLite tables. Rust only drives
+/// the fixed set of SQL rounds; no adjacency list or SCC partition is resident.
+pub async fn retract_scc(db: &DatabaseConnection, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+    let counting_rounds = retract(db, seeds).await?;
+    let txn = db.begin().await?;
+    let seed_vals: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
+    let seed_in = format!("({})", seed_vals.join(","));
+
+    exec(&txn, "DELETE FROM cx_scc_scope").await?;
+    exec(&txn, "DELETE FROM cx_scc_frontier").await?;
+    exec(&txn, "DELETE FROM cx_scc_next").await?;
+    exec(&txn, "DELETE FROM cx_scc_live").await?;
+
+    // The affected support graph is persisted as a set. UNION is the nested
+    // fixpoint's deduplication: each key enters the scope once, including cycles.
+    exec(
+        &txn,
+        &format!(
+            "INSERT INTO cx_scc_scope(key)
+             WITH RECURSIVE scope(key) AS (
+                SELECT key FROM cx_row WHERE key IN {seed_in}
+                UNION
+                SELECT d.child_key FROM scope
+                  JOIN cx_dep d ON d.parent_key = scope.key
+             )
+             SELECT key FROM scope"
+        ),
+    )
+    .await?;
+
+    // An SCC is live only if support crosses into the affected scope from a row
+    // outside it. The cut itself never seeds a later return edge into its SCC.
+    exec(
+        &txn,
+        &format!(
+            "INSERT OR IGNORE INTO cx_scc_frontier(key)
+             SELECT s.key
+             FROM cx_scc_scope s
+             CROSS JOIN cx_dep d ON d.child_key = s.key
+             CROSS JOIN cx_row p ON p.key = d.parent_key
+             LEFT JOIN cx_scc_scope inside_scope ON inside_scope.key = p.key
+             CROSS JOIN cx_row r ON r.key = s.key
+             WHERE inside_scope.key IS NULL
+               AND p.weight > 0
+               AND r.weight > 0
+               AND s.key NOT IN {seed_in}"
+        ),
+    )
+    .await?;
+    exec(&txn, "INSERT OR IGNORE INTO cx_scc_live SELECT key FROM cx_scc_frontier").await?;
+
+    let mut nested_rounds = 0u64;
+    loop {
+        if scalar(&txn, "SELECT count(*) FROM cx_scc_frontier").await? == 0 {
+            break;
+        }
+        nested_rounds += 1;
+        // PK insertion replaces SELECT DISTINCT's temp B-tree. `cx_scc_live`
+        // keeps the frontier ping-pong semi-naive: a member is expanded once.
+        exec(
+            &txn,
+            "DELETE FROM cx_scc_next;
+             INSERT OR IGNORE INTO cx_scc_next(key)
+             SELECT d.child_key
+             FROM cx_scc_frontier f
+             CROSS JOIN cx_dep d ON d.parent_key = f.key
+             CROSS JOIN cx_scc_scope s ON s.key = d.child_key
+             CROSS JOIN cx_row r ON r.key = d.child_key
+             LEFT JOIN cx_scc_live seen ON seen.key = d.child_key
+             WHERE r.weight > 0 AND seen.key IS NULL",
+        )
+        .await?;
+        exec(
+            &txn,
+            "INSERT OR IGNORE INTO cx_scc_live SELECT key FROM cx_scc_next;
+             DELETE FROM cx_scc_frontier;
+             INSERT INTO cx_scc_frontier SELECT key FROM cx_scc_next",
+        )
+        .await?;
+    }
+
+    // A counted-positive member omitted by the nested least fixpoint had only
+    // internal support. This is the SCC correction; unaffected rows never scan.
+    exec(
+        &txn,
+        "UPDATE cx_row SET weight=0
+         WHERE key IN (SELECT key FROM cx_scc_scope)
+           AND key NOT IN (SELECT key FROM cx_scc_live)",
+    )
+    .await?;
+    txn.commit().await?;
+    Ok(counting_rounds + nested_rounds)
 }
 
 // ============================================================================
