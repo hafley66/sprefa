@@ -1,8 +1,16 @@
 # sprefa-extract — the golden plan (distill v5, normalize for v6)
 
-> Canonical TYPE source: `v6/sprefa-seed/src/_3_extract/` (the header-only type
-> math; `cargo check` green). This file is the EPIC decomposition + recon + golden
-> tests. Types are not re-derived here — they are pointed at.
+> **CURRENT MIND (canonical): `v6/sprefa-seed/src/_3_extract/_7_tasks.rs`** — the
+> living ledger (scope, identity, decisions, partitioning recon, family dimension,
+> turnkey test plan, future filesystem, CLI/streaming, `ExtractPlan` proof tokens).
+> This file is the NARRATIVE (recon, prior art, the v5→v6 inversion) + the BUILD
+> SEQUENCE. Reconciled 2026-07-23; where the two differ, `_7_tasks.rs` wins.
+>
+> The seed `_3_extract/` is the header-only type math (`cargo check` green); its
+> code still holds the pre-refactor shape (the `NodeKind`/`EdgeKind` sums, the
+> `_6_facade` async shell) with `REVISION` notes pointing at the per-family
+> reshape. Catching the code up to the ledger is the first mechanical pass, not a
+> design decision.
 
 ## Context
 
@@ -20,17 +28,21 @@ representation prior art) landed the facts this plan rests on.
   with an `AnalysisMask { types, calls, dataflow }`. `ModuleResolver: Send + Sync`
   (`src/graph/modgraph/mod.rs:171`) — `exts`/`edges(file, content, &ProjectCx)`.
   Asymmetric: one is per-file (`Sync`, no context), the other needs the file set
-  (`&ProjectCx<'a>`). This asymmetry is REAL (the cache-key split) and is kept.
-- The four families are declared in RUST, not `.dl`: `src/engine/decls.rs`
-  `module/type/call/dataflow_rel_decls()`, with CLOSED enum "brands"
-  (`builtin_enum_brands`, decls.rs:73-134) the typechecker enforces. The `.dl`
-  files only consume them. Variant sets (the authoritative kind vocabularies):
+  (`&ProjectCx<'a>`). The asymmetry is real (the cache-key split) and is kept as
+  the two-phase seam.
+- v5 produces, per lang: type / call / dataflow (the three `TypeLang` methods) +
+  module (`ModuleResolver`) + the CST enumeration (`src/cst.rs` `walk_cst`, the
+  lossless named-node tree backing `node`/`child` query relations + the spine) +
+  `flow_edge` (a stdlib `.dl`, `std/flow.dl:89`). Kinds are declared in RUST, not
+  `.dl`: `src/engine/decls.rs` `module/type/call/dataflow_rel_decls()`, with CLOSED
+  enum "brands" (`builtin_enum_brands`, decls.rs:73-134) the typechecker enforces.
+  Variant sets (the authoritative kind vocabularies):
   - `df_node_kind` (23): param let_bind var_read var_write lit call_res new
     member ret borrow binop unop loop if match block closure try break expr
     (+TS: cond logic concat template).
   - `type_entity_kind` (9), `type_edge_kind` (7), `CallKind` (3),
     `module_binding` kind (5: named default namespace side_effect reexport),
-    `const_value_kind` (3: lit template concat).
+    `const_value_kind` (v5 decls.rs:130: lit template; TS collector adds concat).
 - THREE different `kind` representations in v5: typed enums (type+call),
   free-form `String` (df), `&'static str` (edges/modules). FOUR different span
   shapes: byte range `Option<(u32,u32)>` (modules), line-only (type/call),
@@ -38,34 +50,28 @@ representation prior art) landed the facts this plan rests on.
 - SPLIT node identity: `mint_sym` coordinate strings `file::kind::name`
   (`typegraph/mod.rs:412`, ~26.6% of dict bytes) for type/call; dense `NodeIdx`
   → `_df_node_dict` coordinate surrogate for df; kind-salted `WhereBytes` id for
-  CST. (`salt_rev`, the function the older plans cite, does NOT exist in current
-  v5 — grep is empty; the live digest logic is `extract_input_digest`,
-  engine/extract/mod.rs:861. Flagged so the next agent does not chase a ghost.)
+  CST. (`salt_rev`, the function older plans cite, does NOT exist in current v5;
+  the live digest logic is `extract_input_digest`, engine/extract/mod.rs:861.)
 - Per-language roster. TypeLang impls: rust (syn), ts (oxc), kotlin (tree-sitter),
   go+python (tree-sitter for comments/strings, SCIP for call/type). ModuleResolver
-  impls: rust/ts/kotlin/go/python. EVERY lang has both. NO ast-grep family
-  extractor today (ast-grep is the term-op `sg` only). Parse sharing is opt-in:
+  impls: rust/ts/kotlin/go/python. EVERY lang has both. Parse sharing is opt-in:
   only `RustTypes` overrides `extract_bundle`; the other four parse once per
   family (3× waste the bundle seam was meant to kill).
 - SCIP is a FORMAT / resolution overlay, not a family. `scip_import::load`
   (scip_import.rs:96) parses symbol/range/role/display_name/relationships into
   `scip_*` rels; the engine consumes them as resolution overrides
   (`scip_ref` overrides name resolution, std/flow.dl:96-114). v5 already tiered:
-  Tier 1 SCIP (compiler-backed, "nearly free to add a lang"), Tier 2 native AST
-  (the Kotlin-sized lift), tree-sitter floor. `.agents/memory/reference_scip_multilang_indexers.md`.
+  Tier 1 SCIP (compiler-backed, "nearly free to add a lang"), Tier 2 native AST,
+  tree-sitter floor.
 - The FIFTH family v5 half-built lives in a stdlib `.dl`, not Rust: `flow_edge`
   (`std/flow.dl:89`) = `df_edge ∪ arg→param positional hop ∪ ret→call_res
-  backward hop` over `call_edge`. `examples/flow-interproc.dl` states the thesis:
-  df stops at fn boundaries, call_edge walks symbols not values, flow_edge unites
-  them. Left in `.dl` because v5 never typed it.
+  backward hop` over `call_edge`.
 - v5 already got the content-addressing + demand-skip right at the engine seam:
   `FactCache<(repo,path,hash), (rid, Arc<T>)>` (engine/extract/mod.rs:51) caches
-  per-file by content; `moved_extract_rels(family, files, with_scip) -> Vec<(rev,
-  digest)>` (mod.rs:903) is the per-rev digest-skip gate. These are the seeds of
-  the v6 two-phase cache keys.
+  per-file by content; `moved_extract_rels(family, files, with_scip)` (mod.rs:903)
+  is the per-rev digest-skip gate. These are the seeds of the v6 two-phase keys.
 - v5 stated gaps honestly: per-site callee cloning (k-CFA) out of scope; node-level
-  types function-level only (type_sig by-position vs df_node by-name); no CFG /
-  dominator / use-def family.
+  types function-level only; no CFG / dominator / use-def family.
 
 ### Recon — prior art (representation only; lazy/IVM stripped)
 
@@ -76,43 +82,42 @@ SCIP (`Occurrence{symbol,range,role}` + `SymbolInformation.Kind` + the
 `SymbolRole` bitfield Definition/Import/Write/Read/Generated/Test/ForwardDef;
 relationships as bools). Joern CPG unifies AST+CFG+DDG+CDG+call with edge
 properties (`REACHING_DEF.VARIABLE`, `ARGUMENT_INDEX`) — maps to v6's aux side
-projections. CodeQL normalizes at the STORAGE level (reject: per-language
-predicate normalization); local-vs-global dataflow is a QUERY concern, not a
-storage kind (intra/inter derivable from `enclosing_symbol` equality). SVF/WALA/
-Soot converge on: def/use sites + CFG + DDG, with register def-use syntactic
-(emit it) and memory def-use points-to-dependent (downstream). Arena AST
-(oxc/biome): one `Allocator` per rayon task, parse one file, project to owned
-Vecs, drop the arena — the CST never crosses a thread; peak RSS = biggest file.
-Parser buy-vs-buy: tree-sitter (40+, the universal backup), oxc (JS/TS, arena,
-~3× swc), syn (Rust proc-macro), ast-grep (pattern over tree-sitter), rowan
-(lossless CST, you write the parser).
+projections. CodeQL normalizes at the STORAGE level; local-vs-global dataflow is
+a QUERY concern, not a storage kind (intra/inter derivable from
+`enclosing_symbol` equality). SVF/WALA/Soot converge on: def/use sites + CFG +
+DDG, with register def-use syntactic (emit it) and memory def-use points-to-
+dependent (downstream). Arena AST (oxc/biome): one `Allocator` per rayon task,
+parse one file, project to owned Vecs, drop the arena — the CST never crosses a
+thread; peak RSS = biggest file. Parser landscape: tree-sitter (40+, the floor +
+lossless CST), oxc (JS/TS, arena), syn (Rust proc-macro), ast-grep (pattern over
+tree-sitter; also a usable CST Parser), rowan (lossless CST, you write the parser).
 
 ### Plan boundary
 
-- **In:** `sprefa-extract` turns `(source bytes, language, FamilyMask)` +
-  `(optional SCIP index)` into `RawNode`/`RawEdge`/`ProjectEdge` + aux, in the
-  `_0_shape` vocabulary. No DB, no reactor, no store-id type in any public
-  signature. **Sync CPU core (parse/project/merge on rayon) behind an async shell
-  (`ReactiveExtract`, seed `_6_facade`) the demand layer holds** — mirrors
-  `Store`/`StoreHandle`. The core has nothing to await; the shell wraps each
-  on-demand op on the blocking pool (one bridge per dispatch batch) so the
-  reactive engine never `spawn_blocking`s per cold blob. The async EVAL flip
-  (cold-observable subscriptions, the cone scheduler) is the engine's, not
-  extract's — extract only exposes the on-demand parse entry points.
+- **In:** `sprefa-extract` turns `(source bytes, language, FamilyMask)` + optional
+  SCIP index into per-family `FamilyBundle<F>` + aux, in the `_0_shape` vocabulary.
+  No DB, no reactor, no store-id type in any public signature. **SYNC only** — no
+  async facade (the `_6_facade` `ReactiveExtract`/`ProjectView` is CUT). The CPU
+  core (parse/project/merge on rayon) has nothing to await; reactivity lives in
+  other crates. The async-eval flip + the sprefa-language are NOT this crate's.
 - **Out (other layers own):** the SQLite store (`sprefa-store`, the spine + node/
   edge tables), the graph algorithms (`sprefa-graph`), the reactive/demand engine
-  + the async-eval flip (`sprefa-engine`/`sprefa-server` — "syntax to mark when
-  not" is a LATER dilemma, not this crate's), cross-file name RESOLUTION
-  execution (extract emits unresolved phase-1 specifiers + phase-2 resolutions;
-  the store joins), full points-to / memory-SSA / reaching-definitions.
-- **Seam (where extract meets store):** the `RawNode → node_id` / `NameId → StrId`
+  + async-eval flip, cross-file name RESOLUTION execution (extract emits phase-1
+  specifiers + phase-2 resolutions; the store joins), full points-to / memory-SSA
+  / reaching-definitions.
+- **Seam (where extract meets store):** the `Node<F> → node_id` / `NameId → StrId`
   / `Span → file_bytes` adapter lives in ONE module in the main engine crate, not
   in extract or store. Extract's public API names no store type; the store knows
   nothing about families; the main crate is the only code that touches both.
-- **Lowering:** source → arena CST (Parser tier) → masked projection (FileExtract
-  / ProjectExtract) → owned `RawNode`/`RawEdge` Vecs → (engine seam) intern into
-  store `node`/`edge`. The CST is transient; only the projection escapes the
-  arena.
+- **CLI + streaming wire:** a thin `[[bin]]` (clap + serde, NO tokio) wraps the
+  sync lib and streams the FLAT tagged form `(family, span, kind, name)` as JSONL
+  to stdout. The flat form is the SAME shape as the store seam and the parity
+  normalize — one flatten, three consumers. This bin is driven (this iteration) by
+  an RxJS prototype that owns the reactivity; it is also the purity-proof oracle
+  vs biome/oxc (promoted from frontier to near-term).
+- **Lowering:** source → arena CST (Parser tier) → masked projection (`Project<F>`
+  phase 1; `Resolve<F>` phase 2) → per-family `FamilyBundle<F>` → (seam) intern
+  into store `node`/`edge`, or (CLI) flatten to JSONL.
 
 ## The inversion (v5 → v6)
 
@@ -160,38 +165,42 @@ flowchart TB
     classDef ram fill:#2e0f0f,stroke:#ff6b6b,color:#ffd7d7;
 ```
 
-### v6 — extraction is a LEAF below the store (sync core + async shell)
+### v6 — extraction is a SYNC LEAF below the store (per-family; CLI streams)
 
 ```mermaid
 flowchart TB
-    DEM["demand cone activates<br/>(cold blob parses only when subscribed)"]:::ext
-    SCIP["ScipSource: Tier 1<br/>tokio::process shell-out"]:::scip
+    CLI["CLI bin: clap + serde, NO tokio<br/>streams flat JSONL"]:::ext
+    RXJS["RxJS prototype<br/>(reactivity this iteration)"]:::ext
+    SCIP["ScipSource: Tier 1<br/>std::process shell-out"]:::scip
 
-    subgraph EX["v6: sprefa-extract, a LEAF below the store"]
-        REX["ReactiveExtract<br/>async shell the engine holds"]:::async
+    subgraph EX["v6: sprefa-extract, a SYNC leaf below the store"]
+        DISP["Dispatch<br/>ONE generic rayon orchestrator"]:::lang
         subgraph CORE["sync core: rayon, arena-per-file"]
             direction TB
-            P["Parser tier<br/>syn (rust) / oxc (ts) / tree-sitter (floor)"]:::lang
-            CST["arena CST: one arena per file,<br/>DROPPED after projection"]:::lang
-            FE["FileExtract: phase 1<br/>key: blob + lang + mask"]:::lang
-            PE["ProjectExtract: phase 2<br/>key: blob + project_digest + mask"]:::lang
-            P --> CST --> FE
-            CST --> PE
+            P["Parser<br/>syn / oxc / tree-sitter / ast-grep"]:::lang
+            CST["arena tree: one arena per file,<br/>DROPPED after projection"]:::lang
+            PROJ["Project<F> phase 1<br/>key: blob + lang + mask"]:::lang
+            RES["Resolve<F> phase 2<br/>key: blob + project_digest + mask"]:::lang
+            P --> CST --> PROJ
+            CST --> RES
         end
-        MR{"merge"}:::merge
-        OUT["RawNode / RawEdge / ProjectEdge: the _0_shape<br/>ONE Span / ONE kind ordinal per family<br/>id = (family, span, kind)"]:::shape
-        REX -.spawn_blocking, one per batch.-> P
-        FE --> MR
-        PE --> MR
-        MR --> OUT
+        RAT{"ratchet<br/>(Ast / Scip / Ghcacher)"}:::merge
+        OUT["FamilyBundle<F>: the shape<br/>ONE Span; kind = F::NodeKind<br/>id = (family, span, kind)"]:::shape
+        WIRE["wire.rs: flatten to<br/>(family, span, kind, name)"]:::shape
+        DISP --> PROJ & RES
+        PROJ --> RAT
+        RES --> RAT
+        RAT --> OUT
+        OUT --> WIRE
     end
 
-    DEM --> REX
-    SCIP -.diet ScipIndex.-> MR
-    OUT ==>|"ONE seam: no rows, no SQL"| STORE[("sprefa-store<br/>interns RawNode to node_id")]:::disk
+    RXJS --> CLI
+    CLI --> DISP
+    SCIP -.diet ScipIndex.-> RAT
+    WIRE ==>|"JSONL stdout"| RXJS
+    OUT ==>|"ONE seam: no rows, no SQL"| STORE[("sprefa-store<br/>interns Node<F> to node_id")]:::disk
 
     classDef ext fill:#1e2a3a,stroke:#5aa9ff,color:#dbeafe;
-    classDef async fill:#2a1f3a,stroke:#b98cff,color:#ecdcff;
     classDef lang fill:#12331f,stroke:#3fd88b,color:#d7ffe9;
     classDef scip fill:#241a08,stroke:#ffb454,color:#ffe9c7;
     classDef merge fill:#2a1f3a,stroke:#b98cff,color:#ecdcff;
@@ -203,224 +212,125 @@ flowchart TB
 
 | axis | v5 | v6 |
 |---|---|---|
-| where it lives | engine methods (`engine/extract/*`) | own crate, a leaf below the store |
-| output | `Vec<Vec<Value>>` rows → `rel_*` tables | `RawNode`/`RawEdge`; the store interns |
+| where it lives | engine methods (`engine/extract/*`) | own crate, a sync leaf below the store |
+| output | `Vec<Vec<Value>>` rows → `rel_*` tables | per-family `FamilyBundle<F>`; the store interns |
 | node identity | `mint_sym` + `NodeIdx` + salted `WhereBytes` (3 schemes) | `(family, span, kind)` — one |
+| family axis | a `NodeKind`/`EdgeKind` sum + 3 kind reps | **type-level `Family` + `Node<F>`/`Edge<F>`; the sums DELETE** |
+| planes | implicit | 3 explicit: RESOLUTION (Type\|Call\|Module) / VALUE-FLOW (Df\|Flow) / STRUCTURE (Cst) |
 | spans | 4 shapes (byte-range / line / line+col-mixed / WhereBytes) | one `Span` |
-| kinds | typed enums (type/call) + free `String` (df) + `&str` (edges) | one typed enum per family |
-| the two traits | asymmetric `TypeLang` vs `ModuleResolver` | symmetric `FileExtract` / `ProjectExtract` (split = cache key) |
-| module family | a separate trait | the project phase of every family |
-| SCIP | overlay bolted in the engine (`scip_narrow`) | first-class Tier-1 source, merged by precedence |
+| the two traits | asymmetric `TypeLang` vs `ModuleResolver` | per-family `Project<F>` (phase 1) + `Resolve<F>` (phase 2); family is a type param, not a sum |
+| module family | a separate trait | collapses: resolution half → SCIP namespace edges; binding half → aux |
+| SCIP | overlay bolted in the engine (`scip_narrow`) | bidirectional wire; Tier-1 source, ratchet-merged |
 | parse sharing | opt-in (only Rust; others parse 3×) | default — one parse, masked projections, all langs |
-| flow_edge | stranded in `std/flow.dl`, stringly-joined | typed `FlowEdgeKind` (5th family) |
+| flow_edge | stranded in `std/flow.dl`, stringly-joined | typed `Flow<F>` on the value-flow plane |
 | RAM | resident memo + parse trees → ~36 GB | arena-per-file, dropped → peak = biggest file |
-| eagerness | eager; whole program ticks | demand-driven; cold blob parses only when subscribed |
-| concurrency | engine-controlled, ~serial parse | rayon core + async shell |
+| eagerness | eager; whole program ticks | on-demand (reactivity owned by engine / the RxJS prototype) |
+| concurrency | engine-controlled, ~serial parse | rayon core; sync only |
+| reactivity | (v5's eager poll) | NOT in this crate (RxJS prototype drives the CLI this iteration) |
 | dictionary | 63% re-encoded coordinates | vocabulary only (coordinates are spans) |
 
-## Decisions (the rulings this crate rests on)
+## Decisions (the rulings; full detail in `_7_tasks.rs`)
 
-1. **ONE coordinate, ONE typed-kind ordinal per family, node id = (family, span,
-   kind).** Deletes `mint_sym`, the four span shapes, the three kind reps, and the
-   split node identity — structurally, not by discipline. (seed `_0_shape`.)
-2. **Two traits, kept two.** `FileExtract` (key: blob+lang+mask) and
-   `ProjectExtract` (key: blob+project_digest+mask). The cache-key difference is
-   the one distinction worth preserving; everything else unifies. (seed `_2_traits`.)
-3. **Tiered sources, merged.** SCIP = ground truth for call/type/module
-   resolution; native AST owns dataflow + spans; tree-sitter is the floor + the
-   CST family. (seed `_2_traits::Source`, `_4_scip`.)
-4. **SCIP is bought, not built.** Foreign indexers behind a subprocess seam;
-   diet-scip keeps only symbol/range/role/relations. No bespoke indexer, no FFI.
-5. **Arena-per-file on rayon.** The 36GB-kill: each worker owns a `ParseArena`;
-   the CST never crosses a thread; peak RSS = biggest single file.
-6. **flow_edge promoted to a typed 5th family** (`FlowEdgeKind`), lifted out of
-   the stdlib `.dl` into the type system. k-CFA / dominators / CFG stay frontier.
-7. **Concrete types until a second impl arrives** (crate-map practicality ruling).
-   The seed traits are the contract; the real crate starts with concrete structs.
-8. **Sync core + async shell.** The CPU core (parse/project/merge) stays sync +
-   rayon — nothing to await. An async `ReactiveExtract` facade (seed `_6_facade`)
-   wraps it for the demand layer, taking owned inputs (`ProjectView`, pre-staged
-   bytes) because async futures must be `'static + Send` and cannot hold the
-   sync core's borrowed `&ProjectCx<'a>`. The bridge is one `spawn_blocking` per
-   dispatch batch (like the store's writer thread), not per blob. SCIP build is
-   `tokio::process` (genuinely IO-shaped); SCIP load stays sync (fast CPU). Same
-   split v6 already chose for `Store`/`StoreHandle`.
-9. **The extract→store adapter lives once, in the main crate.** The
-   `RawNode → store::node_id` interning (keyed by `(family, span, kind)`),
-   `NameId → StrId`, and `Span → file_bytes` writes are cross-crate glue; they go
-   in ONE module in the main engine crate (does not exist yet — only `sprefa-seed`
-   and `sprefa-store` are in the v6 workspace today), not duplicated in extract or
-   store. Extract emits; the store accepts; the main crate is the only place that
-   knows both.
-10. **Port + clean, do not relitigate the parser choice.** v5's per-lang roster
-    (syn for Rust, oxc for JS/TS, tree-sitter for kotlin/go/python + the CST
-    family) is inherited as-is. The work is porting v5's ~12.7K lines of
-    extraction behind the seed traits and normalizing (sym→span, kind-String→typed
-    enum, one Span), not a buy-vs-buy re-evaluation. A parser bench is optional
-    validation, not a gate.
+1. **Families are TYPE-LEVEL.** A `Family` trait + marker structs (`DfF`/`CallF`/
+   `TypeF`/`ModuleF`/`CstF`); `Node<F>`/`Edge<F>`; the `NodeKind`/`EdgeKind` sums
+   DELETE. Orthogonal axes are not variants of one type; the store splits by family
+   anyway, so flatten-then-resplit is wasted. *(Supersedes the seed's sum-based
+   "one typed-kind ordinal per family"; the sums were the false unification.)*
+2. **Three planes.** RESOLUTION (`Type|Call|Module`, SCIP-wire, ratchet-able) +
+   VALUE-FLOW (`Df|Flow`, native AST-only, the differentiator) + STRUCTURE (`Cst`,
+   the lossless tree-sitter named-node tree). **CstF is a 5th family** (v5 had it
+   as `cst.rs` enumeration; closed the coverage gap).
+3. **Module collapses.** Resolution half → SCIP namespace edges; binding half → aux.
+4. **SCIP is a bidirectional wire.** `ScipOccurrence ↔ Node<F>` both ways; our AST
+   facts project OUT (joinable, ratchet-eligible), foreign indexers project IN.
+   Round-trippable for the 3 resolution families ONLY.
+5. **The ratchet.** `merge` = per-fact best-producer-wins over N producers
+   (`Ast`/`Scip(&indexer)`/`Ghcacher`). SCIP ground-truth for call/type/module is
+   ONE rule, not the whole policy. `Producer` rides the bundle.
+6. **Sync only.** The `_6_facade` async shell is CUT. Pure CPU + rayon; nothing
+   awaits. The engine (or the RxJS prototype) wraps our sync `dispatch`. SCIP build
+   = `std::process`. *(Supersedes the earlier "sync core + async shell" ruling.)*
+7. **The extract→store adapter lives once, in the main crate.** `Node<F> → node_id`
+   by `(family, span, kind)`, `NameId → StrId`, `Span → file_bytes` — one module.
+8. **Port + clean, 3 langs.** rust (syn), ts+js (oxc), go. python+kotlin deferred.
+   Go has NO native Rust parser: its `Parser` is tree-sitter, `Project<F>`/`Resolve<F>`
+   walk the CST directly + scip-go for resolution. No buy-vs-buy gate.
+9. **Concrete types until a second impl** (crate-map practicality ruling).
+10. **Identity is content-addressed, git-unbound.** project = a corpus root (a git
+    worktree OR a plain directory); file = path + `BlobHash`; version (rev / now) is
+    how bytes are FOUND, never the cache key. `BlobSource` is source-agnostic.
+11. **Turnkey tests.** Tier-1 snapshot (one file + one fixture per lang; the codegen
+    loop) + Tier-2 parity golden (v5-vs-v6 normalized diff; where v5's disparate
+    inline tests unify). The trait interface is the contract.
+12. **CLI + streaming wire.** clap + serde, no tokio; flat tagged JSONL stdout; the
+    same flatten feeds the store seam + parity diff.
 
-## The epics (dependency order)
+## The build sequence (epics / commits; each ends green)
 
-### Epic 0 — the type math (DONE)
-**Goal:** the normalized type vocabulary, in one header. **Status:** landed in the
-seed (`_3_extract/`, 7 files, `cargo check` green at `6dea0166`).
-**Done:** every v5 kind brand is a typed enum; one `Span`; node id = (family,
-span, kind); the parity-surface `Extract` trait + `Tasks` stub + `ExtractPlan`
-epic ledger exist (`mod.rs`).
-**Golden:** `cargo check` clean; a grep audit that every v5 `decls.rs` brand maps
-to a `_0_shape` enum variant (no vocabulary lost).
+**Epic 0 — type math (DONE).** Seed `_3_extract/`, `cargo check` green. Every v5
+kind brand is a typed enum; one `Span`; the `Extract` contract + `ExtractPlan`
+proof-token ledger exist. *(Pending: catch the seed code up to the per-family
+reshape — delete the sums, cut the facade, add `Family`/`Node<F>`. Mechanical.)*
 
-### Epic 1 — hollow crate + parser registry (port v5's roster)
-**Goal:** stand up `sprefa-extract` as a real crate with concrete-but-empty impls
-behind the seed traits. **Inherit v5's per-lang parser roster as-is** (syn/oxc/
-tree-sitter); the parser choice is ported, not relitigated.
-**Contract** (seed `_2_traits::Parser`): `fn parse<'a>(&self, content: &[u8], arena:
-&'a ParseArena) -> Cst<'a>`. Registry: `Source { parser, ast, scip }`.
-**Storage/identity:** no state across files; one arena per parse.
-**Tasks:**
-1. crate skeleton: `Cargo.toml` (own `[workspace]`, like sprefa-store), `lib.rs`
-   re-exporting the seed traits, `Tasks` moved from the seed to the crate.
-1.1 the `Parser` impls: `SynParser` (Rust), `OxcParser` (JS/TS), `TsParser`
-   (floor; all other langs). One per backing tool, behind the trait.
-1.2 `Source` registry table: the v5 roster (rust/ts/kotlin/go/python/c) mapped to
-   tiers, lifted from `lang_tables.rs`.
-1.3 parser roster: inherit v5 — `SynParser` (Rust), `OxcParser` (JS/TS),
-   `TsParser` (kotlin/go/python + the CST family). A throughput/RSS bench is
-   OPTIONAL validation, not a gate; revisit only if a port blocks on a parser
-   limitation.
-**Lowering:** `Parser` → `Cst` (arena-borrowed); no projection yet.
-**Done:** the crate compiles standalone; the bench prints the per-parser numbers.
-**Golden:** parse sprefa's own `src/` through each Rust parser; assert the node
-COUNT (not positions) agrees to within a documented tolerance.
+**Commit 1 — piping proof (the easiest win, abides).** Stand up `v6/sprefa-extract/`
+as a real crate: atoms + `Family`/`CstF` + `Node<F>` + flat `wire` + `Parser` +
+`Project<F>` + a single-threaded `dispatch`; `AstGrepParser` + `Project<CstF>`
+(one Parser covers rust/ts/go via ast-grep grammars); a clap `bin` streaming JSONL
+with `--bench` (parse/walk/serialize split); a TS fixture + snapshot. Proves bin →
+seams → flat wire → stdout end to end; ast-grep is the Parser, not a subprocess
+shortcut (abides). `--bench` is the harness that will race oxc once oxc is the Parser.
 
-### Epic 2 — arena-per-file RAM mastery (the 36GB-kill)
-**Goal:** prove RSS stays flat under N-worker parallel parse, stressed to breaking.
-**Contract** (seed `_2_traits::ExtractBudget`, `_2_traits::ParseArena`): the budget
-fields `rss_bytes` / `arena_bytes` / `workers`; memcap (setrlimit/getrusage,
-mirroring sprefa-store) aborts a worker over `rss_bytes`.
-**Instance timeline:** arena created per rayon task → parse one file → project to
-owned `Vec<RawNode>`/`Vec<RawEdge>` → arena dropped → output sent back. The CST
-never outlives the task.
-**Storage/identity:** resident state = the per-task arena + the projected Vecs;
-nothing accumulates across files (v5's resident memo/parse-tree pile is gone).
-**Tasks:**
-2. `ParseArena` over `bumpalo` (or oxc's allocator for the oxc path); cap at
-   `arena_bytes`; a file over it is skipped + logged (never beachballs).
-2.1 rayon `par_iter` over `Vec<ExtractJob>`; each worker owns its arena.
-2.2 memcap guard: a worker exceeding `rss_bytes` aborts + reports (the sprefa-store
-   pattern), so the OS never swaps.
-2.3 the stress lab: ramp workers 1→cores and file sizes to a multi-GB corpus; plot
-   peak RSS + wall-time. Find the cliff (arena cap too high, or a leak).
-**Done:** peak RSS ≤ `biggest_single_file_arena × workers + overhead`, flat across
-corpus size; the lab report names the breaking point.
-**Golden:** parse a synthetic 10×-duplicated corpus (same blob, 10k paths) under
-the gun; assert RSS is independent of path count (content-addressed parse runs
-once) and independent of corpus bytes beyond one arena.
+**Commits 2-4 — TS via oxc + scip-typescript.** (2) `OxcParser` + `Project<TypeF>`,
+the real oxc interfacing; the oxc race (full pipeline vs oxc raw parse). (3)
+`Project<CallF>` then `Project<DfF>` — TS AST families complete. (4) scip-typescript
+subprocess → `Resolve<*>` (TS resolution; the SCIP-wire IN projection; ratchet).
 
-### Epic 3 — two-phase extraction + SCIP tier merge (the core port)
-**Goal:** port v5's four families behind `FileExtract`/`ProjectExtract`, port the
-SCIP source, and define the merge. This is where v5's 16.7K lines lands, normalized.
-**Contract** (seed `_2_traits`): `FileExtract::extract(path, content, mask) ->
-FileBundle`; `ProjectExtract::resolve(path, file, cx, mask) -> ProjectBundle`;
-`ScipSource::build/load`; `Extract::merge`.
-**Storage/identity:** phase-1 cache key `(BlobHash, lang, FamilyMask)`; phase-2 key
-`(BlobHash, ProjectDigest, FamilyMask)`. `NameId` is extract's arena interner; the
-engine maps `NameId → store::StrId`, `Span → file_bytes`, `RawNode → node_id` by
-`(family, span, kind)`.
-**Tasks:**
-3. port `typegraph/rust` (syn) → `RustFileExtract` + `RustProjectExtract`,
-   swapping sym→span, kind-String→`DfNodeKind`, fn_sym→`scope: Span`.
-3.1 port `typegraph/{ts,kotlin,go,python}` (oxc/tree-sitter) the same way.
-3.2 port `modgraph/{rust,ts,kotlin,go,python}` → the `ProjectExtract` halves +
-   the `Binding` side table; `ProjectCx` indexes (`RustCrates`/`GoIndex`/...) stay
-   lazy `OnceLock`.
-3.3 `ScipSource` impls: shell-out per `INDEXERS` (scip_setup.rs:51) + the diet
-   protobuf parse (scip_import.rs:96 → `ScipIndex`).
-3.4 `merge`: SCIP def/ref overrides call/type/module resolution; AST fills df +
-   spans. Emit `ProjectEdge { kind: ScipOverride | NameResolve }`.
-3.5 parity: byte-identical `RawNode`/`RawEdge` sets vs v5 on the sprefa corpus
-   (the oracle is v5 itself, run side-by-side).
-**Lowering/compat:** diagnostics (parse errors, unresolved specifiers) surface as
-`Resolution::Unresolved` + a side channel; the engine owns what to do with them.
-**Done:** all four families + SCIP ported; parity green vs v5 on one repo.
-**Golden:** extract the sprefa repo through v6 and v5; diff the flattened
-`(family, file, span, kind)` node set and the edge set — empty diff (modulo the
-documented `sym→span` + `kind`-enum normalizations).
+**Commit 5 — Rust via syn.** `SynParser` + `Project<{Type,Call,Df,Module,Cst}>` +
+`Resolve<*>`; port `typegraph/rust` (sym→span, kind-String→typed enum, one Span).
 
-### Epic 4 — parallel dispatch + contention lab
-**Goal:** the top-level `dispatch` (seed `Extract::dispatch`) over rayon, with the
-shared-read `ProjectCx`, proven free of lock contention / livelock.
-**Contract:** `fn dispatch(jobs, cx, sources, budget) -> Vec<ExtractOutput>`.
-**Storage/identity:** `ProjectCx` is `Sync` + borrowed; the lazy indexes are built
-once (single-threaded) then read concurrently (`OnceLock` → `Arc`). The phase-1
-cache is a content-keyed map; contention is the lab target.
-**Tasks:**
-4. `dispatch`: `jobs.par_iter()` → per-job `extract_file` → `resolve_project`
-   (phase 2 needs the merged file set, so it runs after a barrier or per-blob with
-   the prebuilt `cx`).
-4.1 the cache: `DashMap<FileCacheKey, Arc<FileBundle>>` (or the engine-owned
-   store cache) — LAB the contention on the hot path.
-4.2 the contention lab: a many-small-files workload (the worst case for cache
-   contention) vs a few-large-files workload; measure lock wait + throughput.
-**Done:** dispatch wall-time scales near-linearly with workers to core count; no
-contention cliff on the small-files workload.
-**Golden:** dispatch 50k small files on N workers; assert throughput/worker is
-flat (no contention regression) and RSS stays under the Epic-2 budget.
+**Commit 6 — Go via tree-sitter + scip-go.** `TsParser` + `Project/Resolve` walking
+the tree-sitter CST + scip-go for resolution.
 
-### Epic 5 — flow_edge promotion + term-op unity
-**Goal:** (a) promote v5's stdlib `flow_edge` to typed `FlowEdgeKind` edges in the
-type system; (b) unify the term-extract ops under the same arena + cache.
-**Contract** (seed `_0_shape::FlowEdgeKind`, `_5_term`): the five flow variants;
-the `Extractor`/`Registry` term seam sharing `ParseStrings`.
-**Tasks:**
-5. `flow_edge` lift: implement the arg→param / ret→call_res / lambda hops as
-   `EdgeKind::Flow(_)` projection in `resolve_project`, replacing the `std/flow.dl`
-   stringly-joined rels. Parity: closure(flow_edge) byte-identical to v5 on
-   `examples/flow-interproc.dl`.
-5.1 term ops: port `sg`/`ast`/`json`/`regex` behind `Extractor`, arena-interning
-   cells (`TermValue::Name(NameId)`, not `String`).
-**Done:** flow_edge computed in extract, not `.dl`; term ops share the arena.
-**Golden:** run the v5 `flow-interproc.dl` fixture's expected reachable-set
-through v6's typed flow edges; exact match.
+**Standing labs (ride alongside, each ends with its golden):**
+- *Arena-per-file RAM mastery* — prove RSS ≤ `biggest_file × workers + overhead`,
+  flat across corpus size; memcap aborts a worker over `rss_bytes`. Golden: 10×
+  duplicated corpus, RSS independent of path count + corpus bytes.
+- *Parallel dispatch + contention* — rayon `dispatch` over the shared-read
+  `ProjectCx`; prove no lock contention / livelock on a many-small-files workload.
+- *flow_edge promotion* — lift v5's `std/flow.dl` `flow_edge` to typed `Flow<F>`;
+  parity on `examples/flow-interproc.dl`.
 
-## Frontier (deferred decisions + the evidence each needs)
+Each commit: snapshot green; from commit 2, the parity golden vs v5 green.
 
-- **k-CFA / per-site callee cloning.** v5 stated it out of scope. Evidence needed:
-  a real query that needs per-site precision (a taint query that over-approximates
-  under the current call_target pin). Belongs in extract (call-site cloning) or
-  the engine (query-time)? Decide on that query.
-- **Node-level types.** v5: type_sig by-position, df_node by-name, function-level
-  only. Evidence: a query that needs the type of a specific df node. Likely an
-  extract-side `TypeRef` enrichment on df nodes.
-- **CFG / dominators / use-def.** No family today. Evidence: a query that needs
-  control-dependence or dominator trees (CodeQL-style). Decide extract-vs-engine;
-  SVF says register def-use is syntactic (extract), memory def-use is points-to
-  (engine/downstream).
-- **ast-grep as a family extractor.** v5 used ast-grep for the term op only.
-  Evidence: does lifting a family (e.g. a new lang) onto ast-grep patterns beat a
-  tree-sitter extractor for dev cost? Lab in Epic 1.3.
+## Frontier (deferred, evidence-gated)
+
+- **k-CFA / per-site callee cloning.** v5 stated out of scope. Evidence: a real
+  query needing per-site precision. Extract (call-site cloning) or engine?
+- **Node-level types.** v5: function-level only. Evidence: a query needing a
+  specific df node's type.
+- **CFG / dominators / use-def.** No family today. SVF: register def-use syntactic
+  (extract), memory def-use points-to (engine/downstream).
+- **git-fu lab.** Re-establish the efficient rev→blob story (shellout vs libgit2 vs
+  pack-index direct) on linux-kernel-history class input. v5: shellout usually won.
 - **The async-eval boundary syntax.** "Mark when not async" is a `sprefa-lang`
-  decision for the engine/server layer, NOT this crate. This crate stays sync.
+  decision for the engine/server layer, NOT this crate.
 
-## Verification (standing rails, every epic)
+## Verification (standing rails, every commit)
 
-- `cargo check` green on the seed (the type math) AND on the real crate once it
-  exists; `cargo tree -p sprefa-extract` contains no `rusqlite`/`sqlx`/`tokio`/
-  `axum`/`sea-orm` (extract is a leaf below store).
+- `cargo check` green on the seed AND on the real crate; `cargo tree` for the lib
+  contains no `rusqlite`/`sqlx`/`tokio`/`axum`/`sea-orm` (extract is a sync leaf).
+  The bin adds only `clap` + `serde`; still no tokio.
 - extract's public API names no store-id type and no storage type (greppable;
-  crate-map boundary rail).
-- the RAM gun (Epic 2 golden): RSS independent of corpus size + path count.
-- parity vs v5 (Epic 3 golden): byte-identical normalized node/edge sets.
-- each epic ends with its golden test green before the next starts.
+  crate-map boundary rail). The wire is the FLAT tagged form; the generic `Node<F>`
+  never crosses the seam or the stdout stream.
+- the RAM gun: RSS independent of corpus size + path count.
+- parity vs v5: byte-identical normalized node/edge sets.
+- each commit ends with its golden (snapshot, then +parity) green.
 
 ## Staffing
 
-One agent per epic, worktree under `.claude/worktrees/`, base the extract crate on
-the seed at `6dea0166` (branch `plan/extract-golden-plan`). Epics 1 + 2 can pair
-(parser bench feeds the arena budget); 3 is the bulk; 4 + 5 follow. This plan +
-the seed header are the spec — an agent should not re-derive types, only impl them.
-
-<!-- resolved(decision) 2026-07-23: inherit v5 — oxc for JS/TS, syn for Rust, tree-sitter for kotlin/go/python + CST family. Port + clean; no buy-vs-buy gate. Revisit only if a port blocks on a parser limitation. -->
-<!-- todo(perf): arena cap policy — skip-and-log vs spill-to-disk for a file over arena_bytes; the lab finds the real max single-file arena on the corpus -->
-<!-- todo(decision): phase-2 placement — per-blob with prebuilt cx (current sketch) vs a post-barrier pass; the small-files workload in Epic 4 decides -->
-<!-- todo(feature): the content-keyed phase-1 cache lives in extract, the engine, or the store? v5 had it in the engine (FactCache); v6 should pin it once -->
+One agent per commit, worktree under `.claude/worktrees/`, base the real crate on
+the seed on branch `plan/extract-golden-plan`. Single file per language under
+`lang/`. This plan + the `_7_tasks.rs` ledger are the spec — an agent should not
+re-derive types or decisions, only implement them. The trait interface is the
+turnkey contract for codegenning a new lang.
