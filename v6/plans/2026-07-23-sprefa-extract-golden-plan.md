@@ -321,6 +321,180 @@ the tree-sitter CST + scip-go for resolution.
 
 Each commit: snapshot green; from commit 2, the parity golden vs v5 green.
 
+## Epic U - the uniform surface (commit 3c; slots after 3b, before Resolve/Rust/Go)
+
+**Why.** v5 had ONE uniform boundary (`TypeLang` + `type_langs()` roster + masked
+`extract_bundle`); v6 has uniform *leaves* (`Parser`, `Project<F>`) but the
+orchestration above them is hand-rolled per family: 4 `dispatch_*`, 8 `flatten_*`,
+a hand-coded bin stream, 4 hand-written snapshot tests, and NO per-lang binding
+or roster. Adding Rust (commit 5) or Go (commit 6) today duplicates that
+quadruple. This epic stands up the v6 `Source` (the `TypeLang` analog the seed
+planned, `_7_tasks.rs:127`) and collapses the four layers to one data-driven
+path each, so a new lang is ONE `Source` impl + one roster line + one fixture
+(the turnkey contract, `_7_tasks.rs:158`).
+
+**Recon (observed, at HEAD after commit 3b `de5db74f`).**
+- v5 `TypeLang` (`src/graph/typegraph/mod.rs:439`): `name` / `matches` / `extract`
+  / `extract_calls` / `extract_dataflow` / `extract_bundle(file,content,mask)`;
+  roster `type_langs() -> &[&dyn TypeLang]` first-match (`:491`);
+  `AnalysisMask{types,calls,dataflow}` + `ALL`; `AnalysisBundle{Option<TypeFacts>,
+  Option<CallFacts>, Option<DataflowFacts>}`.
+- v6 current: `seams.rs` has `Parser` (GAT arena), `Project<F>`, `BlobSource`.
+  Grep confirms ZERO `Source` / `FamilyMask` / `ExtractOutput` / roster.
+  `dispatch.rs` = 4 free fns; `wire.rs` = 8 fns (4 flatten + 4 jsonl);
+  `bin/extract.rs` hand-codes the ast-grep-vs-oxc stream; `tests/snapshot.rs` = 4
+  hand `#[test]` fns; `lang/mod.rs` only re-exports projectors.
+- Two-parser reality: CstF runs through ast-grep (one dep = rust/ts/tsx/js/go
+  grammars; the floor); Type/Call/Df run through the native parser (oxc for TS).
+  A TS file with all families masked = 2 parses (ast-grep for cst, oxc feeding
+  type+call+df). The masked bundle's "one parse" is WITHIN a parser (one oxc
+  parse feeds 3 projections). Go (commit 6) is the exception: tree-sitter feeds
+  all families (1 parse).
+- Output is byte-stable under interner sharing: each `flatten_*` resolves
+  `NameId -> &str` at output, so a shared per-file `Strings` (one interner)
+  yields the same JSONL as today's per-family interners. The golden holds.
+
+**Plan boundary.**
+- Authoring surface: one `Source` impl per lang under `lang/<name>.rs` (binds a
+  `Parser` to its per-family `Project<F>`s; parse count is opaque to the trait).
+- Canonical representation: `ExtractOutput` (concrete: `Option<FamilyBundle<F>>`
+  per family + one shared `Strings`).
+- Wire / runtime IR: `flatten(&ExtractOutput) -> Vec<FlatFact>` (FamilyTag
+  dispatched; the existing flat envelope).
+- Target runtimes: stdout JSONL (bin), the store seam adapter, the parity-golden
+  normalize. All three read the one `flatten`.
+
+**Contract.**
+```rust
+// source.rs (new) - or fold into seams.rs
+pub trait Source: Sync + Send {
+    fn name(&self) -> &'static str;
+    fn matches(&self, path: &str) -> bool;
+    /// One parse per backing engine, masked projections. Owns the arena(s)
+    /// internally; returns owned output (no borrowed parse crosses the seam).
+    fn extract(&self, path: &str, content: &[u8], mask: FamilyMask) -> ExtractOutput;
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FamilyMask { pub cst: bool, pub types: bool, pub call: bool, pub df: bool }
+impl FamilyMask {
+    pub const ALL:  Self = Self { cst: true, types: true, call: true, df: true };
+    pub const NONE: Self = Self { cst: false, types: false, call: false, df: false };
+}
+
+// v5 AnalysisBundle shape, family-generic + concrete (not dyn).
+pub struct ExtractOutput {
+    pub strings: Strings,                    // shared: one interner per file
+    pub cst:   Option<FamilyBundle<CstF>>,
+    pub types: Option<FamilyBundle<TypeF>>,
+    pub call:  Option<FamilyBundle<CallF>>,
+    pub df:    Option<FamilyBundle<DfF>>,
+}
+
+// lang/mod.rs - first-match roster (v5 type_langs analog). Order matters:
+// the lang-specific Source precedes the ast-grep CST fallback.
+pub fn sources() -> &'static [&'static dyn Source] { &[&TsSource, &AstgrepSource] }
+pub fn source_for(path: &str) -> Option<&'static dyn Source> { /* first matches() */ }
+
+// dispatch.rs - ONE entry, replaces the 4 dispatch_*.
+pub fn dispatch(path: &str, content: &[u8], mask: FamilyMask) -> Option<ExtractOutput> {
+    source_for(path).map(|src| src.extract(path, content, mask))
+}
+
+// wire.rs - ONE public flatten. The 4 bundle flatteners stay as internal helpers.
+pub fn flatten(out: &ExtractOutput) -> Vec<FlatFact> { /* each Some bundle -> its facts */ }
+pub fn flatten_jsonl(out: &ExtractOutput) -> Vec<String> { /* per-family flatten + sort */ }
+```
+
+**Pseudocode - `TsSource::extract` (the two-parser, masked shape).**
+```rust
+fn extract(&self, path, content, mask) -> ExtractOutput {
+    let mut strings = Strings::new();
+    let cst = if mask.cst {
+        let arena = AstGrepParser.make_arena();          // ast-grep = the CST floor
+        AstGrepParser.parse(&arena, path, content).ok().map(|parsed| {
+            let mut b = FamilyBundle::<CstF>::default();
+            CstProjector.project(&parsed, &mut strings, &mut b);
+            b
+        })
+    } else { None };
+    let (types, call, df) = if mask.types || mask.call || mask.df {
+        let arena = OxcParser.make_arena();               // ONE oxc parse -> 3 projections
+        match OxcParser.parse(&arena, path, content) {
+            Ok(parsed) => (
+                mask.types.then(|| project_type(&parsed, &mut strings)),
+                mask.call.then(||  project_call(&parsed, &mut strings)),
+                mask.df.then(||    project_df(&parsed, &mut strings)),
+            ),
+            Err(_) => (None, None, None),                 // partial: cst may still be Some
+        }
+    } else { (None, None, None) };
+    ExtractOutput { strings, cst, types, call, df }
+}
+```
+
+**Instance timeline.** `Source` impls are unit structs held `&'static` in the
+roster; created once, no mutable state, live for program duration. The arena(s)
+are created inside `extract`, lent to parse+project, dropped at `extract`
+return. `ExtractOutput` is owned and returned; the caller (bin/engine) consumes
+and drops it. `ParseError` lifetime: raised inside `extract`; a failed NATIVE
+parse leaves those families `None` (partial output survives; cst may still be
+present if only oxc failed). No panic on parse failure.
+
+**Storage + identity.** `Source` holds no state (a vtable for its parser +
+projectors). `ExtractOutput.strings` is the ONE interner for the file (shared
+across families; kills today's per-family `Strings` duplication). Fact identity
+unchanged: `(FamilyTag, Span, kind)`. Roster = static slice, first `matches()`
+wins (v5 convention; lang-specific precedes the ast-grep fallback). The store
+seam still interns nodes by `(family, span, kind)`; extract names no store id.
+
+**Recursive tasks.**
+1. **The contract types** (`source.rs`, new).
+   1.1 `FamilyMask` (struct + `ALL`/`NONE` + per-family ctors `with_cst()` ...).
+   1.2 `ExtractOutput` (concrete; `Default`; shared `Strings` + `Option<FamilyBundle<F>>` per family).
+   1.3 `Source` trait (`name` / `matches` / `extract`).
+   1.4 Re-export from `lib.rs`.
+2. **`TsSource`** (`lang/ts.rs`, new; splits the oxc binding out of `lang/oxc.rs`).
+   2.1 `TsSource` struct; `matches` = oxc `source_type_for(path).is_some()` (.ts/.tsx/.js/...).
+   2.2 `TsSource::extract` = ast-grep for cst (masked) + one oxc parse for type/call/df (masked); shared `Strings`.
+3. **`AstgrepSource`** (`lang/astgrep.rs`; the existing `AstGrepParser`+`CstProjector` repurposed as a cst-only `Source`).
+   3.1 `matches` = `AstGrepParser.matches(path)` (rust/ts/go/...). Preserves commit 1's all-lang CST.
+   3.2 `extract` = cst-only (other families `None`).
+4. **Roster + lookup** (`lang/mod.rs`): `sources() = [&TsSource, &AstgrepSource]`; `source_for(path)` first-match. Rust/Go Sources prepend in commits 5/6.
+5. **Uniform dispatch** (`dispatch.rs`): `dispatch(path, content, mask) -> Option<ExtractOutput>`. Delete `dispatch_{cst,type,call,df}`.
+6. **Uniform wire** (`wire.rs`): `flatten(&ExtractOutput)` + `flatten_jsonl`. Keep per-bundle flatteners as internal helpers; remove the public `flatten_*`/`_*_jsonl` quadruple.
+7. **Uniform CLI** (`bin/extract.rs`): `dispatch(path, content, FamilyMask::ALL)` -> `flatten` -> stdout. Add `--family cst,type,call,df` to set the mask. `--bench` iterates the present families.
+8. **Uniform test harness** (`tests/snapshot.rs`): ONE loop-driven `#[test]` over `[(FamilyTag, mask, &snap_path)]`: `dispatch(path, bytes, mask)` -> flatten that family -> sort -> diff its snap. Replaces the 4 hand fns. PLUS a roster test: `source_for("x.rs") == AstgrepSource`, `source_for("x.ts") == TsSource`.
+
+**Lowering / compatibility path.** Lang-specific parse (ast-grep / oxc / syn /
+tree-sitter) -> uniform `ExtractOutput` (the `Source` trait IS the lowering
+boundary) -> flat `FlatFact` wire -> {stdout, store seam, parity normalize}.
+Diagnostics: `ParseError` (existing) raised in `extract`; a native-parse failure
+leaves that family `None` (partial output, no panic). The `Node<F>` / `Parser` /
+`Project<F>` leaves are UNCHANGED; this epic reorganizes only the layer above them.
+
+**Done condition.** `grep -c 'pub fn dispatch_' dispatch.rs` == 1; the bin names
+no ast-grep/oxc type outside the `Source` impls; `tests/snapshot.rs` has ONE
+loop-driven test (+ roster test), not 4; the 4 existing TS snapshots are
+byte-identical through the new path; `cargo check` lib+bin + `cargo test` green;
+`cargo tree` still clean of tokio/sqlx/sea-orm/rusqlite/axum.
+
+**Epic golden test.** `tests/snapshot.rs::ts_uniform_surface`: loop the 4
+families, each via `dispatch("sample.ts", bytes, single_family_mask)` -> flatten
+-> sort -> diff its committed `sample.<family>.snap`, byte-identical to today
+(proves one `dispatch` + one `flatten` path reproduces the per-family output with
+zero regression). PLUS `source_for` routing assertions (`.rs`->AstgrepSource,
+`.ts`->TsSource). The 4 `.snap` files stay unchanged; the new wiring is what the
+test proves.
+
+**Frontier (this epic).**
+- CstF-via-native-parser unification: drop the ast-grep cst parse when the native
+  parser already has a tree (oxc does; syn does; tree-sitter IS one). The
+  two-parse cost is the price of "ast-grep is the CST floor for every lang."
+  Evidence to resolve: a measurement that the second parse is hot.
+- `Resolve<F>` (commit 4) extends `Source` with a `resolve(&ExtractOutput,
+  &ProjectCx)` phase-2 method; the masked-bundle shape carries forward unchanged.
+
 ## Frontier (deferred, evidence-gated)
 
 - **k-CFA / per-site callee cloning.** v5 stated out of scope. Evidence: a real

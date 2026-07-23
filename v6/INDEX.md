@@ -31,7 +31,7 @@
 | [plans/2026-07-20-graph-layer-measurements.md](plans/2026-07-20-graph-layer-measurements.md) | 139 | v6 graph layer: measurements |
 | [plans/2026-07-21-spine-orm.md](plans/2026-07-21-spine-orm.md) | 200 | V6 spine — the 6 tables, one ORM, hard boundaries |
 | [plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md](plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md) | 184 | v6 core: the lab arc — oracles, why, efficiency, measured Big-O + empirical ratios |
-| [plans/2026-07-23-sprefa-extract-golden-plan.md](plans/2026-07-23-sprefa-extract-golden-plan.md) | 355 | sprefa-extract - the golden plan (distill v5, normalize for v6) |
+| [plans/2026-07-23-sprefa-extract-golden-plan.md](plans/2026-07-23-sprefa-extract-golden-plan.md) | 529 | sprefa-extract - the golden plan (distill v5, normalize for v6) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
@@ -371,9 +371,10 @@
 211:### What changed (one axis per row)
 232:## Decisions (the rulings; full detail in `_7_tasks.rs`)
 268:## The build sequence (epics / commits; each ends green)
-324:## Frontier (deferred, evidence-gated)
-337:## Verification (standing rails, every commit)
-349:## Staffing
+324:## Epic U - the uniform surface (commit 3c; slots after 3b, before Resolve/Rust/Go)
+498:## Frontier (deferred, evidence-gated)
+511:## Verification (standing rails, every commit)
+523:## Staffing
 ```
 
 ### skills/mermaid-living-map.md

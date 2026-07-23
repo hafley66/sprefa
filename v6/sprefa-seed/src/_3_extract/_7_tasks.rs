@@ -84,9 +84,14 @@
 //!                (span-to-span, resolved) still land at Resolve<TypeF> (commit 4).
 //!
 //! BUILD STATUS (2026-07-23, commits 1-3b LANDED in v6/sprefa-extract/. The TS
-//! phase-1 families — Cst / Type(+sigs) / Call / Df — all project + stream +
-//! snapshot. Next: the remaining TS pieces (const-value facet, the Resolve<*>
-//! pass at commit 4) then rust (syn) + go (tree-sitter)):
+//! phase-1 families - Cst / Type(+sigs) / Call / Df - all project + stream +
+//! snapshot. NEXT (commit 3c, Epic U): stand up the uniform surface v5 had -
+//! the `Source` trait (the TypeLang analog) + `FamilyMask` + `ExtractOutput` +
+//! the `sources()` first-match roster, collapsing the 4 dispatch_* / 8 flatten_*
+//! / hand-coded bin / 4 hand-written tests to ONE data-driven path each. Full
+//! epic (contract, pseudocode, recursive tasks, golden) is written into
+//! v6/plans/2026-07-23-sprefa-extract-golden-plan.md under "Epic U". After that:
+//! const-value facet, the Resolve<*> pass (commit 4), then rust (syn) + go:
 //!   6a29d920  commit 1   CstF via ast-grep (one dep = rust/ts/tsx/js/go grammars);
 //!              clap bin streaming flat JSONL with --bench; snapshot. Piping proof.
 //!   f3ceb4fa  commit 2a  Parser/Project seam -> arena-passing GAT: oxc's
