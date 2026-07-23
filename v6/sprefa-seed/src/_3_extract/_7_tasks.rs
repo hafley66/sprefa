@@ -123,7 +123,8 @@
 //!   against the signatures, runs the snapshot harness, reads the diff. No per-lang
 //!   test scaffolding. Single file per lang (for now).
 //!
-//! Future filesystem (sprefa-extract, the real crate; does not exist yet):
+//! Future filesystem (sprefa-extract; the real crate. commit 1 LANDED 2026-07-23
+//! with the CstF subset live, the rest lands with commits 2-6):
 //!   src/
 //!     lib.rs        re-export the trait interface + Family + shape (the "lib")
 //!     shape.rs      S1 atoms: Span, BlobHash, NameId, NodeRef, FamilyTag, Project, File

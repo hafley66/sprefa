@@ -272,13 +272,19 @@ kind brand is a typed enum; one `Span`; the `Extract` contract + `ExtractPlan`
 proof-token ledger exist. *(Pending: catch the seed code up to the per-family
 reshape - delete the sums, cut the facade, add `Family`/`Node<F>`. Mechanical.)*
 
-**Commit 1 - piping proof (the easiest win, abides).** Stand up `v6/sprefa-extract/`
+**Commit 1 - piping proof (DONE 2026-07-23).** Stand up `v6/sprefa-extract/`
 as a real crate: atoms + `Family`/`CstF` + `Node<F>` + flat `wire` + `Parser` +
 `Project<F>` + a single-threaded `dispatch`; `AstGrepParser` + `Project<CstF>`
 (one Parser covers rust/ts/go via ast-grep grammars); a clap `bin` streaming JSONL
 with `--bench` (parse/walk/serialize split); a TS fixture + snapshot. Proves bin →
 seams → flat wire → stdout end to end; ast-grep is the Parser, not a subprocess
 shortcut (abides). `--bench` is the harness that will race oxc once oxc is the Parser.
+Receipts (2026-07-23): `cargo check` + `cargo test` green (snapshot, 89 facts = 45
+nodes + 44 child edges off the TS fixture); `cargo tree` clean of
+tokio/sqlx/sea-orm/rusqlite/axum, and `clap` is bin-only-gated out of the lib tree;
+the public API names no store-id type (greppable). The crate: `Cargo.toml`,
+`src/{lib,shape,family,rows,seams,wire,dispatch}.rs`, `src/lang/{mod,astgrep}.rs`,
+`src/bin/extract.rs`, `tests/snapshot.rs` + `tests/fixtures/ts/{sample.ts,sample.cstf.snap}`.
 
 **Commits 2-4 - TS via oxc + scip-typescript.** (2) `OxcParser` + `Project<TypeF>`,
 the real oxc interfacing; the oxc race (full pipeline vs oxc raw parse). (3)
