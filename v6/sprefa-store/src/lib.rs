@@ -906,6 +906,51 @@ mod tests {
             assert!(names.contains(&required), "schema object {required} missing: {names:?}");
         }
     }
+
+    async fn count_alive(db: &DatabaseConnection, table: &str) -> i64 {
+        use sea_orm::{DatabaseBackend, Statement};
+        db.query_one_raw(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            format!("SELECT count(*) FROM {table} WHERE weight>0"),
+        ))
+        .await
+        .unwrap()
+        .map(|r| r.try_get_by_index::<i64>(0).unwrap_or(0))
+        .unwrap_or(0)
+    }
+
+    // Epic 3 — two namespaces in ONE db are independent. Stamp the default ns and a
+    // "b_" ns into the same db, load the same little support graph into each, retract
+    // the anchor in the DEFAULT ns only, and assert the b_ ns's survivors are UNTOUCHED
+    // (no cross-talk between cx_row and b_cx_row). Proves the engine is namespace-
+    // generic through the cascade, not just at the DDL.
+    #[tokio::test]
+    async fn two_namespaces_are_independent() {
+        let db = raw_db("twons").await;
+        // Stamp BOTH namespaces into the one db: cx_*/rx_* and b_cx_*/b_rx_*.
+        stamp(&db, &GraphNs::default()).await.unwrap();
+        stamp(&db, &GraphNs::new("b_")).await.unwrap();
+
+        // Same support graph in each: (0,0) anchors (0,1) via one dep edge.
+        let ns = GraphNs::default();
+        let nb = GraphNs::new("b_");
+        crate::cascade::insert_rows(&db, &ns, &[(0, 0, 1), (0, 1, 1)]).await.unwrap();
+        crate::cascade::insert_deps(&db, &ns, &[(0, 0, 0, 1)]).await.unwrap();
+        crate::cascade::insert_rows(&db, &nb, &[(0, 0, 1), (0, 1, 1)]).await.unwrap();
+        crate::cascade::insert_deps(&db, &nb, &[(0, 0, 0, 1)]).await.unwrap();
+        assert_eq!(count_alive(&db, &ns.row).await, 2);
+        assert_eq!(count_alive(&db, &nb.row).await, 2);
+
+        // Retract the anchor in the DEFAULT namespace only.
+        crate::cascade::retract(&db, &ns, &[(0, 0)]).await.unwrap();
+
+        // Default ns: anchor + dependent both died. b_ ns: UNTOUCHED (still 2 alive).
+        assert_eq!(count_alive(&db, &ns.row).await, 0, "default ns retracted to zero");
+        assert_eq!(
+            count_alive(&db, &nb.row).await, 2,
+            "b_ ns must be untouched by the default ns retract (no cross-talk)"
+        );
+    }
 }
 
 }
