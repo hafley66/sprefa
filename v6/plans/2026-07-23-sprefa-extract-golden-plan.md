@@ -91,8 +91,14 @@ Parser buy-vs-buy: tree-sitter (40+, the universal backup), oxc (JS/TS, arena,
 
 - **In:** `sprefa-extract` turns `(source bytes, language, FamilyMask)` +
   `(optional SCIP index)` into `RawNode`/`RawEdge`/`ProjectEdge` + aux, in the
-  `_0_shape` vocabulary. SYNC, CPU-bound, rayon-parallel, arena-mastered. No DB,
-  no async, no reactor, no store-id type in any public signature.
+  `_0_shape` vocabulary. No DB, no reactor, no store-id type in any public
+  signature. **Sync CPU core (parse/project/merge on rayon) behind an async shell
+  (`ReactiveExtract`, seed `_6_facade`) the demand layer holds** — mirrors
+  `Store`/`StoreHandle`. The core has nothing to await; the shell wraps each
+  on-demand op on the blocking pool (one bridge per dispatch batch) so the
+  reactive engine never `spawn_blocking`s per cold blob. The async EVAL flip
+  (cold-observable subscriptions, the cone scheduler) is the engine's, not
+  extract's — extract only exposes the on-demand parse entry points.
 - **Out (other layers own):** the SQLite store (`sprefa-store`, the spine + node/
   edge tables), the graph algorithms (`sprefa-graph`), the reactive/demand engine
   + the async-eval flip (`sprefa-engine`/`sprefa-server` — "syntax to mark when
@@ -123,6 +129,14 @@ Parser buy-vs-buy: tree-sitter (40+, the universal backup), oxc (JS/TS, arena,
    the stdlib `.dl` into the type system. k-CFA / dominators / CFG stay frontier.
 7. **Concrete types until a second impl arrives** (crate-map practicality ruling).
    The seed traits are the contract; the real crate starts with concrete structs.
+8. **Sync core + async shell.** The CPU core (parse/project/merge) stays sync +
+   rayon — nothing to await. An async `ReactiveExtract` facade (seed `_6_facade`)
+   wraps it for the demand layer, taking owned inputs (`ProjectView`, pre-staged
+   bytes) because async futures must be `'static + Send` and cannot hold the
+   sync core's borrowed `&ProjectCx<'a>`. The bridge is one `spawn_blocking` per
+   dispatch batch (like the store's writer thread), not per blob. SCIP build is
+   `tokio::process` (genuinely IO-shaped); SCIP load stays sync (fast CPU). Same
+   split v6 already chose for `Store`/`StoreHandle`.
 
 ## The epics (dependency order)
 

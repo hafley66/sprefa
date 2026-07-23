@@ -20,6 +20,9 @@
 //!              + the shell-out ScipSource (foreign indexers, no bespoke FFI).
 //!   _5_term    the term-extract axis (sg/ast/json/regex/yaml — pattern -> rows),
 //!              a different axis from the four graph families, sharing the arena.
+//!   _6_facade  the ASYNC shell (ReactiveExtract + owned ProjectView) the reactive
+//!              engine holds — wraps the sync core on the blocking pool. Sync core
+//!              + async shell, mirroring store::Store / StoreHandle.
 //!   _7_tasks   the parity surface: Extract trait + Tasks stub + ExtractPlan.
 //!
 //! Companion epic plan: `v6/plans/2026-07-23-sprefa-extract-golden-plan.md`.
@@ -31,9 +34,11 @@ pub mod _2_traits;
 pub mod _3_facts;
 pub mod _4_scip;
 pub mod _5_term;
+pub mod _6_facade;
 pub mod _7_tasks;
 
 // Re-export the contract surface so the crate reads as one vocabulary.
+pub use _6_facade::{ProjectView, ReactiveExtract};
 pub use _7_tasks::{AuxFacts, Evidence};
 pub use _7_tasks::{Extract, ExtractPlan, ExtractOutput, Merged, MergedBundle, Tasks};
 pub use _7_tasks::{Arened, Dispatched, FlowUnified};
