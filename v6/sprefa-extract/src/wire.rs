@@ -9,7 +9,7 @@
 
 use serde::Serialize;
 
-use crate::family::{CallF, CstEdgeKind, CstF, Family, TypeF};
+use crate::family::{CallF, CstEdgeKind, CstF, DfF, Family, TypeF};
 use crate::rows::FamilyBundle;
 use crate::shape::{FamilyTag, Strings};
 
@@ -169,6 +169,43 @@ pub fn flatten_call(bundle: &FamilyBundle<CallF>, strings: &Strings) -> Vec<Flat
 
 pub fn flatten_call_jsonl(bundle: &FamilyBundle<CallF>, strings: &Strings) -> Vec<String> {
     let mut lines: Vec<String> = flatten_call(bundle, strings)
+        .into_iter()
+        .map(|fact| serde_json::to_string(&fact).expect("flat fact is serializable"))
+        .collect();
+    lines.sort();
+    lines
+}
+
+/// Flatten one DfF bundle to flat facts: value-flow NODES (kind = the DfNodeKind
+/// slug; name = the variable / property / type when the node carries one) +
+/// Direct value EDGES (src value -> dst value). The enclosing callable is
+/// derived at the seam (not in the wire). The enrichment aux (arg slots, field
+/// names, literal texts) lands in follow-ups.
+pub fn flatten_df(bundle: &FamilyBundle<DfF>, strings: &Strings) -> Vec<FlatFact> {
+    let mut out = Vec::with_capacity(bundle.nodes.len() + bundle.edges.len());
+    for node in &bundle.nodes {
+        out.push(FlatFact::Node {
+            family: DfF::TAG,
+            span: SpanOut::new(node.span.start, node.span.end()),
+            kind: node.kind.as_str().to_string(),
+            name: node.name.map(|id| strings.lookup(id).to_string()),
+        });
+    }
+    for edge in &bundle.edges {
+        let from = bundle.node(edge.src);
+        let to = bundle.node(edge.dst);
+        out.push(FlatFact::Edge {
+            family: DfF::TAG,
+            kind: edge.kind.as_str().to_string(),
+            from: SpanOut::new(from.span.start, from.span.end()),
+            to: SpanOut::new(to.span.start, to.span.end()),
+        });
+    }
+    out
+}
+
+pub fn flatten_df_jsonl(bundle: &FamilyBundle<DfF>, strings: &Strings) -> Vec<String> {
+    let mut lines: Vec<String> = flatten_df(bundle, strings)
         .into_iter()
         .map(|fact| serde_json::to_string(&fact).expect("flat fact is serializable"))
         .collect();

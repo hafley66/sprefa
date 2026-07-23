@@ -249,3 +249,111 @@ impl Family for CallF {
     type Aux = CallFAux;
     const TAG: FamilyTag = FamilyTag::Call;
 }
+
+// ── VALUE-FLOW plane: DfF (commit 3b) ───────────────────────────────────────
+//
+// Intra-procedural value flow: every value-bearing position in a callable's
+// body is a NODE (a var read/write/bind, a param, a call result, a literal, a
+// member access, a return, ...); local value flow is an EDGE. The two together
+// are the dataflow graph the engine's `df_reaches` closure walks on the SAME
+// fixpoint as the call/type/module graphs. This is the family SCIP CANNOT
+// produce (no CFG/DDG in the format): always AST-backed, the differentiator.
+//
+// Identity is `(span, kind)`; the enclosing callable is NOT stored (derived at
+// the seam by span-containment over the CallF defs, the same pattern as the
+// CallF site caller). The enrichment aux (positional arg slots, field names,
+// literal texts, loop/nest facts) lands in follow-ups; the EDGES already carry
+// every value flow, so the graph is complete without them.
+
+/// The df-node marker.
+#[derive(Default, Copy, Clone, Debug)]
+pub struct DfF;
+
+/// df_node kind. v5 `decls.rs` brand, 23 variants. The TS walker (commit 3b)
+/// emits the value-flow subset (param/let_bind/var_read/lit/call_res/new/member/
+/// ret/binop/concat/template/cond/logic/closure/expr); the rest (borrow/unop/
+/// loop/if/match/block/try/break/var_write) are Rust/other-lang kinds declared
+/// now so the vocabulary is closed.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DfNodeKind {
+    Param,
+    LetBind,
+    VarRead,
+    VarWrite,
+    Lit,
+    CallRes,
+    New,
+    Member,
+    Ret,
+    Borrow,
+    Binop,
+    Unop,
+    Loop,
+    If,
+    Match,
+    Block,
+    Closure,
+    Try,
+    Break,
+    Expr,
+    // TS/JS flow additions (v5 ts flow.rs):
+    Cond,
+    Logic,
+    Concat,
+    Template,
+}
+
+impl DfNodeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DfNodeKind::Param => "param",
+            DfNodeKind::LetBind => "let_bind",
+            DfNodeKind::VarRead => "var_read",
+            DfNodeKind::VarWrite => "var_write",
+            DfNodeKind::Lit => "lit",
+            DfNodeKind::CallRes => "call_res",
+            DfNodeKind::New => "new",
+            DfNodeKind::Member => "member",
+            DfNodeKind::Ret => "ret",
+            DfNodeKind::Borrow => "borrow",
+            DfNodeKind::Binop => "binop",
+            DfNodeKind::Unop => "unop",
+            DfNodeKind::Loop => "loop",
+            DfNodeKind::If => "if",
+            DfNodeKind::Match => "match",
+            DfNodeKind::Block => "block",
+            DfNodeKind::Closure => "closure",
+            DfNodeKind::Try => "try",
+            DfNodeKind::Break => "break",
+            DfNodeKind::Expr => "expr",
+            DfNodeKind::Cond => "cond",
+            DfNodeKind::Logic => "logic",
+            DfNodeKind::Concat => "concat",
+            DfNodeKind::Template => "template",
+        }
+    }
+}
+
+/// df_edge kind. v5's `df_edge(from, to)` was unkinded; `Direct` is that edge.
+/// `Flow` (the promoted fifth family, std/flow.dl:89 — the interprocedural
+// value-flow union: arg->param, ret->call_res, higher-order) lands with epic 5.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DfEdgeKind {
+    /// An intra-procedural value edge: `dst` receives the value of `src`.
+    Direct,
+}
+
+impl DfEdgeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DfEdgeKind::Direct => "direct",
+        }
+    }
+}
+
+impl Family for DfF {
+    type NodeKind = DfNodeKind;
+    type EdgeKind = DfEdgeKind;
+    type Aux = (); // enrichment (args/fields/lits/param_pos/loops) lands in follow-ups
+    const TAG: FamilyTag = FamilyTag::Df;
+}

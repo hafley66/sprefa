@@ -83,8 +83,10 @@
 //!                must survive for the node-level type join. The Param/Returns EDGES
 //!                (span-to-span, resolved) still land at Resolve<TypeF> (commit 4).
 //!
-//! BUILD STATUS (2026-07-23, commits 1-3a LANDED in v6/sprefa-extract/; the build
-//! order 3a->3b(DfF) holds):
+//! BUILD STATUS (2026-07-23, commits 1-3b LANDED in v6/sprefa-extract/. The TS
+//! phase-1 families — Cst / Type(+sigs) / Call / Df — all project + stream +
+//! snapshot. Next: the remaining TS pieces (const-value facet, the Resolve<*>
+//! pass at commit 4) then rust (syn) + go (tree-sitter)):
 //!   6a29d920  commit 1   CstF via ast-grep (one dep = rust/ts/tsx/js/go grammars);
 //!              clap bin streaming flat JSONL with --bench; snapshot. Piping proof.
 //!   f3ceb4fa  commit 2a  Parser/Project seam -> arena-passing GAT: oxc's
@@ -113,6 +115,21 @@
 //!              CallF/CallKind/CallEdgeKind/CallSite/CallFAux + FlatFact::Site +
 //!              dispatch_call. Def span MATCHES the TypeF entity span (two facets
 //!              join on one coordinate).
+//!   (3b code)  commit 3b  DfF: the intra-procedural value-flow graph. Ports v5
+//!              ts_dataflow_from (ts/flow.rs): every value-bearing position -> a
+//!              NODE (param/let_bind/var_read/lit/call_res/new/member/ret/binop/
+//!              concat/template/cond/logic/closure/expr), local value flow -> a
+//!              Direct EDGE. Full DfNodeKind(23) + DfEdgeKind{Direct}. DROPPED vs
+//!              v5 (deliberate deferrals): fn_sym/mint_sym/lambda_sym (the
+//!              enclosing callable is DERIVED at the seam by span-containment
+//!              over CallF defs, like the CallF site caller; NOT stored on the
+//!              node — keeps the uniform Node<F> shape); line_at/line_index; the
+//!              enrichment aux (args positional slots / fields names / lits texts
+//!              / param_pos / loops / nests) — the EDGES already carry every
+//!              value flow; JSX element/fragment flow (catch-all covers it). The
+//!              transient scope HashMap (var name -> NodeRef) for intra-procedural
+//!              resolution is kept. Added DfF/DfNodeKind/DfEdgeKind + flatten_df +
+//!              dispatch_df. df_reaches walks this on the same fixpoint.
 //!   PENDING:   the name-resolved type EDGES (field/impl/variant/uses + the
 //!              resolved param/returns binding) still land at Resolve<TypeF>
 //!              (commit 4) by design. Also unported: ts_const_facts_from (the

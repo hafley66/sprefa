@@ -3,8 +3,8 @@
 //! file through parse -> project(CstF) -> (bundle, strings); the bin and the
 //! snapshot test both go through here.
 
-use crate::family::{CallF, CstF, TypeF};
-use crate::lang::{AstGrepParser, CallProjector, CstProjector, OxcParser, TypeProjector};
+use crate::family::{CallF, CstF, DfF, TypeF};
+use crate::lang::{AstGrepParser, CallProjector, CstProjector, DfProjector, OxcParser, TypeProjector};
 use crate::rows::FamilyBundle;
 use crate::seams::{ParseError, Parser, Project};
 use crate::shape::Strings;
@@ -54,6 +54,22 @@ pub fn dispatch_call(
     let arena = parser.make_arena();
     let parsed = parser.parse(&arena, path, content)?;
     let mut bundle = FamilyBundle::<CallF>::default();
+    let mut strings = Strings::new();
+    projector.project(&parsed, &mut strings, &mut bundle);
+    Ok((bundle, strings))
+}
+
+/// Parse + project one file's bytes to its DfF bundle via oxc. A third
+/// projection over the same tree (the value-flow graph).
+pub fn dispatch_df(
+    path: &str,
+    content: &[u8],
+    parser: &OxcParser,
+    projector: &DfProjector,
+) -> Result<(FamilyBundle<DfF>, Strings), ParseError> {
+    let arena = parser.make_arena();
+    let parsed = parser.parse(&arena, path, content)?;
+    let mut bundle = FamilyBundle::<DfF>::default();
     let mut strings = Strings::new();
     projector.project(&parsed, &mut strings, &mut bundle);
     Ok((bundle, strings))

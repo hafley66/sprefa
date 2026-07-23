@@ -11,9 +11,9 @@ use std::time::Instant;
 use clap::Parser;
 
 use sprefa_extract::{
-    dispatch_call, dispatch_cst, dispatch_type, flatten_call, flatten_cst, flatten_type,
-    AstGrepParser, CallF, CallProjector, CstF, CstProjector, FamilyBundle, OxcParser, Parser as _,
-    Project as _, Strings, TypeF, TypeProjector,
+    dispatch_call, dispatch_cst, dispatch_df, dispatch_type, flatten_call, flatten_cst, flatten_df,
+    flatten_type, AstGrepParser, CallF, CallProjector, CstF, CstProjector, DfF, DfProjector,
+    FamilyBundle, OxcParser, Parser as _, Project as _, Strings, TypeF, TypeProjector,
 };
 
 #[derive(Parser)]
@@ -57,6 +57,11 @@ fn stream(path: &str, content: &[u8]) -> Result<(), Box<dyn std::error::Error>> 
         // CallF: a second projection over the same oxc tree (defs + call sites).
         let (call, call_strings) = dispatch_call(path, content, &OxcParser, &CallProjector)?;
         for fact in flatten_call(&call, &call_strings) {
+            println!("{}", serde_json::to_string(&fact)?);
+        }
+        // DfF: a third projection (the intra-procedural value-flow graph).
+        let (df, df_strings) = dispatch_df(path, content, &OxcParser, &DfProjector)?;
+        for fact in flatten_df(&df, &df_strings) {
             println!("{}", serde_json::to_string(&fact)?);
         }
     }
@@ -116,6 +121,21 @@ fn bench(path: &str, content: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
         eprintln!(
             "call: walk {:?} serial {:?} ({} defs, {} sites, {} facts)",
             walk_call, ser_call, call_bundle.nodes.len(), call_bundle.aux.sites.len(), call_facts.len(),
+        );
+
+        // DfF reuses the oxc parse; the bench times its own walk + serialize.
+        let df_projector = DfProjector;
+        let t = Instant::now();
+        let mut df_bundle = FamilyBundle::<DfF>::default();
+        let mut df_strings = Strings::new();
+        df_projector.project(&ty_parsed, &mut df_strings, &mut df_bundle);
+        let walk_df = t.elapsed();
+        let t = Instant::now();
+        let df_facts = flatten_df(&df_bundle, &df_strings);
+        let ser_df = t.elapsed();
+        eprintln!(
+            "df:   walk {:?} serial {:?} ({} nodes, {} edges, {} facts)",
+            walk_df, ser_df, df_bundle.nodes.len(), df_bundle.edges.len(), df_facts.len(),
         );
     }
     Ok(())

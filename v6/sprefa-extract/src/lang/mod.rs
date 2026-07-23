@@ -7,4 +7,4 @@ pub mod astgrep;
 pub mod oxc;
 
 pub use astgrep::{AstGrepParser, CstProjector, SgRoot};
-pub use oxc::{CallProjector, OxcParser, TypeProjector};
+pub use oxc::{CallProjector, DfProjector, OxcParser, TypeProjector};
