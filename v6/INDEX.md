@@ -32,7 +32,7 @@
 | [plans/2026-07-21-spine-orm.md](plans/2026-07-21-spine-orm.md) | 200 | V6 spine — the 6 tables, one ORM, hard boundaries |
 | [plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md](plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md) | 184 | v6 core: the lab arc — oracles, why, efficiency, measured Big-O + empirical ratios |
 | [plans/2026-07-23-v6-reactive-datalog-isomorphism.md](plans/2026-07-23-v6-reactive-datalog-isomorphism.md) | 137 | v6 reactive datalog ↔ rx isomorphism (theory draft, NOT locked) |
-| [plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md](plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md) | 135 | v6 rxjs lowering + the TS cascade port (engineering plan) |
+| [plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md](plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md) | 256 | v6 rxjs lowering + the TS cascade port (engineering plan) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
@@ -401,6 +401,16 @@
 94:## Concurrency / parse pools (async vs parallel — the line that matters)
 115:## BOOKMARK — push groupBy + LIMIT into SQLite (owner, 2026-07-23)
 127:## Relates to (cross-links)
+137:## Epic golden plan (parse vs lower, bound by the AST contract)
+143:### Recon facts (observed, not guessed)
+150:### Plan + lowering boundary
+157:### Epic 0 · the cascade foundation — DONE (reference)
+162:### Epic 1 · the lowering core (IN FLIGHT) — parse ∥ this, bound by 1.1
+193:### Epic 2 · recursive/fixpoint lowering (`expand`) — co-design, depends on 1.2
+206:### Epic 3 · `@next`/reconcile + impure arms — depends on 1, 2
+221:### Epic 4 · IO/reactor wiring + the Rust boundary — depends on 1-3
+239:### Epic 5 · parsing (turnkey JS) — PARALLEL to 1-4, against the 1.1 AST contract
+252:### Frontier (deferred decisions + evidence needed)
 ```
 
 ### skills/mermaid-living-map.md
