@@ -63,13 +63,17 @@
 //!   D-concrete   concrete structs until a second impl (crate-map practicality ruling).
 //!
 //! Partitioning recon vs v5 sprawl (verified 2026-07-23, grep on v5 src/):
-//!   v5 TypeLang methods (all 5 langs: rust/ts/python/go/kotlin) -> v6
+//!   v5 TypeLang methods -> v6 (uniform across langs, no special-case lang):
 //!     extract            (types)   -> `Project<TypeF>`
 //!     extract_calls                -> `Project<CallF>`
 //!     extract_dataflow             -> `Project<DfF>`
 //!     ModuleResolver.edges         -> `Project<ModuleF>` + `Resolve<{Module,Call,Type}>`
-//!   Uniform across langs: every lang implements all three + ModuleResolver, so the
-//!   per-family partition has NO special-case lang.
+//!   PORT SCOPE (this iteration): 3 langs only: rust (syn), ts+js (oxc), go.
+//!   python + kotlin deferred. Go has NO native Rust parser (no syn/oxc analog): its
+//!   `Parser` is tree-sitter, so Go's `Project<F>`/`Resolve<F>` walk the tree-sitter
+//!   CST directly (the floor as the only tier) + scip-go for resolution. The trait
+//!   model already handles this: `Project<F>` consumes whatever `Parsed` is (syn tree
+//!   / oxc AST / tree-sitter CST).
 //!   COVERAGE GAP found + closed: CstF. v5 `src/cst.rs` `walk_cst` enumerates the
 //!   lossless tree-sitter named-node tree (backs `node`/`child` query relations +
 //!   codemod anchors + the spine). It is a 5th family: `Node<CstF>` = {kind: NameId
@@ -130,16 +134,35 @@
 //!     budget.rs     ParseArena, ExtractBudget, ExtractJob, FileCacheKey
 //!     project.rs    ProjectCx + FileSet/ManifestMap/IndexBag/ProjectDigest
 //!     output.rs     ExtractOutput, AuxFacts, Producer, ratchet
-//!     dispatch.rs   Dispatch (the ONE rayon orchestrator)
+//!     wire.rs       the flat tagged envelope (FamilyTag, span, kind, name) + serde
+//!     dispatch.rs   Dispatch (the ONE rayon orchestrator) + streaming sink variant
 //!     lang/         ONE FILE PER LANGUAGE (the turnkey unit)
-//!       mod.rs        the Source registry table (the roster)
+//!       mod.rs        the Source roster: [rust, ts, go]   (python/kotlin deferred)
 //!       rust.rs       SynParser + Project<{Type,Call,Df,Module,Cst}> + Resolve<{...}>
-//!       ts.rs         OxcParser + ...
-//!       python.rs go.rs kotlin.rs   TsParser + ...
+//!       ts.rs         OxcParser + ...   (js + ts)
+//!       go.rs         TsParser + Project/Resolve (tree-sitter walk) + scip-go
+//!   src/bin/extract.rs  the CLI: clap args + streaming JSONL stdout (rxjs-driven; no tokio)
 //!   tests/
 //!     snapshot.rs       Tier 1: per-lang family snapshots over fixtures/
 //!     golden_parity.rs  Tier 2: v5-vs-v6 normalized diff (the unified v5 intent)
 //!     fixtures/<lang>/sample.<ext>  +  sample.<family>.snap
+//!
+//! CLI + streaming wire (the RxJS-prototype path; reactivity lives in TS, not here):
+//!   A thin `[[bin]]` target wraps the sync lib: clap for args, serde for the wire,
+//!   NO tokio (sync stdout drain). The reactivity this iteration is an RxJS prototype
+//!   that spawns this bin and reads the stdout fact stream: confirms D-sync-only and
+//!   "reactivity elsewhere." Three bakes:
+//!   1. wire = the FLAT tagged form `(FamilyTag, span, kind, name)`: the SAME shape as
+//!      the store seam (S7) and the parity-golden normalization. One flatten, three
+//!      consumers (stdout JSONL / store adapter / parity diff). serde on the flat
+//!      envelope, NOT on the generic `Node<F>` (which stays in-memory).
+//!   2. STREAMING emission: rayon workers feed a channel; the bin drains + writes JSONL
+//!      to stdout as each blob extracts, so RSS does not buffer the whole corpus. The
+//!      lib offers `dispatch` -> Vec AND a streaming sink variant.
+//!   3. dep placement: serde on the lib's flat wire types (cheap, always on); clap on
+//!      the bin only. The lib stays pure-graph + rayon.
+//!   This bin is ALSO the "CLI oracle" frontier item (purity proof vs biome/oxc),
+//!   promoted from deferred to near-term because it IS the prototype path.
 //!
 //! Frontier (deferred, evidence-gated):
 //!   CLI oracle   ship an ast-grep/biome-shaped CLI from this crate as a purity-proof
