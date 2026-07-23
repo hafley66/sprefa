@@ -57,6 +57,23 @@ Supporting: `v6/ARCHITECTURE.md` (one semi-naive cascade, prune =
 digest·A / weight·B / reached·C). DRed derivation was in the deleted
 `v6/labs/labkit/WHY-DRED.md` — `git log --follow` it if needed.
 
+## The TS engine + rxjs lowering (DECIDED 2026-07-23)
+
+- The reactive engine is **TS on ACTUAL rxjs** (Observable / Subject /
+  BehaviorSubject + a BufferPolicy knob). NOT a Rust rx re-implementation. json-rx
+  is EXTRACTED from an rxjs graph (round-trip proof), not a lowering target.
+- The Rust crate keeps its job: the SQLite cascade (Reach / Cascade / Reconcile /
+  GraphStore) + extraction (WASM/CLI). It is ported 1:1 to TS at
+  `v6/sprefa-store/js/` so the rxjs layer calls the same knobs + reads the same
+  SQLite. Golden-gated 11/11, peak RSS 141 MiB. dd/salsa stay Rust-side oracles,
+  NOT ported to TS.
+- The **fixpoint stays in SQLite** (the cascade). rxjs owns the control plane
+  (demand, dirty, wake, compose) — the part v5's global tick did badly. Re-doing
+  Z-set IVM in TS is the resident-RAM trap the unification killed.
+- **BOOKMARK (owner, 2026-07-23):** groupBy / aggregation / latest-by-gen lower
+  INTO SQL (`GROUP BY` + `LIMIT`) at the `dirty` boundary, never into TS arrays.
+  Plan: `v6/plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md`.
+
 ## How to re-find any past decision (the commands that work)
 
 ```bash

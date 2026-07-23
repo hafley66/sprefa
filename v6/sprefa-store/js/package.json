@@ -1,0 +1,21 @@
+{
+  "name": "sprefa-store-engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "v6 reactive datalog engine on actual RxJS. The type/rel-kind ledger lives in tasks.d.ts (sibling, not src/). The Rust crate next door keeps the SQLite cascade (Traits A-D).",
+  "packageManager": "pnpm@11.10.0",
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "tsc": "tsgo --noEmit",
+    "test": "node --test --experimental-transform-types"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.1",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@typescript/native-preview": "^7.0.0-dev.20260707.2"
+  }
+}
