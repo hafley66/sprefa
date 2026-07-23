@@ -36,14 +36,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let projector = CstProjector;
 
     if cli.bench {
+        let arena = parser.make_arena();
         let parse_start = Instant::now();
-        let root = parser.parse(&path, &content)?;
+        let parsed = parser.parse(&arena, &path, &content)?;
         let parse_time = parse_start.elapsed();
 
         let mut bundle = FamilyBundle::<CstF>::default();
         let mut strings = Strings::new();
         let walk_start = Instant::now();
-        projector.project(&root, &mut strings, &mut bundle);
+        projector.project(&parsed, &mut strings, &mut bundle);
         let walk_time = walk_start.elapsed();
 
         let ser_start = Instant::now();

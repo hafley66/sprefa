@@ -28,7 +28,8 @@ pub type SgRoot = AstGrep<StrDoc<SupportLang>>;
 pub struct AstGrepParser;
 
 impl Parser for AstGrepParser {
-    type Parsed = SgRoot;
+    type Arena = ();
+    type Parsed<'a> = SgRoot;
 
     fn name(&self) -> &'static str {
         "ast-grep"
@@ -38,7 +39,9 @@ impl Parser for AstGrepParser {
         SupportLang::from_path(path).is_some()
     }
 
-    fn parse(&self, path: &str, content: &[u8]) -> Result<SgRoot, ParseError> {
+    fn make_arena(&self) {}
+
+    fn parse(&self, _arena: &(), path: &str, content: &[u8]) -> Result<SgRoot, ParseError> {
         let lang = SupportLang::from_path(path)
             .ok_or_else(|| ParseError::NoGrammar(path.to_string()))?;
         let src =
@@ -53,7 +56,7 @@ impl Parser for AstGrepParser {
 pub struct CstProjector;
 
 impl Project<CstF> for CstProjector {
-    type Parsed = SgRoot;
+    type Parsed<'a> = SgRoot;
 
     fn project(&self, root: &SgRoot, strings: &mut Strings, sink: &mut FamilyBundle<CstF>) {
         // Iterative pre-order DFS. Stack entries carry the node + the index of

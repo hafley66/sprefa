@@ -39,21 +39,44 @@ impl fmt::Display for ParseError {
 impl std::error::Error for ParseError {}
 
 /// content -> parsed CST handle. One impl per backing engine. `parse` takes the
-/// path so the grammar can be selected (`SupportLang::from_path`); the lifetime
-/// of the returned handle is owned by the caller and dropped after projection.
+/// path so the grammar can be selected (`SupportLang::from_path`) and a
+/// caller-owned `Arena` the returned handle borrows.
+///
+/// The arena is owned by the dispatch and lent to `parse`, because some engines
+/// borrow their backing store: oxc's `Program<'a>` borrows its `Allocator`, so it
+/// cannot be returned as an owned value the way ast-grep's `AstGrep` (which owns
+/// its buffer) can. ast-grep sets `type Arena = ()`; oxc sets
+/// `type Arena = oxc_allocator::Allocator`. The dispatch holds the arena across
+/// `parse` + `project`, then drops it.
 pub trait Parser: Sync + Send {
-    type Parsed;
+    type Arena;
+    type Parsed<'a>
+    where
+        Self: 'a;
+
     fn name(&self) -> &'static str;
     fn matches(&self, path: &str) -> bool;
-    fn parse(&self, path: &str, content: &[u8]) -> Result<Self::Parsed, ParseError>;
+    fn make_arena(&self) -> Self::Arena;
+    fn parse<'a>(
+        &self,
+        arena: &'a Self::Arena,
+        path: &str,
+        content: &[u8],
+    ) -> Result<Self::Parsed<'a>, ParseError>;
 }
 
 /// Phase 1: one parse, masked projections. `strings` is the per-file interner
 /// (shared across families); `sink` receives the bundle. The projector interns
-/// names/kinds into `strings` and pushes rows into `sink`.
+/// names/kinds into `strings` and pushes rows into `sink`. `Parsed<'a>` matches
+/// the paired `Parser`'s handle (the dispatch pins them together).
 pub trait Project<F: Family>: Sync + Send {
-    type Parsed;
-    fn project(&self, parsed: &Self::Parsed, strings: &mut Strings, sink: &mut FamilyBundle<F>);
+    type Parsed<'a>;
+    fn project<'a>(
+        &self,
+        parsed: &Self::Parsed<'a>,
+        strings: &mut Strings,
+        sink: &mut FamilyBundle<F>,
+    );
 }
 
 /// File bytes in, content-hashed out. SOURCE-AGNOSTIC: a corpus may be a git

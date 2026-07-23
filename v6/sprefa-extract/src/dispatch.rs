@@ -19,9 +19,10 @@ pub fn dispatch_cst(
     parser: &AstGrepParser,
     projector: &CstProjector,
 ) -> Result<(FamilyBundle<CstF>, Strings), ParseError> {
-    let root = parser.parse(path, content)?;
+    let arena = parser.make_arena();
+    let parsed = parser.parse(&arena, path, content)?;
     let mut bundle = FamilyBundle::<CstF>::default();
     let mut strings = Strings::new();
-    projector.project(&root, &mut strings, &mut bundle);
+    projector.project(&parsed, &mut strings, &mut bundle);
     Ok((bundle, strings))
 }
