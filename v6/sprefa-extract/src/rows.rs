@@ -48,16 +48,19 @@ impl<F: Family> Edge<F> {
 }
 
 /// One family's output for one file. The dispatch produces a bundle per masked
-/// family; the wire flattens (bundle, strings) -> flat facts.
+/// family; the wire flattens (bundle, strings) -> flat facts. `aux` carries the
+/// family's side-channel payload (TypeF arrow-type sigs; later df param_pos/
+/// args/...): per-node attributes that are not span-pair edges.
 #[derive(Clone, Debug)]
 pub struct FamilyBundle<F: Family> {
     pub nodes: Vec<Node<F>>,
     pub edges: Vec<Edge<F>>,
+    pub aux: F::Aux,
 }
 
 impl<F: Family> Default for FamilyBundle<F> {
     fn default() -> Self {
-        Self { nodes: Vec::new(), edges: Vec::new() }
+        Self { nodes: Vec::new(), edges: Vec::new(), aux: F::Aux::default() }
     }
 }
 

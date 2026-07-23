@@ -74,9 +74,17 @@
 //!                nested method `magnitude`, value-const `origin`) are modeling
 //!                differences: v5 models callable arrow-types in the type graph
 //!                and excludes value-consts from TypeF (they are df value nodes).
+//!                REPRESENTATION (locked 2026-07-23 commit 2c): the arrow sig is a
+//!                SIGS SIDE TABLE (`TypeSig{owner:Span, slot:SigSlot, pos, ty:NameId}`
+//!                in Family::Aux), NOT span-pair edges. Rationale: a type REFERENCE
+//!                is not a declared entity (would pollute TypeEntityKind, which is
+//!                declaration kinds); its target is a bare name unresolved in phase 1
+//!                (a span edge would lie about a binding we have not made); and pos
+//!                must survive for the node-level type join. The Param/Returns EDGES
+//!                (span-to-span, resolved) still land at Resolve<TypeF> (commit 4).
 //!
-//! BUILD STATUS (2026-07-23, commits 1-2 LANDED in v6/sprefa-extract/; the build
-//! order 1->2->3 holds):
+//! BUILD STATUS (2026-07-23, commits 1-2c LANDED in v6/sprefa-extract/; the build
+//! order 2c->3a(CallF)->3b(DfF) holds):
 //!   6a29d920  commit 1   CstF via ast-grep (one dep = rust/ts/tsx/js/go grammars);
 //!              clap bin streaming flat JSONL with --bench; snapshot. Piping proof.
 //!   f3ceb4fa  commit 2a  Parser/Project seam -> arena-passing GAT: oxc's
@@ -86,12 +94,19 @@
 //!              (class/interface/alias/enum/function/method entities; ctor +
 //!              non-fn const skipped). oxc race in --bench. cargo tree clean of
 //!              tokio/sqlx/sea-orm/rusqlite/axum; public API names no store-id type.
-//!   PENDING on 2b's callable entities: the arrow-type PAYLOAD (TypeExpr params/
-//!              ret) + the Param/Returns/Uses EDGES are NOT yet emitted (they
-//!              land at resolution, commit 4) -> Function/Method entities are
-//!              kinded SKELETONS pending their [A]=>B. Also unported:
-//!              ts_const_facts_from (the string-const-value facet; origin-style
-//!              consts stay df value nodes).
+//!   (2c code)  commit 2c  D-arrow-type PAYLOAD: the callable arrow signature is
+//!              now emitted as `TypeSig` rows in the TypeF aux (one per named
+//!              type ref in a param slot / the return slot; port of v5
+//!              ts_fn_signature_edges' param/returns half). Representation
+//!              decision: a SIGS SIDE TABLE, NOT span-pair edges (the target is
+//!              a bare NameId, unresolved in phase 1; Resolve<TypeF> binds it at
+//!              commit 4). Keyword types (number) emit no sig; a union slot
+//!              emits one per arm. param POSITION preserved (for the node-level
+//!              type join). Added Family::Aux + FlatFact::Sig; CstF::Aux=().
+//!   PENDING:   the name-resolved type EDGES (field/impl/variant/uses + the
+//!              resolved param/returns binding) still land at Resolve<TypeF>
+//!              (commit 4) by design. Also unported: ts_const_facts_from (the
+//!              string-const-value facet; origin-style consts stay df value nodes).
 //!   ORACLE:     scip-typescript 0.4.0 was run on the fixture (throwaway /tmp). The
 //!              real correctness gate is occurrence/resolution parity (the commit 4
 //!              ratchet), NOT a raw symbol diff (scip is a flat exhaustive symbol

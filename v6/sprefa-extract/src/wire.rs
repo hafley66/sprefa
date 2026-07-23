@@ -26,9 +26,9 @@ impl SpanOut {
     }
 }
 
-/// One flat fact. The `record` tag discriminates node vs edge; `family` carries
-/// the family plane. Serialized as JSONL (`{"record":"node",...}` /
-/// `{"record":"edge",...}`).
+/// One flat fact. The `record` tag discriminates node vs edge vs sig; `family`
+/// carries the family plane. Serialized as JSONL (`{"record":"node",...}` /
+/// `{"record":"edge",...}` / `{"record":"sig",...}`).
 #[derive(Serialize, Debug)]
 #[serde(tag = "record", rename_all = "lowercase")]
 pub enum FlatFact {
@@ -43,6 +43,17 @@ pub enum FlatFact {
         kind: String,
         from: SpanOut,
         to: SpanOut,
+    },
+    /// A family aux row. TypeF arrow-type sig today: `owner` is the callable
+    /// node's span, `slot` is param/ret, `pos` the param index, `ty` the
+    /// referenced type's bare name (unresolved in phase 1). Future aux (consts,
+    /// df param_pos/args) ride the same arm.
+    Sig {
+        family: FamilyTag,
+        owner: SpanOut,
+        slot: String,
+        pos: u32,
+        ty: String,
     },
 }
 
@@ -87,17 +98,27 @@ pub fn flatten_cst_jsonl(bundle: &FamilyBundle<CstF>, strings: &Strings) -> Vec<
     lines
 }
 
-/// Flatten one TypeF bundle to flat facts. Commit 2b carries entity NODES only
-/// (kind = the TypeEntityKind slug, name from the interner); the type edges
-/// land with `Resolve<TypeF>` (commit 4).
+/// Flatten one TypeF bundle to flat facts: entity NODES (kind = the
+/// TypeEntityKind slug, name from the interner) + the arrow-type SIGS (each
+/// callable's param/return type references). The name-resolved type edges
+/// (field / impl / uses / ...) land with `Resolve<TypeF>` (commit 4).
 pub fn flatten_type(bundle: &FamilyBundle<TypeF>, strings: &Strings) -> Vec<FlatFact> {
-    let mut out = Vec::with_capacity(bundle.nodes.len());
+    let mut out = Vec::with_capacity(bundle.nodes.len() + bundle.aux.sigs.len());
     for node in &bundle.nodes {
         out.push(FlatFact::Node {
             family: TypeF::TAG,
             span: SpanOut::new(node.span.start, node.span.end()),
             kind: node.kind.as_str().to_string(),
             name: node.name.map(|id| strings.lookup(id).to_string()),
+        });
+    }
+    for sig in &bundle.aux.sigs {
+        out.push(FlatFact::Sig {
+            family: TypeF::TAG,
+            owner: SpanOut::new(sig.owner.start, sig.owner.end()),
+            slot: sig.slot.as_str().to_string(),
+            pos: sig.pos,
+            ty: strings.lookup(sig.ty).to_string(),
         });
     }
     out

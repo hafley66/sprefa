@@ -25,7 +25,7 @@ pub mod shape;
 pub mod wire;
 
 pub use dispatch::{dispatch_cst, dispatch_type};
-pub use family::{CstEdgeKind, CstF, Family, TypeEdgeKind, TypeEntityKind, TypeF};
+pub use family::{CstEdgeKind, CstF, Family, SigSlot, TypeEdgeKind, TypeEntityKind, TypeFAux, TypeF, TypeSig};
 pub use lang::{AstGrepParser, CstProjector, OxcParser, TypeProjector};
 pub use rows::{Edge, FamilyBundle, Node};
 pub use seams::{BlobSource, ParseError, Parser, Project};

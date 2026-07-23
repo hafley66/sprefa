@@ -13,13 +13,18 @@
 
 use std::fmt;
 
-use crate::shape::{FamilyTag, NameId};
+use crate::shape::{FamilyTag, NameId, Span};
 
 /// One static-analysis family. The associated kinds are the per-family node and
 /// edge vocabularies; `TAG` is the flat discriminant used at the seam only.
+/// `Aux` is the family's side-channel payload (TypeF arrow-type sigs, later
+/// df param_pos/args/...): per-node/per-occurrence attributes that are NOT
+/// span-pair edges and do not fit the uniform `Node<F>`/`Edge<F>` shape. The
+/// bundle carries one `F::Aux`; the wire flattens it to its own `FlatFact` arm.
 pub trait Family {
     type NodeKind: Clone + fmt::Debug;
     type EdgeKind: Copy + Clone + fmt::Debug;
+    type Aux: Default + Clone + fmt::Debug;
     const TAG: FamilyTag;
 }
 
@@ -43,6 +48,7 @@ pub enum CstEdgeKind {
 impl Family for CstF {
     type NodeKind = NameId;
     type EdgeKind = CstEdgeKind;
+    type Aux = ();
     const TAG: FamilyTag = FamilyTag::Cst;
 }
 
@@ -115,8 +121,60 @@ impl TypeEdgeKind {
     }
 }
 
+// ── TypeF aux: the arrow-type payload (the D-arrow-type decision in code) ────
+//
+// A function/method IS a type: `[...A] => B`. The callable ENTITY node (above)
+// is span + kind + name; the arrow SIGNATURE is this side table. One `TypeSig`
+// per named type reference in a param slot or the return slot. The target is a
+// bare `NameId` (phase-1 honest: unresolved; `Resolve<TypeF>` binds it to a
+// declaration span at commit 4). v5 modeled these as name-string `param`/
+// `returns` type-edges; the name survives, the sym-string does not.
+//
+// `pos` preserves parameter ORDER for the node-level type join (`param_pos`)
+// the seed ports later. Keyword types (number/string/...) are distinct AST
+// variants, never `TSTypeReference`s, so they emit no sig (a `number` param
+// carries no resolvable name); a union slot (`A | B`) emits one sig per arm.
+
+/// One named type reference in a callable's signature. `owner` is the callable
+/// node's span (the join key back to the `Node<TypeF>`); `ty` is the referenced
+/// type's bare name, interned.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TypeSig {
+    pub owner: Span,
+    pub slot: SigSlot,
+    pub pos: u32,
+    pub ty: NameId,
+}
+
+/// Where in a signature a `TypeSig` sits. `Param` = an input slot; `Ret` = the
+/// output slot. (`Field`, for a class property's annotation, lands with the
+/// class-fields pass; declared here is deferred to keep this commit's vocab to
+/// what it emits.)
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SigSlot {
+    Param,
+    Ret,
+}
+
+impl SigSlot {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SigSlot::Param => "param",
+            SigSlot::Ret => "ret",
+        }
+    }
+}
+
+/// The TypeF side-channel: arrow-type sigs (and, later, consts/docs). Rides the
+/// bundle's `aux`; the wire flattens it to `FlatFact::Sig`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TypeFAux {
+    pub sigs: Vec<TypeSig>,
+}
+
 impl Family for TypeF {
     type NodeKind = TypeEntityKind;
     type EdgeKind = TypeEdgeKind;
+    type Aux = TypeFAux;
     const TAG: FamilyTag = FamilyTag::Type;
 }

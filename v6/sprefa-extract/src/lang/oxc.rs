@@ -1,20 +1,28 @@
-//! The oxc Parser + the TypeF projection (TS/JS type entities). oxc is the
-//! arena AST front-end v5 carried (`src/graph/typegraph/ts`). `Program<'a>`
-//! borrows the `Allocator` AND the source text, so the dispatch owns the arena
-//! and the parse ties `content` to `'a` (the GAT seam from commit 2a).
+//! The oxc Parser + the TypeF projection (TS/JS type entities + their arrow-type
+//! signatures). oxc is the arena AST front-end v5 carried
+//! (`src/graph/typegraph/ts`). `Program<'a>` borrows the `Allocator` AND the
+//! source text, so the dispatch owns the arena and the parse ties `content` to
+//! `'a` (the GAT seam from commit 2a).
 //!
 //! Commit 2b ports v5 `ts_entities_from`: the type declarations (class /
 //! interface / alias / enum / function / method) become span-addressed
-//! `Node<TypeF>`. The type EDGES (field / impl / uses / ...) are name-resolved
-//! relationships and land with `Resolve<TypeF>` (commit 4, scip-typescript);
-//! phase 1 stays pure-content span nodes.
+//! `Node<TypeF>`. Commit 2c ports the arrow-type half of v5
+//! `ts_fn_signature_edges`: each callable's param + return type references
+//! become `TypeSig` rows in the bundle's aux (the D-arrow-type payload: a
+//! function IS a type, `[...A] => B`). The target stays a bare name (phase-1
+//! honest; `Resolve<TypeF>` binds it to a declaration span at commit 4). The
+//! name-resolved type EDGES (field / impl / uses / ...) still land with
+//! `Resolve<TypeF>`; phase 1 stays pure-content.
+
+use std::collections::BTreeSet;
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast as ts;
 use oxc_ast::ast::Program;
+use oxc_ast_visit::Visit as OxcVisit;
 use oxc_span::SourceType;
 
-use crate::family::{TypeEntityKind, TypeF};
+use crate::family::{SigSlot, TypeEntityKind, TypeF};
 use crate::rows::{FamilyBundle, Node};
 use crate::seams::{ParseError, Parser, Project};
 use crate::shape::{Span, Strings};
@@ -173,6 +181,15 @@ fn class_entity(class: &ts::Class, strings: &mut Strings, sink: &mut FamilyBundl
             }
             if let ts::PropertyKey::StaticIdentifier(key) = &method.key {
                 push_entity(sink, strings, method.span, key.name.to_string(), TypeEntityKind::Method);
+                // A method IS a type: carry its arrow signature (param/ret refs).
+                fn_sigs(
+                    method.span,
+                    &method.value.type_parameters,
+                    &method.value.params,
+                    &method.value.return_type,
+                    strings,
+                    sink,
+                );
             }
         }
     }
@@ -181,6 +198,14 @@ fn class_entity(class: &ts::Class, strings: &mut Strings, sink: &mut FamilyBundl
 fn fn_entity(func: &ts::Function, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
     let Some(id) = &func.id else { return };
     push_entity(sink, strings, func.span, id.name.to_string(), TypeEntityKind::Function);
+    fn_sigs(
+        func.span,
+        &func.type_parameters,
+        &func.params,
+        &func.return_type,
+        strings,
+        sink,
+    );
 }
 
 /// `const foo = (...) => ...` / `const foo = function (...) {...}` at the top
@@ -192,16 +217,132 @@ fn var_fn_entity(var: &ts::VariableDeclaration, strings: &mut Strings, sink: &mu
         let ts::BindingPattern::BindingIdentifier(name) = &declarator.id else {
             continue;
         };
-        let is_function = match &declarator.init {
-            Some(
-                ts::Expression::ArrowFunctionExpression(_) | ts::Expression::FunctionExpression(_),
-            ) => true,
-            _ => false,
-        };
-        if !is_function {
-            continue;
+        match &declarator.init {
+            Some(ts::Expression::ArrowFunctionExpression(arrow)) => {
+                push_entity(sink, strings, declarator.span, name.name.to_string(), TypeEntityKind::Function);
+                fn_sigs(
+                    declarator.span,
+                    &arrow.type_parameters,
+                    &arrow.params,
+                    &arrow.return_type,
+                    strings,
+                    sink,
+                );
+            }
+            Some(ts::Expression::FunctionExpression(func)) => {
+                push_entity(sink, strings, declarator.span, name.name.to_string(), TypeEntityKind::Function);
+                fn_sigs(
+                    declarator.span,
+                    &func.type_parameters,
+                    &func.params,
+                    &func.return_type,
+                    strings,
+                    sink,
+                );
+            }
+            _ => {}
         }
-        push_entity(sink, strings, declarator.span, name.name.to_string(), TypeEntityKind::Function);
+    }
+}
+
+// ── arrow-type signatures (the D-arrow-type payload) ────────────────────────
+//
+// Port of v5 `ts_fn_signature_edges`'s param/returns half. Collects every
+// `TSTypeReference` name under a signature's type annotations (excluding the
+// callable's own type-parameter names), minting one `TypeSig` per name per
+// slot. Keyword types (number/string) are distinct AST variants, never
+// references, so they emit nothing; a union slot (A | B) emits one per arm.
+
+/// The signature slots of one callable: param type-refs (with their positional
+/// index) + the return type-refs. `owner` is the callable node's span; the sigs
+/// join back to that node at the wire and the resolution seam.
+fn fn_sigs(
+    owner: oxc_span::Span,
+    type_parameters: &Option<oxc_allocator::Box<ts::TSTypeParameterDeclaration>>,
+    params: &ts::FormalParameters,
+    return_type: &Option<oxc_allocator::Box<ts::TSTypeAnnotation>>,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
+    let exclude = type_param_names(type_parameters);
+    for (pos, param) in params.items.iter().enumerate() {
+        if let Some(ann) = &param.type_annotation {
+            for name in refs_in_type(&ann.type_annotation, &exclude) {
+                push_sig(sink, strings, owner, SigSlot::Param, pos as u32, &name);
+            }
+        }
+    }
+    if let Some(rt) = return_type {
+        for name in refs_in_type(&rt.type_annotation, &exclude) {
+            push_sig(sink, strings, owner, SigSlot::Ret, 0, &name);
+        }
+    }
+}
+
+fn push_sig(
+    sink: &mut FamilyBundle<TypeF>,
+    strings: &mut Strings,
+    owner: oxc_span::Span,
+    slot: SigSlot,
+    pos: u32,
+    name: &str,
+) {
+    sink.aux.sigs.push(crate::family::TypeSig {
+        owner: Span { start: owner.start, len: owner.end - owner.start },
+        slot,
+        pos,
+        ty: strings.intern(name),
+    });
+}
+
+/// The callable's declared type-parameter names (the exclusion set: a generic
+/// `<T>` referencing itself is not a sig). Port of v5 `ts_param_edges`'s name
+/// collection (constraint refs as "generic" edges are deferred to commit 4).
+fn type_param_names(
+    tp: &Option<oxc_allocator::Box<ts::TSTypeParameterDeclaration>>,
+) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    if let Some(tp) = tp {
+        for param in &tp.params {
+            names.insert(param.name.name.to_string());
+        }
+    }
+    names
+}
+
+/// Every `TSTypeReference` name under a type subtree, excluding the callable's
+/// own type-parameter names. Port of v5 `ts_refs_in_type`.
+fn refs_in_type(ty: &ts::TSType, exclude: &BTreeSet<String>) -> Vec<String> {
+    let mut collector = TypeRefCollector { exclude, out: Vec::new() };
+    collector.visit_ts_type(ty);
+    collector.out
+}
+
+struct TypeRefCollector<'p> {
+    exclude: &'p BTreeSet<String>,
+    out: Vec<String>,
+}
+
+impl<'a, 'p> OxcVisit<'a> for TypeRefCollector<'p> {
+    fn visit_ts_type_reference(&mut self, reference: &ts::TSTypeReference<'a>) {
+        if let Some(name) = ts_type_name(&reference.type_name) {
+            if !self.exclude.contains(&name) {
+                self.out.push(name);
+            }
+        }
+        oxc_ast_visit::walk::walk_ts_type_reference(self, reference);
+    }
+}
+
+/// A `TSTypeName` to a dotted string (`Db`, `React.Node`), or None for `this`.
+/// Port of v5 `ts_type_name`.
+fn ts_type_name(name: &ts::TSTypeName) -> Option<String> {
+    match name {
+        ts::TSTypeName::IdentifierReference(id) => Some(id.name.to_string()),
+        ts::TSTypeName::QualifiedName(qualified) => {
+            ts_type_name(&qualified.left).map(|left| format!("{left}.{}", qualified.right.name))
+        }
+        ts::TSTypeName::ThisExpression(_) => None,
     }
 }
 
