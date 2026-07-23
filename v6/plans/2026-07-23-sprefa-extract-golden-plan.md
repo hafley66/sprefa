@@ -110,6 +110,110 @@ Parser buy-vs-buy: tree-sitter (40+, the universal backup), oxc (JS/TS, arena,
   store `node`/`edge`. The CST is transient; only the projection escapes the
   arena.
 
+## The inversion (v5 → v6)
+
+One sentence: **v5 mints coordinate strings inside the engine and writes them to
+rel tables; v6 emits span-addressed facts from a leaf and lets the store name
+them.** Every row in the table below is a consequence of where identity lives and
+which side of the DB seam the work happens on.
+
+### v5 — extraction lives INSIDE the engine (the tangle)
+
+```mermaid
+flowchart TB
+    subgraph ENG["v5: extraction lives INSIDE src/engine"]
+        direction TB
+        TRIG["watcher / poll<br/>(EAGER: the whole program ticks)"]:::ext
+        REF["refresh_module/type/call/df/node_rels<br/>(engine methods)"]:::eng
+        TL["TypeLang: Sync<br/>per-file, no context"]:::lang
+        MR["ModuleResolver: Send+Sync<br/>per-file + ProjectCx"]:::lang
+        SCN["scip_narrow<br/>reads scip_* rels"]:::overlay
+        MINT["mint_sym + salt_rev<br/>file::kind::name strings"]:::disease
+        IDS["NodeIdx (df) + salted WhereBytes (CST)<br/>3 identity schemes, 4 span shapes, 3 kind reps"]:::disease
+        ROWS["Vec of Vec of Value rows"]:::sql
+        DB[("rel_* tables + _strings<br/>(63% re-encoded coordinates)")]:::disk
+        FC["FactCache: resident memo + parse trees"]:::ram
+        TRIG --> REF
+        REF --> TL
+        REF --> MR
+        REF -.overlay bolted on.-> SCN
+        TL --> MINT
+        MR --> MINT
+        MINT --> IDS
+        IDS --> ROWS
+        ROWS -->|"refresh_rel"| DB
+        REF --> FC
+        FC -.resident.-> RAM["~36 GB RSS"]:::ram
+    end
+
+    classDef ext fill:#1e2a3a,stroke:#5aa9ff,color:#dbeafe;
+    classDef eng fill:#12331f,stroke:#3fd88b,color:#d7ffe9;
+    classDef lang fill:#2a1f3a,stroke:#b98cff,color:#ecdcff;
+    classDef sql fill:#3a2a12,stroke:#ffb454,color:#ffe9c7;
+    classDef disk fill:#0e1b2e,stroke:#5aa9ff,color:#cfe4ff;
+    classDef disease fill:#2e0f0f,stroke:#ff6b6b,color:#ffd7d7;
+    classDef overlay fill:#241a08,stroke:#ffb454,color:#ffe9c7,stroke-dasharray:5 4;
+    classDef ram fill:#2e0f0f,stroke:#ff6b6b,color:#ffd7d7;
+```
+
+### v6 — extraction is a LEAF below the store (sync core + async shell)
+
+```mermaid
+flowchart TB
+    DEM["demand cone activates<br/>(cold blob parses only when subscribed)"]:::ext
+    SCIP["ScipSource: Tier 1<br/>tokio::process shell-out"]:::scip
+
+    subgraph EX["v6: sprefa-extract, a LEAF below the store"]
+        REX["ReactiveExtract<br/>async shell the engine holds"]:::async
+        subgraph CORE["sync core: rayon, arena-per-file"]
+            direction TB
+            P["Parser tier<br/>syn (rust) / oxc (ts) / tree-sitter (floor)"]:::lang
+            CST["arena CST: one arena per file,<br/>DROPPED after projection"]:::lang
+            FE["FileExtract: phase 1<br/>key: blob + lang + mask"]:::lang
+            PE["ProjectExtract: phase 2<br/>key: blob + project_digest + mask"]:::lang
+            P --> CST --> FE
+            CST --> PE
+        end
+        MR{"merge"}:::merge
+        OUT["RawNode / RawEdge / ProjectEdge: the _0_shape<br/>ONE Span / ONE kind ordinal per family<br/>id = (family, span, kind)"]:::shape
+        REX -.spawn_blocking, one per batch.-> P
+        FE --> MR
+        PE --> MR
+        MR --> OUT
+    end
+
+    DEM --> REX
+    SCIP -.diet ScipIndex.-> MR
+    OUT ==>|"ONE seam: no rows, no SQL"| STORE[("sprefa-store<br/>interns RawNode to node_id")]:::disk
+
+    classDef ext fill:#1e2a3a,stroke:#5aa9ff,color:#dbeafe;
+    classDef async fill:#2a1f3a,stroke:#b98cff,color:#ecdcff;
+    classDef lang fill:#12331f,stroke:#3fd88b,color:#d7ffe9;
+    classDef scip fill:#241a08,stroke:#ffb454,color:#ffe9c7;
+    classDef merge fill:#2a1f3a,stroke:#b98cff,color:#ecdcff;
+    classDef shape fill:#12331f,stroke:#3fd88b,color:#d7ffe9,stroke-width:2px;
+    classDef disk fill:#0e1b2e,stroke:#5aa9ff,color:#cfe4ff;
+```
+
+### What changed (one axis per row)
+
+| axis | v5 | v6 |
+|---|---|---|
+| where it lives | engine methods (`engine/extract/*`) | own crate, a leaf below the store |
+| output | `Vec<Vec<Value>>` rows → `rel_*` tables | `RawNode`/`RawEdge`; the store interns |
+| node identity | `mint_sym` + `NodeIdx` + salted `WhereBytes` (3 schemes) | `(family, span, kind)` — one |
+| spans | 4 shapes (byte-range / line / line+col-mixed / WhereBytes) | one `Span` |
+| kinds | typed enums (type/call) + free `String` (df) + `&str` (edges) | one typed enum per family |
+| the two traits | asymmetric `TypeLang` vs `ModuleResolver` | symmetric `FileExtract` / `ProjectExtract` (split = cache key) |
+| module family | a separate trait | the project phase of every family |
+| SCIP | overlay bolted in the engine (`scip_narrow`) | first-class Tier-1 source, merged by precedence |
+| parse sharing | opt-in (only Rust; others parse 3×) | default — one parse, masked projections, all langs |
+| flow_edge | stranded in `std/flow.dl`, stringly-joined | typed `FlowEdgeKind` (5th family) |
+| RAM | resident memo + parse trees → ~36 GB | arena-per-file, dropped → peak = biggest file |
+| eagerness | eager; whole program ticks | demand-driven; cold blob parses only when subscribed |
+| concurrency | engine-controlled, ~serial parse | rayon core + async shell |
+| dictionary | 63% re-encoded coordinates | vocabulary only (coordinates are spans) |
+
 ## Decisions (the rulings this crate rests on)
 
 1. **ONE coordinate, ONE typed-kind ordinal per family, node id = (family, span,
