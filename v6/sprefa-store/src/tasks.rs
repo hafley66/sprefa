@@ -29,7 +29,10 @@
 //! DONE bar (read off this file):
 //! - Reach     ✅ oracle+parity green (efficiency open: `scc_labels` closure)
 //! - Cascade   ✅ oracle+parity green (the genesis, most mature)
-//! - Reconcile ❌ salsa oracle not ported — the ONE graph-correctness gap
+//! - Reconcile ⚠ oracle PORTED (oracle::salsa + tests/reconcile.rs); parity test PROVED
+//!   engine::reconcile INCORRECT for DAG diamonds (lazy one-hop sweep ≠ topo order).
+//!   The engine is right for chains (its unit tests) and wrong the moment a node has
+//!   deps at different hop distances. Fix = topo/ascending sweep (labkit's proven shape).
 //! - Temporal  substrate, not graph parity (see bottom)
 //! - GraphStore · storage CLOSED: collapse measured +4% at scale -> REJECTED; shape = the split
 //!   two-plane pair. Epic 1 landed (stamp + measure_storage). Forward = a namespace-generic engine
@@ -315,19 +318,27 @@ impl Cascade for Tasks {
 }
 
 impl Reconcile for Tasks {
-    /// ❌ GAP · SQLite `reconcile::seed` :992 · oracle salsa ❌ NOT ported · parity unit only
+    /// ⚠ SQLite `reconcile::seed` :992 · oracle salsa ✅ ported (oracle::salsa) · engine
+    ///   is correct for chains, INCORRECT for DAG diamonds — see `dirty`.
     async fn seed(&self, _id: i64, _digest: i64, _deps: &[(i64, i64)], _rev: i64) {
         todo!()
     }
-    /// ❌ GAP · SQLite `reconcile::mark_changed` :1013 · oracle salsa ❌ · parity unit only
+    /// ⚠ SQLite `reconcile::mark_changed` :1013 · oracle ✅ · engine chains-only (see dirty).
     async fn mark_changed(&self, _ids: &[i64], _rev: i64) {
         todo!()
     }
-    /// ❌ GAP · SQLite `reconcile::dirty` :1024 · oracle salsa ❌ · parity unit only · (the FRONTIER — salsa's red-green, one-hop + cutoff)
+    /// ⚠ SQLite `reconcile::dirty` :1024 · oracle ✅ · THE BUG: the lazy one-hop `dirty()`
+    ///   frontier verifies nodes in HOP-distance-from-source order, which is NOT
+    ///   topological order on a DAG with diamonds. A node at hop 1 (reads an edited cell)
+    ///   that also reads a hop-2 dep is verified against that still-stale dep and never
+    ///   re-dirtied (under one edit `rev`, `changed_at > verified_at` is false once both
+    ///   equal `rev`). Proven by tests/reconcile.rs (#[ignore]'d): on n=32 the engine
+    ///   recomputes exactly the right SET (missed=[]) but wrong VALUES for every node
+    ///   with a greater-hop dep. Fix = topo/ascending sweep (labkit SqlReconciler shape).
     async fn dirty(&self) -> Vec<i64> {
         todo!()
     }
-    /// ❌ GAP · SQLite `reconcile::verify` :1040 · oracle salsa ❌ · parity unit only
+    /// ⚠ SQLite `reconcile::verify` :1040 · oracle ✅ · engine chains-only (see dirty).
     async fn verify(&self, _id: i64, _new_digest: i64, _rev: i64) -> bool {
         todo!()
     }

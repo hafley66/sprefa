@@ -32,6 +32,11 @@ libc = "0.2"
 # it through the ordinary lib build, which cannot see dev-dependencies.
 differential-dataflow = "0.25"
 timely = "0.31"
+# The independent reconcile oracle in src/oracle.rs (`oracle::salsa`): the resident
+# salsa-crate implementation of the same red-green algorithm, cross-checked against the
+# SQLite reconcile plane (`engine::reconcile`) in tests/reconcile.rs. Plain dep (not
+# optional, mirroring dd/timely above) so the parity test runs under default `cargo test`.
+salsa = "0.28"
 
 # The one measurement path: plain tracing. Spans = which code ran + timing,
 # events = metrics (rss/disk/stmt count). Collected by src/trace.rs. No dlsym,
