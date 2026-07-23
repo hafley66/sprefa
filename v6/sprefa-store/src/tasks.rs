@@ -29,15 +29,15 @@
 //! DONE bar (read off this file):
 //! - Reach     ✅ oracle+parity green (efficiency open: `scc_labels` closure)
 //! - Cascade   ✅ oracle+parity green (the genesis, most mature)
-//! - Reconcile ⚠ oracle PORTED (oracle::salsa + tests/reconcile.rs); parity test PROVED
-//!   engine::reconcile INCORRECT for DAG diamonds (lazy one-hop sweep ≠ topo order).
-//!   The engine is right for chains (its unit tests) and wrong the moment a node has
-//!   deps at different hop distances. Fix = topo/ascending sweep (labkit's proven shape).
+//! - Reconcile ✅ oracle+parity green (oracle::salsa + tests/reconcile.rs). The correct
+//!   driver is `propagate` (engine.rs): an ascending topological sweep — the labkit
+//!   SqlReconciler shape, byte-identical to salsa on DAGs w/ diamonds (answer + recompute
+//!   count). The lazy one-hop `dirty()` is a low-level query, NOT a topo-sweep driver.
 //! - Temporal  substrate, not graph parity (see bottom)
-//! - GraphStore · storage CLOSED: collapse measured +4% at scale -> REJECTED; shape = the split
-//!   two-plane pair. Epic 1 landed (stamp + measure_storage). Forward = a namespace-generic engine
-//!   (`GraphNs` prefix; see `GraphStorePlan`). `Layout` is the Epic-1 measurement knob, retires
-//!   when the engine threads to `GraphNs`.
+//! - GraphStore · storage CLOSED (collapse measured +4% at scale -> REJECTED; split pair)
+//!   + Epic 2/3 LANDED: the engine is namespace-generic (`GraphNs` prefix, `stamp(db,
+//!   &GraphNs)`); `Layout` retired, collapse DDL lives in `measure::stamp_collapsed_evidence`.
+//!   Epic 3 golden `two_namespaces_are_independent` proves two stores in one db don't cross-talk.
 #![allow(dead_code, unused_variables, async_fn_in_trait)]
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -318,27 +318,23 @@ impl Cascade for Tasks {
 }
 
 impl Reconcile for Tasks {
-    /// ⚠ SQLite `reconcile::seed` :992 · oracle salsa ✅ ported (oracle::salsa) · engine
-    ///   is correct for chains, INCORRECT for DAG diamonds — see `dirty`.
+    /// ✅ SQLite `reconcile::seed` :992 · oracle salsa ✅ · plants rx_memo + rx_dep.
     async fn seed(&self, _id: i64, _digest: i64, _deps: &[(i64, i64)], _rev: i64) {
         todo!()
     }
-    /// ⚠ SQLite `reconcile::mark_changed` :1013 · oracle ✅ · engine chains-only (see dirty).
+    /// ✅ SQLite `reconcile::mark_changed` :1013 · low-level changed_at bump.
     async fn mark_changed(&self, _ids: &[i64], _rev: i64) {
         todo!()
     }
-    /// ⚠ SQLite `reconcile::dirty` :1024 · oracle ✅ · THE BUG: the lazy one-hop `dirty()`
-    ///   frontier verifies nodes in HOP-distance-from-source order, which is NOT
-    ///   topological order on a DAG with diamonds. A node at hop 1 (reads an edited cell)
-    ///   that also reads a hop-2 dep is verified against that still-stale dep and never
-    ///   re-dirtied (under one edit `rev`, `changed_at > verified_at` is false once both
-    ///   equal `rev`). Proven by tests/reconcile.rs (#[ignore]'d): on n=32 the engine
-    ///   recomputes exactly the right SET (missed=[]) but wrong VALUES for every node
-    ///   with a greater-hop dep. Fix = topo/ascending sweep (labkit SqlReconciler shape).
+    /// ✅ SQLite `reconcile::dirty` :1125 · the one-hop frontier (a low-level query, NOT a
+    ///   topo-sweep driver). The parity-proven driver is `reconcile::propagate` (engine.rs):
+    ///   an ascending topological sweep, correct on DAG diamonds where this lazy hop-order
+    ///   loop is not (it verifies a node before a higher-hop dep and never re-dirties it
+    ///   under one `rev`). tests/reconcile.rs is the standing proof (salsa == SQL == from-scratch).
     async fn dirty(&self) -> Vec<i64> {
         todo!()
     }
-    /// ⚠ SQLite `reconcile::verify` :1040 · oracle ✅ · engine chains-only (see dirty).
+    /// ✅ SQLite `reconcile::verify` :1144 · write digest + early cutoff. Driven by `propagate`.
     async fn verify(&self, _id: i64, _new_digest: i64, _rev: i64) -> bool {
         todo!()
     }

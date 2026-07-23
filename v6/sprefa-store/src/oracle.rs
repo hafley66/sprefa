@@ -2,8 +2,8 @@
 //! - `dd`    : ported long ago (the cascade/reach oracle).
 //! - `salsa` : ported 2026-07-23 from the folded labkit (SalsaReconciler, the resident
 //!             salsa-crate ground truth for the reconcile plane). Its parity test
-//!             (tests/reconcile.rs) PROVED engine::reconcile incorrect for DAG diamonds;
-//!             the test is #[ignore]'d until that sweep is made topo-correct.
+//!             (tests/reconcile.rs) is GREEN: engine::reconcile driven through `propagate`
+//!             (the ascending topo sweep) is byte-identical to salsa on DAGs w/ diamonds.
 //! TODO remaining: move the tarjan/walk oracle out of tests/covering.rs to here.
 
 pub mod dd {

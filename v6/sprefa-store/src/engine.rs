@@ -1166,6 +1166,62 @@ pub async fn verify(
     Ok(moved)
 }
 
+/// The correct reconcile sweep (the labkit `SqlReconciler` shape, proven byte-identical
+/// to salsa on DAGs with diamonds). Process `seeds` — the edited cells, whose values
+/// already changed — and every transitive reader whose digest actually moves, in
+/// ASCENDING id order. Ascending is a valid topological order here (every rx_dep edge is
+/// parent->child with child > parent), so when a node is recomputed all of its deps are
+/// already current in rx_memo. That is exactly the property the lazy one-hop `dirty()`
+/// loop violates: it walks in hop-distance-from-source order, which is NOT topo order when
+/// a node has deps at different hop distances, so it locks a node stale against a dep
+/// verified later in the same `rev`. Use THIS as the reconcile driver, not the dirty() loop.
+///
+/// `recompute(id, dep_digests)` returns the node's new digest from its value (caller-
+/// owned) and its deps' current digests (read here from rx_memo); the fold is order-
+/// independent (XOR). Each node is persisted via `verify` (early cutoff: readers of an
+/// unmoved node are never enqueued). Returns the recompute count — the early-cutoff meter.
+pub async fn propagate<F>(
+    db: &DatabaseConnection,
+    ns: &GraphNs,
+    seeds: &[i64],
+    rev: i64,
+    recompute: F,
+) -> Result<u64, DbErr>
+where
+    F: Fn(i64, &[i64]) -> i64,
+{
+    use std::collections::BTreeSet;
+    let mut dirty: BTreeSet<i64> = seeds.iter().copied().collect();
+    let mut count = 0u64;
+    while let Some(&id) = dirty.iter().next() {
+        dirty.remove(&id);
+        // the node's deps' current digests (order-independent: node_digest folds with XOR).
+        let dep_digests = query_ids(
+            db,
+            &format!(
+                "SELECT m.digest FROM {rdep} dep JOIN {memo} m ON m.id = dep.read WHERE dep.reader = {id}",
+                rdep = ns.rdep,
+                memo = ns.memo
+            ),
+        )
+        .await?;
+        let new_digest = recompute(id, &dep_digests);
+        let moved = verify(db, ns, id, new_digest, rev).await?;
+        count += 1;
+        if moved {
+            let readers = query_ids(
+                db,
+                &format!("SELECT reader FROM {rdep} WHERE read = {id}", rdep = ns.rdep),
+            )
+            .await?;
+            for reader in readers {
+                dirty.insert(reader);
+            }
+        }
+    }
+    Ok(count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

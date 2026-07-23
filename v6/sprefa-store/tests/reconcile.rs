@@ -1,25 +1,13 @@
-//! The reconcile parity check: `engine::reconcile` (salsa-in-SQL) vs the resident
-//! salsa-crate oracle vs a from-scratch oracle, over a matrix of layered DAGs + edit
-//! streams. DONE bar = byte-identical ANSWER digest every edit tick + equal RECOMPUTE
-//! COUNT (early cutoff behaves identically).
+//! The reconcile parity check: `engine::reconcile` (driven through `propagate`, the
+//! topological sweep) vs the resident salsa-crate oracle vs a from-scratch oracle, over a
+//! matrix of layered DAGs + edit streams. DONE bar = byte-identical ANSWER digest every
+//! edit tick + equal RECOMPUTE COUNT (early cutoff behaves identically).
 //!
-//! STATUS (2026-07-23): the salsa oracle is ported and SOUND (it agrees with the
-//! from-scratch oracle). This test is `#[ignore]`'d because it EXPOSES a real
-//! correctness bug in `engine::reconcile`, not a test bug:
-//!   the lazy one-hop `dirty()` frontier verifies nodes in HOP-DISTANCE-from-source
-//!   order, which is NOT topological order on a DAG with diamonds. A node at hop 1
-//!   (it reads an edited cell) that ALSO reads a hop-2 dep is verified in batch 1
-//!   against that still-stale hop-2 dep, and is never re-dirtied: under the edit `rev`,
-//!   `dep.changed_at > reader.verified_at` is false once both equal `rev`. The node's
-//!   digest is locked in wrong. The reconcile unit tests are all CHAINS (no diamonds),
-//!   which is why this hid — and why the family was tagged "parity unit only".
-//! DIAGNOSIS is deterministic: on n=32 seed=1 tick 0, the engine recomputes exactly the
-//! right SET of nodes (missed = []), but their VALUES are wrong for every node that has
-//! a dep at a greater hop distance (node 12 reads 4@hop0 + 9,10@hop2, etc.).
-//! FIX DIRECTION: the sweep must process in TOPOLOGICAL (ascending-id) order with
-//! demand-deps-first recompute — the labkit `SqlReconciler` RAM-ascending sweep was
-//! proven correct against salsa; the current SQL lazy-CTE loop diverged from it. Run
-//! on demand: `cargo test --test reconcile -- --ignored`.
+//! `propagate` (engine.rs reconcile) is the labkit `SqlReconciler` shape: it walks seeds
+//! + transitive readers in ASCENDING id order (a valid topo order, since deps < node), so
+//! a node is recomputed only after its deps are current — the property the earlier
+//! lazy one-hop `dirty()` loop violated on DAG diamonds. This test is the standing proof
+//! the SQLite plane matches salsa, including the early-cutoff count.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -43,12 +31,15 @@ async fn open() -> (DatabaseConnection, GraphNs) {
     (db, ns)
 }
 
+/// Seed the SQLite reconcile plane (rx_memo/rx_dep under the default ns) with the cold
+/// ascending digests. Returns the RAM value mirror (propagate recomputes from rx_memo
+/// digests, so no RAM memo mirror is needed).
 async fn engine_build(
     db: &DatabaseConnection,
     ns: &GraphNs,
     deps: &[Vec<u32>],
     init: &[i64],
-) -> (Vec<i64>, Vec<i64>, u64) {
+) -> (Vec<i64>, u64) {
     let n = init.len();
     let value = init.to_vec();
     let mut memo = vec![0i64; n];
@@ -57,51 +48,11 @@ async fn engine_build(
         let dep_ids: Vec<i64> = deps[i].iter().map(|&j| j as i64).collect();
         reconcile::seed(db, ns, i as i64, memo[i], &dep_ids, 0).await.unwrap();
     }
-    (value, memo, 0)
+    (value, 0)
 }
 
-/// Drives `engine::reconcile` exactly as its documented `reconcile_loop` does
-/// (mark seeds, then the lazy one-hop `dirty()` + `verify()` loop). This is the
-/// driving that exposes the topo-order bug documented above.
-async fn engine_edit(
-    db: &DatabaseConnection,
-    ns: &GraphNs,
-    deps: &[Vec<u32>],
-    value: &mut [i64],
-    memo: &mut [i64],
-    recomputes: &mut u64,
-    rev: i64,
-    changes: &[(u32, i64)],
-) {
-    for &(i, v) in changes {
-        value[i as usize] = v;
-    }
-    let mut edited: Vec<i64> = changes.iter().map(|&(i, _)| i as i64).collect();
-    edited.sort_unstable();
-    // seed: recompute + verify each edited cell (its value moved) so its digest is current
-    // and its changed_at drives the reader frontier.
-    for &id in &edited {
-        let i = id as usize;
-        let new_digest = salsa::node_digest(value[i], deps[i].iter().map(|&j| memo[j as usize]));
-        let _moved = reconcile::verify(db, ns, id, new_digest, rev).await.unwrap();
-        memo[i] = new_digest;
-        *recomputes += 1;
-    }
-    loop {
-        let front = reconcile::dirty(db, ns).await.unwrap();
-        if front.is_empty() {
-            break;
-        }
-        for id in front {
-            let i = id as usize;
-            let new_digest = salsa::node_digest(value[i], deps[i].iter().map(|&j| memo[j as usize]));
-            let _moved = reconcile::verify(db, ns, id, new_digest, rev).await.unwrap();
-            memo[i] = new_digest;
-            *recomputes += 1;
-        }
-    }
-}
-
+/// XOR of every durable rx_memo digest — reading the table proves the on-disk memo is the
+/// truth, not a RAM shadow.
 async fn engine_answer(db: &DatabaseConnection, ns: &GraphNs) -> i64 {
     let rows = db
         .query_all_raw(Statement::from_string(
@@ -113,8 +64,11 @@ async fn engine_answer(db: &DatabaseConnection, ns: &GraphNs) -> i64 {
     rows.iter().fold(0i64, |a, r| a ^ r.try_get_by_index::<i64>(0).unwrap_or(0))
 }
 
+/// Over a matrix of (nodes, ticks, edits-per-tick, rng-seed): the SQLite reconcile plane
+/// (driven via `propagate`) and the salsa-crate oracle agree on the answer digest EVERY
+/// tick, both match the from-scratch oracle at the end, and they recompute the SAME number
+/// of nodes (early-cutoff parity). If any breaks, this names the exact shape that broke it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "engine::reconcile lazy one-hop sweep is not topo-correct for DAG diamonds; see module doc"]
 async fn reconcile_parity_salsa_vs_sql() {
     for &(n, ticks, per, seed) in &[
         (32usize, 10usize, 3usize, 1u64),
@@ -129,9 +83,9 @@ async fn reconcile_parity_salsa_vs_sql() {
         sal.build(deps.clone(), stream.init.clone());
 
         let (db, ns) = open().await;
-        let (mut value, mut memo, mut recomputes) =
-            engine_build(&db, &ns, &deps, &stream.init).await;
+        let (mut value, mut recomputes) = engine_build(&db, &ns, &deps, &stream.init).await;
 
+        // post-build answer agrees.
         let mut sal_ans = sal.answer();
         let mut eng_ans = engine_answer(&db, &ns).await;
         assert_eq!(sal_ans, eng_ans, "post-build answer mismatch (n={n})");
@@ -139,7 +93,15 @@ async fn reconcile_parity_salsa_vs_sql() {
         for (ti, tick) in stream.edits.iter().enumerate() {
             sal.edit(tick);
             let rev = (ti + 1) as i64;
-            engine_edit(&db, &ns, &deps, &mut value, &mut memo, &mut recomputes, rev, tick).await;
+            for &(i, v) in tick {
+                value[i as usize] = v;
+            }
+            let seeds: Vec<i64> = tick.iter().map(|&(i, _)| i as i64).collect();
+            recomputes += reconcile::propagate(&db, &ns, &seeds, rev, |id, dep_digests| {
+                salsa::node_digest(value[id as usize], dep_digests.iter().copied())
+            })
+            .await
+            .unwrap();
             sal_ans = sal.answer();
             eng_ans = engine_answer(&db, &ns).await;
             assert_eq!(
@@ -148,7 +110,10 @@ async fn reconcile_parity_salsa_vs_sql() {
             );
         }
 
+        // 3-way: the durable SQLite memo equals the independent from-scratch oracle.
         assert_eq!(eng_ans, stream.oracle_answer, "engine != from-scratch oracle (n={n})");
+
+        // the early-cutoff proof: salsa and SQL recompute the SAME number of nodes.
         assert_eq!(
             sal.recomputes(),
             recomputes,
