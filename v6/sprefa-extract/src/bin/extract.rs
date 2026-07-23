@@ -1,8 +1,9 @@
 //! The CLI: clap args, NO tokio. Streams flat JSONL to stdout (RSS does not
-//! buffer the whole corpus; the lib drains). `--bench` times parse / walk /
-//! serialize separately to stderr; this is the harness that will race oxc once
-//! oxc is the Parser (commit 2). Commit 1: one file (dir walk lands with the
-//! corpus harness).
+//! buffer the whole corpus; the lib drains). For a TS/JS file it runs BOTH
+//! families: CstF via ast-grep (one dep covers rust/ts/go grammars) and TypeF
+//! via oxc. `--bench` times each family's parse / walk / serialize separately
+//! to stderr; the oxc-vs-ast-grep parse split is the race that sharpens once
+//! oxc owns more families (commit 3+). Commit 2: single file.
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -10,8 +11,8 @@ use std::time::Instant;
 use clap::Parser;
 
 use sprefa_extract::{
-    dispatch_cst, flatten_cst, AstGrepParser, CstF, CstProjector, FamilyBundle, Parser as _,
-    Project as _, Strings,
+    dispatch_cst, dispatch_type, flatten_cst, flatten_type, AstGrepParser, CstF, CstProjector,
+    FamilyBundle, OxcParser, Parser as _, Project as _, Strings, TypeF, TypeProjector,
 };
 
 #[derive(Parser)]
@@ -20,10 +21,10 @@ use sprefa_extract::{
     about = "sprefa-extract: corpus -> flat graph facts (JSONL to stdout)"
 )]
 struct Cli {
-    /// A file to extract (commit 1: single file; dir walk lands with the corpus harness).
+    /// A file to extract (commit 2: single file).
     path: PathBuf,
 
-    /// Time parse / walk / serialize to stderr instead of streaming facts to stdout.
+    /// Time each family's parse / walk / serialize to stderr instead of streaming facts.
     #[arg(long)]
     bench: bool,
 }
@@ -32,36 +33,69 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let content = std::fs::read(&cli.path)?;
     let path = cli.path.to_string_lossy();
-    let parser = AstGrepParser;
-    let projector = CstProjector;
-
     if cli.bench {
-        let arena = parser.make_arena();
-        let parse_start = Instant::now();
-        let parsed = parser.parse(&arena, &path, &content)?;
-        let parse_time = parse_start.elapsed();
-
-        let mut bundle = FamilyBundle::<CstF>::default();
-        let mut strings = Strings::new();
-        let walk_start = Instant::now();
-        projector.project(&parsed, &mut strings, &mut bundle);
-        let walk_time = walk_start.elapsed();
-
-        let ser_start = Instant::now();
-        let facts = flatten_cst(&bundle, &strings);
-        let ser_time = ser_start.elapsed();
-
-        eprintln!("parse   {:?}", parse_time);
-        eprintln!("walk    {:?}", walk_time);
-        eprintln!("serial  {:?}", ser_time);
-        eprintln!("nodes   {}", bundle.nodes.len());
-        eprintln!("edges   {}", bundle.edges.len());
-        eprintln!("facts   {}", facts.len());
+        bench(&path, &content)?;
     } else {
-        let (bundle, strings) = dispatch_cst(&path, &content, &parser, &projector)?;
-        for fact in flatten_cst(&bundle, &strings) {
+        stream(&path, &content)?;
+    }
+    Ok(())
+}
+
+fn stream(path: &str, content: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    // CstF via ast-grep (rust/ts/tsx/js/go grammars in one dep).
+    let (cst, cst_strings) = dispatch_cst(path, content, &AstGrepParser, &CstProjector)?;
+    for fact in flatten_cst(&cst, &cst_strings) {
+        println!("{}", serde_json::to_string(&fact)?);
+    }
+    // TypeF via oxc (TS/JS only); skipped silently if oxc has no grammar for the path.
+    if OxcParser.matches(path) {
+        let (ty, ty_strings) = dispatch_type(path, content, &OxcParser, &TypeProjector)?;
+        for fact in flatten_type(&ty, &ty_strings) {
             println!("{}", serde_json::to_string(&fact)?);
         }
+    }
+    Ok(())
+}
+
+fn bench(path: &str, content: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let cst_parser = AstGrepParser;
+    let cst_projector = CstProjector;
+    let arena = cst_parser.make_arena();
+    let t = Instant::now();
+    let cst_parsed = cst_parser.parse(&arena, path, content)?;
+    let parse_cst = t.elapsed();
+    let mut cst_bundle = FamilyBundle::<CstF>::default();
+    let mut cst_strings = Strings::new();
+    let t = Instant::now();
+    cst_projector.project(&cst_parsed, &mut cst_strings, &mut cst_bundle);
+    let walk_cst = t.elapsed();
+    let t = Instant::now();
+    let cst_facts = flatten_cst(&cst_bundle, &cst_strings);
+    let ser_cst = t.elapsed();
+    eprintln!(
+        "cst:  parse {:?} walk {:?} serial {:?} ({} nodes, {} edges, {} facts)",
+        parse_cst, walk_cst, ser_cst, cst_bundle.nodes.len(), cst_bundle.edges.len(), cst_facts.len(),
+    );
+
+    if OxcParser.matches(path) {
+        let ty_parser = OxcParser;
+        let ty_projector = TypeProjector;
+        let arena = ty_parser.make_arena();
+        let t = Instant::now();
+        let ty_parsed = ty_parser.parse(&arena, path, content)?;
+        let parse_oxc = t.elapsed();
+        let mut ty_bundle = FamilyBundle::<TypeF>::default();
+        let mut ty_strings = Strings::new();
+        let t = Instant::now();
+        ty_projector.project(&ty_parsed, &mut ty_strings, &mut ty_bundle);
+        let walk_oxc = t.elapsed();
+        let t = Instant::now();
+        let ty_facts = flatten_type(&ty_bundle, &ty_strings);
+        let ser_oxc = t.elapsed();
+        eprintln!(
+            "type: parse {:?} walk {:?} serial {:?} ({} entities, {} facts)",
+            parse_oxc, walk_oxc, ser_oxc, ty_bundle.nodes.len(), ty_facts.len(),
+        );
     }
     Ok(())
 }

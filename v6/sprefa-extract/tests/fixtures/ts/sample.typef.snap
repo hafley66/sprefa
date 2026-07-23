@@ -1,0 +1,7 @@
+{"record":"node","family":"type","span":{"start":146,"end":165},"kind":"alias","name":"Vec"}
+{"record":"node","family":"type","span":{"start":174,"end":220},"kind":"enum","name":"Dir"}
+{"record":"node","family":"type","span":{"start":229,"end":381},"kind":"class","name":"Vec2"}
+{"record":"node","family":"type","span":{"start":297,"end":379},"kind":"method","name":"magnitude"}
+{"record":"node","family":"type","span":{"start":442,"end":479},"kind":"function","name":"sub"}
+{"record":"node","family":"type","span":{"start":7,"end":83},"kind":"function","name":"add"}
+{"record":"node","family":"type","span":{"start":92,"end":137},"kind":"interface","name":"Point"}

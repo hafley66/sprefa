@@ -286,10 +286,15 @@ the public API names no store-id type (greppable). The crate: `Cargo.toml`,
 `src/{lib,shape,family,rows,seams,wire,dispatch}.rs`, `src/lang/{mod,astgrep}.rs`,
 `src/bin/extract.rs`, `tests/snapshot.rs` + `tests/fixtures/ts/{sample.ts,sample.cstf.snap}`.
 
-**Commits 2-4 - TS via oxc + scip-typescript.** (2) `OxcParser` + `Project<TypeF>`,
-the real oxc interfacing; the oxc race (full pipeline vs oxc raw parse). (3)
-`Project<CallF>` then `Project<DfF>` - TS AST families complete. (4) scip-typescript
-subprocess → `Resolve<*>` (TS resolution; the SCIP-wire IN projection; ratchet).
+**Commits 2-4 - TS via oxc + scip-typescript.** (2) `OxcParser` + `Project<TypeF>`
+(DONE 2026-07-23, two green commits: `f3ceb4fa` generalized the Parser/Project
+seam to an arena-passing GAT because oxc's `Program<'a>` borrows its `Allocator`;
+then the oxc parse + the `ts_entities_from` port emit TS type entities: class /
+interface / alias / enum / function / method, constructor + non-function consts
+correctly skipped). The oxc race prints both families' parse/walk/serial under
+`--bench`. (3) `Project<CallF>` then `Project<DfF>` - TS AST families complete. (4)
+scip-typescript subprocess → `Resolve<*>` (TS resolution; the SCIP-wire IN
+projection; ratchet).
 
 **Commit 5 - Rust via syn.** `SynParser` + `Project<{Type,Call,Df,Module,Cst}>` +
 `Resolve<*>`; port `typegraph/rust` (sym→span, kind-String→typed enum, one Span).

@@ -9,7 +9,7 @@
 
 use serde::Serialize;
 
-use crate::family::{CstEdgeKind, CstF, Family};
+use crate::family::{CstEdgeKind, CstF, Family, TypeF};
 use crate::rows::FamilyBundle;
 use crate::shape::{FamilyTag, Strings};
 
@@ -80,6 +80,31 @@ pub fn flatten_cst(bundle: &FamilyBundle<CstF>, strings: &Strings) -> Vec<FlatFa
 /// seam and parity normalize use the same flatten then their own ordering.
 pub fn flatten_cst_jsonl(bundle: &FamilyBundle<CstF>, strings: &Strings) -> Vec<String> {
     let mut lines: Vec<String> = flatten_cst(bundle, strings)
+        .into_iter()
+        .map(|fact| serde_json::to_string(&fact).expect("flat fact is serializable"))
+        .collect();
+    lines.sort();
+    lines
+}
+
+/// Flatten one TypeF bundle to flat facts. Commit 2b carries entity NODES only
+/// (kind = the TypeEntityKind slug, name from the interner); the type edges
+/// land with `Resolve<TypeF>` (commit 4).
+pub fn flatten_type(bundle: &FamilyBundle<TypeF>, strings: &Strings) -> Vec<FlatFact> {
+    let mut out = Vec::with_capacity(bundle.nodes.len());
+    for node in &bundle.nodes {
+        out.push(FlatFact::Node {
+            family: TypeF::TAG,
+            span: SpanOut::new(node.span.start, node.span.end()),
+            kind: node.kind.as_str().to_string(),
+            name: node.name.map(|id| strings.lookup(id).to_string()),
+        });
+    }
+    out
+}
+
+pub fn flatten_type_jsonl(bundle: &FamilyBundle<TypeF>, strings: &Strings) -> Vec<String> {
+    let mut lines: Vec<String> = flatten_type(bundle, strings)
         .into_iter()
         .map(|fact| serde_json::to_string(&fact).expect("flat fact is serializable"))
         .collect();

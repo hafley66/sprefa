@@ -17,6 +17,13 @@ publish = false
 # Ported verbatim, not relitigated.
 ast-grep-core = "0.38"
 ast-grep-language = "0.38"
+# oxc arena AST front-end for TS/JS (v5 carried these; src/graph/typegraph/ts).
+# The Program<'a> borrows the Allocator + source text, so parse ties content to
+# 'a (the GAT seam). Commit 2b: TypeF entities only.
+oxc_allocator = "0.135"
+oxc_parser = "0.135"
+oxc_ast = "0.135"
+oxc_span = "0.135"
 # serde on the FLAT wire envelope only (never on the generic Node<F>). The store
 # seam + the parity-golden normalize + the stdout JSONL all read this one shape.
 serde = { version = "1", features = ["derive"] }

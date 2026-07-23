@@ -4,5 +4,7 @@
 //! tree-sitter projectors + SCIP resolvers are added.
 
 pub mod astgrep;
+pub mod oxc;
 
 pub use astgrep::{AstGrepParser, CstProjector, SgRoot};
+pub use oxc::{OxcParser, TypeProjector};

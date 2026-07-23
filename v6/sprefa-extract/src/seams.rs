@@ -25,13 +25,15 @@ use crate::shape::Strings;
 pub enum ParseError {
     NoGrammar(String),
     Utf8(String),
+    Parse(String),
 }
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParseError::NoGrammar(path) => write!(f, "no ast-grep grammar for {path}"),
+            ParseError::NoGrammar(path) => write!(f, "no grammar for {path}"),
             ParseError::Utf8(msg) => write!(f, "source is not valid UTF-8: {msg}"),
+            ParseError::Parse(msg) => write!(f, "parser failed: {msg}"),
         }
     }
 }
@@ -61,7 +63,7 @@ pub trait Parser: Sync + Send {
         &self,
         arena: &'a Self::Arena,
         path: &str,
-        content: &[u8],
+        content: &'a [u8],
     ) -> Result<Self::Parsed<'a>, ParseError>;
 }
 

@@ -41,7 +41,7 @@ impl Parser for AstGrepParser {
 
     fn make_arena(&self) {}
 
-    fn parse(&self, _arena: &(), path: &str, content: &[u8]) -> Result<SgRoot, ParseError> {
+    fn parse<'a>(&self, _arena: &'a (), path: &str, content: &'a [u8]) -> Result<SgRoot, ParseError> {
         let lang = SupportLang::from_path(path)
             .ok_or_else(|| ParseError::NoGrammar(path.to_string()))?;
         let src =
