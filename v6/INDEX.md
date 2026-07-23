@@ -31,7 +31,7 @@
 | [plans/2026-07-20-graph-layer-measurements.md](plans/2026-07-20-graph-layer-measurements.md) | 139 | v6 graph layer: measurements |
 | [plans/2026-07-21-spine-orm.md](plans/2026-07-21-spine-orm.md) | 200 | V6 spine — the 6 tables, one ORM, hard boundaries |
 | [plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md](plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md) | 184 | v6 core: the lab arc — oracles, why, efficiency, measured Big-O + empirical ratios |
-| [plans/2026-07-23-sprefa-extract-golden-plan.md](plans/2026-07-23-sprefa-extract-golden-plan.md) | 336 | sprefa-extract — the golden plan (distill v5, normalize for v6) |
+| [plans/2026-07-23-sprefa-extract-golden-plan.md](plans/2026-07-23-sprefa-extract-golden-plan.md) | 336 | sprefa-extract - the golden plan (distill v5, normalize for v6) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
@@ -360,14 +360,14 @@
 
 ### plans/2026-07-23-sprefa-extract-golden-plan.md
 ```
-1:# sprefa-extract — the golden plan (distill v5, normalize for v6)
+1:# sprefa-extract - the golden plan (distill v5, normalize for v6)
 15:## Context
-24:### Recon — observed facts (v5, at HEAD)
-76:### Recon — prior art (representation only; lazy/IVM stripped)
+24:### Recon - observed facts (v5, at HEAD)
+76:### Recon - prior art (representation only; lazy/IVM stripped)
 95:### Plan boundary
 122:## The inversion (v5 → v6)
-129:### v5 — extraction lives INSIDE the engine (the tangle)
-168:### v6 — extraction is a SYNC LEAF below the store (per-family; CLI streams)
+129:### v5 - extraction lives INSIDE the engine (the tangle)
+168:### v6 - extraction is a SYNC LEAF below the store (per-family; CLI streams)
 211:### What changed (one axis per row)
 232:## Decisions (the rulings; full detail in `_7_tasks.rs`)
 268:## The build sequence (epics / commits; each ends green)
