@@ -312,17 +312,17 @@ async fn scc_condensed_and_count_pairs_agree() {
         let (store, path) = load_dense(&adj).await;
 
         // --- SCC partition ---
-        let labels = reach::scc_labels(store.conn()).await.unwrap();
+        let labels = reach::scc_labels(store.conn(), store.ns()).await.unwrap();
         assert_eq!(store_partition(&labels), oracle_partition(&cond),
             "{name}: SCC partition disagreed");
 
         // --- count_pairs (byte-exact) ---
         let want = oracle::count_pairs(&cond) as i128;
-        let got = reach::count_pairs(store.conn()).await.unwrap();
+        let got = reach::count_pairs(store.conn(), store.ns()).await.unwrap();
         assert_eq!(got, want, "{name}: count_pairs disagreed");
 
         // --- condensation: size multiset + cyclic flags (repr space) ---
-        let cd = reach::build_condensed(store.conn()).await.unwrap();
+        let cd = reach::build_condensed(store.conn(), store.ns()).await.unwrap();
         // oracle repr = min member of each comp
         let mut o_size: BTreeMap<i64, i64> = BTreeMap::new();
         let mut o_cyclic: BTreeMap<i64, bool> = BTreeMap::new();
@@ -359,11 +359,11 @@ async fn reaches_from_and_reached_by_agree() {
         let (store, path) = load_dense(&adj).await;
         for start in 0..k as u32 {
             let want = sorted(oracle::reaches_from(&cond, start).into_iter().map(|n| n as i64).collect());
-            let got = sorted(reach::reaches_from(store.conn(), start as i64).await.unwrap());
+            let got = sorted(reach::reaches_from(store.conn(), store.ns(), start as i64).await.unwrap());
             assert_eq!(got, want, "{name}: reaches_from({start}) disagreed");
 
             let want_r = sorted(oracle::reached_by(&cond, start).into_iter().map(|n| n as i64).collect());
-            let got_r = sorted(reach::reached_by(store.conn(), start as i64).await.unwrap());
+            let got_r = sorted(reach::reached_by(store.conn(), store.ns(), start as i64).await.unwrap());
             assert_eq!(got_r, want_r, "{name}: reached_by({start}) disagreed");
         }
         cleanup(&path);
@@ -404,7 +404,7 @@ async fn multi_source_walk_and_halt_bfs_agree() {
 
         let starts_i: Vec<(i64, i64, i64)> = starts.iter().map(|&(t, nd, d)| (t as i64, nd as i64, d)).collect();
         let halt_i: Vec<i64> = halt_nodes.iter().map(|&h| h as i64).collect();
-        let got = reach::multi_source_walk(store.conn(), &starts_i,
+        let got = reach::multi_source_walk(store.conn(), store.ns(), &starts_i,
             if halt_i.is_empty() { None } else { Some(&halt_i) }, cap).await.unwrap();
         let want_i: Vec<(i64, i64, i64)> = want.iter().map(|&(t, nd, d)| (t as i64, nd as i64, d)).collect();
         assert_eq!(got, want_i, "{name}: multi_source_walk disagreed");
@@ -414,7 +414,7 @@ async fn multi_source_walk_and_halt_bfs_agree() {
             let starts2: Vec<(u32, u32)> = starts.iter().map(|&(t, nd, _)| (t, nd)).collect();
             let want_h = oracle::multi_source_halt_bfs(&adj, &starts2, &halt_mask);
             let starts2_i: Vec<(i64, i64)> = starts2.iter().map(|&(t, nd)| (t as i64, nd as i64)).collect();
-            let got_h = reach::multi_source_halt_bfs(store.conn(), &starts2_i, &halt_i).await.unwrap();
+            let got_h = reach::multi_source_halt_bfs(store.conn(), store.ns(), &starts2_i, &halt_i).await.unwrap();
             let want_h_i: Vec<(i64, i64)> = want_h.iter().map(|&(t, nd)| (t as i64, nd as i64)).collect();
             assert_eq!(got_h, want_h_i, "{name}: multi_source_halt_bfs disagreed");
         }

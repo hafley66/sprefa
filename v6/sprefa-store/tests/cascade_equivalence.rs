@@ -11,6 +11,7 @@
 
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection};
 use sprefa_store::cascade;
+use sprefa_store::relstore::GraphNs;
 
 const W: i64 = 2_000;
 
@@ -33,7 +34,8 @@ async fn scalar(db: &DatabaseConnection, sql: &str) -> i64 {
 #[tokio::test]
 async fn incremental_cascade_equals_from_scratch_recompute() {
     let db = Database::connect("sqlite::memory:").await.unwrap();
-    cascade::create_schema(&db).await.unwrap();
+    let ns = GraphNs::default();
+    cascade::create_schema(&db, &ns).await.unwrap();
 
     // ---- a non-trivial mixed-support DAG ------------------------------------
     // roots r0=(0,0), r1=(0,1)
@@ -55,14 +57,14 @@ async fn incremental_cascade_equals_from_scratch_recompute() {
         deps.push((1, (j + 1) % W, 2, j)); // L1[j+1] -> L2[j]
         deps.push((2, j, 3, j)); // L2[j] -> L3[j]
     }
-    cascade::insert_rows(&db, &rows).await.unwrap();
-    cascade::insert_deps(&db, &deps).await.unwrap();
+    cascade::insert_rows(&db, &ns, &rows).await.unwrap();
+    cascade::insert_deps(&db, &ns, &deps).await.unwrap();
 
     // snapshot the ORIGINAL edges before the cascade mutates cx_dep
     exec(&db, "CREATE TABLE lab_orig_dep AS SELECT * FROM cx_dep").await;
 
     // ---- Method A: incremental cascade of retracting r0 ---------------------
-    cascade::retract(&db, &[(0, 0)]).await.unwrap();
+    cascade::retract(&db, &ns, &[(0, 0)]).await.unwrap();
     // survivors_A = rows still at weight > 0 (soft-delete: dead rows are retained
     // at weight <= 0, not physically removed).
 

@@ -26,7 +26,7 @@ use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::registry::LookupSpan;
 
-use crate::relstore::{stamp, Layout, RelStore};
+use crate::relstore::{stamp, GraphNs, Layout, RelStore};
 
 // ============================ the collector ============================
 // (plain tracing → Vec<Record>; the one collection mechanism)
@@ -613,6 +613,41 @@ impl StorageDelta {
     }
 }
 
+/// Stamp the COLLAPSED storage shape (g_node + g_edge + ix_g_edge_dst + the TEMP
+/// working set) onto `db`. This is the measured-and-REJECTED alternative to the
+/// split two-plane pair (+4% at scale; see `measure_storage_scaled`), kept as
+/// EVIDENCE so the frozen collapse-vs-split comparison still compiles. No cascade
+/// runs on this shape; it exists only to weigh its bytes. The DDL is the verbatim
+/// collapse shape the engine shipped under the retired `Layout::Collapsed` arm.
+pub(crate) async fn stamp_collapsed_evidence(db: &DatabaseConnection) -> Result<(), DbErr> {
+    // Same cache/mmap tuning cascade::create_schema applies, then the collapsed
+    // schema. g_node holds every plane's value column so EITHER plane can live on
+    // it; the unused columns are the dead-byte cost the measurement quantifies.
+    // TEMP tables mirror cx_'s RAM-only working set.
+    db.execute_unprepared(
+        "PRAGMA cache_size=-262144; PRAGMA mmap_size=1073741824;
+                 CREATE TABLE g_node (
+                    key         INTEGER PRIMARY KEY,
+                    weight      INTEGER NOT NULL DEFAULT 1,
+                    digest      INTEGER NOT NULL DEFAULT 0,
+                    changed_at  INTEGER NOT NULL DEFAULT 0,
+                    verified_at INTEGER NOT NULL DEFAULT 0
+                 );
+                 CREATE TABLE g_edge (
+                    src INTEGER NOT NULL,
+                    dst INTEGER NOT NULL,
+                    PRIMARY KEY (src, dst)
+                 ) WITHOUT ROWID;
+                 CREATE INDEX ix_g_edge_dst ON g_edge (dst);
+                 CREATE TEMP TABLE g_frontier (key INTEGER PRIMARY KEY);
+                 CREATE TEMP TABLE g_next     (key INTEGER PRIMARY KEY);
+                 CREATE TEMP TABLE g_hits (key INTEGER PRIMARY KEY, dec INTEGER NOT NULL);
+                 CREATE TEMP TABLE g_cone (key INTEGER PRIMARY KEY);",
+    )
+    .await?;
+    Ok(())
+}
+
 /// Load `corpus` under each layout, checkpoint, and read the on-disk bytes. The
 /// Split path is the live RelStore (cx_row/cx_dep + rx_memo/rx_dep); the Collapsed
 /// path inserts the same (key, weight) + edges straight into g_node/g_edge. Both
@@ -645,7 +680,7 @@ async fn storage_bytes(layout: Layout, corpus: &benchgraph::MultiGraph) -> i64 {
 
     match layout {
         Layout::Split => {
-            let store = RelStore::attach_with(db.clone(), Layout::Split).await.unwrap();
+            let store = RelStore::attach_with(db.clone(), GraphNs::default()).await.unwrap();
             let rows: Vec<(i64, i64, i64)> = corpus
                 .rows
                 .iter()
@@ -660,7 +695,7 @@ async fn storage_bytes(layout: Layout, corpus: &benchgraph::MultiGraph) -> i64 {
             store.add_deps(&deps).await.unwrap();
         }
         Layout::Collapsed => {
-            stamp(&db, Layout::Collapsed).await.unwrap();
+            stamp_collapsed_evidence(&db).await.unwrap();
             // g_node(key, weight): the dead value columns keep their DEFAULT 0 —
             // present in the row format (the byte cost we weigh) but not written.
             for chunk in corpus.rows.chunks(CHUNK) {
@@ -778,7 +813,10 @@ async fn storage_bytes_streaming(layout: Layout, layers: usize, width: usize) ->
     let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
     opt.max_connections(1).min_connections(1);
     let db = Database::connect(opt).await.unwrap();
-    stamp(&db, layout).await.unwrap();
+    match layout {
+        Layout::Split => stamp(&db, &GraphNs::default()).await.unwrap(),
+        Layout::Collapsed => stamp_collapsed_evidence(&db).await.unwrap(),
+    }
 
     const CHUNK: usize = 4000;
     let txn = db.begin().await.unwrap();
@@ -813,6 +851,45 @@ async fn storage_bytes_streaming(layout: Layout, layers: usize, width: usize) ->
 #[cfg(test)]
 mod storage_tests {
     use super::*;
+    use sea_orm::{ConnectOptions, Database, DatabaseBackend, DatabaseConnection, Statement};
+
+    async fn raw_db(tag: &str) -> DatabaseConnection {
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let uniq = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "measure_stamp_{tag}_{}_{uniq}.sqlite",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
+        let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
+        opt.max_connections(1).min_connections(1);
+        Database::connect(opt).await.unwrap()
+    }
+
+    // (type, name, sql) for every persistent schema object (TEMP tables live in
+    // sqlite_temp_master, so this sees only the durable tables + indexes).
+    async fn persistent_master(db: &DatabaseConnection) -> Vec<(String, String, String)> {
+        let rows = db
+            .query_all_raw(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT type, name, sql FROM sqlite_master \
+                 WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE '\\_%' ESCAPE '\\' \
+                 ORDER BY type, name"
+                    .to_owned(),
+            ))
+            .await
+            .unwrap();
+        rows.iter()
+            .map(|r| {
+                (
+                    r.try_get_by_index::<String>(0).unwrap_or_default(),
+                    r.try_get_by_index::<String>(1).unwrap_or_default(),
+                    r.try_get_by_index::<String>(2).unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
 
     #[tokio::test]
     async fn measure_storage_weighs_both_layouts() {
@@ -844,6 +921,60 @@ mod storage_tests {
         let delta = measure_storage_scaled(20, 30).await;
         assert!(delta.split_bytes > 0, "scaled split bytes should be positive: {delta:?}");
         assert!(delta.collapsed_bytes > 0, "scaled collapsed bytes should be positive: {delta:?}");
+    }
+
+    // 1.2 (moved from relstore) — the collapsed evidence schema makes g_node +
+    // g_edge + ix_g_edge_dst; a node carrying all five value columns and a dedup
+    // edge round-trip through it. g_node's digest/changed_at/verified_at are the
+    // dead-column cost the measurement weighs. Retargeted onto stamp_collapsed_evidence.
+    #[tokio::test]
+    async fn stamp_collapsed_round_trips() {
+        let db = raw_db("collapsed").await;
+        stamp_collapsed_evidence(&db).await.unwrap();
+
+        let names = persistent_master(&db).await;
+        let name_set: Vec<&str> = names.iter().map(|(_, n, _)| n.as_str()).collect();
+        for required in ["g_node", "g_edge", "ix_g_edge_dst"] {
+            assert!(name_set.contains(&required), "{required} missing: {name_set:?}");
+        }
+
+        // round-trip a node with every plane's value column + two edges
+        db.execute_unprepared(
+            "INSERT INTO g_node(key,weight,digest,changed_at,verified_at) \
+             VALUES (1000000000,2,77,3,4); \
+             INSERT INTO g_edge(src,dst) VALUES (1000000000,2000000000),(1000000000,3000000000)",
+        )
+        .await
+        .unwrap();
+        // g_edge PK dedups: re-inserting the same edge is a no-op (OR IGNORE shape)
+        db.execute_unprepared("INSERT OR IGNORE INTO g_edge(src,dst) VALUES (1000000000,2000000000)")
+            .await
+            .unwrap();
+
+        let node = db
+            .query_one_raw(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT weight,digest,changed_at,verified_at FROM g_node WHERE key=1000000000"
+                    .to_owned(),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(node.try_get_by_index::<i64>(0).unwrap(), 2, "weight round-trip");
+        assert_eq!(node.try_get_by_index::<i64>(1).unwrap(), 77, "digest round-trip");
+        assert_eq!(node.try_get_by_index::<i64>(2).unwrap(), 3, "changed_at round-trip");
+        assert_eq!(node.try_get_by_index::<i64>(3).unwrap(), 4, "verified_at round-trip");
+
+        let edge_count = db
+            .query_one_raw(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT count(*) FROM g_edge WHERE src=1000000000".to_owned(),
+            ))
+            .await
+            .unwrap()
+            .map(|r| r.try_get_by_index::<i64>(0).unwrap_or(0))
+            .unwrap_or(0);
+        assert_eq!(edge_count, 2, "duplicate edge was deduped by the PK");
     }
 }
 

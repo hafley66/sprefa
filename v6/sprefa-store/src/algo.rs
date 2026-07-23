@@ -32,6 +32,8 @@
 #![allow(async_fn_in_trait)]
 use sea_orm::{DatabaseConnection, DbErr};
 
+use crate::relstore::GraphNs;
+
 /// Reachability and structure over a directed graph. Node keys are dense `i64`.
 ///
 /// Two impls: [`SqliteReach`] (the on-disk engine over `cx_dep`) and a resident
@@ -54,29 +56,31 @@ pub trait Reach {
 }
 
 /// The SQLite engine: every method is the on-disk `cx_dep` formulation in
-/// [`crate::reach`]. Borrows the connection; state is on disk, not in `self`.
+/// [`crate::reach`]. Borrows the connection and the store's [`GraphNs`]; state is
+/// on disk, not in `self`.
 pub struct SqliteReach<'a> {
     db: &'a DatabaseConnection,
+    ns: &'a GraphNs,
 }
 
 impl<'a> SqliteReach<'a> {
-    pub fn new(db: &'a DatabaseConnection) -> Self {
-        Self { db }
+    pub fn new(db: &'a DatabaseConnection, ns: &'a GraphNs) -> Self {
+        Self { db, ns }
     }
 }
 
 impl Reach for SqliteReach<'_> {
     async fn reaches_from(&self, start: i64) -> Result<Vec<i64>, DbErr> {
-        crate::reach::reaches_from(self.db, start).await
+        crate::reach::reaches_from(self.db, &self.ns, start).await
     }
     async fn reached_by(&self, target: i64) -> Result<Vec<i64>, DbErr> {
-        crate::reach::reached_by(self.db, target).await
+        crate::reach::reached_by(self.db, &self.ns, target).await
     }
     async fn scc_labels(&self) -> Result<Vec<(i64, i64)>, DbErr> {
-        crate::reach::scc_labels(self.db).await
+        crate::reach::scc_labels(self.db, &self.ns).await
     }
     async fn count_pairs(&self) -> Result<i128, DbErr> {
-        crate::reach::count_pairs(self.db).await
+        crate::reach::count_pairs(self.db, &self.ns).await
     }
 }
 
@@ -113,7 +117,7 @@ mod tests {
             .add_deps(&[(0, 0, 0, 1), (0, 1, 0, 2), (0, 2, 0, 0)])
             .await
             .unwrap();
-        let r = SqliteReach::new(store.conn());
+        let r = SqliteReach::new(store.conn(), store.ns());
         let mut labels = r.scc_labels().await.unwrap();
         labels.sort_unstable();
         assert_eq!(labels, vec![(0, 0), (1, 0), (2, 0)], "one SCC, repr = 0");

@@ -686,112 +686,82 @@ impl Default for GraphNs {
     }
 }
 
-/// Stamp the node+edge DDL for `layout` onto `db` (pragmas first).
+/// Stamp the split two-plane schema (cascade `cx_*` + reconcile `rx_*` + TEMP
+/// working set + indexes) under the namespace `ns` onto `db` (pragmas first).
 ///
-/// `Split` delegates VERBATIM to the two live `create_schema` (cascade +
-/// reconcile), so the Split on-disk shape can never drift from production — the
-/// 1.1 golden locks that equality. `Collapsed` emits g_node + g_edge +
-/// ix_g_edge_dst + the TEMP working set the collapsed cascade retargets onto in
-/// Epic 2.
-///
-/// g_edge columns are `src`/`dst`, not the plan's `from`/`to`: `from` is a SQL
-/// reserved word and Epic 2 retargets every cascade statement onto these names.
-/// `g_node`/`g_edge` mirror the spine's `node`/`edge` (the unified graph); the
-/// `g_` prefix keeps a collapsed store from clashing with `cx_`/`rx_` in one db.
+/// `ns = GraphNs::default()` (empty prefix) reproduces the live `cx_`/`rx_` set
+/// byte-for-byte, so the 1.1 schema-equality golden stays green; a custom prefix
+/// yields an independent store in the same db. The collapsed shape (g_node/g_edge)
+/// is measurement evidence only and lives in [`crate::measure::stamp_collapsed_evidence`].
 ///
 /// Build-vs-buy: hand-rolled DDL. The lab need is ephemeral schema for a fresh
 /// temp db per run (create_schema already `format!`s); sea-query / refinery /
 /// sqlx-migrations version a LIVE db, which is not this.
-pub async fn stamp(db: &DatabaseConnection, layout: Layout) -> Result<(), DbErr> {
+pub async fn stamp(db: &DatabaseConnection, ns: &GraphNs) -> Result<(), DbErr> {
     db.execute_unprepared(crate::unfuck_sqlite::OPEN_PRAGMAS).await?;
-    match layout {
-        Layout::Split => {
-            cascade::create_schema(db).await?;
-            reconcile::create_schema(db).await?;
-        }
-        Layout::Collapsed => {
-            // Same cache/mmap tuning cascade::create_schema applies, then the
-            // collapsed schema. g_node holds every plane's value column so EITHER
-            // plane can live on it; the unused columns are the dead-byte cost the
-            // measurement quantifies. TEMP tables mirror cx_'s RAM-only working set.
-            db.execute_unprepared(
-                "PRAGMA cache_size=-262144; PRAGMA mmap_size=1073741824;
-                 CREATE TABLE g_node (
-                    key         INTEGER PRIMARY KEY,
-                    weight      INTEGER NOT NULL DEFAULT 1,
-                    digest      INTEGER NOT NULL DEFAULT 0,
-                    changed_at  INTEGER NOT NULL DEFAULT 0,
-                    verified_at INTEGER NOT NULL DEFAULT 0
-                 );
-                 CREATE TABLE g_edge (
-                    src INTEGER NOT NULL,
-                    dst INTEGER NOT NULL,
-                    PRIMARY KEY (src, dst)
-                 ) WITHOUT ROWID;
-                 CREATE INDEX ix_g_edge_dst ON g_edge (dst);
-                 CREATE TEMP TABLE g_frontier (key INTEGER PRIMARY KEY);
-                 CREATE TEMP TABLE g_next     (key INTEGER PRIMARY KEY);
-                 CREATE TEMP TABLE g_hits (key INTEGER PRIMARY KEY, dec INTEGER NOT NULL);
-                 CREATE TEMP TABLE g_cone (key INTEGER PRIMARY KEY);",
-            )
-            .await?;
-        }
-    }
+    cascade::create_schema(db, ns).await?;
+    reconcile::create_schema(db, ns).await?;
     Ok(())
 }
 
 pub struct RelStore {
     db: DatabaseConnection,
+    ns: GraphNs,
 }
 
 impl RelStore {
-    /// Open (or create) a store at `db` stamped for `layout`. The layout knob
+    /// Open (or create) a store at `db` stamped for namespace `ns`. The namespace
     /// lives here; everything above it (RelStore API, measure harness) is fixed.
-    pub async fn attach_with(db: DatabaseConnection, layout: Layout) -> Result<Self, DbErr> {
-        stamp(&db, layout).await?;
-        Ok(Self { db })
+    pub async fn attach_with(db: DatabaseConnection, ns: GraphNs) -> Result<Self, DbErr> {
+        stamp(&db, &ns).await?;
+        Ok(Self { db, ns })
     }
 
     /// Open (or create) a store at `db` with the store's tuning + both schemas.
-    /// The status quo: Split layout (cx_ + rx_). Delegates to [`attach_with`].
+    /// The status quo: the default namespace (cx_ + rx_). Delegates to [`attach_with`].
     pub async fn attach(db: DatabaseConnection) -> Result<Self, DbErr> {
-        Self::attach_with(db, Layout::Split).await
+        Self::attach_with(db, GraphNs::default()).await
     }
 
     pub fn conn(&self) -> &DatabaseConnection {
         &self.db
     }
 
+    /// The namespace this store's `cx_*`/`rx_*` tables live under.
+    pub fn ns(&self) -> &GraphNs {
+        &self.ns
+    }
+
     // ---- FACT plane (generic Z-set over (rel,row)) ----------------------------
 
     /// Insert `(rel, row, weight)` tuples.
     pub async fn add_rows(&self, rows: &[(i64, i64, i64)]) -> Result<(), DbErr> {
-        cascade::insert_rows(&self.db, rows).await
+        cascade::insert_rows(&self.db, &self.ns, rows).await
     }
     /// Insert dependency edges `(parent_rel, parent_row, child_rel, child_row)`.
     pub async fn add_deps(&self, edges: &[(i64, i64, i64, i64)]) -> Result<(), DbErr> {
-        cascade::insert_deps(&self.db, edges).await
+        cascade::insert_deps(&self.db, &self.ns, edges).await
     }
     /// Forward add: propagate aliveness from `seeds`. Returns rounds.
     pub async fn assert(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
-        cascade::assert(&self.db, seeds).await
+        cascade::assert(&self.db, &self.ns, seeds).await
     }
     /// Counting retraction (fast, correct on ACYCLIC support graphs). Returns rounds.
     pub async fn retract(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
-        cascade::retract(&self.db, seeds).await
+        cascade::retract(&self.db, &self.ns, seeds).await
     }
     /// Counting retraction with an on-disk SCC-scoped nested fixpoint. Returns rounds.
     pub async fn retract_scc(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
-        cascade::retract_scc(&self.db, seeds).await
+        cascade::retract_scc(&self.db, &self.ns, seeds).await
     }
     /// Cycle-safe retraction (Delete-and-Rederive), Rust-driven round loop. Returns rounds.
     pub async fn retract_dred(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
-        cascade::retract_dred(&self.db, seeds).await
+        cascade::retract_dred(&self.db, &self.ns, seeds).await
     }
     /// Cycle-safe retraction as two recursive CTEs (whole traversal in SQLite's C
     /// engine, no per-round round-trip). Same result as `retract_dred`; use at scale.
     pub async fn retract_dred_cte(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
-        cascade::retract_dred_cte(&self.db, seeds).await
+        cascade::retract_dred_cte(&self.db, &self.ns, seeds).await
     }
     /// Count live rows (weight > 0) across all relations.
     pub async fn alive(&self) -> Result<i64, DbErr> {
@@ -800,7 +770,7 @@ impl RelStore {
             .db
             .query_one_raw(Statement::from_string(
                 DatabaseBackend::Sqlite,
-                "SELECT count(*) FROM cx_row WHERE weight>0".to_owned(),
+                format!("SELECT count(*) FROM {} WHERE weight>0", self.ns.row),
             ))
             .await?
             .map(|r| r.try_get_by_index::<i64>(0).unwrap_or(0))
@@ -816,7 +786,7 @@ impl RelStore {
             .db
             .query_all_raw(Statement::from_string(
                 DatabaseBackend::Sqlite,
-                "SELECT key FROM cx_row WHERE weight>0 ORDER BY key".to_owned(),
+                format!("SELECT key FROM {} WHERE weight>0 ORDER BY key", self.ns.row),
             ))
             .await?
             .iter()
@@ -828,15 +798,15 @@ impl RelStore {
 
     pub async fn seed_memo(&self, rel: i64, row: i64, digest: i64, deps: &[(i64, i64)], rev: i64) -> Result<(), DbErr> {
         let dep_keys: Vec<i64> = deps.iter().map(|&(r, w)| key(r, w)).collect();
-        reconcile::seed(&self.db, key(rel, row), digest, &dep_keys, rev).await
+        reconcile::seed(&self.db, &self.ns, key(rel, row), digest, &dep_keys, rev).await
     }
     pub async fn mark_changed(&self, cells: &[(i64, i64)], rev: i64) -> Result<(), DbErr> {
         let ks: Vec<i64> = cells.iter().map(|&(r, w)| key(r, w)).collect();
-        reconcile::mark_changed(&self.db, &ks, rev).await
+        reconcile::mark_changed(&self.db, &self.ns, &ks, rev).await
     }
     /// The stale frontier as `(rel, row)` pairs.
     pub async fn dirty(&self) -> Result<Vec<(i64, i64)>, DbErr> {
-        Ok(reconcile::dirty(&self.db)
+        Ok(reconcile::dirty(&self.db, &self.ns)
             .await?
             .into_iter()
             .map(|k| (k / KEY_STRIDE, k % KEY_STRIDE))
@@ -844,7 +814,7 @@ impl RelStore {
     }
     /// Record a recomputed rel's digest; returns whether it moved (early cutoff).
     pub async fn verify(&self, rel: i64, row: i64, digest: i64, rev: i64) -> Result<bool, DbErr> {
-        reconcile::verify(&self.db, key(rel, row), digest, rev).await
+        reconcile::verify(&self.db, &self.ns, key(rel, row), digest, rev).await
     }
 }
 
@@ -939,8 +909,8 @@ mod tests {
             .execute_unprepared(crate::unfuck_sqlite::OPEN_PRAGMAS)
             .await
             .unwrap();
-        crate::cascade::create_schema(&via_direct).await.unwrap();
-        crate::reconcile::create_schema(&via_direct).await.unwrap();
+        crate::cascade::create_schema(&via_direct, &GraphNs::default()).await.unwrap();
+        crate::reconcile::create_schema(&via_direct, &GraphNs::default()).await.unwrap();
 
         let master_attach = persistent_master(&via_attach).await;
         let master_direct = persistent_master(&via_direct).await;
@@ -955,60 +925,6 @@ mod tests {
         ] {
             assert!(names.contains(&required), "schema object {required} missing: {names:?}");
         }
-    }
-
-    // 1.2 — stamp(Collapsed) makes g_node + g_edge + ix_g_edge_dst; a node carrying
-    // all five value columns and a dedup edge round-trip through it. g_node's
-    // digest/changed_at/verified_at are the dead-column cost the measurement weighs.
-    #[tokio::test]
-    async fn stamp_collapsed_round_trips() {
-        let db = raw_db("collapsed").await;
-        stamp(&db, Layout::Collapsed).await.unwrap();
-
-        let names = persistent_master(&db).await;
-        let name_set: Vec<&str> = names.iter().map(|(_, n, _)| n.as_str()).collect();
-        for required in ["g_node", "g_edge", "ix_g_edge_dst"] {
-            assert!(name_set.contains(&required), "{required} missing: {name_set:?}");
-        }
-
-        // round-trip a node with every plane's value column + two edges
-        db.execute_unprepared(
-            "INSERT INTO g_node(key,weight,digest,changed_at,verified_at) \
-             VALUES (1000000000,2,77,3,4); \
-             INSERT INTO g_edge(src,dst) VALUES (1000000000,2000000000),(1000000000,3000000000)",
-        )
-        .await
-        .unwrap();
-        // g_edge PK dedups: re-inserting the same edge is a no-op (OR IGNORE shape)
-        db.execute_unprepared("INSERT OR IGNORE INTO g_edge(src,dst) VALUES (1000000000,2000000000)")
-            .await
-            .unwrap();
-
-        use sea_orm::{DatabaseBackend, Statement};
-        let node = db
-            .query_one_raw(Statement::from_string(
-                DatabaseBackend::Sqlite,
-                "SELECT weight,digest,changed_at,verified_at FROM g_node WHERE key=1000000000"
-                    .to_owned(),
-            ))
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(node.try_get_by_index::<i64>(0).unwrap(), 2, "weight round-trip");
-        assert_eq!(node.try_get_by_index::<i64>(1).unwrap(), 77, "digest round-trip");
-        assert_eq!(node.try_get_by_index::<i64>(2).unwrap(), 3, "changed_at round-trip");
-        assert_eq!(node.try_get_by_index::<i64>(3).unwrap(), 4, "verified_at round-trip");
-
-        let edge_count = db
-            .query_one_raw(Statement::from_string(
-                DatabaseBackend::Sqlite,
-                "SELECT count(*) FROM g_edge WHERE src=1000000000".to_owned(),
-            ))
-            .await
-            .unwrap()
-            .map(|r| r.try_get_by_index::<i64>(0).unwrap_or(0))
-            .unwrap_or(0);
-        assert_eq!(edge_count, 2, "duplicate edge was deduped by the PK");
     }
 }
 

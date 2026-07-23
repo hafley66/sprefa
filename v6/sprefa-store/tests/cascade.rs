@@ -15,6 +15,7 @@
 
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection};
 use sprefa_store::cascade;
+use sprefa_store::relstore::GraphNs;
 use sprefa_store::stmt_counter;
 use std::time::Instant;
 
@@ -38,7 +39,8 @@ async fn manual_cascade_retracts_by_subtraction_at_scale() {
     db.execute_unprepared("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
         .await
         .unwrap();
-    cascade::create_schema(&db).await.unwrap();
+    let ns = GraphNs::default();
+    cascade::create_schema(&db, &ns).await.unwrap();
 
     // ---- build the DAG -------------------------------------------------------
     let t = Instant::now();
@@ -54,8 +56,8 @@ async fn manual_cascade_retracts_by_subtraction_at_scale() {
         }
         deps.push((1, j, 2, j)); // A[j] -> B[j]
     }
-    cascade::insert_rows(&db, &rows).await.unwrap();
-    cascade::insert_deps(&db, &deps).await.unwrap();
+    cascade::insert_rows(&db, &ns, &rows).await.unwrap();
+    cascade::insert_deps(&db, &ns, &deps).await.unwrap();
     let total = 2 + 2 * WIDTH as i64;
     assert_eq!(scalar(&db, "SELECT count(*) FROM cx_row").await, total);
     eprintln!(
@@ -68,7 +70,7 @@ async fn manual_cascade_retracts_by_subtraction_at_scale() {
     // ---- retract r0, counting statements ------------------------------------
     let t = Instant::now();
     stmt_counter::reset();
-    let rounds = cascade::retract(&db, &[(0, 0)]).await.unwrap();
+    let rounds = cascade::retract(&db, &ns, &[(0, 0)]).await.unwrap();
     let stmts = stmt_counter::get();
     eprintln!(
         "[retract] r0 -> {} rounds, {} statements, {:?}",
