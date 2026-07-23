@@ -609,26 +609,6 @@ use crate::{cascade, reconcile};
 
 pub use cascade::{key, KEY_STRIDE};
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Layout knob (GraphStore Epic 1): the on-disk shape of the two planes lives
-// UNDER attach. The RelStore API + the measure harness stay fixed; only the
-// table set flips. See src/tasks.rs `GraphStorePlan` for the inference chain.
-// ─────────────────────────────────────────────────────────────────────────────
-/// Which table set [`RelStore::attach_with`] stamps. EPIC-1 MEASUREMENT KNOB ONLY:
-/// `Split` is the live shape; `Collapsed` was the measured-and-REJECTED alternative
-/// (+4% at scale; see `measure::measure_storage_scaled`). Retires once the engine
-/// threads to [`GraphNs`] (Epic 2); kept now so the frozen collapse measurement
-/// still compiles.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Layout {
-    /// cx_row/cx_dep (cascade) + rx_memo/rx_dep (reconcile). The live shape; the
-    /// only shape that ships.
-    Split,
-    /// g_node (every plane's value column) + g_edge. Measured +4% over Split at
-    /// every scale that matters -> rejected. Lives only in the storage measurement.
-    Collapsed,
-}
-
 /// The namespace for one graph store: every persistent table, index, and TEMP
 /// working-table name, built from a prefix. `GraphNs::default()` (empty prefix) is
 /// the live `cx_`/`rx_` set; `GraphNs::new("b_")` is an independent store in the
@@ -636,9 +616,9 @@ pub enum Layout {
 ///
 /// PREFIX, not schema-qualify, is the namespace mechanism: SQLite TEMP working
 /// tables live in `temp.` and CANNOT be qualified to an ATTACH'd schema, so prefix
-/// is the only namespace that covers the working set. Declared here; Epic 2
-/// (tasks.rs `GraphStorePlan`) threads it through cascade/reconcile/reach, after
-/// which `Layout` retires.
+/// is the only namespace that covers the working set. Epic 2 threaded this through
+/// cascade/reconcile/reach; the retired `Layout` measurement knob is gone (the
+/// frozen collapse-vs-split evidence lives in `measure::stamp_collapsed_evidence`).
 #[derive(Clone, Debug)]
 pub struct GraphNs {
     pub row: String,          // {p}cx_row    — cascade Z-set nodes

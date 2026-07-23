@@ -26,7 +26,7 @@ use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::registry::LookupSpan;
 
-use crate::relstore::{stamp, GraphNs, Layout, RelStore};
+use crate::relstore::{stamp, GraphNs, RelStore};
 
 // ============================ the collector ============================
 // (plain tracing → Vec<Record>; the one collection mechanism)
@@ -618,7 +618,7 @@ impl StorageDelta {
 /// split two-plane pair (+4% at scale; see `measure_storage_scaled`), kept as
 /// EVIDENCE so the frozen collapse-vs-split comparison still compiles. No cascade
 /// runs on this shape; it exists only to weigh its bytes. The DDL is the verbatim
-/// collapse shape the engine shipped under the retired `Layout::Collapsed` arm.
+/// collapse shape the engine shipped under the retired collapsed-storage arm.
 pub(crate) async fn stamp_collapsed_evidence(db: &DatabaseConnection) -> Result<(), DbErr> {
     // Same cache/mmap tuning cascade::create_schema applies, then the collapsed
     // schema. g_node holds every plane's value column so EITHER plane can live on
@@ -648,18 +648,27 @@ pub(crate) async fn stamp_collapsed_evidence(db: &DatabaseConnection) -> Result<
     Ok(())
 }
 
-/// Load `corpus` under each layout, checkpoint, and read the on-disk bytes. The
+/// Private shape knob for the frozen collapse-vs-split measurement. `Split` is the
+/// live two-plane pair; `Collapsed` is the measured-and-rejected alternative. This
+/// replaced the now-retired `relstore::Layout` once the engine threaded to `GraphNs`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Shape {
+    Split,
+    Collapsed,
+}
+
+/// Load `corpus` under each shape, checkpoint, and read the on-disk bytes. The
 /// Split path is the live RelStore (cx_row/cx_dep + rx_memo/rx_dep); the Collapsed
 /// path inserts the same (key, weight) + edges straight into g_node/g_edge. Both
 /// use the SAME dense key space (tag*STRIDE + id, STRIDE = 1e9), so the comparison
 /// is fair — identical logical rows, only the table set differs.
 pub async fn measure_storage(corpus: &benchgraph::MultiGraph) -> StorageDelta {
-    let split_bytes = storage_bytes(Layout::Split, corpus).await;
-    let collapsed_bytes = storage_bytes(Layout::Collapsed, corpus).await;
+    let split_bytes = storage_bytes(Shape::Split, corpus).await;
+    let collapsed_bytes = storage_bytes(Shape::Collapsed, corpus).await;
     StorageDelta { split_bytes, collapsed_bytes }
 }
 
-async fn storage_bytes(layout: Layout, corpus: &benchgraph::MultiGraph) -> i64 {
+async fn storage_bytes(layout: Shape, corpus: &benchgraph::MultiGraph) -> i64 {
     let path = std::env::temp_dir().join(format!(
         "sprefa_storage_{}_{:x}.sqlite",
         std::process::id(),
@@ -679,7 +688,7 @@ async fn storage_bytes(layout: Layout, corpus: &benchgraph::MultiGraph) -> i64 {
     let key_of = |tag: u32, id: i64| -> i64 { (tag as i64) * STRIDE + id };
 
     match layout {
-        Layout::Split => {
+        Shape::Split => {
             let store = RelStore::attach_with(db.clone(), GraphNs::default()).await.unwrap();
             let rows: Vec<(i64, i64, i64)> = corpus
                 .rows
@@ -694,7 +703,7 @@ async fn storage_bytes(layout: Layout, corpus: &benchgraph::MultiGraph) -> i64 {
             store.add_rows(&rows).await.unwrap();
             store.add_deps(&deps).await.unwrap();
         }
-        Layout::Collapsed => {
+        Shape::Collapsed => {
             stamp_collapsed_evidence(&db).await.unwrap();
             // g_node(key, weight): the dead value columns keep their DEFAULT 0 —
             // present in the row format (the byte cost we weigh) but not written.
@@ -765,18 +774,18 @@ pub fn parents_of(g: i64, width: usize) -> Vec<i64> {
 /// Same corpus shape as `measure_storage(gen_multi(layers, width))`, but the Rust
 /// heap stays near zero. This is the form for multi-GB runs.
 pub async fn measure_storage_scaled(layers: usize, width: usize) -> StorageDelta {
-    let split_bytes = storage_bytes_streaming(Layout::Split, layers, width).await;
-    let collapsed_bytes = storage_bytes_streaming(Layout::Collapsed, layers, width).await;
+    let split_bytes = storage_bytes_streaming(Shape::Split, layers, width).await;
+    let collapsed_bytes = storage_bytes_streaming(Shape::Collapsed, layers, width).await;
     StorageDelta { split_bytes, collapsed_bytes }
 }
 
-async fn flush_nodes(db: &impl ConnectionTrait, buf: &[(i64, i64)], layout: Layout) {
+async fn flush_nodes(db: &impl ConnectionTrait, buf: &[(i64, i64)], layout: Shape) {
     if buf.is_empty() {
         return;
     }
     let table = match layout {
-        Layout::Split => "cx_row",
-        Layout::Collapsed => "g_node",
+        Shape::Split => "cx_row",
+        Shape::Collapsed => "g_node",
     };
     let vals: Vec<String> = buf.iter().map(|(k, w)| format!("({k},{w})")).collect();
     db.execute_unprepared(&format!("INSERT INTO {table}(key,weight) VALUES {}", vals.join(",")))
@@ -784,13 +793,13 @@ async fn flush_nodes(db: &impl ConnectionTrait, buf: &[(i64, i64)], layout: Layo
         .unwrap();
 }
 
-async fn flush_edges(db: &impl ConnectionTrait, buf: &[(i64, i64)], layout: Layout) {
+async fn flush_edges(db: &impl ConnectionTrait, buf: &[(i64, i64)], layout: Shape) {
     if buf.is_empty() {
         return;
     }
     let (table, c1, c2) = match layout {
-        Layout::Split => ("cx_dep", "parent_key", "child_key"),
-        Layout::Collapsed => ("g_edge", "src", "dst"),
+        Shape::Split => ("cx_dep", "parent_key", "child_key"),
+        Shape::Collapsed => ("g_edge", "src", "dst"),
     };
     let vals: Vec<String> = buf.iter().map(|(a, b)| format!("({a},{b})")).collect();
     db.execute_unprepared(&format!("INSERT INTO {table}({c1},{c2}) VALUES {}", vals.join(",")))
@@ -798,7 +807,7 @@ async fn flush_edges(db: &impl ConnectionTrait, buf: &[(i64, i64)], layout: Layo
         .unwrap();
 }
 
-async fn storage_bytes_streaming(layout: Layout, layers: usize, width: usize) -> i64 {
+async fn storage_bytes_streaming(layout: Shape, layers: usize, width: usize) -> i64 {
     let n: i64 = 2 + (layers * width) as i64;
     let path = std::env::temp_dir().join(format!(
         "sprefa_storage_scaled_{}_{:x}.sqlite",
@@ -814,8 +823,8 @@ async fn storage_bytes_streaming(layout: Layout, layers: usize, width: usize) ->
     opt.max_connections(1).min_connections(1);
     let db = Database::connect(opt).await.unwrap();
     match layout {
-        Layout::Split => stamp(&db, &GraphNs::default()).await.unwrap(),
-        Layout::Collapsed => stamp_collapsed_evidence(&db).await.unwrap(),
+        Shape::Split => stamp(&db, &GraphNs::default()).await.unwrap(),
+        Shape::Collapsed => stamp_collapsed_evidence(&db).await.unwrap(),
     }
 
     const CHUNK: usize = 4000;
