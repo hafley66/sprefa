@@ -9,7 +9,7 @@
 
 use serde::Serialize;
 
-use crate::family::{CstEdgeKind, CstF, Family, TypeF};
+use crate::family::{CallF, CstEdgeKind, CstF, Family, TypeF};
 use crate::rows::FamilyBundle;
 use crate::shape::{FamilyTag, Strings};
 
@@ -54,6 +54,15 @@ pub enum FlatFact {
         slot: String,
         pos: u32,
         ty: String,
+    },
+    /// A CallF call site (phase-1 unresolved). `span` locates the call, `callee`
+    /// is the trailing name as written (the resolution key), `callee_path` the
+    /// full qualified path when >1 segment (filled by resolution).
+    Site {
+        family: FamilyTag,
+        span: SpanOut,
+        callee: String,
+        callee_path: Option<String>,
     },
 }
 
@@ -126,6 +135,40 @@ pub fn flatten_type(bundle: &FamilyBundle<TypeF>, strings: &Strings) -> Vec<Flat
 
 pub fn flatten_type_jsonl(bundle: &FamilyBundle<TypeF>, strings: &Strings) -> Vec<String> {
     let mut lines: Vec<String> = flatten_type(bundle, strings)
+        .into_iter()
+        .map(|fact| serde_json::to_string(&fact).expect("flat fact is serializable"))
+        .collect();
+    lines.sort();
+    lines
+}
+
+/// Flatten one CallF bundle to flat facts: callable def NODES (kind = the
+/// CallKind slug, name from the interner) + call SITE rows (the callee as
+/// written, unresolved in phase 1). The resolved caller->callee edges land with
+/// `Resolve<CallF>` (commit 4).
+pub fn flatten_call(bundle: &FamilyBundle<CallF>, strings: &Strings) -> Vec<FlatFact> {
+    let mut out = Vec::with_capacity(bundle.nodes.len() + bundle.aux.sites.len());
+    for node in &bundle.nodes {
+        out.push(FlatFact::Node {
+            family: CallF::TAG,
+            span: SpanOut::new(node.span.start, node.span.end()),
+            kind: node.kind.as_str().to_string(),
+            name: node.name.map(|id| strings.lookup(id).to_string()),
+        });
+    }
+    for site in &bundle.aux.sites {
+        out.push(FlatFact::Site {
+            family: CallF::TAG,
+            span: SpanOut::new(site.span.start, site.span.end()),
+            callee: strings.lookup(site.callee).to_string(),
+            callee_path: site.callee_path.map(|id| strings.lookup(id).to_string()),
+        });
+    }
+    out
+}
+
+pub fn flatten_call_jsonl(bundle: &FamilyBundle<CallF>, strings: &Strings) -> Vec<String> {
+    let mut lines: Vec<String> = flatten_call(bundle, strings)
         .into_iter()
         .map(|fact| serde_json::to_string(&fact).expect("flat fact is serializable"))
         .collect();

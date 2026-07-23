@@ -11,8 +11,9 @@ use std::time::Instant;
 use clap::Parser;
 
 use sprefa_extract::{
-    dispatch_cst, dispatch_type, flatten_cst, flatten_type, AstGrepParser, CstF, CstProjector,
-    FamilyBundle, OxcParser, Parser as _, Project as _, Strings, TypeF, TypeProjector,
+    dispatch_call, dispatch_cst, dispatch_type, flatten_call, flatten_cst, flatten_type,
+    AstGrepParser, CallF, CallProjector, CstF, CstProjector, FamilyBundle, OxcParser, Parser as _,
+    Project as _, Strings, TypeF, TypeProjector,
 };
 
 #[derive(Parser)]
@@ -51,6 +52,11 @@ fn stream(path: &str, content: &[u8]) -> Result<(), Box<dyn std::error::Error>> 
     if OxcParser.matches(path) {
         let (ty, ty_strings) = dispatch_type(path, content, &OxcParser, &TypeProjector)?;
         for fact in flatten_type(&ty, &ty_strings) {
+            println!("{}", serde_json::to_string(&fact)?);
+        }
+        // CallF: a second projection over the same oxc tree (defs + call sites).
+        let (call, call_strings) = dispatch_call(path, content, &OxcParser, &CallProjector)?;
+        for fact in flatten_call(&call, &call_strings) {
             println!("{}", serde_json::to_string(&fact)?);
         }
     }
@@ -95,6 +101,21 @@ fn bench(path: &str, content: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
         eprintln!(
             "type: parse {:?} walk {:?} serial {:?} ({} entities, {} facts)",
             parse_oxc, walk_oxc, ser_oxc, ty_bundle.nodes.len(), ty_facts.len(),
+        );
+
+        // CallF reuses the oxc parse; the bench times its own walk + serialize.
+        let call_projector = CallProjector;
+        let t = Instant::now();
+        let mut call_bundle = FamilyBundle::<CallF>::default();
+        let mut call_strings = Strings::new();
+        call_projector.project(&ty_parsed, &mut call_strings, &mut call_bundle);
+        let walk_call = t.elapsed();
+        let t = Instant::now();
+        let call_facts = flatten_call(&call_bundle, &call_strings);
+        let ser_call = t.elapsed();
+        eprintln!(
+            "call: walk {:?} serial {:?} ({} defs, {} sites, {} facts)",
+            walk_call, ser_call, call_bundle.nodes.len(), call_bundle.aux.sites.len(), call_facts.len(),
         );
     }
     Ok(())

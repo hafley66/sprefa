@@ -83,8 +83,8 @@
 //!                must survive for the node-level type join. The Param/Returns EDGES
 //!                (span-to-span, resolved) still land at Resolve<TypeF> (commit 4).
 //!
-//! BUILD STATUS (2026-07-23, commits 1-2c LANDED in v6/sprefa-extract/; the build
-//! order 2c->3a(CallF)->3b(DfF) holds):
+//! BUILD STATUS (2026-07-23, commits 1-3a LANDED in v6/sprefa-extract/; the build
+//! order 3a->3b(DfF) holds):
 //!   6a29d920  commit 1   CstF via ast-grep (one dep = rust/ts/tsx/js/go grammars);
 //!              clap bin streaming flat JSONL with --bench; snapshot. Piping proof.
 //!   f3ceb4fa  commit 2a  Parser/Project seam -> arena-passing GAT: oxc's
@@ -103,6 +103,16 @@
 //!              commit 4). Keyword types (number) emit no sig; a union slot
 //!              emits one per arm. param POSITION preserved (for the node-level
 //!              type join). Added Family::Aux + FlatFact::Sig; CstF::Aux=().
+//!   (3a code)  commit 3a  CallF: callable DEF nodes (CallKind{Free,Method}; ports
+//!              v5 ts_call_defs_from incl nested named-fn defs + the class ctor
+//!              whose call-name is the class name so `new Foo()` resolves) + call
+//!              SITES in the CallF aux (CallSite{span, callee, callee_path}; ports
+//!              v5 TsCallSites: CallExpression + NewExpression + JSXElement
+//!              component). Sites unresolved in phase 1 (callee as written); caller
+//!              is span-containment at the seam. Lambda defs (df lift) -> DfF. Added
+//!              CallF/CallKind/CallEdgeKind/CallSite/CallFAux + FlatFact::Site +
+//!              dispatch_call. Def span MATCHES the TypeF entity span (two facets
+//!              join on one coordinate).
 //!   PENDING:   the name-resolved type EDGES (field/impl/variant/uses + the
 //!              resolved param/returns binding) still land at Resolve<TypeF>
 //!              (commit 4) by design. Also unported: ts_const_facts_from (the

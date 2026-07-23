@@ -2,10 +2,13 @@ export function add(left: number, right: number): number {
   return left + right;
 }
 
-// Named-type signature: exercises the arrow-type payload (param/ret sigs).
-// Keyword-only `add` above carries no resolvable name, so it emits no sig.
+// Named-type signature + a nested named fn (exercises the arrow-type sigs AND
+// the nested-call-def walker) + call sites (identifier / new / member).
 export function shift(p: Point, d: Dir): Vec2 {
-  return new Vec2(p.x, p.y);
+  function clamp(n: number): number {
+    return n;
+  }
+  return new Vec2(clamp(p.x), clamp(p.y));
 }
 
 export interface Point {

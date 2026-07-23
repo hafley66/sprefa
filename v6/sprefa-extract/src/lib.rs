@@ -24,10 +24,16 @@ pub mod seams;
 pub mod shape;
 pub mod wire;
 
-pub use dispatch::{dispatch_cst, dispatch_type};
-pub use family::{CstEdgeKind, CstF, Family, SigSlot, TypeEdgeKind, TypeEntityKind, TypeFAux, TypeF, TypeSig};
-pub use lang::{AstGrepParser, CstProjector, OxcParser, TypeProjector};
+pub use dispatch::{dispatch_call, dispatch_cst, dispatch_type};
+pub use family::{
+    CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, Family, SigSlot, TypeEdgeKind,
+    TypeEntityKind, TypeFAux, TypeF, TypeSig,
+};
+pub use lang::{AstGrepParser, CallProjector, CstProjector, OxcParser, TypeProjector};
 pub use rows::{Edge, FamilyBundle, Node};
 pub use seams::{BlobSource, ParseError, Parser, Project};
 pub use shape::{BlobHash, FamilyTag, NameId, NodeRef, Span, Strings};
-pub use wire::{flatten_cst, flatten_cst_jsonl, flatten_type, flatten_type_jsonl, FlatFact, SpanOut};
+pub use wire::{
+    flatten_call, flatten_call_jsonl, flatten_cst, flatten_cst_jsonl, flatten_type, flatten_type_jsonl,
+    FlatFact, SpanOut,
+};

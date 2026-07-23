@@ -3,8 +3,8 @@
 //! file through parse -> project(CstF) -> (bundle, strings); the bin and the
 //! snapshot test both go through here.
 
-use crate::family::{CstF, TypeF};
-use crate::lang::{AstGrepParser, CstProjector, OxcParser, TypeProjector};
+use crate::family::{CallF, CstF, TypeF};
+use crate::lang::{AstGrepParser, CallProjector, CstProjector, OxcParser, TypeProjector};
 use crate::rows::FamilyBundle;
 use crate::seams::{ParseError, Parser, Project};
 use crate::shape::Strings;
@@ -38,6 +38,22 @@ pub fn dispatch_type(
     let arena = parser.make_arena();
     let parsed = parser.parse(&arena, path, content)?;
     let mut bundle = FamilyBundle::<TypeF>::default();
+    let mut strings = Strings::new();
+    projector.project(&parsed, &mut strings, &mut bundle);
+    Ok((bundle, strings))
+}
+
+/// Parse + project one file's bytes to its CallF bundle via oxc. Same shape as
+/// `dispatch_type` (shares the parse; a second projection over the same tree).
+pub fn dispatch_call(
+    path: &str,
+    content: &[u8],
+    parser: &OxcParser,
+    projector: &CallProjector,
+) -> Result<(FamilyBundle<CallF>, Strings), ParseError> {
+    let arena = parser.make_arena();
+    let parsed = parser.parse(&arena, path, content)?;
+    let mut bundle = FamilyBundle::<CallF>::default();
     let mut strings = Strings::new();
     projector.project(&parsed, &mut strings, &mut bundle);
     Ok((bundle, strings))
