@@ -61,6 +61,42 @@
 //!                `std::process::Command`. (tokio available/safe but unreached here.)
 //!   D-port-clean port + clean v5's roster (syn/oxc/tree-sitter) as-is; no buy-vs-buy gate.
 //!   D-concrete   concrete structs until a second impl (crate-map practicality ruling).
+//!   D-arrow-type functions/methods STAY in `TypeF`: a function IS a type
+//!                (`[A] => B`); the TypeF entity carries the arrow signature and
+//!                owns the `param`/`returns`/`uses` type-edges. v5 test
+//!                `ts_entities_kinds_lines_and_arrow_types` (v5 `typegraph/ts/
+//!                mod.rs:1275`, line 1304 "a function IS a type") locks this.
+//!                TypeF = the TYPE facet; CallF (commit 3) = the CALL facet
+//!                (def/sites/resolution). Two orthogonal projections of one
+//!                declaration, NOT false unification. (An earlier "trim
+//!                TypeEntityKind to pure types" suggestion was RETRACTED on this
+//!                evidence.) scip-typescript's divergences (arrow-const `sub`,
+//!                nested method `magnitude`, value-const `origin`) are modeling
+//!                differences: v5 models callable arrow-types in the type graph
+//!                and excludes value-consts from TypeF (they are df value nodes).
+//!
+//! BUILD STATUS (2026-07-23, commits 1-2 LANDED in v6/sprefa-extract/; the build
+//! order 1->2->3 holds):
+//!   6a29d920  commit 1   CstF via ast-grep (one dep = rust/ts/tsx/js/go grammars);
+//!              clap bin streaming flat JSONL with --bench; snapshot. Piping proof.
+//!   f3ceb4fa  commit 2a  Parser/Project seam -> arena-passing GAT: oxc's
+//!              Program<'a> borrows its Allocator, so parse takes a caller-owned
+//!              Arena + content:'a; the dispatch holds the arena across parse+project.
+//!   4fbf9a68  commit 2b  OxcParser + Project<TypeF>: ports v5 ts_entities_from
+//!              (class/interface/alias/enum/function/method entities; ctor +
+//!              non-fn const skipped). oxc race in --bench. cargo tree clean of
+//!              tokio/sqlx/sea-orm/rusqlite/axum; public API names no store-id type.
+//!   PENDING on 2b's callable entities: the arrow-type PAYLOAD (TypeExpr params/
+//!              ret) + the Param/Returns/Uses EDGES are NOT yet emitted (they
+//!              land at resolution, commit 4) -> Function/Method entities are
+//!              kinded SKELETONS pending their [A]=>B. Also unported:
+//!              ts_const_facts_from (the string-const-value facet; origin-style
+//!              consts stay df value nodes).
+//!   ORACLE:     scip-typescript 0.4.0 was run on the fixture (throwaway /tmp). The
+//!              real correctness gate is occurrence/resolution parity (the commit 4
+//!              ratchet), NOT a raw symbol diff (scip is a flat exhaustive symbol
+//!              table; v5/v6 model callable arrow-types in the type graph + exclude
+//!              value-consts, so the models differ by construction).
 //!
 //! Partitioning recon vs v5 sprawl (verified 2026-07-23, grep on v5 src/):
 //!   v5 TypeLang methods -> v6 (uniform across langs, no special-case lang):
@@ -123,8 +159,8 @@
 //!   against the signatures, runs the snapshot harness, reads the diff. No per-lang
 //!   test scaffolding. Single file per lang (for now).
 //!
-//! Future filesystem (sprefa-extract; the real crate. commits 1-2 LANDED
-//! 2026-07-23: CstF (ast-grep) + TS TypeF (oxc); the rest lands with commits 3-6):
+//! Future filesystem (sprefa-extract; the real crate. commits 1-2 LANDED 2026-07-23
+//! (see BUILD STATUS above); the rest lands with commits 3-6):
 //!   src/
 //!     lib.rs        re-export the trait interface + Family + shape (the "lib")
 //!     shape.rs      S1 atoms: Span, BlobHash, NameId, NodeRef, FamilyTag, Project, File

@@ -292,7 +292,15 @@ seam to an arena-passing GAT because oxc's `Program<'a>` borrows its `Allocator`
 then the oxc parse + the `ts_entities_from` port emit TS type entities: class /
 interface / alias / enum / function / method, constructor + non-function consts
 correctly skipped). The oxc race prints both families' parse/walk/serial under
-`--bench`. (3) `Project<CallF>` then `Project<DfF>` - TS AST families complete. (4)
+`--bench`. NOTE (D-arrow-type): Function/Method STAY in TypeF because a function
+IS a type (`[A] => B`); v5 `ts/mod.rs:1275` test locks it. TypeF = the type facet,
+CallF (commit 3) = the call facet — two projections, not duplication (an earlier
+"trim TypeEntityKind" suggestion was retracted on this evidence). The arrow-type
+PAYLOAD (`TypeExpr`) + Param/Returns/Uses EDGES are not yet emitted — they land at
+resolution (commit 4); commit 2b's callable entities are kinded skeletons until
+then. A scip-typescript oracle diff is not byte-identical by construction (see
+`_7_tasks.rs` BUILD STATUS); the real gate is occurrence/resolution parity (commit 4).
+(3) `Project<CallF>` then `Project<DfF>` - TS AST families complete. (4)
 scip-typescript subprocess → `Resolve<*>` (TS resolution; the SCIP-wire IN
 projection; ratchet).
 
