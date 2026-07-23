@@ -363,4 +363,4 @@ impl GraphStore for Tasks {
     }
 }
 
-// (Temporal is substrate, not a parity trait — see the note above. No impl here.)
+// (Temporal is a base layer concern, not a parity trait. See the note above. No impl here.)
