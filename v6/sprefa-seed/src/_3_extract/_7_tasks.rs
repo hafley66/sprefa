@@ -83,15 +83,11 @@
 //!                must survive for the node-level type join. The Param/Returns EDGES
 //!                (span-to-span, resolved) still land at Resolve<TypeF> (commit 4).
 //!
-//! BUILD STATUS (2026-07-23, commits 1-3b LANDED in v6/sprefa-extract/. The TS
+//! BUILD STATUS (2026-07-23, commits 1-3c LANDED in v6/sprefa-extract/. The TS
 //! phase-1 families - Cst / Type(+sigs) / Call / Df - all project + stream +
-//! snapshot. NEXT (commit 3c, Epic U): stand up the uniform surface v5 had -
-//! the `Source` trait (the TypeLang analog) + `FamilyMask` + `ExtractOutput` +
-//! the `sources()` first-match roster, collapsing the 4 dispatch_* / 8 flatten_*
-//! / hand-coded bin / 4 hand-written tests to ONE data-driven path each. Full
-//! epic (contract, pseudocode, recursive tasks, golden) is written into
-//! v6/plans/2026-07-23-sprefa-extract-golden-plan.md under "Epic U". After that:
-//! const-value facet, the Resolve<*> pass (commit 4), then rust (syn) + go:
+//! snapshot through ONE uniform surface (the Source roster + masked extract +
+//! one dispatch + one flatten). NEXT: the const-value facet, the Resolve<*>
+//! pass (commit 4), then rust (syn) + go:
 //!   6a29d920  commit 1   CstF via ast-grep (one dep = rust/ts/tsx/js/go grammars);
 //!              clap bin streaming flat JSONL with --bench; snapshot. Piping proof.
 //!   f3ceb4fa  commit 2a  Parser/Project seam -> arena-passing GAT: oxc's
@@ -135,6 +131,21 @@
 //!              transient scope HashMap (var name -> NodeRef) for intra-procedural
 //!              resolution is kept. Added DfF/DfNodeKind/DfEdgeKind + flatten_df +
 //!              dispatch_df. df_reaches walks this on the same fixpoint.
+//!   (3c code)  commit 3c  Epic U LANDED: the uniform surface v5 had. New
+//!              `source.rs` (`Source` trait + `FamilyMask` + `ExtractOutput`),
+//!              `TsSource` (cst via ast-grep + type/call/df via ONE oxc parse, one
+//!              shared `Strings`) + `AstgrepSource` (cst-only fallback) behind a
+//!              first-match `sources()`/`source_for()` roster (`lang/mod.rs`).
+//!              Collapsed: 4 `dispatch_*` -> one `dispatch(path,content,mask) ->
+//!              Option<ExtractOutput>`; 8 `flatten_*` -> one `flatten` +
+//!              `flatten_jsonl` (per-family flatteners demoted to private helpers);
+//!              the hand-coded bin -> `dispatch`+`flatten`+`--family`; 4 hand tests
+//!              -> ONE loop-driven `ts_uniform_surface` (+ a roster test).
+//!              `lang/oxc.rs` renamed `lang/ts.rs`. Done condition held: 4 TS
+//!              snapshots byte-identical (no `UPDATE_SNAP`), `pub fn dispatch`=1,
+//!              bin names no ast-grep/oxc type outside `Source` impls, `cargo tree`
+//!              still clean. The two-parser reality + `Resolve<F>` extending
+//!              `Source` are Epic U's frontier (see the plan).
 //!   PENDING:   the name-resolved type EDGES (field/impl/variant/uses + the
 //!              resolved param/returns binding) still land at Resolve<TypeF>
 //!              (commit 4) by design. Also unported: ts_const_facts_from (the

@@ -15,6 +15,7 @@ use ast_grep_language::SupportLang;
 use crate::family::{CstEdgeKind, CstF};
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{ParseError, Parser, Project};
+use crate::source::{ExtractOutput, FamilyMask, Source};
 use crate::shape::{NodeRef, Span, Strings};
 
 /// The owned ast-grep root: owns its source `String` + the tree-sitter `Tree`.
@@ -90,5 +91,43 @@ impl Project<CstF> for CstProjector {
                 stack.push((child, my_named));
             }
         }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// AstgrepSource: the CST-only Source (the floor for every ast-grep lang). Epic U.
+//
+// Commit 1's AstGrepParser + CstProjector repurposed as a Source: cst-only (the
+// other families are None). The roster's fallback behind the lang-specific
+// TsSource; a .rs/.go/... that has no native parser still gets the lossless CST.
+// ════════════════════════════════════════════════════════════════════════════
+
+/// The CST-only `Source`: every ast-grep grammar (rust/ts/tsx/js/go/...) gets the
+/// lossless named-node tree, nothing else.
+#[derive(Default)]
+pub struct AstgrepSource;
+
+impl Source for AstgrepSource {
+    fn name(&self) -> &'static str {
+        "astgrep"
+    }
+
+    fn matches(&self, path: &str) -> bool {
+        AstGrepParser.matches(path)
+    }
+
+    fn extract(&self, path: &str, content: &[u8], mask: FamilyMask) -> ExtractOutput {
+        let mut strings = Strings::new();
+        let cst = if mask.cst {
+            let arena = AstGrepParser.make_arena();
+            AstGrepParser.parse(&arena, path, content).ok().map(|parsed| {
+                let mut bundle = FamilyBundle::<CstF>::default();
+                CstProjector.project(&parsed, &mut strings, &mut bundle);
+                bundle
+            })
+        } else {
+            None
+        };
+        ExtractOutput { strings, cst, types: None, call: None, df: None }
     }
 }

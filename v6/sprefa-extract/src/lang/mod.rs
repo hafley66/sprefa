@@ -1,10 +1,23 @@
-//! The language roster. Commit 1: one entry, `astgrep` (one Parser covers
-//! rust/ts/tsx/js/go via ast-grep's grammars). Per-language modules
-//! (rust.rs / ts.rs / go.rs) land with commits 2-6 as the oxc / syn /
-//! tree-sitter projectors + SCIP resolvers are added.
+//! The language roster. First-match (v5 `type_langs()`, typegraph/mod.rs:491):
+//! the lang-specific `Source` precedes the ast-grep CST fallback. A `.ts` hits
+//! `TsSource` (cst via ast-grep + type/call/df via oxc); a `.rs` falls to
+//! `AstgrepSource` (cst-only). Rust/Go `Source`s prepend in commits 5/6.
 
 pub mod astgrep;
-pub mod oxc;
+pub mod ts;
 
-pub use astgrep::{AstGrepParser, CstProjector, SgRoot};
-pub use oxc::{CallProjector, DfProjector, OxcParser, TypeProjector};
+pub use astgrep::{AstGrepParser, AstgrepSource, CstProjector, SgRoot};
+pub use ts::{CallProjector, DfProjector, OxcParser, TsSource, TypeProjector};
+
+use crate::source::Source;
+
+/// The first-match roster. Order matters: the lang-specific `Source` precedes the
+/// ast-grep CST fallback (v5 `type_langs()` convention).
+pub fn sources() -> &'static [&'static dyn Source] {
+    &[&TsSource, &AstgrepSource]
+}
+
+/// The first `Source` whose `matches(path)` is true, else None.
+pub fn source_for(path: &str) -> Option<&'static dyn Source> {
+    sources().iter().copied().find(|src| src.matches(path))
+}

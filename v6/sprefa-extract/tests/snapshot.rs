@@ -1,104 +1,76 @@
-//! Tier-1 snapshots: parse the TS fixture, project each family, flatten, diff
-//! against the committed `.snap`. The `.snap` is the deterministic (sorted)
-//! JSONL; the sort makes the snapshot immune to ast-grep/tree-sitter/oxc
-//! traversal-order shifts.
+//! Tier-1 snapshots via the uniform surface. ONE loop-driven test dispatches each
+//! family under a single-family mask, flattens, sorts, diffs its committed `.snap`.
+//! The sort makes the snapshot immune to traversal-order shifts. A roster test
+//! pins the first-match routing. The 4 `.snap` files stay unchanged: the new path
+//! reproduces the per-family output with zero regression (Epic U's golden).
 
-use sprefa_extract::{
-    dispatch_call, dispatch_cst, dispatch_df, dispatch_type, flatten_call_jsonl, flatten_cst_jsonl,
-    flatten_df_jsonl, flatten_type_jsonl, AstGrepParser, CallProjector, CstProjector, DfProjector,
-    OxcParser, TypeProjector,
-};
+use sprefa_extract::{dispatch, flatten_jsonl, source_for, FamilyMask, FamilyTag};
 
-const CST_SNAP: &str = "tests/fixtures/ts/sample.cstf.snap";
-const TYPE_SNAP: &str = "tests/fixtures/ts/sample.typef.snap";
-const CALL_SNAP: &str = "tests/fixtures/ts/sample.callf.snap";
-const DF_SNAP: &str = "tests/fixtures/ts/sample.dff.snap";
+const FIXTURE: &[u8] = include_bytes!("fixtures/ts/sample.ts");
 
-#[test]
-fn ts_cstf_snapshot() {
-    let content = include_bytes!("fixtures/ts/sample.ts");
-    let (bundle, strings) =
-        dispatch_cst("sample.ts", content, &AstGrepParser, &CstProjector).expect("parse");
-    let actual = flatten_cst_jsonl(&bundle, &strings).join("\n");
-
-    // Regenerate the committed snapshot: `UPDATE_SNAP=1 cargo test`.
-    if std::env::var("UPDATE_SNAP").is_ok() {
-        std::fs::write(CST_SNAP, format!("{actual}\n")).expect("write snap");
-        eprintln!("updated {CST_SNAP}");
-        return;
-    }
-
-    let expected = include_str!("fixtures/ts/sample.cstf.snap");
-    assert_eq!(
-        actual,
-        expected.trim_end(),
-        "CstF snapshot drifted. Regenerate with UPDATE_SNAP=1 cargo test, or overwrite \
-         {CST_SNAP} with:\n----\n{actual}\n----"
-    );
+struct Case {
+    tag: FamilyTag,
+    mask: FamilyMask,
+    snap: &'static str,
 }
 
+const CASES: &[Case] = &[
+    Case {
+        tag: FamilyTag::Cst,
+        mask: FamilyMask { cst: true, types: false, call: false, df: false },
+        snap: "tests/fixtures/ts/sample.cstf.snap",
+    },
+    Case {
+        tag: FamilyTag::Type,
+        mask: FamilyMask { cst: false, types: true, call: false, df: false },
+        snap: "tests/fixtures/ts/sample.typef.snap",
+    },
+    Case {
+        tag: FamilyTag::Call,
+        mask: FamilyMask { cst: false, types: false, call: true, df: false },
+        snap: "tests/fixtures/ts/sample.callf.snap",
+    },
+    Case {
+        tag: FamilyTag::Df,
+        mask: FamilyMask { cst: false, types: false, call: false, df: true },
+        snap: "tests/fixtures/ts/sample.dff.snap",
+    },
+];
+
+/// Epic U's golden: one `dispatch` + one `flatten_jsonl` path reproduces each
+/// family's committed snapshot byte-for-byte (proves the uniform surface is a
+/// zero-regression reorganization of the per-family output).
 #[test]
-fn ts_typef_snapshot() {
-    let content = include_bytes!("fixtures/ts/sample.ts");
-    let (bundle, strings) =
-        dispatch_type("sample.ts", content, &OxcParser, &TypeProjector).expect("parse");
-    let actual = flatten_type_jsonl(&bundle, &strings).join("\n");
+fn ts_uniform_surface() {
+    let update = std::env::var("UPDATE_SNAP").is_ok();
+    for case in CASES {
+        let out = dispatch("sample.ts", FIXTURE, case.mask).expect("a Source matches .ts");
+        let actual = flatten_jsonl(&out).join("\n");
 
-    if std::env::var("UPDATE_SNAP").is_ok() {
-        std::fs::write(TYPE_SNAP, format!("{actual}\n")).expect("write snap");
-        eprintln!("updated {TYPE_SNAP}");
-        return;
+        // Regenerate the committed snapshot: `UPDATE_SNAP=1 cargo test`.
+        if update {
+            std::fs::write(case.snap, format!("{actual}\n")).expect("write snap");
+            eprintln!("updated {}", case.snap);
+            continue;
+        }
+
+        let expected = std::fs::read_to_string(case.snap).expect("snap missing");
+        assert_eq!(
+            actual,
+            expected.trim_end(),
+            "{:?} snapshot drifted. Regenerate with UPDATE_SNAP=1 cargo test, or overwrite \
+             {} with:\n----\n{actual}\n----",
+            case.tag,
+            case.snap,
+        );
     }
-
-    let expected = include_str!("fixtures/ts/sample.typef.snap");
-    assert_eq!(
-        actual,
-        expected.trim_end(),
-        "TypeF snapshot drifted. Regenerate with UPDATE_SNAP=1 cargo test, or overwrite \
-         {TYPE_SNAP} with:\n----\n{actual}\n----"
-    );
 }
 
+/// The first-match roster: a `.ts` routes to the lang-specific `TsSource`, a `.rs`
+/// falls through to the cst-only `AstgrepSource`, an unknown ext routes nowhere.
 #[test]
-fn ts_callf_snapshot() {
-    let content = include_bytes!("fixtures/ts/sample.ts");
-    let (bundle, strings) =
-        dispatch_call("sample.ts", content, &OxcParser, &CallProjector).expect("parse");
-    let actual = flatten_call_jsonl(&bundle, &strings).join("\n");
-
-    if std::env::var("UPDATE_SNAP").is_ok() {
-        std::fs::write(CALL_SNAP, format!("{actual}\n")).expect("write snap");
-        eprintln!("updated {CALL_SNAP}");
-        return;
-    }
-
-    let expected = include_str!("fixtures/ts/sample.callf.snap");
-    assert_eq!(
-        actual,
-        expected.trim_end(),
-        "CallF snapshot drifted. Regenerate with UPDATE_SNAP=1 cargo test, or overwrite \
-         {CALL_SNAP} with:\n----\n{actual}\n----"
-    );
-}
-
-#[test]
-fn ts_dff_snapshot() {
-    let content = include_bytes!("fixtures/ts/sample.ts");
-    let (bundle, strings) =
-        dispatch_df("sample.ts", content, &OxcParser, &DfProjector).expect("parse");
-    let actual = flatten_df_jsonl(&bundle, &strings).join("\n");
-
-    if std::env::var("UPDATE_SNAP").is_ok() {
-        std::fs::write(DF_SNAP, format!("{actual}\n")).expect("write snap");
-        eprintln!("updated {DF_SNAP}");
-        return;
-    }
-
-    let expected = include_str!("fixtures/ts/sample.dff.snap");
-    assert_eq!(
-        actual,
-        expected.trim_end(),
-        "DfF snapshot drifted. Regenerate with UPDATE_SNAP=1 cargo test, or overwrite \
-         {DF_SNAP} with:\n----\n{actual}\n----"
-    );
+fn roster_routes_by_extension() {
+    assert_eq!(source_for("x.ts").expect(".ts").name(), "ts");
+    assert_eq!(source_for("x.rs").expect(".rs").name(), "astgrep");
+    assert!(source_for("x.unknownext").is_none());
 }

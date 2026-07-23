@@ -1,76 +1,16 @@
-//! Commit-1 dispatch: single-threaded. The rayon orchestrator + the
-//! arena-per-worker budget land in the parallelism lab (epic 4). This drives one
-//! file through parse -> project(CstF) -> (bundle, strings); the bin and the
-//! snapshot test both go through here.
+//! The uniform dispatch: one data-driven entry over the `Source` roster. Replaces
+//! commit 1-3b's 4 hand-rolled `dispatch_{cst,type,call,df}` (the quadruple Epic U
+//! collapses). The generic rayon `dispatch` over many `ExtractJob`s + the arena-
+//! per-worker budget land in the parallelism lab (epic 4); this is the single-file
+//! piping core both the bin and the snapshot exercise.
 
-use crate::family::{CallF, CstF, DfF, TypeF};
-use crate::lang::{AstGrepParser, CallProjector, CstProjector, DfProjector, OxcParser, TypeProjector};
-use crate::rows::FamilyBundle;
-use crate::seams::{ParseError, Parser, Project};
-use crate::shape::Strings;
+use crate::lang::source_for;
+use crate::source::{ExtractOutput, FamilyMask};
 
-/// Parse + project one file's bytes to its CstF bundle (and the interner it
-/// filled). The generic rayon `dispatch` over many `ExtractJob`s lands with the
-/// dispatch lab; this is the single-file piping core both the bin and the
-/// snapshot exercise.
-pub fn dispatch_cst(
-    path: &str,
-    content: &[u8],
-    parser: &AstGrepParser,
-    projector: &CstProjector,
-) -> Result<(FamilyBundle<CstF>, Strings), ParseError> {
-    let arena = parser.make_arena();
-    let parsed = parser.parse(&arena, path, content)?;
-    let mut bundle = FamilyBundle::<CstF>::default();
-    let mut strings = Strings::new();
-    projector.project(&parsed, &mut strings, &mut bundle);
-    Ok((bundle, strings))
-}
-
-/// Parse + project one file's bytes to its TypeF bundle via oxc. Same shape as
-/// `dispatch_cst`; the arena is the oxc `Allocator` the `Program` borrows.
-pub fn dispatch_type(
-    path: &str,
-    content: &[u8],
-    parser: &OxcParser,
-    projector: &TypeProjector,
-) -> Result<(FamilyBundle<TypeF>, Strings), ParseError> {
-    let arena = parser.make_arena();
-    let parsed = parser.parse(&arena, path, content)?;
-    let mut bundle = FamilyBundle::<TypeF>::default();
-    let mut strings = Strings::new();
-    projector.project(&parsed, &mut strings, &mut bundle);
-    Ok((bundle, strings))
-}
-
-/// Parse + project one file's bytes to its CallF bundle via oxc. Same shape as
-/// `dispatch_type` (shares the parse; a second projection over the same tree).
-pub fn dispatch_call(
-    path: &str,
-    content: &[u8],
-    parser: &OxcParser,
-    projector: &CallProjector,
-) -> Result<(FamilyBundle<CallF>, Strings), ParseError> {
-    let arena = parser.make_arena();
-    let parsed = parser.parse(&arena, path, content)?;
-    let mut bundle = FamilyBundle::<CallF>::default();
-    let mut strings = Strings::new();
-    projector.project(&parsed, &mut strings, &mut bundle);
-    Ok((bundle, strings))
-}
-
-/// Parse + project one file's bytes to its DfF bundle via oxc. A third
-/// projection over the same tree (the value-flow graph).
-pub fn dispatch_df(
-    path: &str,
-    content: &[u8],
-    parser: &OxcParser,
-    projector: &DfProjector,
-) -> Result<(FamilyBundle<DfF>, Strings), ParseError> {
-    let arena = parser.make_arena();
-    let parsed = parser.parse(&arena, path, content)?;
-    let mut bundle = FamilyBundle::<DfF>::default();
-    let mut strings = Strings::new();
-    projector.project(&parsed, &mut strings, &mut bundle);
-    Ok((bundle, strings))
+/// Extract one file's bytes through the first `Source` that matches its path, for
+/// exactly the masked families. None when no `Source` matches the path (the bin
+/// and the test treat that as "nothing to emit"). The arena(s) are owned inside
+/// `Source::extract`; nothing borrowed crosses this call.
+pub fn dispatch(path: &str, content: &[u8], mask: FamilyMask) -> Option<ExtractOutput> {
+    source_for(path).map(|src| src.extract(path, content, mask))
 }

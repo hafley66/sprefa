@@ -84,7 +84,7 @@ pub trait Project<F: Family>: Sync + Send {
 /// File bytes in, content-hashed out. SOURCE-AGNOSTIC: a corpus may be a git
 /// worktree (`GitShellout`) or a plain directory (`Filesystem`). The content
 /// hash is the cache key; how bytes were found never is. Commit 1 declares it;
-/// the engine supplies bytes directly via `dispatch_cst`.
+/// the engine supplies bytes directly via `dispatch`.
 pub trait BlobSource: Sync + Send {
     fn blob(&self, path: &str) -> Option<Vec<u8>>;
 }

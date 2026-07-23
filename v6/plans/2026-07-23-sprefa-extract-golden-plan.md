@@ -323,6 +323,14 @@ Each commit: snapshot green; from commit 2, the parity golden vs v5 green.
 
 ## Epic U - the uniform surface (commit 3c; slots after 3b, before Resolve/Rust/Go)
 
+> **DONE 2026-07-23 (commit 3c landed).** `source.rs` (`Source` + `FamilyMask` +
+> `ExtractOutput`) + `TsSource` + `AstgrepSource` + first-match roster; one
+> `dispatch`, one `flatten`/`flatten_jsonl`; `lang/oxc.rs` → `lang/ts.rs`. Done
+> condition held: 4 TS snapshots byte-identical (no `UPDATE_SNAP`), one loop-driven
+> `ts_uniform_surface` (+ roster test), `pub fn dispatch`=1, bin names no
+> ast-grep/oxc type outside `Source` impls, `cargo tree` clean. The frontier below
+> (two-parser reality; `Resolve<F>` extends `Source`) stays open.
+
 **Why.** v5 had ONE uniform boundary (`TypeLang` + `type_langs()` roster + masked
 `extract_bundle`); v6 has uniform *leaves* (`Parser`, `Project<F>`) but the
 orchestration above them is hand-rolled per family: 4 `dispatch_*`, 8 `flatten_*`,

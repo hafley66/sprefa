@@ -22,10 +22,12 @@ use oxc_ast::ast::Program;
 use oxc_ast_visit::Visit as OxcVisit;
 use oxc_span::{GetSpan, SourceType};
 
-use crate::family::{CallF, CallKind, CallSite, DfEdgeKind, DfF, DfNodeKind, SigSlot, TypeEntityKind, TypeF};
+use crate::family::{CallF, CallKind, CallSite, CstF, DfEdgeKind, DfF, DfNodeKind, SigSlot, TypeEntityKind, TypeF};
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{ParseError, Parser, Project};
 use crate::shape::{NodeRef, Span, Strings};
+use crate::source::{ExtractOutput, FamilyMask, Source};
+use super::astgrep::{AstGrepParser, CstProjector};
 
 /// `oxc_span::Span` (start + end) -> our byte `Span` (start + len). One
 /// coordinate; the engine derives line/col from the file bytes when needed.
@@ -1201,4 +1203,75 @@ fn push_entity(
         )
         .with_name(strings.intern(name.as_ref())),
     );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// TsSource: the TS/JS Source (cst via ast-grep + type/call/df via oxc). Epic U.
+//
+// The two-parser, masked shape. cst runs through ast-grep (one dep = the CST
+// floor for every lang); type/call/df run through ONE oxc parse (three masked
+// projections over the same tree). ONE shared `Strings` across all four families.
+// A .ts/.tsx/.js/... file with all families masked = 2 parses; the masked
+// bundle's "one parse" is WITHIN a parser (one oxc parse feeds 3 projections).
+// ════════════════════════════════════════════════════════════════════════════
+
+/// The TS/JS `Source`. `matches` = oxc has a source type for the path
+/// (.ts/.tsx/.mts/.cts/.js/.jsx/.mjs/.cjs).
+#[derive(Default)]
+pub struct TsSource;
+
+impl Source for TsSource {
+    fn name(&self) -> &'static str {
+        "ts"
+    }
+
+    fn matches(&self, path: &str) -> bool {
+        source_type_for(path).is_some()
+    }
+
+    fn extract(&self, path: &str, content: &[u8], mask: FamilyMask) -> ExtractOutput {
+        let mut strings = Strings::new();
+
+        // cst via ast-grep (masked). Owns its () arena; dropped at block end. A
+        // failed ast-grep parse leaves cst None (no panic).
+        let cst = if mask.cst {
+            let arena = AstGrepParser.make_arena();
+            AstGrepParser.parse(&arena, path, content).ok().map(|parsed| {
+                let mut bundle = FamilyBundle::<CstF>::default();
+                CstProjector.project(&parsed, &mut strings, &mut bundle);
+                bundle
+            })
+        } else {
+            None
+        };
+
+        // type/call/df via ONE oxc parse (masked). Owns the Allocator; the Program
+        // borrows it + content, both dropped at block end. A failed parse leaves
+        // all three None (partial output: cst above may still be Some).
+        let mut types = None;
+        let mut call = None;
+        let mut df = None;
+        if mask.types || mask.call || mask.df {
+            let arena = OxcParser.make_arena();
+            if let Ok(parsed) = OxcParser.parse(&arena, path, content) {
+                if mask.types {
+                    let mut bundle = FamilyBundle::<TypeF>::default();
+                    TypeProjector.project(&parsed, &mut strings, &mut bundle);
+                    types = Some(bundle);
+                }
+                if mask.call {
+                    let mut bundle = FamilyBundle::<CallF>::default();
+                    CallProjector.project(&parsed, &mut strings, &mut bundle);
+                    call = Some(bundle);
+                }
+                if mask.df {
+                    let mut bundle = FamilyBundle::<DfF>::default();
+                    DfProjector.project(&parsed, &mut strings, &mut bundle);
+                    df = Some(bundle);
+                }
+            }
+        }
+
+        ExtractOutput { strings, cst, types, call, df }
+    }
 }
