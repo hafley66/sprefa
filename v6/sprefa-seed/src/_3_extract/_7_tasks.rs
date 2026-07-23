@@ -27,7 +27,7 @@
 //!                `Filesystem` impl (path -> bytes; "version" = now/mtime).
 //!   extraction   syntax/semantics families, per-language, rayon, arena-per-file.
 //!   scip         Tier-1 resolution source, BIDIRECTIONAL wire + ratchet (D-scip-wire).
-//!   tree-iter    tree-sitter integration points (the floor + the CST family).
+//!   tree-iter    tree-sitter integration points (the floor + the CstF family).
 //!
 //! Identity (content-addressed; holds for git AND non-git corpora):
 //!   project = a corpus root (a git worktree OR a plain directory OR ...).
@@ -43,25 +43,42 @@
 //!                (Orthogonal axes are not variants of one type; the store splits by
 //!                family anyway, so flatten-then-resplit is wasted motion. v5 + the
 //!                bundles already had per-family types; the sum was the false unification.)
-//!   D-planes     2 planes: RESOLUTION (Type|Call|Module, SCIP-wire, ratchet-able,
-//!                multi-source) + VALUE-FLOW (Df|Flow, native, AST-only, the part no
-//!                SCIP tool produces and where this crate earns its keep).
-//!   D-module     Module collapses: resolution half -> SCIP namespace edges (a file IS
-//!                a namespace; SCIP's symbol scheme already nests modules); binding
-//!                half -> aux side metadata. Not a standalone resolution family.
-//!   D-scip-wire  SCIP is a BIDIRECTIONAL wire: `ScipOccurrence <-> Node<F>` both ways.
-//!                Our AST facts project OUT to ScipOccurrence (joinable, ratchet-
-//!                eligible); foreign indexers project IN. Round-trippable for the 3
-//!                resolution families ONLY (df/flow/binding have no SCIP shape).
-//!   D-ratchet    `merge` generalizes from "SCIP overrides" to per-fact best-producer-
-//!                wins over N producers (`Ast`, `Scip(&indexer)`, `Ghcacher`). The
-//!                `Producer` tag rides the bundle, not the row.
-//!   D-sync-only  NO async facade. `_6_facade` (`ReactiveExtract`/`ProjectView`) is CUT.
-//!                Pure CPU + rayon; nothing awaits. The engine wraps our sync
-//!                `dispatch` in ITS spawn_blocking if it is async. SCIP build =
-//!                `std::process::Command`. (tokio is available/safe but unreached here.)
+//!   D-planes     3 planes now: RESOLUTION (Type|Call|Module, SCIP-wire, ratchet-
+//!                able) + VALUE-FLOW (Df|Flow, native, AST-only, the differentiator)
+//!                + STRUCTURE (Cst, the lossless tree-sitter named-node tree).
+//!   D-module     Module collapses: resolution half -> SCIP namespace edges (a file
+//!                IS a namespace; SCIP's symbol scheme already nests modules);
+//!                binding half -> aux side metadata. Not a standalone resolution family.
+//!   D-scip-wire  SCIP is a BIDIRECTIONAL wire: `ScipOccurrence <-> Node<F>` both
+//!                ways. Our AST facts project OUT (joinable, ratchet-eligible);
+//!                foreign indexers project IN. Round-trippable for the 3 resolution
+//!                families ONLY (df/flow/cst/binding have no SCIP shape).
+//!   D-ratchet    `merge` = per-fact best-producer-wins over N producers (`Ast`,
+//!                `Scip(&indexer)`, `Ghcacher`). The `Producer` tag rides the bundle.
+//!   D-sync-only  NO async facade. `_6_facade` (`ReactiveExtract`/`ProjectView`) is
+//!                CUT. Pure CPU + rayon; nothing awaits. The engine wraps our sync
+//!                `dispatch` in ITS spawn_blocking if async. SCIP build =
+//!                `std::process::Command`. (tokio available/safe but unreached here.)
 //!   D-port-clean port + clean v5's roster (syn/oxc/tree-sitter) as-is; no buy-vs-buy gate.
 //!   D-concrete   concrete structs until a second impl (crate-map practicality ruling).
+//!
+//! Partitioning recon vs v5 sprawl (verified 2026-07-23, grep on v5 src/):
+//!   v5 TypeLang methods (all 5 langs: rust/ts/python/go/kotlin) -> v6
+//!     extract            (types)   -> `Project<TypeF>`
+//!     extract_calls                -> `Project<CallF>`
+//!     extract_dataflow             -> `Project<DfF>`
+//!     ModuleResolver.edges         -> `Project<ModuleF>` + `Resolve<{Module,Call,Type}>`
+//!   Uniform across langs: every lang implements all three + ModuleResolver, so the
+//!   per-family partition has NO special-case lang.
+//!   COVERAGE GAP found + closed: CstF. v5 `src/cst.rs` `walk_cst` enumerates the
+//!   lossless tree-sitter named-node tree (backs `node`/`child` query relations +
+//!   codemod anchors + the spine). It is a 5th family: `Node<CstF>` = {kind: NameId
+//!   (grammar kind, OPEN vocabulary, interned), span, parent_ix}, edges = child. The
+//!   STRUCTURE plane. Every tree-sitter lang gets it for free (the floor, first-class).
+//!   const_value: v5 brand `const_value_kind = [lit, template]` (decls.rs:130); seed
+//!   has 3 (+concat, from the TS collector). Reconcile variant count on port. Stays a
+//!   Type-family aux (consts), not its own family. flow_edge stays the value-flow
+//!   union (std/flow.dl:89 -> typed `Flow<F>`).
 //!
 //! CPU trait factoring: one seam per orthogonal dimension, no fat trait:
 //!   tool    `Parser`        syn / oxc / tree-sitter: one impl per backing engine
@@ -72,7 +89,57 @@
 //!   blobs   `BlobSource`    file locator -> Blob (`GitShellout` / `Filesystem` / ...; lab picks)
 //!   scip    `ScipSource`    build (subprocess) + load (protobuf parse)
 //!   (enum, not trait, for the closed vocabularies: per-family kind enums, `Producer`,
-//!    `FamilyTag`. trait for the open extension points.)
+//!    `FamilyTag`. trait for the open extension points. CstF's kind is the exception:
+//!    an open interned grammar name, so `NameId`, not a closed enum.)
+//!
+//! Family dimension (type-level; the marker structs + trait; the sums DELETE):
+//!   trait Family { type NodeKind; type EdgeKind; const TAG: FamilyTag; }
+//!      DfF     -> DfNodeKind(23) · DfEdgeKind{ Direct, Flow(FlowEdgeKind) }  [value-flow]
+//!      CallF   -> CallNodeKind{Free,Method,Lambda} · CallEdgeKind{...}       [resolution]
+//!      TypeF   -> TypeEntity(9) · TypeEdge(7)                               [resolution]
+//!      ModuleF -> ModuleNode{File,PkgRoot} · ModuleEdge{...}                [resolution]
+//!      CstF    -> kind: NameId (OPEN grammar vocab) · CstEdge{Child}        [structure]
+//!   FlowEdgeKind{ DfDirect, ArgToParam, RetToCallRes, LambdaElem, LambdaRet }
+//!
+//! Turnkey test plan (a new lang is ONE file + ONE fixture; the codegen loop):
+//!   Tier 1 SNAPSHOT (dev feedback, per-lang):
+//!     `tests/snapshot.rs` iterates registered langs; for each, parses
+//!     `tests/fixtures/<lang>/sample.<ext>` and diffs each family's flattened
+//!     `(family, span, kind, name)` node+edge set against `sample.<family>.snap`.
+//!     Add a lang = write `lang/<name>.rs` (impl the trait interface), register in
+//!     `lang/mod.rs`, drop a fixture, run. The `.snap` files generate on first run,
+//!     get reviewed + committed. This is what an AI codegenning a new lang runs.
+//!   Tier 2 PARITY GOLDEN (the unified v5 intent, the correctness gate):
+//!     `tests/golden_parity.rs` runs v5 AND v6 on the same fixtures, normalizes both
+//!     to `(family, span, kind)`, asserts an empty diff. v5's disparate inline tests
+//!     (`rust/tests.rs`, `typegraph/{kotlin,go,python,ts/*}`, `engine/extract/*_tests`,
+//!     `cst.rs`, `scip_import.rs`) get ported HERE: each one's INTENT becomes one
+//!     parity case, cleaned up + unified behind the trait interface.
+//!   The trait interface IS the turnkey contract: codegen fills `lang/<name>.rs`
+//!   against the signatures, runs the snapshot harness, reads the diff. No per-lang
+//!   test scaffolding. Single file per lang (for now).
+//!
+//! Future filesystem (sprefa-extract, the real crate; does not exist yet):
+//!   src/
+//!     lib.rs        re-export the trait interface + Family + shape (the "lib")
+//!     shape.rs      S1 atoms: Span, BlobHash, NameId, NodeRef, FamilyTag, Project, File
+//!     family.rs     S2: Family trait + DfF/CallF/TypeF/ModuleF/CstF + kind enums
+//!     rows.rs       S3: Node<F>, Edge<F>, ProjectEdge, FamilyBundle<F>
+//!     scip.rs       S4: ScipIndex wire + the in/out projections
+//!     seams.rs      S5: Parser, Project<F>, Resolve<F>, BlobSource, ScipSource, Source
+//!     budget.rs     ParseArena, ExtractBudget, ExtractJob, FileCacheKey
+//!     project.rs    ProjectCx + FileSet/ManifestMap/IndexBag/ProjectDigest
+//!     output.rs     ExtractOutput, AuxFacts, Producer, ratchet
+//!     dispatch.rs   Dispatch (the ONE rayon orchestrator)
+//!     lang/         ONE FILE PER LANGUAGE (the turnkey unit)
+//!       mod.rs        the Source registry table (the roster)
+//!       rust.rs       SynParser + Project<{Type,Call,Df,Module,Cst}> + Resolve<{...}>
+//!       ts.rs         OxcParser + ...
+//!       python.rs go.rs kotlin.rs   TsParser + ...
+//!   tests/
+//!     snapshot.rs       Tier 1: per-lang family snapshots over fixtures/
+//!     golden_parity.rs  Tier 2: v5-vs-v6 normalized diff (the unified v5 intent)
+//!     fixtures/<lang>/sample.<ext>  +  sample.<family>.snap
 //!
 //! Frontier (deferred, evidence-gated):
 //!   CLI oracle   ship an ast-grep/biome-shaped CLI from this crate as a purity-proof
@@ -92,9 +159,11 @@ use crate::_3_extract::_2_traits::{ExtractBudget, ExtractJob, ProjectCx, Source}
 use crate::_3_extract::_4_scip::{ScipError, ScipIndex};
 
 // Proof tokens RELEASED by an unlanded task (mirror store tasks.rs convention):
-//   TypedFamilies  epic 0 : per-family Family trait + Node<F>/Edge<F>; sums deleted
+//   TypedFamilies  epic 0 : per-family Family trait + Node<F>/Edge<F>; sums deleted; CstF the 5th
 //   GitFuLabbed    epic G : rev->blob shellout-vs-libgit2 lab (linux-kernel-history class)
-//   Ported         epic P : v5 four families + SCIP ported behind Project<F>/Resolve<F>
+//   Ported         epic P : v5 five families (incl CstF) + SCIP ported behind Project<F>/Resolve<F>
+//   TurnkeyTest    epic T : Tier-1 snapshot harness + single-file-per-lang codegen loop
+//   Arened         epic 2 : arena-per-file RSS flat under N-worker parse
 //   Merged         epic 3 : ratchet: per-fact best-producer-wins over N producers
 //   Dispatched     epic 4 : rayon dispatch, no lock contention / livelock
 //   FlowUnified    epic 5 : flow_edge promoted to typed Flow<F> edges
@@ -102,6 +171,7 @@ use crate::_3_extract::_4_scip::{ScipError, ScipIndex};
 pub struct TypedFamilies;
 pub struct GitFuLabbed;
 pub struct Ported;
+pub struct TurnkeyTest;
 pub struct Arened;
 pub struct Merged;
 pub struct Dispatched;
@@ -136,7 +206,7 @@ pub trait BlobSource: Sync {
 /// REVISION (this session): signatures below still use the seed's pre-refactor types
 /// (`FileBundle`/`ProjectBundle`/`ProjectCx`). They become, per the decisions above:
 ///   extract_file    -> per-family `Project<F>::project` (one per family, masked)
-///   resolve_project -> per-family `Resolve<F>::resolve` (call/type/module; df none)
+///   resolve_project -> per-family `Resolve<F>::resolve` (call/type/module; df/cst none)
 ///   ProjectCx       -> kept (project = a corpus root; git is one BlobSource, not assumed)
 ///   merge           -> `ratchet(&[(Producer, ExtractOutput)]) -> ExtractOutput`
 ///   dispatch        -> unchanged shape (the ONE generic rayon orchestrator)
@@ -184,8 +254,8 @@ pub trait Extract {
 }
 
 /// What one blob's extraction yields. REVISION -> per-family `FamilyBundle<F>` vecs
-/// (df/call/type/module) + aux; the flat `nodes: Vec<RawNode>` (which carried the
-/// now-deleted `NodeKind` sum) goes away.
+/// (df/call/type/module/cst) + aux; the flat `nodes: Vec<RawNode>` (which carried
+/// the now-deleted `NodeKind` sum) goes away.
 #[derive(Clone, Debug, Default)]
 pub struct ExtractOutput {
     pub nodes: Vec<RawNode>,
@@ -233,7 +303,7 @@ impl Extract for Tasks {
         _cx: &ProjectCx,
         _sources: &[Source],
     ) -> ProjectBundle {
-        todo!("epic 1: Resolve<F>::resolve for call/type/module; df skipped")
+        todo!("epic 1: Resolve<F>::resolve for call/type/module; df/cst skipped")
     }
     fn scip_build(&self, _root: &std::path::Path, _indexer: &'static str) -> Result<(), ScipError> {
         todo!("epic 3: shell out rust-analyzer/scip-typescript/...; write index.scip")
@@ -251,22 +321,27 @@ impl Extract for Tasks {
 // =============================================================================
 /// A method's ARGS are body predicates (facts released earlier); its RETURN is
 /// the head predicate. Linear narrative ordering, not hard build deps. Epic 0 types
-/// families; epic G labs git-fu; epic P ports; epic 2 masters RAM; epic 3 ratchets;
-/// epic 4 proves parallelism; epic 5 promotes flow; the frontier measures the rest.
+/// families (incl CstF); G labs git-fu; P ports; T stands up the turnkey test loop;
+/// 2 masters RAM; 3 ratchets; 4 proves parallelism; 5 promotes flow; frontier measures.
 pub trait ExtractPlan {
-    /// 0  families are type-level: `Family` trait + `Node<F>`/`Edge<F>`; `NodeKind`/
-    ///    `EdgeKind` sums deleted; family discriminant is a flat `FamilyTag` at the
-    ///    store seam + ratchet key only.
+    /// 0  families are type-level: `Family` trait + `Node<F>`/`Edge<F>`; sums
+    ///    deleted; CstF is the 5th family (STRUCTURE plane, open grammar kind);
+    ///    family discriminant is a flat `FamilyTag` at the seam + ratchet key only.
     fn families_typed(&self) -> TypedFamilies;
     /// G  rev->blob git-fu lab: shellout vs libgit2 vs pack-index direct, on
     ///    linux-kernel-history class input. v5: shellout usually won. (non-git
     ///    blob sourcing is a plain `Filesystem` impl, not labbed.)
     fn git_fu_labbed(&self, proof: &TypedFamilies) -> GitFuLabbed;
-    /// P  port v5's four families + SCIP behind `Project<F>`/`Resolve<F>`, normalized
-    ///    (sym->span, kind-String->typed enum, one Span). Parity: byte-identical vs v5.
+    /// P  port v5's five families (incl CstF) + SCIP behind `Project<F>`/`Resolve<F>`,
+    ///    normalized (sym->span, kind-String->typed enum, one Span). Parity: byte-
+    ///    identical vs v5. Each lang is ONE file under lang/.
     fn v5_ported(&self, proof: &GitFuLabbed) -> Ported;
+    /// T  the turnkey test loop: Tier-1 snapshot harness (per-lang, one fixture +
+    ///    `.snap` per family) + the codegen contract (fill lang/<name>.rs, run, read
+    ///    the diff). A new lang is turnkey because it targets a trait interface.
+    fn turnkey_test(&self, proof: &Ported) -> TurnkeyTest;
     /// 2  arena-per-file parse keeps RSS flat under N-worker rayon dispatch.
-    fn arena_ram_mastered(&self, proof: &Ported) -> Arened;
+    fn arena_ram_mastered(&self, proof: &TurnkeyTest) -> Arened;
     /// 3  the ratchet: per-fact best-producer-wins over N producers (Ast/Scip/Ghcacher).
     fn ratchet_proven(&self, proof: &Arened) -> Merged;
     /// 4  rayon dispatch over a real corpus hits no lock contention / livelock.
