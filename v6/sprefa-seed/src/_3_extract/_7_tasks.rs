@@ -1,33 +1,41 @@
-//! THE PARITY SURFACE + CURRENT MIND — extraction contract as a living ledger.
+//! THE PARITY SURFACE + CURRENT MIND: extraction contract as a living ledger.
 //!
 //! Mirrors `v6/sprefa-store/src/tasks.rs`: traits are the contract, the `Tasks`
 //! impl bodies are `todo!()`, the DOCS are the task notes, `ExtractPlan` is the
 //! proof-token epic ledger. Read the plan off this file.
 //!
 //! ════════════════════════════════════════════════════════════════════════
-//! CURRENT MIND — session 2026-07-23. What this crate IS, after the rulings.
+//! CURRENT MIND: session 2026-07-23. What this crate IS, after the rulings.
 //! ════════════════════════════════════════════════════════════════════════
 //!
-//! Job (one leaf below the store): repo rev -> graph facts. Pure CPU + rayon,
-//! arena-mastered. NO database, NO reactivity, NO async facade. Reactivity, the
-//! async-eval flip, and the sprefa-language are other crates / another session.
+//! Job (one leaf below the store): a corpus at a version -> graph facts. Pure CPU
+//! + rayon, arena-mastered. NO database, NO reactivity, NO async facade.
+//! Reactivity, the async-eval flip, and the sprefa-language are other crates /
+//! another session.
 //!
 //! Scope (this layer owns all four):
-//!   git-fu       rev -> file blobs. Shellout (`git cat-file --batch` bulk read,
-//!                `cat-file -e` existence probe, `rev-parse`) — the v5 lab found
-//!                shellout usually beats libgit2 on big histories (linux-kernel-
-//!                class revs back in time). v5: `engine/repo.rs:1169` `read(rev,
-//!                path)`, `:1152` cat-file --batch, `:108` rev_parse, `:123`
-//!                cat-file -e; `engine/revid.rs` Rev identity + the worktree `+`
-//!                suffix + `GitOid` (a stored rev git can resolve).
+//!   blob source  file bytes in, content-hashed. SOURCE-AGNOSTIC contract
+//!                (`BlobSource`); git is ONE impl, not the only shape. A corpus
+//!                may be a plain directory, a tarball, etc. with no revs. git-fu
+//!                (the shellout path: `cat-file --batch` bulk, `cat-file -e`
+//!                existence, `rev-parse`) is the `GitShellout` impl; the v5 lab
+//!                found shellout usually beats libgit2 on big histories (linux-
+//!                kernel-class revs back in time). v5: `engine/repo.rs:1169`
+//!                `read(rev,path)`, `:1152` cat-file --batch, `:108` rev_parse,
+//!                `:123` cat-file -e; `engine/revid.rs` Rev identity + the
+//!                worktree `+` suffix + `GitOid`. Non-git corpora use a plain
+//!                `Filesystem` impl (path -> bytes; "version" = now/mtime).
 //!   extraction   syntax/semantics families, per-language, rayon, arena-per-file.
 //!   scip         Tier-1 resolution source, BIDIRECTIONAL wire + ratchet (D-scip-wire).
 //!   tree-iter    tree-sitter integration points (the floor + the CST family).
 //!
-//! Identity (content-addressed):
-//!   project = repo.   file = git path + content hash (BlobHash).
-//!   phase-1 key  (BlobHash, lang, Mask)         — same bytes anywhere -> one extract.
-//!   phase-2 key  (BlobHash, RepoDigest, Mask)   — repo state changes -> re-resolve.
+//! Identity (content-addressed; holds for git AND non-git corpora):
+//!   project = a corpus root (a git worktree OR a plain directory OR ...).
+//!   file    = path + content hash (BlobHash).  version is source-specific (a git
+//!             rev, or filesystem "now"): it is how bytes are FOUND, never the
+//!             cache key. The cache keys on content:
+//!   phase-1 key  (BlobHash, lang, Mask):            same bytes anywhere -> one extract.
+//!   phase-2 key  (BlobHash, ProjectDigest, Mask):   corpus state changes -> re-resolve.
 //!
 //! Decisions landed this session (type math is the spec; code stubs catch up):
 //!   D-families   families are TYPE-LEVEL: `Family` trait + marker structs, not a
@@ -35,8 +43,8 @@
 //!                (Orthogonal axes are not variants of one type; the store splits by
 //!                family anyway, so flatten-then-resplit is wasted motion. v5 + the
 //!                bundles already had per-family types; the sum was the false unification.)
-//!   D-planes     2 planes: RESOLUTION (Type|Call|Module — SCIP-wire, ratchet-able,
-//!                multi-source) + VALUE-FLOW (Df|Flow — native, AST-only, the part no
+//!   D-planes     2 planes: RESOLUTION (Type|Call|Module, SCIP-wire, ratchet-able,
+//!                multi-source) + VALUE-FLOW (Df|Flow, native, AST-only, the part no
 //!                SCIP tool produces and where this crate earns its keep).
 //!   D-module     Module collapses: resolution half -> SCIP namespace edges (a file IS
 //!                a namespace; SCIP's symbol scheme already nests modules); binding
@@ -44,7 +52,7 @@
 //!   D-scip-wire  SCIP is a BIDIRECTIONAL wire: `ScipOccurrence <-> Node<F>` both ways.
 //!                Our AST facts project OUT to ScipOccurrence (joinable, ratchet-
 //!                eligible); foreign indexers project IN. Round-trippable for the 3
-//!                resolution families ONLY — df/flow/binding have no SCIP shape.
+//!                resolution families ONLY (df/flow/binding have no SCIP shape).
 //!   D-ratchet    `merge` generalizes from "SCIP overrides" to per-fact best-producer-
 //!                wins over N producers (`Ast`, `Scip(&indexer)`, `Ghcacher`). The
 //!                `Producer` tag rides the bundle, not the row.
@@ -55,13 +63,13 @@
 //!   D-port-clean port + clean v5's roster (syn/oxc/tree-sitter) as-is; no buy-vs-buy gate.
 //!   D-concrete   concrete structs until a second impl (crate-map practicality ruling).
 //!
-//! CPU trait factoring — one seam per orthogonal dimension, no fat trait:
-//!   tool    `Parser`        syn / oxc / tree-sitter — one impl per backing engine
+//! CPU trait factoring: one seam per orthogonal dimension, no fat trait:
+//!   tool    `Parser`        syn / oxc / tree-sitter: one impl per backing engine
 //!   family  `Project<F>`    phase 1: `Parsed -> FamilyBundle<F>`
-//!           `Resolve<F>`    phase 2: `FamilyBundle<F> + RepoCx -> Vec<ProjectEdge>`
+//!           `Resolve<F>`    phase 2: `FamilyBundle<F> + ProjectCx -> Vec<ProjectEdge>`
 //!   binding `Source`        one row per lang: parser + per-family projectors + scip
 //!   orch    `Dispatch`      ONE generic impl; rayon + arena-per-worker live here
-//!   gitfu   `BlobSource`    rev -> blob (`GitShellout` / others; lab picks)
+//!   blobs   `BlobSource`    file locator -> Blob (`GitShellout` / `Filesystem` / ...; lab picks)
 //!   scip    `ScipSource`    build (subprocess) + load (protobuf parse)
 //!   (enum, not trait, for the closed vocabularies: per-family kind enums, `Producer`,
 //!    `FamilyTag`. trait for the open extension points.)
@@ -73,7 +81,8 @@
 //!   git-fu lab   re-establish the efficient rev->blob story (shellout vs libgit2 vs
 //!                pack-index direct) on linux-kernel-history class input. v5's results
 //!                were confusing; shellout usually won. RELEASES GitFuLabbed.
-//!   k-CFA / node-level types / CFG-dominators — extract or engine? (Evidence-gated.)
+//!                (non-git blob sourcing is plain; not labbed.)
+//!   k-CFA / node-level types / CFG-dominators: extract or engine? (Evidence-gated.)
 //!
 //! Companion epic plan: `v6/plans/2026-07-23-sprefa-extract-golden-plan.md`.
 
@@ -86,8 +95,7 @@ use crate::_3_extract::_4_scip::{ScipError, ScipIndex};
 //   TypedFamilies  epic 0 : per-family Family trait + Node<F>/Edge<F>; sums deleted
 //   GitFuLabbed    epic G : rev->blob shellout-vs-libgit2 lab (linux-kernel-history class)
 //   Ported         epic P : v5 four families + SCIP ported behind Project<F>/Resolve<F>
-//   Arened         epic 2 : arena-per-file RSS flat under N-worker parse
-//   Merged         epic 3 : ratchet — per-fact best-producer-wins over N producers
+//   Merged         epic 3 : ratchet: per-fact best-producer-wins over N producers
 //   Dispatched     epic 4 : rayon dispatch, no lock contention / livelock
 //   FlowUnified    epic 5 : flow_edge promoted to typed Flow<F> edges
 //   Evidence       frontier: a measurement that closes a question
@@ -101,20 +109,25 @@ pub struct FlowUnified;
 pub struct Evidence;
 
 // =============================================================================
-// git-fu — rev -> file bytes (the layer this crate owns per the scope ruling)
+// blob source: file bytes in (the layer this crate owns per the scope ruling)
 // =============================================================================
-/// Read one file's bytes at one rev. The expected impl shells out (`git cat-file`
-/// bulk + existence probe + rev-parse); the engine MAY pre-stage bytes and bypass.
-/// v5 source: `engine/repo.rs:1169 read()`, `:1152 cat-file --batch`, `revid.rs`
-/// Rev/`GitOid`. The efficient-vs-not story is a lab (frontier: GitFuLabbed).
+/// File bytes in, content-hashed out. SOURCE-AGNOSTIC: a corpus may be a git
+/// worktree (`GitShellout` impl: rev baked in at construction, bytes via cat-file)
+/// or a plain directory (`Filesystem` impl: path -> bytes, "version" = now). The
+/// engine MAY pre-stage bytes and bypass this. The content hash is the cache key;
+/// how bytes were found (rev vs now) never is. v5 git path: `engine/repo.rs:1169
+/// read()`, `:1152 cat-file --batch`, `revid.rs` Rev/`GitOid`. The git
+/// efficient-vs-not story is a lab (frontier: GitFuLabbed); non-git is plain.
 pub trait BlobSource: Sync {
-    /// `repo_root` is the worktree; `rev` is a git-resolvable object name; `path`
-    /// is repo-relative. Returns the blob bytes, or None if absent at that rev.
-    fn blob_at(&self, repo_root: &std::path::Path, rev: &str, path: &str) -> Option<Vec<u8>>;
+    /// Read one file's bytes for the corpus this source was built over. Returns
+    /// the bytes (the caller hashes them into the `BlobHash` cache key) or None.
+    /// Whatever "version" means (a git rev, fs now) is construction state of the
+    /// concrete impl, not a parameter here.
+    fn blob(&self, path: &str) -> Option<Vec<u8>>;
 }
 
 // =============================================================================
-// Trait · Extract — the contract surface (each method doc = the note)
+// Trait · Extract: the contract surface (each method doc = the note)
 // =============================================================================
 /// The extraction contract. SYNC throughout. The engine calls `dispatch` with the
 /// changed blobs + the active cone mask; extract returns normalized nodes + edges +
@@ -124,9 +137,9 @@ pub trait BlobSource: Sync {
 /// (`FileBundle`/`ProjectBundle`/`ProjectCx`). They become, per the decisions above:
 ///   extract_file    -> per-family `Project<F>::project` (one per family, masked)
 ///   resolve_project -> per-family `Resolve<F>::resolve` (call/type/module; df none)
-///   ProjectCx       -> `RepoCx`            (project = repo)
+///   ProjectCx       -> kept (project = a corpus root; git is one BlobSource, not assumed)
 ///   merge           -> `ratchet(&[(Producer, ExtractOutput)]) -> ExtractOutput`
-///   dispatch        -> unchanged shape     (the ONE generic rayon orchestrator)
+///   dispatch        -> unchanged shape (the ONE generic rayon orchestrator)
 pub trait Extract {
     /// OPEN · rayon fan-out over `jobs`, one arena per worker · oracle: v5
     /// extractors (syn/oxc/tree-sitter) byte-identical on the same corpus ·
@@ -144,9 +157,9 @@ pub trait Extract {
     /// REVISION -> `Project<F>::project`.
     fn extract_file(&self, job: &ExtractJob, sources: &[Source]) -> FileBundle;
 
-    /// OPEN · phase 2: cross-file resolution · cache key (blob, repo_digest,
+    /// OPEN · phase 2: cross-file resolution · cache key (blob, project_digest,
     /// mask) · oracle v5 `ModuleResolver::edges` + type/call resolvers.
-    /// REVISION -> `Resolve<F>::resolve` (RepoCx).
+    /// REVISION -> `Resolve<F>::resolve` (ProjectCx).
     fn resolve_project(
         &self,
         blob: &ExtractJob,
@@ -196,7 +209,7 @@ pub struct MergedBundle {
 }
 
 // =============================================================================
-// The stub impl — every body is `todo!()`; the doc on each method IS the note.
+// The stub impl: every body is `todo!()`; the doc on each method IS the note.
 // =============================================================================
 pub struct Tasks;
 
@@ -234,7 +247,7 @@ impl Extract for Tasks {
 }
 
 // =============================================================================
-// The remaining plan, as a trait — proof-token methods for the open epics.
+// The remaining plan, as a trait: proof-token methods for the open epics.
 // =============================================================================
 /// A method's ARGS are body predicates (facts released earlier); its RETURN is
 /// the head predicate. Linear narrative ordering, not hard build deps. Epic 0 types
@@ -246,7 +259,8 @@ pub trait ExtractPlan {
     ///    store seam + ratchet key only.
     fn families_typed(&self) -> TypedFamilies;
     /// G  rev->blob git-fu lab: shellout vs libgit2 vs pack-index direct, on
-    ///    linux-kernel-history class input. v5: shellout usually won.
+    ///    linux-kernel-history class input. v5: shellout usually won. (non-git
+    ///    blob sourcing is a plain `Filesystem` impl, not labbed.)
     fn git_fu_labbed(&self, proof: &TypedFamilies) -> GitFuLabbed;
     /// P  port v5's four families + SCIP behind `Project<F>`/`Resolve<F>`, normalized
     ///    (sym->span, kind-String->typed enum, one Span). Parity: byte-identical vs v5.
@@ -258,9 +272,9 @@ pub trait ExtractPlan {
     /// 4  rayon dispatch over a real corpus hits no lock contention / livelock.
     fn parallel_dispatch_proven(&self, proof: &Merged) -> Dispatched;
     /// 5  flow_edge (v5 stdlib 5th family, std/flow.dl:89) promoted to typed
-    ///    `Flow<F>` edges — the interprocedural value-flow union in the type system.
+    ///    `Flow<F>` edges: the interprocedural value-flow union in the type system.
     fn flow_edge_promoted(&self, proof: &Dispatched) -> FlowUnified;
-    /// frontier: k-CFA / node-level types / CFG-dominators — extract or engine?
+    /// frontier: k-CFA / node-level types / CFG-dominators: extract or engine?
     ///    CLI oracle (ast-grep/biome-shaped, v3 perf-lab lineage) parks here too.
     ///    Returns Evidence, not a shipped change.
     fn frontier(&self) -> Evidence;
