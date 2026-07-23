@@ -105,6 +105,10 @@ Parser buy-vs-buy: tree-sitter (40+, the universal backup), oxc (JS/TS, arena,
   not" is a LATER dilemma, not this crate's), cross-file name RESOLUTION
   execution (extract emits unresolved phase-1 specifiers + phase-2 resolutions;
   the store joins), full points-to / memory-SSA / reaching-definitions.
+- **Seam (where extract meets store):** the `RawNode → node_id` / `NameId → StrId`
+  / `Span → file_bytes` adapter lives in ONE module in the main engine crate, not
+  in extract or store. Extract's public API names no store type; the store knows
+  nothing about families; the main crate is the only code that touches both.
 - **Lowering:** source → arena CST (Parser tier) → masked projection (FileExtract
   / ProjectExtract) → owned `RawNode`/`RawEdge` Vecs → (engine seam) intern into
   store `node`/`edge`. The CST is transient; only the projection escapes the
@@ -241,6 +245,19 @@ flowchart TB
    dispatch batch (like the store's writer thread), not per blob. SCIP build is
    `tokio::process` (genuinely IO-shaped); SCIP load stays sync (fast CPU). Same
    split v6 already chose for `Store`/`StoreHandle`.
+9. **The extract→store adapter lives once, in the main crate.** The
+   `RawNode → store::node_id` interning (keyed by `(family, span, kind)`),
+   `NameId → StrId`, and `Span → file_bytes` writes are cross-crate glue; they go
+   in ONE module in the main engine crate (does not exist yet — only `sprefa-seed`
+   and `sprefa-store` are in the v6 workspace today), not duplicated in extract or
+   store. Extract emits; the store accepts; the main crate is the only place that
+   knows both.
+10. **Port + clean, do not relitigate the parser choice.** v5's per-lang roster
+    (syn for Rust, oxc for JS/TS, tree-sitter for kotlin/go/python + the CST
+    family) is inherited as-is. The work is porting v5's ~12.7K lines of
+    extraction behind the seed traits and normalizing (sym→span, kind-String→typed
+    enum, one Span), not a buy-vs-buy re-evaluation. A parser bench is optional
+    validation, not a gate.
 
 ## The epics (dependency order)
 
@@ -253,9 +270,10 @@ epic ledger exist (`mod.rs`).
 **Golden:** `cargo check` clean; a grep audit that every v5 `decls.rs` brand maps
 to a `_0_shape` enum variant (no vocabulary lost).
 
-### Epic 1 — hollow crate + tiered parser registry (buy-vs-buy)
+### Epic 1 — hollow crate + parser registry (port v5's roster)
 **Goal:** stand up `sprefa-extract` as a real crate with concrete-but-empty impls
-behind the seed traits, and LAB the parser choice per language.
+behind the seed traits. **Inherit v5's per-lang parser roster as-is** (syn/oxc/
+tree-sitter); the parser choice is ported, not relitigated.
 **Contract** (seed `_2_traits::Parser`): `fn parse<'a>(&self, content: &[u8], arena:
 &'a ParseArena) -> Cst<'a>`. Registry: `Source { parser, ast, scip }`.
 **Storage/identity:** no state across files; one arena per parse.
@@ -266,9 +284,10 @@ behind the seed traits, and LAB the parser choice per language.
    (floor; all other langs). One per backing tool, behind the trait.
 1.2 `Source` registry table: the v5 roster (rust/ts/kotlin/go/python/c) mapped to
    tiers, lifted from `lang_tables.rs`.
-1.3 buy-vs-buy bench: parse throughput (MB/s) + peak RSS per parser over a real
-   corpus (the sprefa tree + a TS-heavy repo). oxc-vs-tree-sitter for JS/TS is
-   the live decision; syn-vs-tree-sitter for Rust is the second.
+1.3 parser roster: inherit v5 — `SynParser` (Rust), `OxcParser` (JS/TS),
+   `TsParser` (kotlin/go/python + the CST family). A throughput/RSS bench is
+   OPTIONAL validation, not a gate; revisit only if a port blocks on a parser
+   limitation.
 **Lowering:** `Parser` → `Cst` (arena-borrowed); no projection yet.
 **Done:** the crate compiles standalone; the bench prints the per-parser numbers.
 **Golden:** parse sprefa's own `src/` through each Rust parser; assert the node
@@ -401,8 +420,7 @@ the seed at `6dea0166` (branch `plan/extract-golden-plan`). Epics 1 + 2 can pair
 (parser bench feeds the arena budget); 3 is the bulk; 4 + 5 follow. This plan +
 the seed header are the spec — an agent should not re-derive types, only impl them.
 
-<!-- todo(decision): oxc-vs-tree-sitter for JS/TS — Epic 1.3 bench decides; oxc wins on speed/arena, tree-sitter on lossless CST + shared FFI story -->
-<!-- todo(decision): syn-vs-tree-sitter for Rust — syn gives proc-macro-grade accuracy + the existing v5 extractor; tree-sitter unifies the FFI story. Lean syn (port cost lowest) unless the lossless CST is needed -->
+<!-- resolved(decision) 2026-07-23: inherit v5 — oxc for JS/TS, syn for Rust, tree-sitter for kotlin/go/python + CST family. Port + clean; no buy-vs-buy gate. Revisit only if a port blocks on a parser limitation. -->
 <!-- todo(perf): arena cap policy — skip-and-log vs spill-to-disk for a file over arena_bytes; the lab finds the real max single-file arena on the corpus -->
 <!-- todo(decision): phase-2 placement — per-blob with prebuilt cx (current sketch) vs a post-barrier pass; the small-files workload in Epic 4 decides -->
 <!-- todo(feature): the content-keyed phase-1 cache lives in extract, the engine, or the store? v5 had it in the engine (FactCache); v6 should pin it once -->

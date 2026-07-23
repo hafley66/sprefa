@@ -31,7 +31,7 @@
 | [plans/2026-07-20-graph-layer-measurements.md](plans/2026-07-20-graph-layer-measurements.md) | 139 | v6 graph layer: measurements |
 | [plans/2026-07-21-spine-orm.md](plans/2026-07-21-spine-orm.md) | 200 | V6 spine — the 6 tables, one ORM, hard boundaries |
 | [plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md](plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md) | 184 | v6 core: the lab arc — oracles, why, efficiency, measured Big-O + empirical ratios |
-| [plans/2026-07-23-sprefa-extract-golden-plan.md](plans/2026-07-23-sprefa-extract-golden-plan.md) | 408 | sprefa-extract — the golden plan (distill v5, normalize for v6) |
+| [plans/2026-07-23-sprefa-extract-golden-plan.md](plans/2026-07-23-sprefa-extract-golden-plan.md) | 426 | sprefa-extract — the golden plan (distill v5, normalize for v6) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
@@ -365,21 +365,21 @@
 16:### Recon — observed facts (v5, at HEAD)
 70:### Recon — prior art (representation only; lazy/IVM stripped)
 90:### Plan boundary
-113:## The inversion (v5 → v6)
-120:### v5 — extraction lives INSIDE the engine (the tangle)
-159:### v6 — extraction is a LEAF below the store (sync core + async shell)
-198:### What changed (one axis per row)
-217:## Decisions (the rulings this crate rests on)
-245:## The epics (dependency order)
-247:### Epic 0 — the type math (DONE)
-256:### Epic 1 — hollow crate + tiered parser registry (buy-vs-buy)
-277:### Epic 2 — arena-per-file RAM mastery (the 36GB-kill)
-301:### Epic 3 — two-phase extraction + SCIP tier merge (the core port)
-331:### Epic 4 — parallel dispatch + contention lab
-351:### Epic 5 — flow_edge promotion + term-op unity
-367:## Frontier (deferred decisions + the evidence each needs)
-386:## Verification (standing rails, every epic)
-397:## Staffing
+117:## The inversion (v5 → v6)
+124:### v5 — extraction lives INSIDE the engine (the tangle)
+163:### v6 — extraction is a LEAF below the store (sync core + async shell)
+202:### What changed (one axis per row)
+221:## Decisions (the rulings this crate rests on)
+262:## The epics (dependency order)
+264:### Epic 0 — the type math (DONE)
+273:### Epic 1 — hollow crate + parser registry (port v5's roster)
+296:### Epic 2 — arena-per-file RAM mastery (the 36GB-kill)
+320:### Epic 3 — two-phase extraction + SCIP tier merge (the core port)
+350:### Epic 4 — parallel dispatch + contention lab
+370:### Epic 5 — flow_edge promotion + term-op unity
+386:## Frontier (deferred decisions + the evidence each needs)
+405:## Verification (standing rails, every epic)
+416:## Staffing
 ```
 
 ### skills/mermaid-living-map.md
