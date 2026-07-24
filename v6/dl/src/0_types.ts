@@ -157,10 +157,16 @@ export interface HostDef<Req extends Row = Row, Resp extends Row = Row> {
   run(req: Req): AsyncIterable<Resp>; // det and multi both fit
 }
 
-/** effect_cache row: digest = mix(host, ...requestTuple) — the v5
- *  pending_effect law. `?` = idempotent (cache hit skips; fork ruling). */
+/** effect_cache row (M8-beta reshape, IdentityWitnessLaw): full_digest = mix(host,
+ *  ...identityCols, ...saltCols) is the PRIMARY KEY — fire-once per WITNESS, not per
+ *  address. identity_digest = mix(host, ...identityCols) groups every witness of the
+ *  same identity (the supersession group; indexed, not unique — a row per witness can
+ *  share it). `?` = idempotent on full_digest (cache hit skips; fork ruling); a NEW
+ *  full_digest within a live identity_digest group triggers supersession (1_hosts.ts's
+ *  HostRunner) instead of a second independent fire. */
 export interface EffectCacheRow {
-  readonly digest: string;
+  readonly full_digest: string;
+  readonly identity_digest: string;
   readonly host: string;
   readonly state: "pending" | "done" | "error";
   readonly requested_tick: number;

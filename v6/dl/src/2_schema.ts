@@ -5,7 +5,13 @@
  * Contract (plan M2, tasks.d.ts): `ddl(decls, retention) -> string[]`.
  *   rel_<name>(cols..., PRIMARY KEY(all cols))     -- set semantics
  *   delta(rel, row_digest, tick, weight)           -- tick shape (b), pinned in DECISIONS
- *   effect_cache(digest PK, host, state, requested_tick)
+ *   effect_cache(full_digest PK, identity_digest, host, state, requested_tick)
+ *     + an index on identity_digest -- M8-beta reshape (IdentityWitnessLaw, tasks.d.ts):
+ *     full_digest is the fire-once key (host + identity cols + witness/salt cols);
+ *     identity_digest (host + identity cols only) groups every witness of one identity,
+ *     the supersession group HostRunner reads by. No migration path: every db in this
+ *     slice is a fresh temp file (tests/curl-session boot a new sqlite each run), so the
+ *     old single-`digest`-column shape is simply replaced, not migrated.
  *   store_meta(key PK, value)                      -- the monotone 'tick' counter row
  * Row identity = full column tuple; row_digest = oracle.mix XOR law (ingest.ts note 6),
  * folded via 0_digest.ts's foldRowDigest (the one shared fold; do not re-implement it).
@@ -32,8 +38,9 @@ export function ddl(decls: readonly RelDecl[], retention: ReadonlyMap<string, Re
     "CREATE TABLE IF NOT EXISTS delta (rel TEXT NOT NULL, row_digest INTEGER NOT NULL, tick INTEGER NOT NULL, weight INTEGER NOT NULL)",
   );
   statements.push(
-    "CREATE TABLE IF NOT EXISTS effect_cache (digest TEXT PRIMARY KEY, host TEXT NOT NULL, state TEXT NOT NULL, requested_tick INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS effect_cache (full_digest TEXT PRIMARY KEY, identity_digest TEXT NOT NULL, host TEXT NOT NULL, state TEXT NOT NULL, requested_tick INTEGER NOT NULL)",
   );
+  statements.push("CREATE INDEX IF NOT EXISTS idx_effect_cache_identity ON effect_cache(identity_digest)");
   statements.push("CREATE TABLE IF NOT EXISTS store_meta (key TEXT PRIMARY KEY, value)");
   statements.push("INSERT INTO store_meta(key,value) VALUES ('tick',0) ON CONFLICT(key) DO NOTHING");
   return statements;
