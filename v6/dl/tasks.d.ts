@@ -93,6 +93,48 @@ export interface EpicLedger {
    *  supersession = orchestrator latest-wins interpretation, flagged in
    *  1_hosts.ts (A->B->A re-fires). */
   M8_identity_witness: { done: true; evidence: "console_hit retracts for real; fire-once per full digest; churn receipts exact" };
+
+  /** DONE 2026-07-24 PM (codex/m9-storage-plane d238bc8d..3047d6cb, merged
+   *  72fb7f48): the rel plane stops storing strings as keys. Every relbase_* is
+   *  all-INTEGER, composite-PK, WITHOUT ROWID, minted through the store's
+   *  create_rel_table on its strings/files spine; rel_* views restore the text
+   *  surface so every reader above the storage line is byte-identical.
+   *  delta.rel_id and both effect_cache digests are INTEGER; ingest paths are
+   *  DL_ROOT-relative (owner ruled the process.cwd() capture acceptable).
+   *
+   *  Receipts on the 251-file rxjs corpus, before vs after on the same driver:
+   *  db 40.9MB -> 9.2MB, index share 45.9% -> 1.24% against the <=15% gate,
+   *  zero TEXT join columns (the remaining TEXT is the strings payload itself,
+   *  the effect_cache host/state labels, and store-spine repos/store_meta).
+   *  Review gate re-run at merge rather than taken from the agent's summary:
+   *  65/65 dl, 75/75 store, typecheck clean, curl-session golden PASS twice
+   *  outside the sandbox, schema proof by sqlite_master dump.
+   *
+   *  Carries the ONE-SQLITE-INTERFACE ruling (owner, same session): open_db()
+   *  in the store's lib.ts is the single connection constructor, leaving zero
+   *  @libsql/client imports in dl src+tests (scripts/dbstat_report.mjs is the
+   *  one documented exception, a plain-node diagnostic with a sqlite3-CLI
+   *  fallback). Horn (c) stands: dl fact rels ride the store's spine, they do
+   *  not live inside its node/edge tables. Store needed zero changes. */
+  M9_storage_plane: { done: true; evidence: "251-file corpus: 40.9MB -> 9.2MB, index 45.9% -> 1.24%, zero TEXT join columns" };
+
+  /** DONE 2026-07-24 PM (c350e88e header, c18efcf3 I-prefix, 2ded157e dead
+   *  alias removal, 45b3225a dataflow lift): both packages carry a C-header
+   *  contract file. sprefa-store gains src/engine/types.ts (I-prefixed contract
+   *  per class + an I*Statics for the side `implements` cannot see + a DATAFLOW
+   *  section declaring the free functions that move data across them); v6/dl's
+   *  src/0_types.ts gains IDlRuntime, IHostRunner, and the entry-point types
+   *  Ddl/IngestFile/ShHost/StartServer, with the pre-existing Bridge and
+   *  ToFactLines finally bound to their implementations.
+   *
+   *  Nothing in TypeScript binds a free function to a declared type, so each
+   *  one carries an AssertTrue<...> alias in its implementing file. Every rail
+   *  was broken on purpose before being trusted (TS2416 on an instance drift,
+   *  TS2344 on a statics drift and on an API drift). It caught a real one on
+   *  the first run: IngestFile had been declared `(path) => Promise<TickReport>`
+   *  since M3 while the implementation took `(rt, filePath)`, wrong for the
+   *  whole arc because no implementation was ever checked against it. */
+  M10_contract_headers: { done: true; evidence: "both headers enforced by AssertTrue proofs; caught the stale IngestFile declaration" };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
