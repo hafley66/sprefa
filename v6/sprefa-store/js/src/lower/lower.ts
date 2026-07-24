@@ -351,7 +351,8 @@ function bodyObsFor(
 // ─────────────────────────────────────────────────────────────────────────────
 // Equi-join: nested-loop over body predicates in body order. A Lit arg selects
 // (row[col] === value); a Var arg binds (first occurrence) or joins (shared-var
-// consistency); a Wild arg (negated refs only) always matches, binds nothing. A
+// consistency); a Wild arg (positive or negated ref) always matches, binds nothing —
+// two wildcards never compare to each other, since neither ever binds. A
 // `notrel` predicate is an ANTI-join: it drops any binding for which the negated
 // rel's CURRENT row set has a compatible row, and otherwise leaves the binding
 // untouched — no new columns, no new bindings (negation introduces no information,
@@ -381,13 +382,17 @@ function equiJoin(rule: Rule, relRows: ReadonlyMap<string, Row[]>): Binding[] {
 }
 
 /** Extend `prev` with row's columns per the ref's args. Null if a Lit or shared-var
- *  check fails. Structural over `{args}` so both `RelRef` (Arg: Var|Lit) and
- *  `NegRelRef` (NegArg: Var|Lit|Wild) reuse it — the anti-join filter above only
- *  checks the return value (compatible or not), discarding the extended map, so an
- *  unbound Var (or a Wild) in a negated ref is correctly existentially quantified
- *  over the negated rel's rows (negation-as-failure). A positive `RelRef`'s `args` is
- *  typed `Arg[]` (no `Wild`), so `arg.kind === "wild"` is unreachable there — the type
- *  system enforces the "wildcard only in a negated ref" rule from ast.ts. */
+ *  check fails. Structural over `{args}` so both `RelRef` and `NegRelRef` reuse it
+ *  (`Arg`/`NegArg` are the same Var|Lit|Wild set as of ast.ts's positive-wildcard
+ *  landing). A `Wild` never binds and never selects — "don't project, don't
+ *  consistency-check" — so two wildcards in the same rule are independently
+ *  existential and never compare to each other. In a negated ref specifically, an
+ *  unbound Var (or a Wild) is existentially quantified over the negated rel's rows
+ *  (negation-as-failure); the anti-join filter above only checks the return value
+ *  (compatible or not), discarding the extended map either way. `ref.args.length` may
+ *  be shorter than the row's width (trailing-arg elision, ast.ts's `RelRef` doc): the
+ *  loop below only reads `args[col]` for `col < ref.args.length`, so missing trailing
+ *  columns are never consulted — same effect as an explicit trailing `Wild`. */
 function tryBind(ref: { readonly args: readonly NegArg[] }, row: Row, prev: Binding): Binding | null {
   const next = new Map(prev);
   for (let col = 0; col < ref.args.length; col++) {
