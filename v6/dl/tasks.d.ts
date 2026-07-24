@@ -85,6 +85,14 @@ export interface EpicLedger {
    *  with re-exports; zero behavior change (52/52, curl golden PASS, fixtures
    *  byte-identical, store 75/75). */
   M7_types_header: { done: true; evidence: "0_types.ts consolidation; goldens byte-identical" };
+  /** DONE 2026-07-24 PM (dl/m8-witness 3b68ca55 + dl/m8-super 366a513e..000b8e7f,
+   *  merged): witness plumbing + supersession per IdentityWitnessLaw below. 63/63;
+   *  curl transcript honest (console_hit/hit_count -> [] for real); churn stress
+   *  fires==30==N*M, delta rows==216 exact, p50 2.08ms/commit, rss +10.22MB;
+   *  stress gun within noise of the pinned baseline. Cache-row DELETE on
+   *  supersession = orchestrator latest-wins interpretation, flagged in
+   *  1_hosts.ts (A->B->A re-fires). */
+  M8_identity_witness: { done: true; evidence: "console_hit retracts for real; fire-once per full digest; churn receipts exact" };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

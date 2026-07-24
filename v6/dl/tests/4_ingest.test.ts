@@ -86,7 +86,7 @@ test("F2 mapping: one record per shape maps to spine rel rows + span_line + file
 // M8-alpha (IdentityWitnessLaw, tasks.d.ts): the `file` row's content_hash is the
 // witness a salted probe joins against: these two tests are the witness's own
 // EXIST (this one) and FLOW (the next one) half.
-test("file row carries the sha-256 hex digest of the file's bytes", async () => {
+test("file row holds the sha-256 hex digest of the file's bytes", async () => {
   const { rt, dbPath } = await bootFixture(spineProgram());
   try {
     await ingestFile(rt, BAD_TS);
@@ -104,7 +104,7 @@ test("file row carries the sha-256 hex digest of the file's bytes", async () => 
 // content_hash row and inserts the new one. Note this nets to 0 in TickReport.changed
 // (src/3_runtime.ts applyEdbTxn: net = genuinelyNew.length - allRetracted.length, both
 // 1 here); the net summary is not where the heartbeat shows. It shows on the per-tick
-// delta STREAM (rt.deltas$), which carries the raw insert/retract sets regardless of
+// delta STREAM (rt.deltas$), which reports the raw insert/retract sets regardless of
 // net, so this test asserts against that stream directly instead of TickReport.
 test("editing content flips the file row: old content_hash retracts, new one inserts (witness heartbeat)", async () => {
   const { rt, dbPath } = await bootFixture(spineProgram());
