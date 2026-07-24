@@ -42,7 +42,10 @@ use crate::{ast, db};
 
 use tree_sitter::Parser;
 
-pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, root: PathBuf) -> Result<()> {
+pub fn run_lsp(
+    programs: &[String], db_path: Option<&str>, db_defaulted: bool, root: PathBuf,
+    diag_db: Option<PathBuf>,
+) -> Result<()> {
     // Stand up the connection and complete the initialize handshake FIRST: the
     // client sends its workspace in `rootUri`, which overrides the process cwd
     // as the scan root. This is how the root reaches an editor-spawned server —
@@ -82,6 +85,20 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, r
     }
     let init_params = connection.initialize(caps_value)?;
     let root = client_root_uri(&init_params).unwrap_or(root);
+
+    // M5.3 `--diag-db` mode: NO engine boot. The rest of this function (db
+    // defaulting, `resolve_programs`/`prepare_paths`, `Engine::new`, the cold
+    // tick, and the normal message loop) never runs — diagnostics come
+    // entirely from polling `diag_db`'s `diag_v5` view. Additive: this branch
+    // returns before any of the engine-boot code below executes, so the
+    // default `--lsp` path (no `--diag-db`) is byte-for-byte unchanged.
+    if let Some(diag_db_path) = diag_db {
+        run_diag_db_mode(&connection, &root, diag_db_path)?;
+        drop(connection);
+        io_threads.join()?;
+        return Ok(());
+    }
+
     // Storage-endgame L2: the defaulted db is the per-root db, keyed off the
     // root's canonical path — and the client's rootUri (above) can override the
     // cwd root the CLI keyed it from. Recompute for the RESOLVED root so an
@@ -363,6 +380,251 @@ fn spawn_daemon_subscriber(root: PathBuf, sender: crossbeam_channel::Sender<lsp_
             }))
             .is_ok()
     });
+}
+
+// ---------- M5.3: `--diag-db` mode (no engine boot) ----------
+//
+// The whole mode is: a background thread polls a sqlite file's `diag_v5`
+// view on a 500ms cadence and forwards `textDocument/publishDiagnostics`
+// notifications through the same `connection.sender` channel the daemon-push
+// subscriber above uses; the main thread just runs the connection's receiver
+// loop so `shutdown`/`exit` still work. No `Engine`, no tick, no db write —
+// the node-side v6 runtime owns `diag_v5` entirely; this reader treats its 9
+// columns as the whole interface.
+
+/// One row of the `diag_v5` view: `path, line, col, end_line, end_col,
+/// severity, code, msg, hint`. Positions are already 0-based per the view's
+/// contract (unlike the engine's `diag` relation, which is 1-based and goes
+/// through `to_diag`'s line-1 adjustment).
+struct DiagV5Row {
+    path: String,
+    line: i64,
+    col: i64,
+    end_line: i64,
+    end_col: i64,
+    severity: String,
+    code: String,
+    msg: String,
+    hint: Option<String>,
+}
+
+/// Run the `--diag-db` message loop: spawn the poll thread, then block on the
+/// connection's receiver only long enough to answer `shutdown`/`exit` (no
+/// other request is meaningful in this mode — diagnostics arrive from the
+/// poll thread, not from editor events). Returns when the client shuts down.
+fn run_diag_db_mode(connection: &Connection, root: &Path, diag_db_path: PathBuf) -> Result<()> {
+    // Relative paths in `diag_v5.path` resolve against the LSP process's own
+    // cwd (the pinned contract), falling back to the resolved workspace root
+    // if the cwd is unreadable for some reason.
+    let cwd = std::env::current_dir().unwrap_or_else(|_| root.to_path_buf());
+    let sender = connection.sender.clone();
+    std::thread::Builder::new()
+        .name("dl-lsp-diag-db-poll".into())
+        .spawn(move || diag_db_poll_loop(diag_db_path, cwd, sender))?;
+
+    for msg in &connection.receiver {
+        if let Message::Request(req) = msg {
+            if connection.handle_shutdown(&req)? {
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Background poll loop for `--diag-db`: every 500ms, check `PRAGMA
+/// data_version` on a PERSISTENT read-only connection to `diag_db_path`. On a
+/// change from the last observed value, SELECT the 9 `diag_v5` columns, group
+/// by path, and publish one `textDocument/publishDiagnostics` per path —
+/// INCLUDING an empty-diagnostics publish for any path that was published on
+/// a previous round but is absent from the current SELECT (the retraction
+/// half: it clears that file's squiggles).
+///
+/// `data_version` MUST be read repeatedly on the SAME connection to mean
+/// anything: verified empirically (sqlite3 CLI + python, both journal and WAL
+/// mode) that a brand-new connection's first `PRAGMA data_version` always
+/// reads as an unchanging per-connection baseline regardless of how many
+/// commits other connections have made — only a SECOND-and-later read on
+/// that SAME connection reflects a since-elapsed external commit. Re-opening
+/// fresh every poll (the first draft of this loop) would silently never
+/// detect a single change. So the connection is held across iterations and
+/// only replaced on error (including "the file does not exist yet", the
+/// documented startup race) — that reopen-on-error path is `open_diag_db_conn`.
+///
+/// Never exits on an IO/SQL error or a missing db/view: those log via
+/// `tracing` and the loop keeps polling. Ends only when the connection's
+/// sender is closed (the LSP session shut down).
+fn diag_db_poll_loop(
+    diag_db_path: PathBuf, cwd: PathBuf, sender: crossbeam_channel::Sender<Message>,
+) {
+    let mut conn: Option<rusqlite::Connection> = None;
+    let mut last_data_version: Option<i64> = None;
+    let mut last_published_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
+    loop {
+        if conn.is_none() {
+            match open_diag_db_conn(&diag_db_path) {
+                Ok(opened) => conn = Some(opened),
+                Err(e) => {
+                    tracing::debug!(
+                        error = %e, path = %diag_db_path.display(),
+                        "[lsp diag-db] open failed (db may not exist yet), will retry in 500ms"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    continue;
+                }
+            }
+        }
+        match poll_diag_v5_once(conn.as_ref().unwrap(), &mut last_data_version) {
+            Ok(Some(rows)) => {
+                let by_path = group_diag_v5_rows(rows);
+                let current_paths: std::collections::HashSet<String> = by_path.keys().cloned().collect();
+                let mut send_failed = false;
+                for (path, diagnostics) in by_path {
+                    if publish_diag_v5_path(&sender, &cwd, &path, diagnostics).is_err() {
+                        send_failed = true;
+                        break;
+                    }
+                }
+                if !send_failed {
+                    for stale_path in last_published_paths.difference(&current_paths) {
+                        if publish_diag_v5_path(&sender, &cwd, stale_path, Vec::new()).is_err() {
+                            send_failed = true;
+                            break;
+                        }
+                    }
+                }
+                if send_failed {
+                    return; // connection closed; nothing left to publish to.
+                }
+                last_published_paths = current_paths;
+            }
+            Ok(None) => {} // data_version unchanged since the last poll; nothing to do.
+            Err(e) => {
+                tracing::warn!(
+                    error = %e, path = %diag_db_path.display(),
+                    "[lsp diag-db] poll failed, reopening connection and retrying in 500ms"
+                );
+                // The connection itself may be the broken part (the file was
+                // replaced/unlinked under us) — drop it so the next iteration
+                // opens fresh via `open_diag_db_conn`, restarting the
+                // data_version baseline against whatever is there now.
+                conn = None;
+                last_data_version = None;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
+/// Open `diag_db_path` read-only. Fails (rather than creating the file) when
+/// the db does not exist yet — the caller retries on the next poll tick,
+/// which is exactly the "db may not exist yet at startup" contract.
+fn open_diag_db_conn(diag_db_path: &Path) -> Result<rusqlite::Connection> {
+    Ok(rusqlite::Connection::open_with_flags(
+        diag_db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?)
+}
+
+/// One poll cycle against the PERSISTENT `conn` (see `diag_db_poll_loop`'s doc
+/// for why this must be the same connection across calls): read `PRAGMA
+/// data_version`. `Ok(None)` when the value is unchanged from
+/// `*last_data_version` (nothing to re-publish); `Ok(Some(rows))` on a
+/// change, having updated `*last_data_version`. A missing `diag_v5` view
+/// reads as zero rows (the node-side runtime may not have created it yet);
+/// any other sqlite/IO error propagates to the caller, which logs it, drops
+/// the connection, and retries next cycle.
+fn poll_diag_v5_once(conn: &rusqlite::Connection, last_data_version: &mut Option<i64>) -> Result<Option<Vec<DiagV5Row>>> {
+    let data_version: i64 = conn.query_row("PRAGMA data_version", [], |row| row.get(0))?;
+    if *last_data_version == Some(data_version) {
+        return Ok(None);
+    }
+    *last_data_version = Some(data_version);
+
+    let query_result = conn
+        .prepare("SELECT path, line, col, end_line, end_col, severity, code, msg, hint FROM diag_v5")
+        .and_then(|mut stmt| {
+            stmt.query_map([], |row| {
+                Ok(DiagV5Row {
+                    path: row.get(0)?,
+                    line: row.get(1)?,
+                    col: row.get(2)?,
+                    end_line: row.get(3)?,
+                    end_col: row.get(4)?,
+                    severity: row.get(5)?,
+                    code: row.get(6)?,
+                    msg: row.get(7)?,
+                    hint: row.get(8)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+        });
+    let rows = match query_result {
+        Ok(rows) => rows,
+        // The view isn't there yet (node-side runtime hasn't created it, or
+        // this poll raced a DROP/recreate) — treat exactly like zero rows,
+        // per the pinned mode contract, rather than surfacing an error.
+        Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("no such table") => Vec::new(),
+        Err(e) => return Err(e.into()),
+    };
+    Ok(Some(rows))
+}
+
+/// Group `diag_v5` rows by `path`, converting each to an LSP `Diagnostic`.
+fn group_diag_v5_rows(rows: Vec<DiagV5Row>) -> HashMap<String, Vec<Diagnostic>> {
+    let mut by_path: HashMap<String, Vec<Diagnostic>> = HashMap::new();
+    for row in rows {
+        by_path.entry(row.path.clone()).or_default().push(diag_v5_to_diagnostic(row));
+    }
+    by_path
+}
+
+/// `diag_v5.severity` string -> LSP `DiagnosticSeverity`. Per the pinned
+/// mapping: error/warn/info/hint -> ERROR/WARNING/INFORMATION/HINT; any other
+/// string (including unrecognized/empty) defaults to WARNING.
+fn diag_v5_severity(severity: &str) -> DiagnosticSeverity {
+    match severity {
+        "error" => DiagnosticSeverity::ERROR,
+        "warn" => DiagnosticSeverity::WARNING,
+        "info" => DiagnosticSeverity::INFORMATION,
+        "hint" => DiagnosticSeverity::HINT,
+        _ => DiagnosticSeverity::WARNING,
+    }
+}
+
+/// One `diag_v5` row -> an LSP `Diagnostic`. Positions are already 0-based
+/// (the view's contract), so unlike `to_diag` (the engine `diag` relation's
+/// converter, which is 1-based) this does no line/col adjustment.
+fn diag_v5_to_diagnostic(row: DiagV5Row) -> Diagnostic {
+    let range = Range::new(
+        Position::new(row.line.max(0) as u32, row.col.max(0) as u32),
+        Position::new(row.end_line.max(0) as u32, row.end_col.max(0) as u32),
+    );
+    let message = match &row.hint {
+        Some(hint) if !hint.is_empty() => format!("{}\nhint: {hint}", row.msg),
+        _ => row.msg,
+    };
+    let code = (!row.code.is_empty()).then(|| lsp_types::NumberOrString::String(row.code));
+    Diagnostic { range, severity: Some(diag_v5_severity(&row.severity)), code, source: Some("dl".into()), message, ..Default::default() }
+}
+
+/// Publish one file's diagnostics (possibly empty, for retraction) by
+/// resolving `path` against `cwd` when relative (absolute paths pass
+/// through unchanged) and sending `textDocument/publishDiagnostics` through
+/// `sender`. Returns `Err` only when the channel itself is closed (the
+/// caller treats that as "the session ended, stop polling").
+fn publish_diag_v5_path(
+    sender: &crossbeam_channel::Sender<Message>, cwd: &Path, path: &str, diagnostics: Vec<Diagnostic>,
+) -> std::result::Result<(), crossbeam_channel::SendError<Message>> {
+    let file_path = Path::new(path);
+    let abs = if file_path.is_absolute() { file_path.to_path_buf() } else { cwd.join(file_path) };
+    let Some(uri) = path_to_uri(&abs) else { return Ok(()); };
+    let params = PublishDiagnosticsParams { uri, diagnostics, version: None };
+    let notification = Notification {
+        method: "textDocument/publishDiagnostics".into(),
+        params: serde_json::to_value(params).unwrap_or_default(),
+    };
+    sender.send(Message::Notification(notification))
 }
 
 /// Query `diag` (optionally for one file), group by path, and send one

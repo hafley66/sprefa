@@ -111,6 +111,16 @@ struct Cli {
     /// must not kill the server with clap's duplicate-arg error.
     #[arg(long, alias = "stdio", overrides_with = "lsp", help_heading = "Run modes")]
     lsp: bool,
+    /// M5.3: additive `--lsp` source mode. Instead of booting the dl engine,
+    /// poll this sqlite file's `diag_v5` view (path, line, col, end_line,
+    /// end_col, severity, code, msg, hint) on a 500ms cadence and republish
+    /// its rows as LSP diagnostics, grouped by path. The db need not exist
+    /// yet at startup (the poller retries the open). No engine boot happens
+    /// in this mode; the default `--lsp` behavior without this flag is
+    /// unchanged. The view is created and maintained by the node-side v6
+    /// runtime.
+    #[arg(long, value_name = "PATH", help_heading = "Run modes")]
+    diag_db: Option<PathBuf>,
     /// Lint/ban mode: render the `diag` relation to stderr. Exit 0 clean, 2 if
     /// any `error`-severity row exists (Claude Code's blocking-hook code), 1 on
     /// a broken program. For pre-commit / CI / Claude Code hooks. See docs/rails.md.
@@ -463,7 +473,7 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
         crate::engine::QueryOutputFormat::Text
     };
     if cli.lsp {
-        crate::run_lsp(programs, db.as_deref(), db_defaulted, root)
+        crate::run_lsp(programs, db.as_deref(), db_defaulted, root, cli.diag_db)
     } else if cli.hook {
         // Harness-hook: stdin event -> tick -> stdout hook JSON. Exit 0 normally
         // (block rides the JSON), 1 if the program is broken (user-facing only).
