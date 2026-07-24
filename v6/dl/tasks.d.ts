@@ -121,6 +121,30 @@ export type BridgeResult = import("./src/0_types.ts").BridgeResult;
  *  headed by a program rule becomes IDB (derived); otherwise it stays EDB. */
 export type Bridge = import("./src/0_types.ts").Bridge;
 
+/** OWNER ESCALATION 2026-07-24 PM (M8, identity-vs-witness): the effect cache was
+ *  memoizing the ADDRESS without the VALUE WITNESS (digest = (host, template inputs)
+ *  only), so sg?-over-file-content kept stale response rows after a file fix
+ *  (console_hit ghosts; only diag died, via the span_line join). The law as ruled:
+ *  - IDENTITY = template-referenced request args (the supersession group).
+ *  - WITNESS  = probe args BEYOND the template inputs: legal, positional-only,
+ *    land between inputs and outputs, join the digest as SALT (v5 precedent:
+ *    wildcard clock-bucket salting of pending_effect), NEVER reach the executor.
+ *  - __req_h columns = inputCols + salt_<i>; __resp_h columns = inputCols +
+ *    salt_<i> + outputCols (responses self-describe their witness).
+ *  - effect_cache splits identity_digest vs full_digest (full is PK; index on
+ *    identity). Fire-once holds per FULL digest.
+ *  - SUPERSESSION: when a new full digest fires within an identity group, the
+ *    prior group's __resp_h rows retract in the SAME commit as the new inserts,
+ *    through the ordinary weights plane (gh-cache latest-wins, engine-side).
+ *  - The fixture witness: file(path, content_hash) spine rel (sha-256 hex of
+ *    bytes, computed at ingest); probe spelling
+ *    sg?("...", path, content_hash, start, end, text).
+ *  Perf baseline BEFORE M8 (2026-07-24): dl suite 669ms; curl-session ~1s wall;
+ *  store stress large-golden rx peakRSS 285.97MB slope 26.07, sql 304.38MB slope
+ *  10.05, digestsAgree=true; retract 0.60ms / scc 6.93ms / dred_cte 0.67ms. */
+export type IdentityWitnessLaw =
+  "digest = identity(template inputs) + witness(salt args); supersession retracts prior witness rows via weights";
+
 /** OWNER SCOPE CHANGE 2026-07-24 (named args INTO M1, out of frontier). Law:
  *  `rel(col: term, ...)` legal in body atoms and heads; named args resolve to
  *  positional slots at load (v5 semantics, ~1727 uses). Mixing: positional first,
