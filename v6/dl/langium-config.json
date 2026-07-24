@@ -1,0 +1,12 @@
+{
+  "projectName": "Dl",
+  "importExtension": ".ts",
+  "languages": [
+    {
+      "id": "dl",
+      "grammar": "grammar/dl.langium",
+      "fileExtensions": [".dl"]
+    }
+  ],
+  "out": "src/0_generated"
+}
