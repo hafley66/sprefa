@@ -23,7 +23,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::family::{CallF, CstF, DfF, SigSlot, TypeEntityKind, TypeF, TypeSig};
+use crate::family::{CallF, CallKind, CallSite, CstF, DfF, SigSlot, TypeEntityKind, TypeF, TypeSig};
 use crate::rows::{FamilyBundle, Node};
 use crate::seams::{Parser, Project};
 use crate::shape::{Span, Strings};
@@ -329,19 +329,125 @@ fn go_receiver_type(method: tree_sitter::Node, src: &[u8]) -> Option<String> {
 // CallF: callable definitions (nodes) + call sites (aux). Commit C.
 //
 // Ports v5 `go_walk_call_defs` (defs, incl. func_literal lambdas) +
-// `go_walk_call_sites` (sites). Commit C fills this in.
+// `go_walk_call_sites` (sites). v5's `mint_sym`/`lambda_sym`/`end` line are
+// dropped: a def is span + kind + name (the name is the bare identifier for
+// callee resolution, NOT a qualified sym). The def span COVERS its body (decl
+// start -> block end) so the seam's span-containment can bind a site's caller;
+// the parity line reads `line_of(span.start)` = the decl start line (v5's
+// `def.line`). Lambda defs (func_literal inside a fn/method body) keep kind=
+// Lambda, name=None (v5's empty name). A package-level func_literal
+// (`var f = func(){}`) is skipped: v5's lift only walks fn/method bodies, so
+// there is no enclosing scope to join (enclosing == "").
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Project the CallF family: one def node per callable (Free / Method / Lambda)
 /// + one site per call expression. Port of v5 `go_walk_call_defs` +
-/// `go_walk_call_sites`. Commit C fills this in.
+/// `go_walk_call_sites`.
 fn project_call(
-    _root: tree_sitter::Node,
-    _src: &[u8],
-    _strings: &mut Strings,
-    _sink: &mut FamilyBundle<CallF>,
+    root: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
 ) {
-    // Commit C: go_walk_call_defs + go_walk_call_sites.
+    go_walk_call_defs(root, src, strings, sink, false);
+    go_walk_call_sites(root, src, strings, sink);
+}
+
+/// The def span covers the whole callable body `[child.start, body.end)` for
+/// span-containment resolution. Port of v5 `end_of(child)` (the body end line).
+fn def_span(child: tree_sitter::Node) -> Span {
+    let start = child.start_byte();
+    let end = child.child_by_field_name("body").unwrap_or(child).end_byte();
+    Span { start: start as u32, len: (end - start) as u32 }
+}
+
+/// Walk every callable declaration, minting one def node per Free function /
+/// Method / Lambda. Port of v5 `go_walk_call_defs`. `in_fn` is v5's
+/// `!enclosing.is_empty()`: a func_literal only mints a Lambda def when inside a
+/// fn/method body (a package-level func literal has no enclosing scope to join).
+fn go_walk_call_defs(
+    node: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+    in_fn: bool,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            // @callable go function
+            "function_declaration" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let span = def_span(child);
+                    let name = go_text(name_node, src).to_string();
+                    sink.nodes.push(Node::new(span, CallKind::Free).with_name(strings.intern(&name)));
+                    go_walk_call_defs(child, src, strings, sink, true);
+                    continue;
+                }
+            }
+            // @callable go method
+            "method_declaration" => {
+                if let (Some(name_node), Some(_)) =
+                    (child.child_by_field_name("name"), go_receiver_type(child, src))
+                {
+                    let span = def_span(child);
+                    let name = go_text(name_node, src).to_string();
+                    sink.nodes
+                        .push(Node::new(span, CallKind::Method).with_name(strings.intern(&name)));
+                    go_walk_call_defs(child, src, strings, sink, true);
+                    continue;
+                }
+            }
+            // `func(...) {...}` inside a fn/method body: a Lambda. A package-level
+            // `var f = func(){}` (in_fn == false) is skipped, matching v5
+            // (enclosing == "" -> no Lambda def).
+            // @callable go lambda
+            "func_literal" if in_fn => {
+                let span = def_span(child);
+                sink.nodes.push(Node::new(span, CallKind::Lambda));
+                go_walk_call_defs(child, src, strings, sink, true);
+                continue;
+            }
+            _ => {}
+        }
+        go_walk_call_defs(child, src, strings, sink, in_fn);
+    }
+}
+
+/// Walk every `call_expression`, minting one call site per call. The callee is
+/// the trailing name: a bare `identifier`, or a `selector_expression`'s field
+/// (`recv.M` -> "M"). A type conversion `T(x)` reads as an ordinary call (the
+// syntactic tier can't tell a conversion from a call). Port of v5
+/// `go_walk_call_sites` + `go_callee`. The site span is the CALLEE node's start
+/// (line_of(span.start) = v5's reported site line).
+fn go_walk_call_sites(
+    node: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "call_expression" {
+            if let Some(func) = child.child_by_field_name("function") {
+                let callee = match func.kind() {
+                    "identifier" => Some(go_text(func, src).to_string()),
+                    "selector_expression" => {
+                        func.child_by_field_name("field").map(|field| go_text(field, src).to_string())
+                    }
+                    _ => None,
+                };
+                if let Some(callee) = callee {
+                    sink.aux.sites.push(CallSite {
+                        span: node_span(func),
+                        callee: strings.intern(&callee),
+                        callee_path: None,
+                    });
+                }
+            }
+        }
+        go_walk_call_sites(child, src, strings, sink);
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
