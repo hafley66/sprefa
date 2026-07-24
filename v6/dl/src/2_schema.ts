@@ -21,28 +21,57 @@
  * RUNTIME purge/replace policy enforced by 3_runtime.ts, not a schema difference.
  */
 import type { RelDecl } from "sprefa-store-engine/src/lower/ast.ts";
+import { rels as rel_tables } from "sprefa-store-engine/src/engine/spine.ts";
 import { foldRowDigest } from "./0_digest.ts";
-import type { Retention, Row } from "./0_types.ts";
+import type { ColumnType, Retention, Row } from "./0_types.ts";
 
-/** decl -> [CREATE TABLE rel_*..., delta, effect_cache, store_meta, tick seed]. */
-export function ddl(decls: readonly RelDecl[], retention: ReadonlyMap<string, Retention>): string[] {
+/** The physical fact-table columns are all INTEGER; text values are dictionary ids. */
+export function relBaseColumns(
+  decl: RelDecl,
+  columnTypes: ReadonlyMap<string, readonly ColumnType[]>,
+): rel_tables.RelCol[] {
+  const types = columnTypes.get(decl.name);
+  if (!types || types.length !== decl.columns.length) {
+    throw new Error(`ddl: missing column types for rel '${decl.name}'`);
+  }
+  return decl.columns.map((name) => rel_tables.rel_col_int(name));
+}
+
+/** The read view restores the text surface from dictionary ids. */
+export function relViewSql(decl: RelDecl, columnTypes: ReadonlyMap<string, readonly ColumnType[]>): string {
+  const types = columnTypes.get(decl.name);
+  if (!types || types.length !== decl.columns.length) {
+    throw new Error(`ddl: missing column types for rel '${decl.name}'`);
+  }
+  const selectList = decl.columns
+    .map((column, index) => {
+      if (types[index] === "int") return column;
+      return `CASE WHEN ${column} = -1 THEN NULL ELSE (SELECT content FROM strings WHERE string_id = ${column}) END AS ${column}`;
+    })
+    .join(", ");
+  return `CREATE VIEW IF NOT EXISTS rel_${decl.name} AS SELECT ${selectList} FROM relbase_${decl.name}`;
+}
+
+/** decl -> [delta, effect_cache, store_meta, tick seed, read views]. */
+export function ddl(
+  decls: readonly RelDecl[],
+  retention: ReadonlyMap<string, Retention>,
+  columnTypes: ReadonlyMap<string, readonly ColumnType[]> = new Map(
+    decls.map((decl) => [decl.name, decl.columns.map(() => "text" as const)]),
+  ),
+): string[] {
   void retention; // shape-only param this arc; runtime reads retention for tick behavior.
   const statements: string[] = [];
-  for (const decl of decls) {
-    const columnList = decl.columns.join(", ");
-    statements.push(
-      `CREATE TABLE IF NOT EXISTS rel_${decl.name} (${columnList}, PRIMARY KEY (${columnList}))`,
-    );
-  }
   statements.push(
-    "CREATE TABLE IF NOT EXISTS delta (rel TEXT NOT NULL, row_digest INTEGER NOT NULL, tick INTEGER NOT NULL, weight INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS delta (rel_id INTEGER NOT NULL, row_digest INTEGER NOT NULL, tick INTEGER NOT NULL, weight INTEGER NOT NULL)",
   );
   statements.push(
-    "CREATE TABLE IF NOT EXISTS effect_cache (full_digest TEXT PRIMARY KEY, identity_digest TEXT NOT NULL, host TEXT NOT NULL, state TEXT NOT NULL, requested_tick INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS effect_cache (full_digest INTEGER PRIMARY KEY, identity_digest INTEGER NOT NULL, host TEXT NOT NULL, state TEXT NOT NULL, requested_tick INTEGER NOT NULL)",
   );
   statements.push("CREATE INDEX IF NOT EXISTS idx_effect_cache_identity ON effect_cache(identity_digest)");
   statements.push("CREATE TABLE IF NOT EXISTS store_meta (key TEXT PRIMARY KEY, value)");
   statements.push("INSERT INTO store_meta(key,value) VALUES ('tick',0) ON CONFLICT(key) DO NOTHING");
+  for (const decl of decls) statements.push(relViewSql(decl, columnTypes));
   return statements;
 }
 

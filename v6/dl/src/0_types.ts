@@ -33,6 +33,7 @@ import type { FactLine } from "sprefa-store-engine/src/engine/ingest.ts";
 
 export type Value = string | number | boolean | null;
 export type Row = Record<string, Value>;
+export type ColumnType = "text" | "int";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Decls / retention.
@@ -94,7 +95,7 @@ export interface BridgeOk {
    *  affinity per column and to decide which columns intern; without it every rel_*
    *  column is untyped (the v5 amplification disease). Resolution law + tie-breaks
    *  live at the inference site in 0_ast_bridge.ts (buildColumnTypes). */
-  readonly columnTypes: ReadonlyMap<string, readonly ("text" | "int")[]>;
+  readonly columnTypes: ReadonlyMap<string, readonly ColumnType[]>;
 }
 export interface BridgeErr { readonly kind: "err"; readonly diags: readonly LoadDiag[] }
 export type BridgeResult = BridgeOk | BridgeErr;
@@ -110,7 +111,7 @@ export type Bridge = (dlText: string, builtinRels: readonly RelDecl[]) => Bridge
 
 /** Tick shape (b), pinned in DECISIONS: flat rel_* current tables + this log. */
 export interface DeltaRow {
-  readonly rel: string;
+  readonly rel_id: number;
   readonly row_digest: number; // oracle.mix XOR law (ingest.ts note 6)
   readonly tick: number;
   readonly weight: 1 | -1;
