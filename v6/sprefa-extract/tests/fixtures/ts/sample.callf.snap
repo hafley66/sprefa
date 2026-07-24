@@ -1,11 +1,11 @@
-{"record":"node","family":"call","span":{"start":244,"end":385},"kind":"free","name":"shift"}
-{"record":"node","family":"call","span":{"start":287,"end":340},"kind":"free","name":"clamp"}
+{"record":"node","family":"call","span":{"start":244,"end":385},"kind":"function","name":"shift"}
+{"record":"node","family":"call","span":{"start":287,"end":340},"kind":"function","name":"clamp"}
 {"record":"node","family":"call","span":{"start":546,"end":596},"kind":"method","name":"Vec2"}
 {"record":"node","family":"call","span":{"start":599,"end":681},"kind":"method","name":"magnitude"}
-{"record":"node","family":"call","span":{"start":7,"end":83},"kind":"free","name":"add"}
+{"record":"node","family":"call","span":{"start":7,"end":83},"kind":"function","name":"add"}
 {"record":"node","family":"call","span":{"start":730,"end":794},"kind":"method","name":"scaled"}
-{"record":"node","family":"call","span":{"start":857,"end":894},"kind":"free","name":"sub"}
-{"record":"node","family":"call","span":{"start":937,"end":987},"kind":"free","name":"mirror"}
+{"record":"node","family":"call","span":{"start":857,"end":894},"kind":"function","name":"sub"}
+{"record":"node","family":"call","span":{"start":937,"end":987},"kind":"function","name":"mirror"}
 {"record":"site","family":"call","span":{"start":350,"end":382},"callee":"Vec2","callee_path":null}
 {"record":"site","family":"call","span":{"start":359,"end":364},"callee":"clamp","callee_path":null}
 {"record":"site","family":"call","span":{"start":371,"end":376},"callee":"clamp","callee_path":null}

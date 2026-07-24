@@ -83,11 +83,12 @@
 //!                must survive for the node-level type join. The Param/Returns EDGES
 //!                (span-to-span, resolved) still land at Resolve<TypeF> (commit 4).
 //!
-//! BUILD STATUS (2026-07-23, commits 1-3c LANDED in v6/sprefa-extract/. The TS
-//! phase-1 families - Cst / Type(+sigs) / Call / Df - all project + stream +
-//! snapshot through ONE uniform surface (the Source roster + masked extract +
-//! one dispatch + one flatten). NEXT: the const-value facet, the Resolve<*>
-//! pass (commit 4), then rust (syn) + go:
+//! BUILD STATUS (2026-07-23, commits 1-3c + Tier-2 PARITY GOLD (TS) LANDED in
+//! v6/sprefa-extract/. The TS phase-1 families - Cst / Type(+sigs) / Call / Df -
+//! all project + stream + snapshot through ONE uniform surface, AND the ported
+//! facets now match a captured v5 oracle (see the (parity) entry). NEXT: broaden
+//! the parity fixtures (const/lambda/docs), the Resolve<*> pass (commit 4), then
+//! rust (syn) + go:
 //!   6a29d920  commit 1   CstF via ast-grep (one dep = rust/ts/tsx/js/go grammars);
 //!              clap bin streaming flat JSONL with --bench; snapshot. Piping proof.
 //!   f3ceb4fa  commit 2a  Parser/Project seam -> arena-passing GAT: oxc's
@@ -146,6 +147,25 @@
 //!              bin names no ast-grep/oxc type outside `Source` impls, `cargo tree`
 //!              still clean. The two-parser reality + `Resolve<F>` extending
 //!              `Source` are Epic U's frontier (see the plan).
+//!   (parity)  Tier-2 PARITY GOLD LANDED (TS, ported facets). Captured v5 oracle:
+//!              `examples/v5_normalize.rs` (v5 root crate) runs
+//!              `TsTypes.extract/extract_calls/extract_dataflow` IN-PROCESS (no DB,
+//!              no repo - TypeLang takes just (file,content)) + emits canonical
+//!              sorted lines -> committed `tests/fixtures/ts/sample.v5.jsonl` ->
+//!              `tests/golden_parity.rs` twin-normalizes v6's flatten + diffs. v6's
+//!              workspace is deliberately isolated (no v5 in its build graph), so
+//!              the oracle is CAPTURED, never linked. RESULT: PORTED facets
+//!              (type_node/type_sig/call_def/call_site/df_node/df_edge) match v5 -
+//!              byte-exact for df (v5 line+byte-col round-trips to v6 Span.start),
+//!              line-exact for type/call (v5 drops the byte offset there). ONE
+//!              divergence found + fixed: CallKind::Free tag "free"->"function"
+//!              (v5 call_def.kind; v6 had coined "free" with no rationale).
+//!              DEFERRED v5-only (measured, destinations logged): type_edge (10 on
+//!              sample.ts; Resolve<TypeF> commit 4), df aux (args/fields/lits/
+//!              param_pos; labels-not-graph), const (0 here; D-arrow-type ruling),
+//!              docs (0; follow-up). v6-ONLY: cst (421 facts; v5 has NO TS
+//!              tree-sitter grammar -> incomparable). sample.ts exercises no
+//!              string-consts/lambdas/docs; broader fixtures are the follow-up.
 //!   PENDING:   the name-resolved type EDGES (field/impl/variant/uses + the
 //!              resolved param/returns binding) still land at Resolve<TypeF>
 //!              (commit 4) by design. Also unported: ts_const_facts_from (the

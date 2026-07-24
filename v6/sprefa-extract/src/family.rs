@@ -195,7 +195,10 @@ pub struct CallF;
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CallKind {
     /// A free function (top-level or nested named declaration, or a function
-    /// bound to a `const`).
+    /// bound to a `const`). The variant is `Free` (the callable shape); its WIRE
+    /// tag is `"function"` — v5's `CallKind::Free.tag()` and `call_def.kind`, kept
+    /// for byte-exact parity (a free function IS a function; v6's earlier `"free"`
+    /// coinage had no rationale and broke the v5 diff).
     Free,
     /// A class method (incl. the constructor, whose call-name is the class name
     /// so a `new Foo()` site resolves to it).
@@ -208,7 +211,7 @@ pub enum CallKind {
 impl CallKind {
     pub fn as_str(self) -> &'static str {
         match self {
-            CallKind::Free => "free",
+            CallKind::Free => "function",
             CallKind::Method => "method",
             CallKind::Lambda => "lambda",
         }
