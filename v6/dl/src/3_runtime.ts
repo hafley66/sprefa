@@ -58,12 +58,15 @@ import { differenceWith, isEqual } from "lodash-es";
 
 import { cascade, type Db } from "sprefa-store-engine/src/engine/engine.ts";
 const { with_txn } = cascade;
+import { rels as rel_tables } from "sprefa-store-engine/src/engine/spine.ts";
+import { Store } from "sprefa-store-engine/src/engine/lib.ts";
 import { lowerProgram, type LoweredProgram, type Row as LowerRow, type Sources } from "sprefa-store-engine/src/lower/lower.ts";
 import type { RelDecl } from "sprefa-store-engine/src/lower/ast.ts";
 
-import { ddl, rowDigest } from "./2_schema.ts";
+import { ddl, relBaseColumns, rowDigest } from "./2_schema.ts";
 import type {
   BridgeOk,
+  ColumnType,
   DeltaEvent,
   DeltaRow,
   DlRuntime as DlRuntimeContract,
@@ -82,6 +85,9 @@ import type {
 
 export interface RuntimeState {
   readonly db: Db;
+  readonly store: Store;
+  readonly relIds: ReadonlyMap<string, number>;
+  readonly columnTypes: ReadonlyMap<string, readonly ColumnType[]>;
   readonly relDecls: ReadonlyMap<string, RelDecl>;
   readonly retention: ReadonlyMap<string, Retention>;
   readonly sourceSubjects: ReadonlyMap<string, BehaviorSubject<LowerRow[]>>;
@@ -168,15 +174,42 @@ function rowFromTuple(tuple: LowerRow, columns: readonly string[]): Row {
   return row as Row;
 }
 
-function sqlLiteral(value: Value): string {
-  if (value === null || value === undefined) return "NULL";
-  if (typeof value === "number") return String(value);
-  if (typeof value === "boolean") return value ? "1" : "0";
-  return `'${value.replace(/'/g, "''")}'`;
+type StoredRow = readonly number[];
+
+function sqlTuple(row: StoredRow): string {
+  return `(${row.join(",")})`;
 }
 
-function sqlTuple(row: Row, columns: readonly string[]): string {
-  return `(${columns.map((column) => sqlLiteral(row[column] ?? null)).join(",")})`;
+function surfaceRowKey(row: Row, columns: readonly string[]): string {
+  return JSON.stringify(columns.map((column) => row[column] ?? null));
+}
+
+function storedRowKey(row: StoredRow): string {
+  return JSON.stringify(row);
+}
+
+function encodeSurfaceRowByColumns(
+  store: Store,
+  columnTypes: ReadonlyMap<string, readonly ColumnType[]>,
+  relName: string,
+  columns: readonly string[],
+  row: Row,
+): StoredRow {
+  const types = columnTypes.get(relName);
+  if (!types || types.length !== columns.length) throw new Error(`commit: invalid column types for rel '${relName}'`);
+  return columns.map((column, index) => {
+    const value = row[column] ?? null;
+    if (types[index] === "int") {
+      if (value === null) {
+        // Numeric NULLs are outside this storage slice; the base table is NOT NULL.
+        throw new Error(`commit: numeric NULL in rel '${relName}' column '${column}'`);
+      }
+      if (typeof value === "boolean") return value ? 1 : 0;
+      if (typeof value !== "number") throw new Error(`commit: non-numeric value in rel '${relName}' column '${column}'`);
+      return value;
+    }
+    return value === null ? -1 : store.intern(String(value));
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -222,18 +255,18 @@ function relMaxColumnWidth(relDecls: ReadonlyMap<string, RelDecl>): number {
 async function loadRowMatchCandidates(
   db: Db,
   relDecls: ReadonlyMap<string, RelDecl>,
-  rows: readonly Row[],
-  columns: readonly string[],
+  rows: readonly StoredRow[],
+  rowWidth: number,
 ): Promise<void> {
   const width = relMaxColumnWidth(relDecls);
   const allColumns = Array.from({ length: width }, (_, i) => `c${i}`).join(", ");
   await db.execute(`CREATE TEMP TABLE IF NOT EXISTS ${ROW_MATCH_TEMP_TABLE} (${allColumns})`);
   await db.execute(`DELETE FROM ${ROW_MATCH_TEMP_TABLE}`);
   if (rows.length === 0) return;
-  const usedColumns = columns.map((_, i) => `c${i}`).join(", ");
+  const usedColumns = Array.from({ length: rowWidth }, (_, i) => `c${i}`).join(", ");
   for (let start = 0; start < rows.length; start += ROW_MATCH_INSERT_CHUNK) {
     const chunk = rows.slice(start, start + ROW_MATCH_INSERT_CHUNK);
-    const values = chunk.map((row) => sqlTuple(row, columns)).join(",");
+    const values = chunk.map((row) => sqlTuple(row)).join(",");
     await db.execute(`INSERT INTO ${ROW_MATCH_TEMP_TABLE}(${usedColumns}) VALUES ${values}`);
   }
 }
@@ -246,18 +279,14 @@ function rowMatchJoinCondition(columns: readonly string[], relAlias: string, tem
   return columns.map((column, i) => `${relAlias}.${column} IS ${tempAlias}.c${i}`).join(" AND ");
 }
 
-function rowKeyOf(row: Row, columns: readonly string[]): string {
-  return JSON.stringify(columns.map((column) => row[column] ?? null));
-}
-
 async function selectAll(db: Db, relName: string, columns: readonly string[]): Promise<Row[]> {
   const res = await db.execute(`SELECT ${columns.join(",")} FROM rel_${relName}`);
-  return res.rows.map((rawRow) => rowFromRaw(rawRow, columns));
+  return res.rows.map((rawRow: unknown) => rowFromRaw(rawRow, columns));
 }
 
 async function selectAllTuples(db: Db, relName: string, columns: readonly string[]): Promise<LowerRow[]> {
   const res = await db.execute(`SELECT ${columns.join(",")} FROM rel_${relName}`);
-  return res.rows.map((rawRow) => {
+  return res.rows.map((rawRow: unknown) => {
     const raw = rawRow as Record<string, unknown>;
     return columns.map((column) => normalizeValue(raw[column])) as LowerRow;
   });
@@ -271,23 +300,26 @@ async function preCheckExistingKeys(
   relDecls: ReadonlyMap<string, RelDecl>,
   relName: string,
   columns: readonly string[],
-  candidates: readonly Row[],
+  candidates: readonly StoredRow[],
 ): Promise<Set<string>> {
   if (candidates.length === 0) return new Set();
-  await loadRowMatchCandidates(db, relDecls, candidates, columns);
+  await loadRowMatchCandidates(db, relDecls, candidates, columns.length);
   const selectColumns = columns.map((column) => `t.${column}`).join(",");
   const res = await db.execute(
-    `SELECT ${selectColumns} FROM rel_${relName} t JOIN ${ROW_MATCH_TEMP_TABLE} c ON ${rowMatchJoinCondition(columns, "t", "c")}`,
+    `SELECT ${selectColumns} FROM relbase_${relName} t JOIN ${ROW_MATCH_TEMP_TABLE} c ON ${rowMatchJoinCondition(columns, "t", "c")}`,
   );
   const keys = new Set<string>();
-  for (const rawRow of res.rows) keys.add(rowKeyOf(rowFromRaw(rawRow, columns), columns));
+  for (const rawRow of res.rows) {
+    const raw = rawRow as Record<string, unknown>;
+    keys.add(storedRowKey(columns.map((column) => Number(raw[column]))));
+  }
   return keys;
 }
 
-async function insertRows(db: Db, relName: string, columns: readonly string[], rows: readonly Row[]): Promise<void> {
+async function insertRows(db: Db, relName: string, columns: readonly string[], rows: readonly StoredRow[]): Promise<void> {
   if (rows.length === 0) return;
-  const values = rows.map((row) => sqlTuple(row, columns)).join(",");
-  await db.execute(`INSERT INTO rel_${relName}(${columns.join(",")}) VALUES ${values} ON CONFLICT DO NOTHING`);
+  const values = rows.map((row) => sqlTuple(row)).join(",");
+  await db.execute(`INSERT INTO relbase_${relName}(${columns.join(",")}) VALUES ${values} ON CONFLICT DO NOTHING`);
 }
 
 async function deleteRows(
@@ -295,11 +327,11 @@ async function deleteRows(
   relDecls: ReadonlyMap<string, RelDecl>,
   relName: string,
   columns: readonly string[],
-  rows: readonly Row[],
+  rows: readonly StoredRow[],
 ): Promise<void> {
   if (rows.length === 0) return;
-  await loadRowMatchCandidates(db, relDecls, rows, columns);
-  const tableRef = `rel_${relName}`;
+  await loadRowMatchCandidates(db, relDecls, rows, columns.length);
+  const tableRef = `relbase_${relName}`;
   await db.execute(
     `DELETE FROM ${tableRef} WHERE EXISTS (SELECT 1 FROM ${ROW_MATCH_TEMP_TABLE} c WHERE ${rowMatchJoinCondition(columns, tableRef, "c")})`,
   );
@@ -308,9 +340,9 @@ async function deleteRows(
 async function insertDeltaRows(db: Db, rows: readonly DeltaRow[]): Promise<void> {
   if (rows.length === 0) return;
   const values = rows
-    .map((row) => `('${row.rel.replace(/'/g, "''")}',${row.row_digest},${row.tick},${row.weight})`)
+    .map((row) => `(${row.rel_id},${row.row_digest},${row.tick},${row.weight})`)
     .join(",");
-  await db.execute(`INSERT INTO delta(rel,row_digest,tick,weight) VALUES ${values}`);
+  await db.execute(`INSERT INTO delta(rel_id,row_digest,tick,weight) VALUES ${values}`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -320,6 +352,28 @@ async function insertDeltaRows(db: Db, rows: readonly DeltaRow[]): Promise<void>
 
 export async function applyEdbTxn(state: RuntimeState, request: CommitRequest): Promise<EdbTickOutcome> {
   const { db } = state;
+  const encodedInsert = new Map<string, readonly StoredRow[]>();
+  const encodedRetract = new Map<string, readonly StoredRow[]>();
+  for (const [relName, rows] of request.batch.insert) {
+    const decl = state.relDecls.get(relName);
+    if (!decl) throw new Error(`commit: unknown rel '${relName}'`);
+    encodedInsert.set(
+      relName,
+      rows.map((row) => encodeSurfaceRowByColumns(state.store, state.columnTypes, relName, decl.columns, row)),
+    );
+  }
+  for (const [relName, rows] of request.batch.retract) {
+    const decl = state.relDecls.get(relName);
+    if (!decl) throw new Error(`commit: unknown rel '${relName}'`);
+    encodedRetract.set(
+      relName,
+      rows.map((row) => encodeSurfaceRowByColumns(state.store, state.columnTypes, relName, decl.columns, row)),
+    );
+  }
+  // flush_strings uses executeMultiple, which rolls back an open BEGIN in the store
+  // adapter. Its monotonic dictionary makes this pre-transaction flush safe.
+  await state.store.flush_strings();
+
   return with_txn(db, async () => {
     const tickRes = await db.execute("UPDATE store_meta SET value = value + 1 WHERE key='tick' RETURNING value");
     const tick = Number(tickRes.rows[0]?.[0] ?? 0);
@@ -337,33 +391,48 @@ export async function applyEdbTxn(state: RuntimeState, request: CommitRequest): 
       const columns = decl.columns;
       const insertCandidates = request.batch.insert.get(relName) ?? [];
       const retractCandidates = request.batch.retract.get(relName) ?? [];
+      const insertIds = encodedInsert.get(relName) ?? [];
+      const retractIds = encodedRetract.get(relName) ?? [];
 
-      const existingForInsert = await preCheckExistingKeys(db, state.relDecls, relName, columns, insertCandidates);
-      const genuinelyNew = insertCandidates.filter((row) => !existingForInsert.has(rowKeyOf(row, columns)));
+      const existingForInsert = await preCheckExistingKeys(db, state.relDecls, relName, columns, insertIds);
+      const genuinelyNewIndexes = insertIds.flatMap((row, index) =>
+        existingForInsert.has(storedRowKey(row)) ? [] : [index],
+      );
+      const genuinelyNew = genuinelyNewIndexes.map((index) => insertCandidates[index]!);
+      const genuinelyNewIds = genuinelyNewIndexes.map((index) => insertIds[index]!);
 
-      const existingForRetract = await preCheckExistingKeys(db, state.relDecls, relName, columns, retractCandidates);
-      const genuinelyRetracted = retractCandidates.filter((row) => existingForRetract.has(rowKeyOf(row, columns)));
+      const existingForRetract = await preCheckExistingKeys(db, state.relDecls, relName, columns, retractIds);
+      const genuinelyRetractedIndexes = retractIds.flatMap((row, index) =>
+        existingForRetract.has(storedRowKey(row)) ? [index] : [],
+      );
+      const genuinelyRetracted = genuinelyRetractedIndexes.map((index) => retractCandidates[index]!);
+      const genuinelyRetractedIds = genuinelyRetractedIndexes.map((index) => retractIds[index]!);
 
       let additionalRetracts: Row[] = [];
+      let additionalRetractIds: StoredRow[] = [];
       const isLatestOnly = (state.retention.get(relName) ?? "all") === 1;
       if (isLatestOnly && insertCandidates.length > 0) {
         const fullBefore = await selectAll(db, relName, columns);
-        const installedKeys = new Set(insertCandidates.map((row) => rowKeyOf(row, columns)));
-        const alreadyRetractedKeys = new Set(genuinelyRetracted.map((row) => rowKeyOf(row, columns)));
+        const installedKeys = new Set(insertCandidates.map((row) => surfaceRowKey(row, columns)));
+        const alreadyRetractedKeys = new Set(genuinelyRetracted.map((row) => surfaceRowKey(row, columns)));
         additionalRetracts = fullBefore.filter(
-          (row) => !installedKeys.has(rowKeyOf(row, columns)) && !alreadyRetractedKeys.has(rowKeyOf(row, columns)),
+          (row) => !installedKeys.has(surfaceRowKey(row, columns)) && !alreadyRetractedKeys.has(surfaceRowKey(row, columns)),
+        );
+        additionalRetractIds = additionalRetracts.map((row) =>
+          encodeSurfaceRowByColumns(state.store, state.columnTypes, relName, columns, row),
         );
       }
 
-      if (genuinelyNew.length > 0) await insertRows(db, relName, columns, genuinelyNew);
+      if (genuinelyNewIds.length > 0) await insertRows(db, relName, columns, genuinelyNewIds);
       const allRetracted = [...genuinelyRetracted, ...additionalRetracts];
-      if (allRetracted.length > 0) await deleteRows(db, state.relDecls, relName, columns, allRetracted);
+      const allRetractedIds = [...genuinelyRetractedIds, ...additionalRetractIds];
+      if (allRetractedIds.length > 0) await deleteRows(db, state.relDecls, relName, columns, allRetractedIds);
 
       for (const row of genuinelyNew) {
-        deltaRows.push({ rel: relName, row_digest: rowDigest(row, columns), tick, weight: 1 });
+        deltaRows.push({ rel_id: state.relIds.get(relName)!, row_digest: rowDigest(row, columns), tick, weight: 1 });
       }
       for (const row of allRetracted) {
-        deltaRows.push({ rel: relName, row_digest: rowDigest(row, columns), tick, weight: -1 });
+        deltaRows.push({ rel_id: state.relIds.get(relName)!, row_digest: rowDigest(row, columns), tick, weight: -1 });
       }
 
       const net = genuinelyNew.length - allRetracted.length;
@@ -471,6 +540,17 @@ export function diffAgainstTables(state: RuntimeState, outcome: EdbTickOutcome, 
 
 export async function applyDerivedTxn(state: RuntimeState, diff: DerivedDiff): Promise<SettledOutcome> {
   const { db } = state;
+  const encodedPerRel = new Map<string, { readonly insert: readonly StoredRow[]; readonly retract: readonly StoredRow[] }>();
+  for (const [relName, { insert, retract }] of diff.perRel) {
+    const decl = state.relDecls.get(relName);
+    if (!decl) throw new Error(`applyDerivedTxn: unknown derived rel '${relName}'`);
+    encodedPerRel.set(relName, {
+      insert: insert.map((row) => encodeSurfaceRowByColumns(state.store, state.columnTypes, relName, decl.columns, row)),
+      retract: retract.map((row) => encodeSurfaceRowByColumns(state.store, state.columnTypes, relName, decl.columns, row)),
+    });
+  }
+  await state.store.flush_strings();
+
   return with_txn(db, async () => {
     const derivedEvents: DeltaEvent[] = [];
     const derivedPairs: [string, number][] = [];
@@ -480,10 +560,15 @@ export async function applyDerivedTxn(state: RuntimeState, diff: DerivedDiff): P
       const decl = state.relDecls.get(relName);
       if (!decl) throw new Error(`applyDerivedTxn: unknown derived rel '${relName}'`);
       const columns = decl.columns;
-      if (insert.length > 0) await insertRows(db, relName, columns, insert);
-      if (retract.length > 0) await deleteRows(db, state.relDecls, relName, columns, retract);
-      for (const row of insert) deltaRows.push({ rel: relName, row_digest: rowDigest(row, columns), tick: diff.tick, weight: 1 });
-      for (const row of retract) deltaRows.push({ rel: relName, row_digest: rowDigest(row, columns), tick: diff.tick, weight: -1 });
+      const encoded = encodedPerRel.get(relName)!;
+      if (encoded.insert.length > 0) await insertRows(db, relName, columns, encoded.insert);
+      if (encoded.retract.length > 0) await deleteRows(db, state.relDecls, relName, columns, encoded.retract);
+      for (const row of insert) {
+        deltaRows.push({ rel_id: state.relIds.get(relName)!, row_digest: rowDigest(row, columns), tick: diff.tick, weight: 1 });
+      }
+      for (const row of retract) {
+        deltaRows.push({ rel_id: state.relIds.get(relName)!, row_digest: rowDigest(row, columns), tick: diff.tick, weight: -1 });
+      }
       const net = insert.length - retract.length;
       if (net !== 0) derivedPairs.push([relName, net]);
       derivedEvents.push({ tick: diff.tick, rel: relName, inserts: insert, retracts: retract });
@@ -532,16 +617,25 @@ export function clearScratchRels(state: RuntimeState, outcome: SettledOutcome): 
 // boot() helpers.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function literalSeedStatements(literalSeeds: ReadonlyMap<string, Value>, relDecls: ReadonlyMap<string, RelDecl>): string[] {
-  const statements: string[] = [];
+function literalSeedRows(
+  store: Store,
+  columnTypes: ReadonlyMap<string, readonly ColumnType[]>,
+  literalSeeds: ReadonlyMap<string, Value>,
+  relDecls: ReadonlyMap<string, RelDecl>,
+): ReadonlyMap<string, readonly StoredRow[]> {
+  const rows = new Map<string, StoredRow[]>();
   for (const [relName, value] of literalSeeds) {
     const decl = relDecls.get(relName);
     if (!decl) throw new Error(`DlRuntime.boot: literal seed rel '${relName}' has no decl`);
     const column = decl.columns[0];
     if (column === undefined) throw new Error(`DlRuntime.boot: literal seed rel '${relName}' has no columns`);
-    statements.push(`INSERT OR IGNORE INTO rel_${relName}(${column}) VALUES (${sqlLiteral(value)})`);
+    const row: Row = { [column]: value };
+    const encoded = encodeSurfaceRowByColumns(store, columnTypes, relName, decl.columns, row);
+    const current = rows.get(relName) ?? [];
+    current.push(encoded);
+    rows.set(relName, current);
   }
-  return statements;
+  return rows;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -568,7 +662,9 @@ export class DlRuntime implements DlRuntimeContract {
       const decl = state.relDecls.get(relName)!;
       const raw$ = lowered.rels.get(relName);
       if (!raw$) throw new Error(`DlRuntime: derived rel '${relName}' missing from lowered program`);
-      namedDerived[relName] = raw$.pipe(map((tuples) => tuples.map((tuple) => rowFromTuple(tuple, decl.columns))));
+      namedDerived[relName] = raw$.pipe(
+        map((tuples: LowerRow[]) => tuples.map((tuple: LowerRow) => rowFromTuple(tuple, decl.columns))),
+      );
     }
     const derivedSets$: Observable<DerivedSnapshot> = (
       state.derivedRelNames.length > 0 ? combineLatest(namedDerived) : of({} as Record<string, Row[]>)
@@ -609,15 +705,35 @@ export class DlRuntime implements DlRuntimeContract {
 
   static async boot(cfg: { dbPath: string; bridge: BridgeOk; extraDdl?: readonly string[] }): Promise<DlRuntime> {
     const db = createClient({ url: `file:${cfg.dbPath}` }) as unknown as Db;
+    const store = await Store.open(db);
 
     const relDecls = new Map<string, RelDecl>();
     for (const decl of cfg.bridge.program.rels) relDecls.set(decl.name, decl);
+    const relIds = new Map<string, number>();
+    for (const decl of cfg.bridge.program.rels) relIds.set(decl.name, store.intern(decl.name));
+    await store.flush_strings();
 
-    const ddlStatements = [...ddl(cfg.bridge.program.rels, cfg.bridge.retention), ...(cfg.extraDdl ?? [])];
+    for (const decl of cfg.bridge.program.rels) {
+      await rel_tables.create_rel_table(
+        db,
+        `relbase_${decl.name}`,
+        relBaseColumns(decl, cfg.bridge.columnTypes),
+        decl.columns,
+      );
+    }
+
+    const ddlStatements = [
+      ...ddl(cfg.bridge.program.rels, cfg.bridge.retention, cfg.bridge.columnTypes),
+      ...(cfg.extraDdl ?? []),
+    ];
     await db.batch(ddlStatements, "write");
 
-    const seedStatements = literalSeedStatements(cfg.bridge.literalSeeds, relDecls);
-    if (seedStatements.length > 0) await db.batch(seedStatements, "write");
+    const seedRows = literalSeedRows(store, cfg.bridge.columnTypes, cfg.bridge.literalSeeds, relDecls);
+    await store.flush_strings();
+    for (const [relName, rows] of seedRows) {
+      const decl = relDecls.get(relName)!;
+      await insertRows(db, relName, decl.columns, rows);
+    }
 
     const sourceSubjects = new Map<string, BehaviorSubject<LowerRow[]>>();
     const sourcesForLower: Sources = new Map();
@@ -644,6 +760,9 @@ export class DlRuntime implements DlRuntimeContract {
 
     const state: RuntimeState = {
       db,
+      store,
+      relIds,
+      columnTypes: cfg.bridge.columnTypes,
       relDecls,
       retention: cfg.bridge.retention,
       sourceSubjects,
