@@ -94,7 +94,7 @@
 | [plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md](plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md) | 256 | v6 rxjs lowering + the TS cascade port (engineering plan) |
 | [plans/2026-07-23-v6-transports-as-rels.md](plans/2026-07-23-v6-transports-as-rels.md) | 123 | Transports as rels — http/ws/LSP/shell with zero effect syntax (F4/F10 working note, 2026-07-23) |
 | [plans/2026-07-24-fork-pipeline-syntax-findings.md](plans/2026-07-24-fork-pipeline-syntax-findings.md) | 80 | Fork findings: pipeline syntax + surface rulings (2026-07-24, session forked-for-sql-pipeline-syntax) |
-| [plans/2026-07-24-v6-dl-mvp-slice.md](plans/2026-07-24-v6-dl-mvp-slice.md) | 575 | v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24) |
+| [plans/2026-07-24-v6-dl-mvp-slice.md](plans/2026-07-24-v6-dl-mvp-slice.md) | 606 | v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
@@ -1567,17 +1567,18 @@
 65:# -> {"rows":[]}
 67:# 8. the editor, meanwhile: dl --lsp --diag-db ~/.local/state/dl/mvp.sqlite
 68:#    published the squiggle at step 4 and cleared it at step 6.
-74:## Recon facts (observed, not guessed)
-120:## Boundary
-139:## Epics
-141:### M0 · package scaffold `v6/dl/`
-191:### M1 · grammar (Langium) -> ast.ts bridge
-280:### M2 · schema + tick runtime
-364:### M3 · ingest: extract -> spine -> EDB
-412:### M4 · host rels: sh executor + builtin sg + extract
-465:### M5 · diag + v5 LSP front
-531:### M6 · http front
-562:## Frontier (deferred, with the evidence that will resolve each)
+74:## Status ledger
+105:## Recon facts (observed, not guessed)
+151:## Boundary
+170:## Epics
+172:### M0 · package scaffold `v6/dl/`
+222:### M1 · grammar (Langium) -> ast.ts bridge
+311:### M2 · schema + tick runtime
+395:### M3 · ingest: extract -> spine -> EDB
+443:### M4 · host rels: sh executor + builtin sg + extract
+496:### M5 · diag + v5 LSP front
+562:### M6 · http front
+593:## Frontier (deferred, with the evidence that will resolve each)
 ```
 
 ### skills/mermaid-living-map.md

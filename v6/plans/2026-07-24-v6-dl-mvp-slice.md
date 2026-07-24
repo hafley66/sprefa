@@ -71,6 +71,37 @@ curl -s -X POST localhost:7171/query -d '? console_hit(path, _, _, _).'
 Step 6 is the whole thesis in one line: the file fix retracts spine facts, the
 diag row dies through the delta plane, and NOTHING diag-specific ran.
 
+## Status ledger
+
+Glance view, updated at every merge (same cadence as tasks.d.ts EpicLedger). The
+per-epic task lists below stay the detail record.
+
+1. **M0 · scaffold — DONE** (2/2 tests, tsgo clean; commits 84744e7a, 7e2992ab)
+   1. ~~0.1 package.json/tsconfig~~ ✓ link: dep + @types/node (type-stripping law), sg bought as @ast-grep/cli 0.39.9
+   2. ~~0.2 stubs + test wiring~~ ✓ header-contract stubs 0..6+main, scaffold test
+   3. ~~0.3 DL_EXTRACT_BIN default~~ ✓ pinned in tasks.d.ts (ExtractBinDefault)
+2. **M1 · grammar -> bridge — DONE** (16 bridge tests + 75 store tests; golden bridge.sg-rail.json; merged 75d486a9)
+   1. ~~1.1 grammar + langium-cli~~ ✓ keyword-beats-terminal law learned twice (text/int/agg names, retention digits -> ID/INT + bridge validation)
+   2. ~~1.2 AST mapping~~ ✓ 0_ast_bridge.ts, single export bridge()
+   3. ~~1.3 positive `_` + trailing elision (the ONE store edit)~~ ✓ dl/m1-store 49cd2101; lower.ts comment-only; labs guard 9bc51bf2
+   4. ~~1.4 host decls + probe minting~~ ✓ __lit_n literal seeding pin; __req_sg/__resp_sg per worked expectation
+   5. ~~1.5 load diagnostics~~ ✓ parse/unknown-rel/arity/minmax/mutation/non-stratifiable
+3. **M2 · schema + tick runtime — DONE** (golden add/noop/remove: tick2 = zero deltas, tick3 = weight retract; merged 78d1cb31)
+   1. ~~2.1 ddl + boot~~ ✓ BehaviorSubject sources seeded from tables; literalSeeds at boot
+   2. ~~2.2 commit + sync-settle assertion~~ ✓ generation bumps BEFORE next() (bug found+fixed)
+   3. ~~2.3 delta log + deltas$~~ ✓ store_meta tick counter, share()'d event stream
+   4. ~~2.4 rel(0)/rel(1)~~ ✓ both exercised; rel(0) DELETE inside applyDerivedTxn (doc'd deviation)
+   5. ~~2.5 derived-diff combinatorics~~ ✓ in/in, in/out, out/in enumerated
+4. **M3 · ingest — IN FLIGHT** (worktree dl-m3-ingest): extract spawn, F2 mapping (record->spine rel rows + computed span_line), per-file diff commit, delete-file case, v1->v2 golden
+5. **M4 · hosts — IN FLIGHT** (worktree dl-m4-hosts): shHost, builtinSg (byteOffset mapping verified), builtinExtract, HostRunner digest cache, fire-once golden, builtin-vs-sh parity
+6. **M5 · diag + LSP — HALF DONE** (4 of 5 tasks; 25/25 dl tests on v11)
+   1. ~~5.1 diagDecl + head defaults~~ ✓ defaults in bridge (M1.4); canonical builtinDecls in 5_diag.ts (86b9101c)
+   2. ~~5.2 diag_v5 view~~ ✓ DIAG_V5_VIEW_SQL -> boot extraDdl; NULL-severity COALESCE proven
+   3. ~~5.3 v5 lsp --diag-db mode~~ ✓ dl/m5-lsp f4fdddbe; persistent-connection data_version law; lsp_capture.mjs; dl binary built
+   4. 5.4 retraction wiring golden — NOT STARTED (rides final integration: needs M3+M4+M6)
+   5. ~~5.5 --check reader~~ ✓ check_diag.mjs exit 2/0/1, spawnSync deadlock trap doc'd
+7. **M6 · http — NOT STARTED** (dispatches after M3+M4 merge; then curl-session golden = the epic-of-epics gate)
+
 ## Recon facts (observed, not guessed)
 
 - `v6/sprefa-store/js` (`sprefa-store-engine` 0.0.0, pnpm@11.10.0, type:module):
