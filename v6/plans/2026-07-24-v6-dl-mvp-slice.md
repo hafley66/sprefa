@@ -135,7 +135,11 @@ per-epic task lists below stay the detail record.
    3. ~~`#` comments~~ ✓ hidden SL_COMMENT terminal, v5 heritage, comment-parity test
    4. ~~showcase fixture~~ ✓ sg-rail.dl = the one end-to-end artifact (typed decls, rel(1)+count agg, host, probe, wildcard, kwargs, diag defaults); golden re-pinned additively, __lit numbering byte-identical; store untouched (75/75, zero diff)
    5. law change recorded: elision now pads refs to full arity with wild() (unfilled slot = wild, unifying elision with named-arg partial atoms)
-9. **M7 · types header consolidation (owner directive, CLEANUP PHASE — runs only after everything above is green)** — NOT STARTED: one C-header-style `src/0_types.ts` (name chosen over `0.types.ts` to match the existing underscore numbering) holding ALL interfacing/impl-contract types (rel/retention/row/delta/tick, bridge shapes, host trait, diag, http surface); every src file imports types from it; tasks.d.ts recomposes to plan-ledger-only (EpicLedger + pins) referencing 0_types; its own reviewed package, all gates re-run after
+9. **M7 · types header consolidation — DONE** (dl/m7-types 5a39592a, merged; zero behavior change: 52/52, tsgo clean, curl-session PASS, fixtures byte-identical, store 75/75)
+   1. ~~0_types.ts~~ ✓ 9 sections in pipeline order (values/rows -> decls -> bridge -> schema/tick -> ingest -> hosts -> diag -> http -> runtime interface)
+   2. ~~0_digest.ts~~ ✓ shared 53-bit fold; 1_hosts/2_schema dedup closed (the M4 note)
+   3. ~~tasks.d.ts recomposed~~ ✓ plan-ledger-only + re-exports (imports kept valid, no test edits)
+   4. documented exception: SpineRelName/ExtractBinDefault stay declared in tasks.d.ts (pin blocks), imported by 4_ingest/1_hosts from there
 
 ## Recon facts (observed, not guessed)
 

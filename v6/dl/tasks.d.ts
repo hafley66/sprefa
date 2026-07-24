@@ -75,6 +75,16 @@ export interface EpicLedger {
    *  offset coincidence (edit must shift bytes), console_hit persists by cache design
    *  (only diag retracts), fixture sh sg shadowed builtinSg (builtins now listed last). */
   M6_http: { done: true; evidence: "tests/golden/curl-session.sh green against live server" };
+  /** DONE 2026-07-24 (dl/m1-kwargs 94f1bf8b, merged): named args in bodies/heads/
+   *  probes/queries via one shared resolveNamedArgs + Member grammar production
+   *  (future JSON5 object-member twin); # comments; showcase fixture; elision law
+   *  unified (unfilled slot = wild). Store untouched. */
+  M1_kwargs: { done: true; evidence: "48/48 post-merge; golden re-pinned additively; store 75/75 zero-diff" };
+  /** DONE 2026-07-24 (dl/m7-types 5a39592a, merged): src/0_types.ts C-header types
+   *  file + src/0_digest.ts shared fold; this file recomposed to plan-ledger-only
+   *  with re-exports; zero behavior change (52/52, curl golden PASS, fixtures
+   *  byte-identical, store 75/75). */
+  M7_types_header: { done: true; evidence: "0_types.ts consolidation; goldens byte-identical" };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
