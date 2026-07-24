@@ -23,8 +23,11 @@
 
 use std::collections::BTreeSet;
 
-use crate::family::{CallF, CallKind, CallSite, CstF, DfF, SigSlot, TypeEntityKind, TypeF, TypeSig};
-use crate::rows::{FamilyBundle, Node};
+use crate::family::{
+    CallF, CallKind, CallSite, CstF, DfEdgeKind, DfF, DfNodeKind, SigSlot, TypeEntityKind, TypeF,
+    TypeSig,
+};
+use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{Parser, Project};
 use crate::shape::{Span, Strings};
 use crate::source::{ExtractOutput, FamilyMask, Source};
@@ -454,19 +457,590 @@ fn go_walk_call_sites(
 // DfF: intra-procedural value flow (nodes + Direct edges). Commit D.
 //
 // Ports v5 `go_dataflow_from` (src/graph/typegraph/go.rs:576). Every value-bearing
-// position in a callable's body becomes a NODE; local value flow becomes a
-// Direct EDGE. Commit D fills this in.
+// position in a callable's body becomes a NODE; local value flow becomes a Direct
+// EDGE. The two are the dataflow graph the engine's `df_reaches` closure walks.
+//
+// BYTE PARITY: v5 mints each node at `(node.start_position().row, .column)` and
+// the oracle reconstructs the byte as `line_starts[row] + col`, which equals
+// tree-sitter's `node.start_byte()`. So v6 mints each node at `node.start_byte()`
+// directly (no line/col bridge, unlike the syn front-end in rust.rs). The
+// (kind, var, byte) triples and the (from_byte, to_byte) edge pairs match v5
+// exactly.
+//
+// What is DROPPED vs v5 (each deliberate, matching the TS/Rust DfF ports):
+//  - `fn_sym` / `mint_sym` / `lambda_sym`: the enclosing callable is NOT stored
+//    on a df node (derived at the seam by span-containment over CallF defs).
+//  - the enrichment aux: `args`, `fields`, `lits`, `param_pos`, `loops`,
+//    `nests`. The EDGES already carry every value flow.
+//  - the closure value node's `lam_sym` name (v5 stored it as the closure-to-
+//    body join key); v6 replaces that join with span-containment, so the closure
+//    node carries no name. The golden_parity waiver normalizes the name field.
 // ════════════════════════════════════════════════════════════════════════════
 
+/// Transient scope: a variable name -> its binding node (param or `let`).
+type Scope = std::collections::HashMap<String, NodeRef>;
+
+use crate::shape::NodeRef;
+
 /// Project the DfF family: each callable's body lifted to its value-flow graph.
-/// Port of v5 `go_dataflow_from`. Commit D fills this in.
+/// Port of v5 `go_dataflow_from` (the driver half). Unlike v5, no post-pass bumps
+/// (v6 stores bytes directly, not 0-based rows), and `loops`/`nests` aux is dropped.
 fn project_df(
-    _root: tree_sitter::Node,
-    _src: &[u8],
-    _strings: &mut Strings,
-    _sink: &mut FamilyBundle<DfF>,
+    root: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<DfF>,
 ) {
-    // Commit D: go_dataflow_from / flow_go.
+    go_walk_fns(root, src, strings, sink);
+}
+
+/// Walk every function/method declaration, lifting each body. Port of v5
+/// `go_walk_fns`. The receiver is NOT seeded as a param (it lives in the
+/// `receiver` field, not `parameters`); a read of the receiver in the body has no
+/// binding edge, matching v5.
+fn go_walk_fns(
+    node: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<DfF>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "function_declaration" => {
+                if child.child_by_field_name("name").is_some() {
+                    go_flow_fn(child, src, strings, sink);
+                }
+            }
+            "method_declaration" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    if go_receiver_type(child, src).is_some() {
+                        let _ = name_node; // v5 mints a fn_sym here; v6 drops it.
+                        go_flow_fn(child, src, strings, sink);
+                    }
+                }
+            }
+            _ => {}
+        }
+        go_walk_fns(child, src, strings, sink);
+    }
+}
+
+/// Seed `param` nodes from the (non-receiver) parameter list, then walk the body.
+/// A grouped parameter (`a, b int`) mints one param node PER declared name,
+/// matching `go_fn_type`'s slot count; an unnamed parameter still advances the
+/// position counter so later named params keep the right index. Port of v5
+/// `go_flow_fn` (the `param_pos` aux is dropped).
+fn go_flow_fn(
+    fn_node: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<DfF>,
+) {
+    let mut scope = Scope::new();
+    if let Some(params) = fn_node.child_by_field_name("parameters") {
+        let mut cursor = params.walk();
+        for param in params.children(&mut cursor) {
+            if !matches!(param.kind(), "parameter_declaration" | "variadic_parameter_declaration") {
+                continue;
+            }
+            let mut name_cursor = param.walk();
+            let names: Vec<tree_sitter::Node> = param
+                .children(&mut name_cursor)
+                .filter(|n| n.kind() == "identifier")
+                .collect();
+            if names.is_empty() {
+                continue;
+            }
+            for name_node in names {
+                let name = go_text(name_node, src).to_string();
+                let node = df_push(sink, strings, name_node.start_byte() as u32, DfNodeKind::Param, Some(&name));
+                scope.insert(name, node);
+            }
+        }
+    }
+    if let Some(body) = fn_node.child_by_field_name("body") {
+        flow_go(body, src, strings, &mut scope, sink);
+    }
+}
+
+/// Returns the node carrying the value of this subtree, or None when the subtree
+/// is a pure statement/binder handled inline (bindings, control-flow headers).
+/// Unhandled node kinds fall through to `go_recurse_children`, conservative.
+/// Port of v5 `flow_go`; byte-exact (each node minted at `node.start_byte()`).
+fn flow_go(
+    node: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    scope: &mut Scope,
+    sink: &mut FamilyBundle<DfF>,
+) -> Option<NodeRef> {
+    let start_byte = node.start_byte() as u32;
+    match node.kind() {
+        "identifier" => {
+            let name = go_text(node, src).to_string();
+            let read = df_push(sink, strings, start_byte, DfNodeKind::VarRead, Some(&name));
+            if let Some(binding) = scope.get(&name) {
+                df_edge(sink, *binding, read);
+            }
+            Some(read)
+        }
+        "interpreted_string_literal" | "raw_string_literal" | "int_literal" | "float_literal"
+        | "imaginary_literal" | "rune_literal" | "true" | "false" | "nil" | "iota" => {
+            Some(df_push(sink, strings, start_byte, DfNodeKind::Lit, None))
+        }
+        // f(args): every argument flows into the call result; a selector callee
+        // `recv.M(args)` flows the receiver in too. Go has no syntactic ctor
+        // marker (capitalization means EXPORTED), so every call is `call_res`.
+        "call_expression" => {
+            let func = node.child_by_field_name("function");
+            let mut receiver: Option<NodeRef> = None;
+            if let Some(func) = func {
+                if func.kind() == "selector_expression" {
+                    if let Some(operand) = func.child_by_field_name("operand") {
+                        receiver = flow_go(operand, src, strings, scope, sink);
+                    }
+                }
+            }
+            let mut arg_ids = Vec::new();
+            if let Some(args) = node.child_by_field_name("arguments") {
+                let mut cursor = args.walk();
+                for arg in args.children(&mut cursor) {
+                    if let Some(id) = flow_go(arg, src, strings, scope, sink) {
+                        arg_ids.push(id);
+                    }
+                }
+            }
+            let call_res = df_push(sink, strings, start_byte, DfNodeKind::CallRes, None);
+            if let Some(recv) = receiver {
+                df_edge(sink, recv, call_res);
+            }
+            for arg_id in arg_ids {
+                df_edge(sink, arg_id, call_res);
+            }
+            Some(call_res)
+        }
+        // `base.Field` outside a call: a member read. As a call's callee (parent
+        // is the enclosing call_expression) the call arm above owns it instead.
+        "selector_expression" => {
+            if node.parent().map(|p| p.kind()) == Some("call_expression") {
+                return None;
+            }
+            let operand = node
+                .child_by_field_name("operand")
+                .and_then(|o| flow_go(o, src, strings, scope, sink));
+            let name = node
+                .child_by_field_name("field")
+                .map(|f| go_text(f, src).to_string())
+                .unwrap_or_default();
+            let member = df_push(sink, strings, start_byte, DfNodeKind::Member, Some(&name));
+            if let Some(operand) = operand {
+                df_edge(sink, operand, member);
+            }
+            Some(member)
+        }
+        // `T{...}` / `[]T{...}` / `map[K]V{...}`: an instantiation. Each element
+        // flows into the `new` node (the keyed/positional field labels are dropped
+        // aux). The key subtree of a `keyed_element` is a LABEL, never walked.
+        "composite_literal" => {
+            let type_name = node
+                .child_by_field_name("type")
+                .map(|t| go_type_name_text(t, src))
+                .unwrap_or_default();
+            let new_node = df_push(sink, strings, start_byte, DfNodeKind::New, Some(&type_name));
+            if let Some(body) = node.child_by_field_name("body") {
+                go_flow_literal_fields(body, src, strings, scope, sink, new_node);
+            }
+            Some(new_node)
+        }
+        // A `literal_value` reached directly (not via `composite_literal`): a
+        // nested element literal whose type is implied by the enclosing composite.
+        "literal_value" => {
+            let new_node = df_push(sink, strings, start_byte, DfNodeKind::New, None);
+            go_flow_literal_fields(node, src, strings, scope, sink, new_node);
+            Some(new_node)
+        }
+        "binary_expression" => {
+            let left = node
+                .child_by_field_name("left")
+                .and_then(|n| flow_go(n, src, strings, scope, sink));
+            let right = node
+                .child_by_field_name("right")
+                .and_then(|n| flow_go(n, src, strings, scope, sink));
+            let binop = df_push(sink, strings, start_byte, DfNodeKind::Binop, None);
+            if let Some(left) = left {
+                df_edge(sink, left, binop);
+            }
+            if let Some(right) = right {
+                df_edge(sink, right, binop);
+            }
+            Some(binop)
+        }
+        "unary_expression" => {
+            let inner = node
+                .child_by_field_name("operand")
+                .and_then(|n| flow_go(n, src, strings, scope, sink));
+            let unop = df_push(sink, strings, start_byte, DfNodeKind::Unop, None);
+            if let Some(inner) = inner {
+                df_edge(sink, inner, unop);
+            }
+            Some(unop)
+        }
+        // `x := rhs` (possibly multi-value): bind each declared name to a fresh
+        // `let_bind` node. A matching-arity rhs pairs positionally; a mismatched
+        // arity taints every target from the first rhs value conservatively.
+        "short_var_declaration" => {
+            let rhs_ids = node
+                .child_by_field_name("right")
+                .map(|right| go_flow_expr_list(right, src, strings, scope, sink))
+                .unwrap_or_default();
+            if let Some(left) = node.child_by_field_name("left") {
+                let mut cursor = left.walk();
+                let names: Vec<tree_sitter::Node> = left
+                    .children(&mut cursor)
+                    .filter(|n| n.kind() == "identifier")
+                    .collect();
+                go_bind(&names, &rhs_ids, DfNodeKind::LetBind, src, strings, scope, sink);
+            }
+            None
+        }
+        "var_declaration" | "const_declaration" => {
+            let mut cursor = node.walk();
+            for spec in node
+                .children(&mut cursor)
+                .filter(|n| matches!(n.kind(), "var_spec" | "const_spec"))
+            {
+                go_flow_spec(spec, src, strings, scope, sink);
+            }
+            None
+        }
+        // `lhs = rhs` (incl. compound `+=`/etc): rebind so later reads see the
+        // new value. Non-identifier targets (`x.Field = v`) still flow for side-
+        // effect visibility without a scope rebind.
+        "assignment_statement" => {
+            let rhs_ids = node
+                .child_by_field_name("right")
+                .map(|right| go_flow_expr_list(right, src, strings, scope, sink))
+                .unwrap_or_default();
+            if let Some(left) = node.child_by_field_name("left") {
+                let mut cursor = left.walk();
+                let targets: Vec<tree_sitter::Node> = left.children(&mut cursor).collect();
+                let names: Vec<tree_sitter::Node> = targets
+                    .iter()
+                    .filter(|n| n.kind() == "identifier")
+                    .copied()
+                    .collect();
+                go_bind(&names, &rhs_ids, DfNodeKind::VarWrite, src, strings, scope, sink);
+                for target in targets
+                    .iter()
+                    .filter(|n| n.kind() != "identifier" && n.kind() != ",")
+                {
+                    flow_go(*target, src, strings, scope, sink);
+                }
+            }
+            None
+        }
+        // `return a, b`: one `ret` node PER returned value, each fed by its own
+        // expression. A naked `return` mints one empty `ret` node so the fn has a
+        // visible graph endpoint. The ret node sits at the EXPRESSION's byte (v5
+        // uses the expression's position), not the return statement's.
+        "return_statement" => {
+            let mut cursor = node.walk();
+            let list = node
+                .children(&mut cursor)
+                .find(|n| n.kind() == "expression_list");
+            let mut minted = false;
+            if let Some(list) = list {
+                let mut list_cursor = list.walk();
+                for expr in list.children(&mut list_cursor) {
+                    if let Some(value) = flow_go(expr, src, strings, scope, sink) {
+                        let ret = df_push(sink, strings, expr.start_byte() as u32, DfNodeKind::Ret, None);
+                        df_edge(sink, value, ret);
+                        minted = true;
+                    }
+                }
+            }
+            if !minted {
+                df_push(sink, strings, start_byte, DfNodeKind::Ret, None);
+            }
+            None
+        }
+        "if_statement" => {
+            if let Some(init) = node.child_by_field_name("initializer") {
+                flow_go(init, src, strings, scope, sink);
+            }
+            if let Some(cond) = node.child_by_field_name("condition") {
+                flow_go(cond, src, strings, scope, sink);
+            }
+            if let Some(cons) = node.child_by_field_name("consequence") {
+                flow_go(cons, src, strings, scope, sink);
+            }
+            if let Some(alt) = node.child_by_field_name("alternative") {
+                flow_go(alt, src, strings, scope, sink);
+            }
+            Some(df_push(sink, strings, start_byte, DfNodeKind::If, None))
+        }
+        // `for range/clause/cond { body }`: walk the header (binding the range
+        // variable when present), then walk the body. The loop FACT (span/var) is
+        // dropped aux. A for_statement's non-`body` child is at most ONE of {bare
+        // condition, `for_clause`, `range_clause`} per the grammar.
+        "for_statement" => {
+            let mut loop_var = String::new();
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                match child.kind() {
+                    "range_clause" => {
+                        if let Some(right) = child.child_by_field_name("right") {
+                            flow_go(right, src, strings, scope, sink);
+                        }
+                        if let Some(left) = child.child_by_field_name("left") {
+                            let mut left_cursor = left.walk();
+                            let names: Vec<tree_sitter::Node> = left
+                                .children(&mut left_cursor)
+                                .filter(|n| n.kind() == "identifier")
+                                .collect();
+                            for name_node in &names {
+                                let name = go_text(*name_node, src).to_string();
+                                if name == "_" {
+                                    continue;
+                                }
+                                let bind = df_push(
+                                    sink,
+                                    strings,
+                                    name_node.start_byte() as u32,
+                                    DfNodeKind::LetBind,
+                                    Some(&name),
+                                );
+                                scope.insert(name.clone(), bind);
+                                if loop_var.is_empty() {
+                                    loop_var = name;
+                                }
+                            }
+                        }
+                    }
+                    "for_clause" => {
+                        if let Some(init) = child.child_by_field_name("initializer") {
+                            flow_go(init, src, strings, scope, sink);
+                        }
+                        if let Some(cond) = child.child_by_field_name("condition") {
+                            flow_go(cond, src, strings, scope, sink);
+                        }
+                        if let Some(update) = child.child_by_field_name("update") {
+                            flow_go(update, src, strings, scope, sink);
+                        }
+                    }
+                    "block" | "for" => {}
+                    _ => {
+                        flow_go(child, src, strings, scope, sink);
+                    }
+                }
+            }
+            if let Some(body) = node.child_by_field_name("body") {
+                flow_go(body, src, strings, scope, sink);
+            }
+            Some(df_push(sink, strings, start_byte, DfNodeKind::Loop, Some(&loop_var)))
+        }
+        // `func(...) {...}`: lift as its OWN fn scope, same shape as Rust
+        // closures/Kotlin lambda literals. The enclosing `scope` is shared, so a
+        // captured outer variable's read still resolves. The `closure` VALUE node
+        // stays in the enclosing fn; v6 carries no name (v5's lam_sym join key is
+        // replaced by span-containment; the golden_parity waiver covers it).
+        "func_literal" => {
+            if let Some(params) = node.child_by_field_name("parameters") {
+                let mut cursor = params.walk();
+                for param in params.children(&mut cursor) {
+                    if !matches!(param.kind(), "parameter_declaration" | "variadic_parameter_declaration") {
+                        continue;
+                    }
+                    let mut name_cursor = param.walk();
+                    let names: Vec<tree_sitter::Node> = param
+                        .children(&mut name_cursor)
+                        .filter(|n| n.kind() == "identifier")
+                        .collect();
+                    if names.is_empty() {
+                        continue;
+                    }
+                    for name_node in names {
+                        let name = go_text(name_node, src).to_string();
+                        let node_ref = df_push(
+                            sink,
+                            strings,
+                            name_node.start_byte() as u32,
+                            DfNodeKind::Param,
+                            Some(&name),
+                        );
+                        scope.insert(name, node_ref);
+                    }
+                }
+            }
+            if let Some(body) = node.child_by_field_name("body") {
+                flow_go(body, src, strings, scope, sink);
+            }
+            Some(df_push(sink, strings, start_byte, DfNodeKind::Closure, None))
+        }
+        // everything else (blocks/statement lists, expression statements,
+        // parenthesized/index/slice/type-assertion/conversion expressions,
+        // go/defer/send/select/switch/labeled statements, ...): recurse
+        // conservatively, surfacing the last value-bearing child.
+        _ => go_recurse_children(node, src, strings, scope, sink),
+    }
+}
+
+/// Flow every element of an `expression_list`, in source order, returning one
+/// `Option<NodeRef>` per element. Port of v5 `go_flow_expr_list`.
+fn go_flow_expr_list(
+    list: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    scope: &mut Scope,
+    sink: &mut FamilyBundle<DfF>,
+) -> Vec<Option<NodeRef>> {
+    let mut cursor = list.walk();
+    list.children(&mut cursor)
+        .map(|e| flow_go(e, src, strings, scope, sink))
+        .collect()
+}
+
+/// Bind each name in `names` to a fresh node of `kind` ("let_bind" for a
+/// declaration, "var_write" for a plain assignment), wiring the matching rhs
+/// value when arity lines up (else every target derives from the first rhs value,
+/// conservative). `_` binds nothing. Port of v5 `go_bind`.
+fn go_bind(
+    names: &[tree_sitter::Node],
+    rhs_ids: &[Option<NodeRef>],
+    kind: DfNodeKind,
+    src: &[u8],
+    strings: &mut Strings,
+    scope: &mut Scope,
+    sink: &mut FamilyBundle<DfF>,
+) {
+    for (i, name_node) in names.iter().enumerate() {
+        let name = go_text(*name_node, src).to_string();
+        if name == "_" {
+            continue;
+        }
+        let bind = df_push(sink, strings, name_node.start_byte() as u32, kind, Some(&name));
+        let rhs = if rhs_ids.len() == names.len() {
+            rhs_ids.get(i).cloned().flatten()
+        } else {
+            rhs_ids.first().cloned().flatten()
+        };
+        if let Some(rhs) = rhs {
+            df_edge(sink, rhs, bind);
+        }
+        scope.insert(name, bind);
+    }
+}
+
+/// A `var_spec`/`const_spec`: bind each declared identifier to a `let_bind` node
+/// fed by its initializer. Port of v5 `go_flow_spec`.
+fn go_flow_spec(
+    spec: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    scope: &mut Scope,
+    sink: &mut FamilyBundle<DfF>,
+) {
+    let mut cursor = spec.walk();
+    let names: Vec<tree_sitter::Node> = spec
+        .children(&mut cursor)
+        .filter(|n| n.kind() == "identifier")
+        .collect();
+    let rhs_ids = spec
+        .child_by_field_name("value")
+        .map(|value| go_flow_expr_list(value, src, strings, scope, sink))
+        .unwrap_or_default();
+    go_bind(&names, &rhs_ids, DfNodeKind::LetBind, src, strings, scope, sink);
+}
+
+/// A composite literal's body (`literal_value`): each `keyed_element`'s value
+/// (and each bare `literal_element`'s value) flows into `owner`. The field labels
+/// are dropped aux; the EDGES carry the flow. Port of v5
+/// `go_flow_literal_fields`.
+fn go_flow_literal_fields(
+    lit: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    scope: &mut Scope,
+    sink: &mut FamilyBundle<DfF>,
+    owner: NodeRef,
+) {
+    let mut cursor = lit.walk();
+    for child in lit.children(&mut cursor) {
+        let value_wrap = match child.kind() {
+            "keyed_element" => child.child_by_field_name("value"),
+            "literal_element" => Some(child),
+            _ => continue,
+        };
+        let Some(value_wrap) = value_wrap else { continue };
+        let Some(inner) = value_wrap.named_child(0) else { continue };
+        if let Some(value) = flow_go(inner, src, strings, scope, sink) {
+            df_edge(sink, value, owner);
+        }
+    }
+}
+
+/// The textual name of a composite literal's element type, for the `new` node's
+/// name: a bare/qualified named type keeps its name; an anonymous array/slice/
+/// map/struct literal type has no name (`""`). Port of v5 `go_type_name_text`.
+fn go_type_name_text(node: tree_sitter::Node, src: &[u8]) -> String {
+    match node.kind() {
+        "type_identifier" => go_text(node, src).to_string(),
+        "qualified_type" => node
+            .child_by_field_name("name")
+            .map(|n| go_text(n, src).to_string())
+            .unwrap_or_default(),
+        "generic_type" => node
+            .child_by_field_name("type")
+            .map(|t| go_type_name_text(t, src))
+            .unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+/// Walk all children conservatively, surfacing the last value-bearing child's
+/// node. The generic fallback `flow_go` reaches for every node kind it doesn't
+/// special-case. Port of v5 `go_recurse_children`.
+fn go_recurse_children(
+    node: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    scope: &mut Scope,
+    sink: &mut FamilyBundle<DfF>,
+) -> Option<NodeRef> {
+    let mut cursor = node.walk();
+    let mut last = None;
+    for child in node.children(&mut cursor) {
+        if let Some(id) = flow_go(child, src, strings, scope, sink) {
+            last = Some(id);
+        }
+    }
+    last
+}
+
+/// Push one df node, returning its `NodeRef` (the dense index edges reference).
+/// The span is start-only (len 0): df node identity is `(span.start, kind)`,
+/// byte-exact with v5's reconstructed `line_starts[row] + col`. Port of v5
+/// `push_node` (minus fn_sym/file/aux).
+fn df_push(
+    sink: &mut FamilyBundle<DfF>,
+    strings: &mut Strings,
+    byte: u32,
+    kind: DfNodeKind,
+    name: Option<&str>,
+) -> NodeRef {
+    let node_ref = NodeRef(sink.nodes.len() as u32);
+    let mut node = Node::new(Span { start: byte, len: 0 }, kind);
+    if let Some(name) = name.filter(|candidate| !candidate.is_empty()) {
+        node = node.with_name(strings.intern(name));
+    }
+    sink.nodes.push(node);
+    node_ref
+}
+
+/// One Direct value edge: `dst` receives the value of `src`.
+fn df_edge(sink: &mut FamilyBundle<DfF>, src: NodeRef, dst: NodeRef) {
+    sink.edges.push(Edge::new(src, dst, DfEdgeKind::Direct));
 }
 
 // ════════════════════════════════════════════════════════════════════════════
