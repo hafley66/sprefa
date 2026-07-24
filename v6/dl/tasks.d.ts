@@ -152,6 +152,18 @@ export type Bridge = import("./src/0_types.ts").Bridge;
  *  Gates: dbstat before/after on a scaled corpus (hundreds of .ts files), rel-plane
  *  index bytes <= 15% of file, bytes/row per table, churn + store stress gun re-run,
  *  commit p50/p95 re-measured (regression = receipts + escalate).
+ *  AMENDMENTS 2 (owner, binding):
+ *  a. SEMI-NAIVE FLOOR: any fixpoint/closure/propagation loop runs the semi-naive
+ *     delta-frontier form (the store cascade IS this). The commit pipeline's
+ *     recompute-whole-sets diff is the called-out naive form. A surviving naive
+ *     loop carries a receipt: where, why bounded, when it graduates.
+ *  b. ONE PROCESS SPACE per algorithm class, uniformly: SQLite set-ops (cascade)
+ *     OR in-RAM tight loops; never a smear (half a traversal in SQL, half in JS
+ *     pulling rows per hop). Commit pipeline + HostRunner audited; the report
+ *     states which space each algorithm closed into and why.
+ *  c. ZERO STRING FOREIGN KEYS, absolute: no TEXT column referencing another row
+ *     (path, rel name, host name, digest-as-hex included; keying digests become
+ *     INTEGER). dbstat gate addition: any join column with TEXT affinity = FAIL.
  *  AMENDMENT (owner, same day, hard evidence): the runtime uses the store's rx
  *  lowering but ONE engine function total (with_txn, 3_runtime.ts:60); ingest.ts is
  *  imported for types only; the live db holds zero store tables. M3 silently dropped
