@@ -52,6 +52,13 @@ const CASES: &[Case] = &[
         baseline: include_str!("fixtures/rust/sample.v5.jsonl"),
         fixture_dir: "rust",
     },
+    Case {
+        name: "go_sample",
+        path: "sample.go",
+        fixture: include_bytes!("fixtures/go/sample.go"),
+        baseline: include_str!("fixtures/go/sample.v5.jsonl"),
+        fixture_dir: "go",
+    },
 ];
 
 const PORTED: &[&str] = &[
