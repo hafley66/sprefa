@@ -31,7 +31,7 @@ pub use family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfEdgeKind, DfF, DfNodeKind,
     Family, SigSlot, TypeEdgeKind, TypeEntityKind, TypeFAux, TypeF, TypeSig,
 };
-pub use lang::{source_for, sources, AstgrepSource, RustSource, TsSource};
+pub use lang::{source_for, sources, AstgrepSource, GoSource, RustSource, TsSource};
 pub use rows::{Edge, FamilyBundle, Node};
 pub use seams::{BlobSource, ParseError, Parser, Project};
 pub use shape::{BlobHash, FamilyTag, NameId, NodeRef, Span, Strings};

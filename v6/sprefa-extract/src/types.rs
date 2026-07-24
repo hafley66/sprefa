@@ -700,12 +700,12 @@ pub enum FlatFact {
 // ════════════════════════════════════════════════════════════════════════════
 //
 //                          TS (oxc)   Rust (syn)   Go (tree-sitter-go)
-//   cst (ast-grep)           [x]         [x]            [ ] pending
-//   type entities + sigs     [x]         [x]            [ ] pending
-//   const facet              [x]         [x]            [ ] pending
-//   call defs + sites        [x]         [x]            [ ] pending
-//   df nodes + edges         [x]         [x]            [ ] pending
-//   parity vs v5 oracle      [x]         [x] *          [ ] pending
+//   cst (ast-grep)           [x]         [x]            [x]
+//   type entities + sigs     [x]         [x]            [x]
+//   const facet              [x]         [x]            [-] n/a (v5 go emits none)
+//   call defs + sites        [x]         [x]            [x]
+//   df nodes + edges         [x]         [x]            [x]
+//   parity vs v5 oracle      [x]         [x] *          [x]
 //
 //   * rust parity: one self-verifying closure-df-node-name waiver.
 //

@@ -84,11 +84,11 @@
 //!                (span-to-span, resolved) still land at Resolve<TypeF> (commit 4).
 //!
 //! BUILD STATUS (2026-07-24, commits 1-3c + Tier-2 PARITY GOLD (TS, incl. const facet) + the
-//! RUST second language + a self-describing CLI) LANDED in v6/sprefa-extract/. The TS + Rust
-//! phase-1 families - Cst / Type(+sigs) / Call / Df (+const) - all project + stream + snapshot
-//! through ONE uniform surface, AND each ported set matches a captured v5 oracle (see the
-//! (parity) + (rust) entries). NEXT: the Resolve<*> pass (commit 4), broaden parity fixtures
-//! (lambda/docs), then go (tree-sitter + scip-go):
+//! RUST + GO languages + a self-describing CLI) LANDED in v6/sprefa-extract/. The TS + Rust +
+//! Go phase-1 families - Cst / Type(+sigs) / Call / Df (+const) - all project + stream +
+//! snapshot through ONE uniform surface, AND each ported set matches a captured v5 oracle (see
+//! the (parity) / (rust) / (go) entries). NEXT: the Resolve<*> pass (commit 4), broaden parity
+//! fixtures (lambda/docs):
 //!   6a29d920  commit 1   CstF via ast-grep (one dep = rust/ts/tsx/js/go grammars);
 //!              clap bin streaming flat JSONL with --bench; snapshot. Piping proof.
 //!   f3ceb4fa  commit 2a  Parser/Project seam -> arena-passing GAT: oxc's
@@ -209,6 +209,20 @@
 //!             `--version` works; PATH is conditionally required so `extract
 //!             --schema` runs standalone. Commit a08ce4b5. `cargo install --path
 //!             v6/sprefa-extract --features cli --locked` puts `extract` on PATH.
+//!   (go)     THIRD LANGUAGE LANDED: `GoSource` (lang/go.rs, ~1120 lines), PREPENDED in the
+//!             roster so .go routes to it. Mirror of TsSource/RustSource: cst via ast-grep
+//!             (ast-grep's go grammar) + type/call/df via tree-sitter-go (`go_parse` ->
+//!             `tree_sitter::Tree`, the "floor as the only tier" - no oxc/syn analog for go).
+//!             Ports v5 `src/graph/typegraph/go.rs` (GoTypes): TypeF entities + arrow sigs,
+//!             CallF (defs + sites), DfF (nodes + Direct edges). tree-sitter yields BYTE
+//!             offsets directly (node.start_byte/end_byte) -> v6 Span with NO line/col bridge
+//!             (simpler than the syn port). TIER-2 PARITY GREEN vs the v5 oracle (go arm in
+//!             v5_normalize.rs): ZERO divergence (type/call line-exact, df byte-exact). v5 go
+//!             emits NO const facet (walk_go_entities skips const_declaration); v6 matches
+//!             (const_value=0 both sides). DEFERRED (same set as TS/Rust): type_edge
+//!             (Resolve<TypeF> commit 4), docs, df aux. Commits 8abdc38e (skeleton) /
+//!             aa3c782e (TypeF) / aab204d1 (CallF) / d6427eab (DfF) / 16bc0855 (parity gold).
+//!             tree-sitter + tree-sitter-go unify with ast-grep's transitives (one copy each).
 //!   PENDING:   the name-resolved type EDGES (field/impl/variant/uses + the
 //!              resolved param/returns binding) still land at Resolve<TypeF>
 //!              (commit 4) by design. ts_const_facts_from is PORTED (see (const)).
