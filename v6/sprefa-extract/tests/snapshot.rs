@@ -67,10 +67,10 @@ fn ts_uniform_surface() {
 }
 
 /// The first-match roster: a `.ts` routes to the lang-specific `TsSource`, a `.rs`
-/// falls through to the cst-only `AstgrepSource`, an unknown ext routes nowhere.
+/// routes to the lang-specific `RustSource`, an unknown ext routes nowhere.
 #[test]
 fn roster_routes_by_extension() {
     assert_eq!(source_for("x.ts").expect(".ts").name(), "ts");
-    assert_eq!(source_for("x.rs").expect(".rs").name(), "astgrep");
+    assert_eq!(source_for("x.rs").expect(".rs").name(), "rust");
     assert!(source_for("x.unknownext").is_none());
 }

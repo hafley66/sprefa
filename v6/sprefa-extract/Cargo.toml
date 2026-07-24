@@ -27,6 +27,15 @@ oxc_ast = "0.135"
 oxc_ast_visit = "0.135"
 oxc_span = "0.135"
 oxc_syntax = "0.135"
+# syn is the Rust AST front-end v5 carried (src/graph/typegraph/rust). The
+# `full` feature parses Item::*; `visit` drives the call-site/call-def walks;
+# `extra-traits` for derive Eq on AST nodes some helpers pattern-match. Ported
+# verbatim, not relitigated. Line/col on spans lives on proc_macro2::Span
+# (syn 2 dropped its `span-locations` feature), gated by proc-macro2's
+# `span-locations`; v6 Span is byte offsets, bridged by the line_starts table
+# in lang/rust.rs.
+syn = { version = "2", features = ["full", "visit", "parsing", "extra-traits"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
 # serde on the FLAT wire envelope only (never on the generic Node<F>). The store
 # seam + the parity-golden normalize + the stdout JSONL all read this one shape.
 serde = { version = "1", features = ["derive"] }
