@@ -54,9 +54,6 @@ export namespace relstore {
 //!
 //! The `cx_*` / `rx_*` tables are the default on-disk impl; callers speak in `(rel, row)`.
 
-export import key = cascade.key;
-export import KEY_STRIDE = cascade.KEY_STRIDE;
-
 /**
  * The namespace for one graph store: every persistent table, index, and TEMP working-table
  * name, built from a prefix. `GraphNs.default()` (empty prefix) is the live `cx_`/`rx_` set;
