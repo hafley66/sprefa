@@ -164,6 +164,14 @@ export type Bridge = import("./src/0_types.ts").Bridge;
  *  c. ZERO STRING FOREIGN KEYS, absolute: no TEXT column referencing another row
  *     (path, rel name, host name, digest-as-hex included; keying digests become
  *     INTEGER). dbstat gate addition: any join column with TEXT affinity = FAIL.
+ *  AMENDMENT 3 (owner): THE STRESS TEST IS THE GOLDEN. M9 acceptance = a pinned
+ *  stress-golden committed in the dl suite: a scaled-corpus session (hundreds of
+ *  real files, repeated churn edits, effect re-fires, retractions) whose output
+ *  invariants are asserted like any golden — exact re-fire counts, delta-log
+ *  growth formula, dbstat ratio ceiling (rel-plane index <= 15%, zero TEXT-affinity
+ *  join columns), commit p50/p95 budget, rss ceiling. Sized at the largest corpus
+ *  under a tolerable suite wall-clock; the degradation knee recorded on the board.
+ *  Repeatable script, not a one-off report.
  *  AMENDMENT (owner, same day, hard evidence): the runtime uses the store's rx
  *  lowering but ONE engine function total (with_txn, 3_runtime.ts:60); ingest.ts is
  *  imported for types only; the live db holds zero store tables. M3 silently dropped
