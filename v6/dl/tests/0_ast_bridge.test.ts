@@ -43,8 +43,15 @@ test("unknown rel: a body ref to an undeclared rel is a load error", () => {
   if (result.kind === "err") assert.ok(result.diags.some((diag) => diag.code === "unknown-rel"));
 });
 
+// M8-alpha collateral: `file` (builtin) is now 2-col (path, content_hash); bumped
+// from 1 arg to 3 so this still passes MORE args than the rel's declared arity
+// (ordinary rel refs, unlike probes, keep the pre-M8 "more args = load error" law;
+// only probes gained the salt-arg exception, see the salt tests below).
 test("arity: more args than declared arity is a load error", () => {
-  const result = bridge("rel out(path: text).\nout(path) <- file(path, extra).\n", builtinRelsForTests());
+  const result = bridge(
+    "rel out(path: text).\nout(path) <- file(path, extra, extra2).\n",
+    builtinRelsForTests(),
+  );
   assert.equal(result.kind, "err");
   if (result.kind === "err") assert.ok(result.diags.some((diag) => diag.code === "arity-mismatch"));
 });
@@ -355,6 +362,129 @@ test("named args in a probe resolve against the host decl", () => {
   ]);
   assert.ok(result.minted.includes("__req_sg"));
   assert.ok(result.minted.includes("__resp_sg"));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Salt-arg law (M8-alpha, IdentityWitnessLaw, tasks.d.ts): a probe with more args
+// than its host's declared columns treats the excess as positional-only witness
+// salts, spliced between the input args and the output args. The fixture golden
+// (sg-rail.dl) covers the happy 1-salt path end to end; these are the unit facets
+// it can't reach on its own.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function shHeader(): string {
+  return ["sh h(pattern: text, path: text, start: int, end: int, text: text) =", "  `sg run --pattern '{pattern}' --json $path`."].join(
+    "\n",
+  );
+}
+
+test("salt-arg law: 1 extra arg mints salt_0 between the input and output columns", () => {
+  const dlText = [
+    shHeader(),
+    "rel out(pattern: text, path: text, salt0: text, start: int, end: int, text: text).",
+    "out(pattern, path, salt0, start, end, text) <- h?(pattern, path, salt0, start, end, text).",
+    "",
+  ].join("\n");
+  const result = bridge(dlText, builtinRelsForTests());
+  assertOk(result);
+
+  const reqRel = result.program.rels.find((rel) => rel.name === "__req_h");
+  assert.ok(reqRel);
+  assert.deepEqual(reqRel!.columns, ["pattern", "path", "salt_0"]);
+
+  const respRel = result.program.rels.find((rel) => rel.name === "__resp_h");
+  assert.ok(respRel);
+  assert.deepEqual(respRel!.columns, ["pattern", "path", "salt_0", "start", "end", "text"]);
+
+  const outRule = result.program.rules.find((rule) => rule.head === "out");
+  assert.ok(outRule);
+  const respRef = outRule.body.find((pred) => pred.kind === "rel" && pred.rel === "__resp_h");
+  assert.ok(respRef);
+  assert.equal(respRef!.kind, "rel");
+  if (respRef!.kind === "rel") {
+    assert.deepEqual(respRef!.args, [
+      { kind: "var", name: "pattern" },
+      { kind: "var", name: "path" },
+      { kind: "var", name: "salt0" },
+      { kind: "var", name: "start" },
+      { kind: "var", name: "end" },
+      { kind: "var", name: "text" },
+    ]);
+  }
+
+  const reqRule = result.program.rules.find((rule) => rule.head === "__req_h");
+  assert.ok(reqRule);
+  assert.deepEqual(reqRule!.headTerms, [
+    { kind: "hvar", name: "pattern" },
+    { kind: "hvar", name: "path" },
+    { kind: "hvar", name: "salt0" },
+  ]);
+});
+
+test("salt-arg law: 2 extra args mint salt_0, salt_1 in arg order", () => {
+  const dlText = [
+    shHeader(),
+    "rel out(pattern: text, path: text, salt0: text, salt1: text, start: int, end: int, text: text).",
+    "out(pattern, path, salt0, salt1, start, end, text) <- h?(pattern, path, salt0, salt1, start, end, text).",
+    "",
+  ].join("\n");
+  const result = bridge(dlText, builtinRelsForTests());
+  assertOk(result);
+
+  const reqRel = result.program.rels.find((rel) => rel.name === "__req_h");
+  assert.ok(reqRel);
+  assert.deepEqual(reqRel!.columns, ["pattern", "path", "salt_0", "salt_1"]);
+
+  const respRel = result.program.rels.find((rel) => rel.name === "__resp_h");
+  assert.ok(respRel);
+  assert.deepEqual(respRel!.columns, ["pattern", "path", "salt_0", "salt_1", "start", "end", "text"]);
+});
+
+test("salt-arg law: a wildcard salt is a LoadDiag (a salt must bind a Var or Lit witness)", () => {
+  const dlText = [
+    shHeader(),
+    "rel out(pattern: text, path: text, start: int, end: int, text: text).",
+    "out(pattern, path, start, end, text) <- h?(pattern, path, _, start, end, text).",
+    "",
+  ].join("\n");
+  const result = bridge(dlText, builtinRelsForTests());
+  assert.equal(result.kind, "err");
+  if (result.kind === "err") {
+    assert.ok(result.diags.some((diag) => diag.code === "named-arg" && diag.message.includes("salt")));
+  }
+});
+
+test("salt-arg law: a named arg targeting nothing still hits the existing named-arg diag", () => {
+  const dlText = [
+    shHeader(),
+    "rel out(pattern: text, path: text, salt0: text, start: int, end: int, text: text).",
+    "out(pattern, path, salt0, start, end, text) <- h?(pattern: pattern, path: path, bogus: salt0, start: start, end: end, text: text).",
+    "",
+  ].join("\n");
+  const result = bridge(dlText, builtinRelsForTests());
+  assert.equal(result.kind, "err");
+  if (result.kind === "err") {
+    assert.ok(result.diags.some((diag) => diag.code === "named-arg" && diag.message.includes("not a declared column")));
+  }
+});
+
+test("salt-arg law: zero-salt probes are unchanged (regression, pre-M8 shapes)", () => {
+  const dlText = [
+    shHeader(),
+    "rel out(pattern: text, path: text, start: int, end: int, text: text).",
+    "out(pattern, path, start, end, text) <- h?(pattern, path, start, end, text).",
+    "",
+  ].join("\n");
+  const result = bridge(dlText, builtinRelsForTests());
+  assertOk(result);
+
+  const reqRel = result.program.rels.find((rel) => rel.name === "__req_h");
+  assert.ok(reqRel);
+  assert.deepEqual(reqRel!.columns, ["pattern", "path"]);
+
+  const respRel = result.program.rels.find((rel) => rel.name === "__resp_h");
+  assert.ok(respRel);
+  assert.deepEqual(respRel!.columns, ["pattern", "path", "start", "end", "text"]);
 });
 
 test("named head args on a non-diag head: an unfilled slot is a binding LoadDiag", () => {

@@ -65,9 +65,10 @@ test("F2 mapping: one record per shape maps to spine rel rows + span_line + file
   ];
 
   const lines = toFactLines(records, BAD_TS);
+  const expectedContentHash = crypto.createHash("sha256").update(fs.readFileSync(BAD_TS)).digest("hex");
 
   assert.deepEqual(lines, [
-    { t: "rel", name: "file", row: [BAD_TS] },
+    { t: "rel", name: "file", row: [BAD_TS, expectedContentHash] },
     { t: "rel", name: "node", row: [BAD_TS, "cst", 147, 167, "call_expression", null] }, // null name covered
     { t: "rel", name: "edge", row: [BAD_TS, "cst", "child", 0, 189, 0, 188] },
     { t: "rel", name: "sig", row: [BAD_TS, 7, 188, "param", 0, "string"] },
@@ -80,6 +81,71 @@ test("F2 mapping: one record per shape maps to spine rel rows + span_line + file
     { t: "rel", name: "span_line", row: [BAD_TS, 158, 3, 13] },
     { t: "rel", name: "span_line", row: [BAD_TS, 167, 3, 22] },
   ]);
+});
+
+// M8-alpha (IdentityWitnessLaw, tasks.d.ts): the `file` row's content_hash is the
+// witness a salted probe joins against: these two tests are the witness's own
+// EXIST (this one) and FLOW (the next one) half.
+test("file row carries the sha-256 hex digest of the file's bytes", async () => {
+  const { rt, dbPath } = await bootFixture(spineProgram());
+  try {
+    await ingestFile(rt, BAD_TS);
+    const fileRows = ((await rt.rows("file")) as Row[]).filter((row) => row.path === BAD_TS);
+    assert.equal(fileRows.length, 1);
+    const expectedHash = crypto.createHash("sha256").update(fs.readFileSync(BAD_TS)).digest("hex");
+    assert.equal(fileRows[0]!.content_hash, expectedHash);
+  } finally {
+    await rt.dispose();
+    cleanupDbFile(dbPath);
+  }
+});
+
+// The witness heartbeat: editing a file's CONTENT (same path) retracts the old
+// content_hash row and inserts the new one. Note this nets to 0 in TickReport.changed
+// (src/3_runtime.ts applyEdbTxn: net = genuinelyNew.length - allRetracted.length, both
+// 1 here); the net summary is not where the heartbeat shows. It shows on the per-tick
+// delta STREAM (rt.deltas$), which carries the raw insert/retract sets regardless of
+// net, so this test asserts against that stream directly instead of TickReport.
+test("editing content flips the file row: old content_hash retracts, new one inserts (witness heartbeat)", async () => {
+  const { rt, dbPath } = await bootFixture(spineProgram());
+  const tempPath = tempCorpusPath();
+  try {
+    fs.copyFileSync(BAD_TS, tempPath);
+    await ingestFile(rt, tempPath);
+    const hashV1 = crypto.createHash("sha256").update(fs.readFileSync(BAD_TS)).digest("hex");
+    assert.deepEqual(
+      ((await rt.rows("file")) as Row[]).filter((row) => row.path === tempPath),
+      [{ path: tempPath, content_hash: hashV1 }],
+    );
+
+    fs.copyFileSync(BAD_V2_TS, tempPath);
+    const fileDeltaEvents: { inserts: readonly Row[]; retracts: readonly Row[] }[] = [];
+    const subscription = rt.deltas$.subscribe((event) => {
+      if (event.rel === "file") fileDeltaEvents.push({ inserts: event.inserts, retracts: event.retracts });
+    });
+    const reportEdit = await ingestFile(rt, tempPath);
+    subscription.unsubscribe();
+
+    const hashV2 = crypto.createHash("sha256").update(fs.readFileSync(BAD_V2_TS)).digest("hex");
+    assert.notEqual(hashV1, hashV2, "test sanity: the two fixture bodies must actually differ");
+    assert.ok(
+      !reportEdit.changed.some(([rel]) => rel === "file"),
+      "the net TickReport delta for `file` is 0 on a same-path content edit (1 insert, 1 retract)",
+    );
+
+    assert.equal(fileDeltaEvents.length, 1, "expected exactly one `file` delta event for the edit tick");
+    assert.deepEqual(fileDeltaEvents[0]!.retracts, [{ path: tempPath, content_hash: hashV1 }]);
+    assert.deepEqual(fileDeltaEvents[0]!.inserts, [{ path: tempPath, content_hash: hashV2 }]);
+
+    assert.deepEqual(
+      ((await rt.rows("file")) as Row[]).filter((row) => row.path === tempPath),
+      [{ path: tempPath, content_hash: hashV2 }],
+    );
+  } finally {
+    await rt.dispose();
+    cleanupDbFile(dbPath);
+    fs.rmSync(tempPath, { force: true });
+  }
 });
 
 test("same file ingested twice = second TickReport has zero deltas", async () => {

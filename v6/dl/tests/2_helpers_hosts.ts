@@ -9,14 +9,17 @@
  * bootHostRunnerFixture/disposeHostFixture (boot a DlRuntime + a HostRunner wired to a
  * fresh libsql connection over the same db file, per the pinned cacheDb resolution),
  * effectCacheDump (deterministic effect_cache read for snapshot comparison), waitUntil
- * (bounded poll -- no arbitrary sleeps).
+ * (bounded poll -- no arbitrary sleeps), makeCountingHost (M8-beta: a deterministic,
+ * no-subprocess HostDef stand-in used by the supersession/ABA tests and by
+ * tests/7_churn_stress.test.ts, so neither has to spawn a real process to prove the
+ * identity/witness mechanics).
  */
 import { createClient, type Client } from "@libsql/client";
 
 import { bridge } from "../src/0_ast_bridge.ts";
 import { HostRunner, type CacheDb, type HostDef } from "../src/1_hosts.ts";
 import { DlRuntime } from "../src/3_runtime.ts";
-import type { BridgeOk } from "../tasks.d.ts";
+import type { BridgeOk, Row } from "../tasks.d.ts";
 import { builtinRelsForTests, readFixture } from "./0_helpers.ts";
 import { cleanupDbFile, freshDbPath } from "./1_helpers_db.ts";
 
@@ -59,8 +62,11 @@ export async function disposeHostFixture(fixture: HostFixture): Promise<void> {
   cleanupDbFile(fixture.dbPath);
 }
 
+/** M8-beta reshape (IdentityWitnessLaw, tasks.d.ts): full_digest is the fire-once PK,
+ *  identity_digest is the supersession group key. */
 export interface EffectCacheEntry {
-  readonly digest: string;
+  readonly full_digest: string;
+  readonly identity_digest: string;
   readonly host: string;
   readonly state: string;
   readonly requested_tick: number;
@@ -71,15 +77,18 @@ export interface EffectCacheEntry {
 export async function effectCacheDump(dbPath: string): Promise<EffectCacheEntry[]> {
   const db = createClient({ url: `file:${dbPath}` });
   try {
-    const res = await db.execute("SELECT digest, host, state, requested_tick FROM effect_cache ORDER BY digest");
+    const res = await db.execute(
+      "SELECT full_digest, identity_digest, host, state, requested_tick FROM effect_cache ORDER BY full_digest",
+    );
     return res.rows
       .map((row) => ({
-        digest: String(row.digest),
+        full_digest: String(row.full_digest),
+        identity_digest: String(row.identity_digest),
         host: String(row.host),
         state: String(row.state),
         requested_tick: Number(row.requested_tick),
       }))
-      .sort((a, b) => (a.digest < b.digest ? -1 : a.digest > b.digest ? 1 : 0));
+      .sort((a, b) => (a.full_digest < b.full_digest ? -1 : a.full_digest > b.full_digest ? 1 : 0));
   } finally {
     db.close();
   }
@@ -100,4 +109,38 @@ export async function waitUntil<T>(
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   throw new Error(`waitUntil: condition not met after ${attempts} attempts (${attempts * intervalMs}ms)`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// makeCountingHost: a deterministic, no-subprocess HostDef stand-in (M8-beta). Used
+// wherever a test needs to prove supersession/ABA/churn mechanics without spawning a
+// real process -- requestCols ["path"] (the identity column any bridged `sh <name>`
+// decl with a `{path}` template ref infers), responseCols ["path","value"]. Each
+// run() call increments a shared counter and echoes the request's path, so a test can
+// assert the EXACT number of executor runs (== distinct (identity,witness) pairs).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export class CountingHost {
+  runCount = 0;
+  readonly calls: Row[] = [];
+  readonly host: HostDef;
+
+  constructor(name: string) {
+    this.host = {
+      name,
+      requestCols: ["path"],
+      responseCols: ["path", "value"],
+      run: (request: Row) => this.run(request),
+    };
+  }
+
+  private async *run(request: Row): AsyncIterable<Row> {
+    this.runCount += 1;
+    this.calls.push(request);
+    yield { path: request.path ?? null, value: this.runCount };
+  }
+}
+
+export function makeCountingHost(name: string): CountingHost {
+  return new CountingHost(name);
 }

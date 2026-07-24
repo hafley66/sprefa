@@ -9,9 +9,11 @@
  * devDep @ast-grep/cli); `builtinExtract` = DL_EXTRACT_BIN (task 4.4: exposing the
  * extraction machinery as a demand-driven host, not a second ingest path). `HostRunner`
  * subscribes deltas$ for __req_* inserts, digest-caches via effect_cache (the `?`
- * idempotence law), commits __resp_* rows in one batch. One in-flight run per digest
- * (the cache row IS the lock); errors land as cache state 'error'; the stream never
- * dies.
+ * idempotence law -- fire-once per WITNESS, M8-beta: IdentityWitnessLaw, tasks.d.ts),
+ * commits __resp_* rows in one batch, ALSO retracting the prior witness's rows in that
+ * same commit when a new witness supersedes it within the same identity group. One
+ * in-flight run per full digest (the cache row IS the lock); errors land as cache state
+ * 'error'; the stream never dies.
  *
  * NUMBERING LAW (why this file looks the way it does): 1_hosts.ts imports ONLY
  * 0_types.ts types + 0_digest.ts (shared fold) + sprefa-store-engine (store
@@ -54,12 +56,29 @@ function valueToShellText(value: Value): string {
   return String(value);
 }
 
-/** Same law as 2_schema.ts's rowDigest, shared via 0_digest.ts's foldRowDigest (see
- *  file header). effect_cache digest = mix(host, ...requestTuple) -- the v5
- *  pending_effect law. */
-function effectDigest(hostName: string, requestRow: Row, requestCols: readonly string[]): string {
-  const narrowed = foldRowDigest(requestRow, requestCols);
+/** Same fold law as 2_schema.ts's rowDigest, shared via 0_digest.ts's foldRowDigest
+ *  (see file header). M8-beta reshape (IdentityWitnessLaw, tasks.d.ts): this ONE
+ *  function computes BOTH halves of effect_cache's split digest, called with a
+ *  different column list each time -- fullDigest = effectDigest(host, row,
+ *  [...identityCols, ...saltCols]); identityDigest = effectDigest(host, row,
+ *  identityCols). Same mix(host, ...tuple) law as before, just over the column set
+ *  the caller asks for. */
+function effectDigest(hostName: string, requestRow: Row, columns: readonly string[]): string {
+  const narrowed = foldRowDigest(requestRow, columns);
   return `${hostName}:${narrowed}`;
+}
+
+/** The bridge's deterministic salt-column minting (0_ast_bridge.ts's probe section,
+ *  IdentityWitnessLaw, tasks.d.ts): a probe with more args than its host's declared
+ *  columns splices `salt_0`..`salt_<s-1>` between the input args and the output args,
+ *  in that fixed index order. That determinism IS the contract this reads off: no
+ *  bridge-side lookup needed here, just a name pattern + a numeric sort. Absent any
+ *  salt_N key (a zero-salt probe/host), this returns [] -- the "zero-salt probes
+ *  unchanged" regression: identityDigest === fullDigest, no supersession ever fires. */
+function saltColumnsOf(row: Row): readonly string[] {
+  return Object.keys(row)
+    .filter((key) => /^salt_\d+$/.test(key))
+    .sort((left, right) => Number(left.slice("salt_".length)) - Number(right.slice("salt_".length)));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -385,32 +404,92 @@ export class HostRunner {
     this.subscription = null;
   }
 
+  /** M8-beta supersession flow (owner-authorized escalation, IdentityWitnessLaw +
+   *  the orchestrator's latest-wins interpretation, tasks.d.ts). identityCols = the
+   *  host's template inputs (host.requestCols); saltCols = whatever salt_N keys the
+   *  bridge spliced into THIS request row (saltColumnsOf). fullDigest is the
+   *  fire-once key (identity+witness); identityDigest is the supersession GROUP key
+   *  (identity only). */
   private async runEffectOnce(pending: PendingEffect): Promise<void> {
-    const digest = effectDigest(pending.host.name, pending.requestRow, pending.host.requestCols);
+    const identityCols = pending.host.requestCols;
+    const saltCols = saltColumnsOf(pending.requestRow);
+    const fullDigest = effectDigest(pending.host.name, pending.requestRow, [...identityCols, ...saltCols]);
+    const identityDigest = effectDigest(pending.host.name, pending.requestRow, identityCols);
     try {
-      const existing = await this.cacheDb.execute({ sql: "SELECT digest FROM effect_cache WHERE digest = ?", args: [digest] });
-      if (existing.rows.length > 0) return; // cache hit: the `?` law -- never re-run, never re-commit.
+      const existing = await this.cacheDb.execute({
+        sql: "SELECT full_digest FROM effect_cache WHERE full_digest = ?",
+        args: [fullDigest],
+      });
+      if (existing.rows.length > 0) return; // cache hit: fire-once per WITNESS, not per address.
 
       await this.cacheDb.execute({
-        sql: "INSERT INTO effect_cache(digest,host,state,requested_tick) VALUES (?,?,?,?) ON CONFLICT(digest) DO NOTHING",
-        args: [digest, pending.host.name, "pending", pending.tick],
+        sql:
+          "INSERT INTO effect_cache(full_digest,identity_digest,host,state,requested_tick) " +
+          "VALUES (?,?,?,?,?) ON CONFLICT(full_digest) DO NOTHING",
+        args: [fullDigest, identityDigest, pending.host.name, "pending", pending.tick],
       });
 
-      const responseRows: Row[] = [];
-      for await (const responseRow of pending.host.run(pending.requestRow)) responseRows.push(responseRow);
+      // Salts NEVER reach the executor (M8-alpha law, IdentityWitnessLaw): the run()
+      // call gets ONLY the identity-column values, never the witness/salt columns.
+      const identityOnlyRequest: Row = {};
+      for (const column of identityCols) identityOnlyRequest[column] = pending.requestRow[column] ?? null;
 
+      const outputRows: Row[] = [];
+      for await (const outputRow of pending.host.run(identityOnlyRequest)) outputRows.push(outputRow);
+
+      // host.run() already yields rows shaped [...identityCols, ...outputCols] (every
+      // HostDef -- shHost/builtinSg/builtinExtract -- echoes its own inputCols back);
+      // splice the witness/salt values back in from the request row so the response
+      // self-describes its witness, per __resp_h's real column shape.
+      const responseRows: Row[] = outputRows.map((outputRow) => {
+        const row: Record<string, Value> = { ...outputRow };
+        for (const column of saltCols) row[column] = pending.requestRow[column] ?? null;
+        return row as Row;
+      });
+
+      // SUPERSESSION: one rows() read (N+1 law -- the filter below computes the
+      // superseded set in TS from that single read, never a per-row query). A row is
+      // superseded when it shares this witness's IDENTITY but NOT its salt values --
+      // same identity group, a stale (prior) witness.
+      const respRelName = `__resp_${pending.host.name}`;
+      const liveRespRows = await this.runtime.rows(respRelName);
+      const supersededRows = liveRespRows.filter((row) => {
+        const sameIdentity = identityCols.every((column) => row[column] === (pending.requestRow[column] ?? null));
+        if (!sameIdentity) return false;
+        const sameWitness = saltCols.every((column) => row[column] === (pending.requestRow[column] ?? null));
+        return !sameWitness;
+      });
+
+      // ONE commit: new witness's rows insert, the prior witness's rows retract, in
+      // the same tick -- riding the ordinary weights plane, zero special code
+      // downstream (curl-session.sh's console_hit finding, now fixed honestly).
       await this.runtime.commit({
-        insert: new Map([[`__resp_${pending.host.name}`, responseRows]]),
-        retract: new Map(),
+        insert: new Map([[respRelName, responseRows]]),
+        retract: supersededRows.length > 0 ? new Map([[respRelName, supersededRows]]) : new Map(),
       });
-      await this.cacheDb.execute({ sql: "UPDATE effect_cache SET state = ? WHERE digest = ?", args: ["done", digest] });
+      await this.cacheDb.execute({
+        sql: "UPDATE effect_cache SET state = ? WHERE full_digest = ?",
+        args: ["done", fullDigest],
+      });
+
+      // ORCHESTRATOR INTERPRETATION of latest-wins (not owner-ruled, flagged per the
+      // escalation law): delete every OTHER full_digest sharing this identity_digest.
+      // The cache tracks the LIVE witness per identity, not every witness ever seen --
+      // an A->B->A content flip therefore RE-FIRES A (its old cache row is gone, so
+      // the next A witness is a cache miss again), rather than being served as a hit
+      // against rows this same commit just retracted above. Fire-once holds while a
+      // witness is CURRENT for its identity group, not forever.
+      await this.cacheDb.execute({
+        sql: "DELETE FROM effect_cache WHERE identity_digest = ? AND full_digest != ?",
+        args: [identityDigest, fullDigest],
+      });
     } catch {
       // Error DETAIL retrieval is a frontier item (documented, not this arc's scope):
       // the state column's 'error' value is all effect_cache records today. The
       // outer .catch keeps this defensive even if the UPDATE itself fails --
       // the stream must never die.
       await this.cacheDb
-        .execute({ sql: "UPDATE effect_cache SET state = ? WHERE digest = ?", args: ["error", digest] })
+        .execute({ sql: "UPDATE effect_cache SET state = ? WHERE full_digest = ?", args: ["error", fullDigest] })
         .catch(() => {});
     }
   }

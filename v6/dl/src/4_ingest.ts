@@ -4,18 +4,24 @@
  * Contract (plan M3, tasks.d.ts): `extractFile(path)` spawns DL_EXTRACT_BIN and yields
  * ExtractRecords; `toFactLines(recs, path)` is the pure-ish F2 mapping (record=node|edge|
  * sig|site|const -> spine rel rows, plus computed span_line(path, start, line, col)
- * rows from file bytes, plus one file(path) row); `ingestFile` diffs the new per-path row
- * set against the current tables and rides ONE rt.commit (retraction is the diff, no
- * diag-specific code). extract is CONSUME-ONLY: never touch its crate or worktree.
+ * rows from file bytes, plus one file(path, content_hash) row); `ingestFile` diffs the
+ * new per-path row set against the current tables and rides ONE rt.commit (retraction is
+ * the diff, no diag-specific code). extract is CONSUME-ONLY: never touch its crate or
+ * worktree.
  *
- * Spine rel schemas (ORCHESTRATOR PIN, tasks.d.ts): file(path); node(path, family, start,
- * end, kind, name); edge(path, family, kind, from_start, from_end, to_start, to_end);
- * sig(path, owner_start, owner_end, slot, pos, ty); site(path, start, end, callee,
- * callee_path); const(path, owner_start, owner_end, field, text, kind); span_line(path,
- * start, line, col) — one row per DISTINCT span offset (start AND end) seen in any
- * node/site record of the file, 0-based line/col, columns counted in BYTES (not UTF-16
- * code units), computed by scanning the raw file buffer for the ingested file exactly
- * once per ingestFile() call.
+ * Spine rel schemas (ORCHESTRATOR PIN, tasks.d.ts): file(path, content_hash); content_hash
+ * is the sha-256 hex digest of the file's raw bytes (M8-alpha, IdentityWitnessLaw,
+ * tasks.d.ts: the witness half of identity-vs-witness). A file row retracts+inserts on
+ * ANY content edit, even a same-mtime rewrite, so a downstream salted probe (e.g. sg?
+ * joined against content_hash) re-fires instead of reusing a stale cached response);
+ * node(path, family, start, end, kind, name); edge(path, family, kind, from_start,
+ * from_end, to_start, to_end); sig(path, owner_start, owner_end, slot, pos, ty);
+ * site(path, start, end, callee, callee_path); const(path, owner_start, owner_end, field,
+ * text, kind); span_line(path, start, line, col) — one row per DISTINCT span offset
+ * (start AND end) seen in any node/site record of the file, 0-based line/col, columns
+ * counted in BYTES (not UTF-16 code units), computed by scanning the raw file buffer for
+ * the ingested file exactly once per ingestFile() call (content_hash reuses that SAME
+ * read: one IO, no second pass over the file).
  *
  * `spineDeclsLocal` below is THIS PACKAGE's own decl builder, used only by its tests
  * (fakeBridgeOk needs a Program built from RelDecl[]). Integration wiring point: package
@@ -25,6 +31,7 @@
  * there is a single source of truth for the spine schema across packages.
  */
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import readline from "node:readline";
 
@@ -44,7 +51,7 @@ import type { ExtractBinDefault, SpineRelName } from "../tasks.d.ts";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SPINE_REL_SCHEMA: readonly { readonly name: SpineRelName; readonly columns: readonly string[] }[] = [
-  { name: "file", columns: ["path"] },
+  { name: "file", columns: ["path", "content_hash"] },
   { name: "node", columns: ["path", "family", "start", "end", "kind", "name"] },
   { name: "edge", columns: ["path", "family", "kind", "from_start", "from_end", "to_start", "to_end"] },
   { name: "sig", columns: ["path", "owner_start", "owner_end", "slot", "pos", "ty"] },
@@ -127,15 +134,25 @@ function offsetToLineCol(lineStarts: readonly number[], offset: number): { reado
 // toFactLines: the F2 mapping. Pure over its inputs in the sense that matters here (same
 // records + same on-disk file bytes -> same output, every time); it does one synchronous
 // read of `filePath` to build the span_line byte-offset index (the offsets are ONLY
-// knowable from the file bytes, per the plan's "computed from the FILE BYTES" pin).
+// knowable from the file bytes, per the plan's "computed from the FILE BYTES" pin) AND
+// to hash the file's content (M8-alpha, IdentityWitnessLaw): one read, both derived
+// from the SAME bytes, no second IO.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function relLine(name: string, row: readonly unknown[]): FactLine {
   return { t: "rel", name, row };
 }
 
+/** sha-256 hex digest of a file's raw bytes: the `file` spine row's witness column
+ *  (content_hash). Any content edit flips this even when mtime/size coincidentally
+ *  match, so a downstream salted probe joined against it re-fires on that edit. */
+function contentHashOf(buffer: Buffer): string {
+  return crypto.createHash("sha256").update(buffer).digest("hex");
+}
+
 export function toFactLines(records: readonly ExtractRecord[], filePath: string): readonly FactLine[] {
   const buffer = fs.readFileSync(filePath);
+  const contentHash = contentHashOf(buffer);
   const lineStarts = buildLineStarts(buffer);
   const offsets = new Set<number>();
   const recordLines: FactLine[] = [];
@@ -189,7 +206,7 @@ export function toFactLines(records: readonly ExtractRecord[], filePath: string)
       return relLine("span_line", [filePath, offset, line, col]);
     });
 
-  return [relLine("file", [filePath]), ...recordLines, ...spanLineLines];
+  return [relLine("file", [filePath, contentHash]), ...recordLines, ...spanLineLines];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -168,7 +168,11 @@ export type DiagHeadDefaultLaw = "end_line=line end_col=col severity='warn' code
 // Builtin spine rels (ORCHESTRATOR PIN 2026-07-24) — the EDB rels ingest writes
 // and programs join. Declared code-side (4_ingest.ts exports spineDecls; 5_diag.ts
 // exports diagDecl); the http layer passes them to bridge() and boot().
-//   file(path)                                                   -- 1 col
+//   file(path, content_hash)                                     -- 2 cols; content_hash
+//                                         is the sha-256 hex of the file's raw bytes
+//                                         (M8-alpha, IdentityWitnessLaw below): the
+//                                         witness column a salted probe joins against
+//                                         so it re-fires on a content edit
 //   node(path, family, start, end, kind, name)                   -- name nullable
 //   edge(path, family, kind, from_start, from_end, to_start, to_end)
 //   sig(path, owner_start, owner_end, slot, pos, ty)

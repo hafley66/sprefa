@@ -2,12 +2,14 @@
   [
     {
       "pattern": "console.log($$$ARGS)",
-      "path": "fixtures/corpus/bad.ts"
+      "path": "fixtures/corpus/bad.ts",
+      "salt_0": "hash_v1"
     }
   ],
   [
     {
-      "digest": "sg:3138813999622562",
+      "full_digest": "sg:8331067656704476",
+      "identity_digest": "sg:3138813999622562",
       "host": "sg",
       "state": "done",
       "requested_tick": 1
@@ -17,6 +19,7 @@
     {
       "pattern": "console.log($$$ARGS)",
       "path": "fixtures/corpus/bad.ts",
+      "salt_0": "hash_v1",
       "start": 147,
       "end": 167,
       "text": "console.log(message)"

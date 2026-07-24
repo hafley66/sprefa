@@ -24,7 +24,16 @@
  *   2. probe minting: `h?(in.., out..)` splits into a minted `__req_h` rule (head =
  *      the input columns; body = every non-probe atom already assembled for this rule
  *      PLUS the literal-binding atoms for any literal probe input) and a minted EDB
- *      `__resp_h` rel referenced in place of the probe.
+ *      `__resp_h` rel referenced in place of the probe. Salt-arg law (M8-alpha,
+ *      IdentityWitnessLaw, tasks.d.ts): a probe may pass MORE args than `h`'s
+ *      declared columns: the first k (k = |inputCols|) bind inputs, the last m
+ *      (m = |columns| - k) bind outputs, anything in between is a positional-only
+ *      witness salt (`salt_0`..`salt_<s-1>`). Salts join the __req_h demand key
+ *      alongside the inputs (`__req_h` columns = `[...inputCols, salts..]`) and are
+ *      echoed back through `__resp_h` (`[...inputCols, salts.., ...outputCols]`), so
+ *      a response self-describes the witness it was minted against: the "witness
+ *      must EXIST and FLOW" half of the identity-vs-witness escalation; supersession
+ *      (retracting a stale response when the salt changes) is a follow-up package.
  *   3. diag head-default law: an unbound diag head var at end_line/end_col/severity/
  *      code/hint gets a default (reuse line/col, or a minted literal for the rest);
  *      an unbound path/line/col/msg stays a load error.
@@ -202,23 +211,35 @@ function toNegArg(node: Gen.ArgTerm): NegArg {
 // before doing anything kind-specific with the result.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Resolves a mixed positional/named argument list against a rel's declared
- *  column order into one slot per column (unfilled slots are `undefined`).
- *  Mixing law (python law, owner-set): positional args fill left-to-right;
- *  once a named arg appears, no further positional arg is legal. Collects
- *  EVERY violation as a "named-arg" LoadDiag instead of stopping at the first:
- *  positional-after-named, duplicate name, name+position slot collision,
- *  unknown column name. `args` is typed at the widest call-site shape
- *  (HeadArg = Member|ArgTerm|AggCall); body/negation/probe/query call sites
- *  pass the narrower AtomArg (Member|ArgTerm) list, which is structurally a
- *  subtype and never actually contains an AggCall at runtime. */
+/** Resolves a mixed positional/named argument list against an ordered slot list
+ *  into one slot per position (unfilled slots are `undefined`). Mixing law
+ *  (python law, owner-set): positional args fill left-to-right; once a named
+ *  arg appears, no further positional arg is legal. Collects EVERY violation as
+ *  a "named-arg" LoadDiag instead of stopping at the first: positional-after-
+ *  named, duplicate name, name+position slot collision, unknown column name.
+ *  `args` is typed at the widest call-site shape (HeadArg = Member|ArgTerm|
+ *  AggCall); body/negation/probe/query call sites pass the narrower AtomArg
+ *  (Member|ArgTerm) list, which is structurally a subtype and never actually
+ *  contains an AggCall at runtime.
+ *
+ *  `columns` entries may be `undefined` (salt-arg law, IdentityWitnessLaw,
+ *  tasks.d.ts): a probe with more args than its host's declared columns
+ *  splices synthetic, UNNAMED salt slots into the middle of the order. An
+ *  `undefined` entry can only ever be filled positionally: it has no name a
+ *  `Member` arg could target, so a named arg aimed at a salt position falls
+ *  straight into the same "not a declared column" diag as any other unknown
+ *  name (see the probe branch in processRuleBody for how `columns` gets
+ *  built with salts spliced in). */
 function resolveNamedArgs(
   ctx: BridgeContext,
-  columns: readonly string[],
+  columns: readonly (string | undefined)[],
   args: readonly Gen.HeadArg[],
 ): (Gen.ArgTerm | Gen.AggCall | undefined)[] {
   const slots: (Gen.ArgTerm | Gen.AggCall | undefined)[] = new Array(columns.length).fill(undefined);
-  const columnIndex = new Map(columns.map((name, index) => [name, index]));
+  const columnIndex = new Map<string, number>();
+  columns.forEach((name, index) => {
+    if (name !== undefined) columnIndex.set(name, index);
+  });
   let sawNamed = false;
   let positionalIndex = 0;
 
@@ -291,6 +312,13 @@ interface BridgeContext {
   readonly knownRelColumns: Map<string, DeclInfo>; // user decls + builtin decls (arity/unknown-rel universe)
   readonly headedRelNames: Set<string>; // rel names that appear as SOME user rule's head (-> IDB)
   readonly hostsByName: Map<string, HostDecl>;
+  /** Salt-arg law (IdentityWitnessLaw, tasks.d.ts): the number of witness-salt args
+   *  a host's probe(s) actually used, keyed by host name; absent/0 means "no salts,
+   *  __req_h/__resp_h keep the pre-M8 declared-column shape" (regression: "zero-salt
+   *  probes unchanged"). One value per host this slice: multiple probes of the SAME
+   *  host with DIFFERING salt counts within one program are unchecked; the last
+   *  probe processed wins. */
+  readonly hostSaltCount: Map<string, number>;
   readonly retention: Map<string, Retention>;
   readonly literalSeeds: Map<string, Value>;
   readonly literalNameByValueKey: Map<string, string>; // JSON.stringify(value) -> minted rel name
@@ -306,6 +334,7 @@ function newContext(): BridgeContext {
     knownRelColumns: new Map(),
     headedRelNames: new Set(),
     hostsByName: new Map(),
+    hostSaltCount: new Map(),
     retention: new Map(),
     literalSeeds: new Map(),
     literalNameByValueKey: new Map(),
@@ -477,34 +506,44 @@ function processRuleBody(ctx: BridgeContext, body: readonly Gen.BodyItem[]): Rul
           break;
         }
         const hostColumnNames = host.columns.map((column) => column.name);
-        if (item.args.length > hostColumnNames.length) {
-          ctx.diags.push({
-            code: "arity-mismatch",
-            message: `\`${item.rel}?\` is declared with ${hostColumnNames.length} column(s), but this probe passes ${item.args.length}`,
-            ...nodePosition(item),
-          });
-        }
-
-        // Resolve the FULL mixed positional/named arg list against the host's
-        // whole column order (named args resolve against the HOST decl's columns,
-        // NamedArgLaw); which of those resolved slots are "input" vs "output" is
-        // then decided by host.inputCols membership, not by textual position.
         const inputColSet = new Set(host.inputCols);
-        const slots = resolveNamedArgs(ctx, hostColumnNames, item.args);
+        const outputColumnNames = hostColumnNames.filter((name) => !inputColSet.has(name));
 
-        // Literal-binding rewrite for literal probe INPUT args: __req_h's demand key
-        // must be all-vars (it groups by the request tuple). The freshly-bound var
-        // reuses the HOST'S declared column name at that position (there is no
-        // user-written var name for a bare literal probe arg to reuse).
+        // Salt-arg law (IdentityWitnessLaw, tasks.d.ts): a probe may pass MORE args
+        // than the host's declared columns. The excess (saltCount) are positional-
+        // only witness salts, spliced between the input args and the output args:
+        // more args than columns is now legal (arity-mismatch for probes fires only
+        // when there aren't enough to fill the inputs, caught below per-input-column
+        // exactly as before). len <= declared columns (saltCount 0) keeps the pre-M8
+        // declared-column order untouched (regression: "zero-salt probes unchanged").
+        const saltCount = Math.max(0, item.args.length - hostColumnNames.length);
+        const saltSlotNames: readonly string[] = Array.from({ length: saltCount }, (_, index) => `salt_${index}`);
+        const slotOrder: readonly (string | undefined)[] =
+          saltCount > 0 ? [...host.inputCols, ...saltSlotNames.map(() => undefined), ...outputColumnNames] : hostColumnNames;
+        if (saltCount > 0) ctx.hostSaltCount.set(host.name, saltCount);
+
+        // Resolve the FULL mixed positional/named arg list against slotOrder (named
+        // args resolve against the HOST decl's REAL columns only: a salt slot has
+        // no name in slotOrder, so it can never be targeted by a Member arg; it
+        // falls into the ordinary "not a declared column" named-arg diag instead).
+        const slots = resolveNamedArgs(ctx, slotOrder, item.args);
+        const slotIndexByName = new Map<string, number>();
+        slotOrder.forEach((name, index) => {
+          if (name !== undefined) slotIndexByName.set(name, index);
+        });
+
+        // Literal-binding rewrite for literal probe INPUT (and salt) args: __req_h's
+        // demand key must be all-vars (it groups by the request tuple). The freshly-
+        // bound var reuses the HOST'S declared column name (or the synthetic
+        // `salt_<n>` name) at that position; there is no user-written var name for
+        // a bare literal probe arg to reuse.
         const mintedInputAtoms: BodyPred[] = [];
         const inputArgs: Arg[] = [];
+        const saltArgs: Arg[] = [];
         const outputArgs: Arg[] = [];
-        hostColumnNames.forEach((columnName, index) => {
-          const slot = slots[index];
-          if (!inputColSet.has(columnName)) {
-            outputArgs.push(slot === undefined ? wild() : toPositiveArg(slot as Gen.ArgTerm));
-            return;
-          }
+
+        host.inputCols.forEach((columnName) => {
+          const slot = slots[slotIndexByName.get(columnName)!];
           if (slot === undefined) {
             ctx.diags.push({
               code: "arity-mismatch",
@@ -532,6 +571,37 @@ function processRuleBody(ctx: BridgeContext, body: readonly Gen.BodyItem[]): Rul
           inputArgs.push(variable(columnName));
         });
 
+        // Salts join the __req_h demand key exactly like an input does: a wild or
+        // omitted salt binds nothing, a meaningless witness, so it is a load error
+        // rather than silently padding to wild() the way a missing OUTPUT does.
+        saltSlotNames.forEach((saltName, index) => {
+          const slot = slots[host.inputCols.length + index];
+          if (slot === undefined || slot.$type === "Wildcard") {
+            ctx.diags.push({
+              code: "named-arg",
+              message: `\`${item.rel}?\` salt argument \`${saltName}\` must be a Var or a literal, not a wildcard`,
+              ...(slot !== undefined ? nodePosition(slot) : nodePosition(item)),
+            });
+            saltArgs.push(wild());
+            return;
+          }
+          if (slot.$type === "Var") {
+            saltArgs.push(variable(slot.name));
+            return;
+          }
+          const mintedName = mintLiteral(ctx, literalValue(slot as Gen.Literal));
+          mintedInputAtoms.push(relRef(mintedName, variable(saltName)));
+          saltArgs.push(variable(saltName));
+        });
+
+        // Outputs: no literal-binding (an output is what the host call PRODUCES,
+        // never a demand-key input); an omitted output slot wild-pads (existing
+        // elision law), a Lit output arg stays a literal term via toPositiveArg.
+        outputColumnNames.forEach((columnName) => {
+          const slot = slots[slotIndexByName.get(columnName)!];
+          outputArgs.push(slotToPositiveArg(slot));
+        });
+
         const reqRelName = `__req_${host.name}`;
         const respRelName = `__resp_${host.name}`;
         recordMinted(ctx, reqRelName);
@@ -541,13 +611,15 @@ function processRuleBody(ctx: BridgeContext, body: readonly Gen.BodyItem[]): Rul
         // other literal-binding mint) — not only in the minted request rule's body.
         outBody.push(...mintedInputAtoms);
 
-        // Request rule: head = the input columns; body = every non-probe atom
+        // Request rule: head = the input columns + salt columns (IdentityWitnessLaw:
+        // "__req_h columns = [...inputCols, salts...]"); body = every non-probe atom
         // already assembled for THIS rule (textually before this probe, now
         // including the literal-binding atoms just pushed above).
-        const reqHeadTerms: HeadTerm[] = inputArgs.map((arg) => headVar(arg.kind === "var" ? arg.name : "_probe_input_error"));
+        const reqHeadArgs: readonly Arg[] = [...inputArgs, ...saltArgs];
+        const reqHeadTerms: HeadTerm[] = reqHeadArgs.map((arg) => headVar(arg.kind === "var" ? arg.name : "_probe_input_error"));
         ctx.mintedRules.push({ head: reqRelName, headTerms: reqHeadTerms, body: [...outBody] });
 
-        outBody.push(relRef(respRelName, ...inputArgs, ...outputArgs));
+        outBody.push(relRef(respRelName, ...inputArgs, ...saltArgs, ...outputArgs));
         break;
       }
       case "MutationItem": {
@@ -707,8 +779,23 @@ export function bridge(dlText: string, builtinRels: readonly AstRelDecl[]): Brid
     rels.push(ctx.headedRelNames.has(builtin.name) ? derivedRel(builtin.name, [...builtin.columns]) : builtin);
   }
   for (const host of ctx.hostsByName.values()) {
-    rels.push(edbRel(`__resp_${host.name}`, host.columns.map((column) => column.name)));
-    rels.push(derivedRel(`__req_${host.name}`, [...host.inputCols]));
+    // Salt-arg law (IdentityWitnessLaw, tasks.d.ts): __resp_h/__req_h's column shape
+    // depends on whether any probe of this host actually used salts this program
+    // (ctx.hostSaltCount, set in the ProbeItem branch above). Zero salts keeps the
+    // pre-M8 shape byte-for-byte (declared-column order for __resp_h, plain
+    // inputCols for __req_h): the "zero-salt probes unchanged" regression.
+    const saltCount = ctx.hostSaltCount.get(host.name) ?? 0;
+    const hostColumnNames = host.columns.map((column) => column.name);
+    if (saltCount === 0) {
+      rels.push(edbRel(`__resp_${host.name}`, hostColumnNames));
+      rels.push(derivedRel(`__req_${host.name}`, [...host.inputCols]));
+      continue;
+    }
+    const inputColSet = new Set(host.inputCols);
+    const outputColumnNames = hostColumnNames.filter((name) => !inputColSet.has(name));
+    const saltColumns = Array.from({ length: saltCount }, (_, index) => `salt_${index}`);
+    rels.push(edbRel(`__resp_${host.name}`, [...host.inputCols, ...saltColumns, ...outputColumnNames]));
+    rels.push(derivedRel(`__req_${host.name}`, [...host.inputCols, ...saltColumns]));
   }
   for (const name of ctx.literalSeeds.keys()) {
     rels.push(edbRel(name, ["value"]));
