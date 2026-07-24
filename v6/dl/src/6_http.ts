@@ -28,7 +28,7 @@
  * acceptable"), this file opens ONE extra libsql connection per program load and
  * reuses it for both HostRunner's effect_cache reads/writes AND this file's own
  * raw SELECT for POST /query (runtime.rows() has no WHERE-clause reader — the
- * DlRuntime contract in tasks.d.ts only exposes commit/rows(rel)/deltas$/dispose,
+ * DlRuntime contract in 0_types.ts only exposes commit/rows(rel)/deltas$/dispose,
  * by design; a second connection to the SAME on-disk file is not a new storage
  * scheme, it is the same pattern tests/2_helpers_hosts.ts already uses). Both
  * connections speak to one SQLite file; libsql/sqlite's own locking arbitrates.
@@ -43,18 +43,17 @@ import { builtinExtract, builtinSg, HostRunner, shHost, type CacheDb, type HostD
 import { DlRuntime } from "./3_runtime.ts";
 import { ingestFile } from "./4_ingest.ts";
 import { builtinDecls, DIAG_V5_VIEW_SQL } from "./5_diag.ts";
-import type { BridgeOk, DeltaEvent, LoadDiag, Row, TickReport, Value } from "../tasks.d.ts";
+import type { BridgeOk, DeltaEvent, DlServer, LoadDiag, Row, TickReport, Value } from "./0_types.ts";
 import type { RelDecl } from "sprefa-store-engine/src/lower/ast.ts";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Public server shape.
-// ─────────────────────────────────────────────────────────────────────────────
+// DlServer (startServer()'s public return shape) is declared in 0_types.ts (M7: a
+// cross-file contract -- tests/6_http.test.ts imports the type) and re-exported here
+// so that existing `from "./6_http.ts"` importers keep working unchanged.
+export type { DlServer };
 
-export interface DlServer {
-  close(): Promise<void>;
-  readonly port: number;
-  activeSubscribeCount(): number;
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Route list.
+// ─────────────────────────────────────────────────────────────────────────────
 
 export const ROUTE_LIST: readonly string[] = [
   "POST /edb/program",

@@ -78,7 +78,7 @@ import type {
   CmpOp,
 } from "sprefa-store-engine/src/lower/ast.ts";
 import { buildRuleGraph, scc, stratify, NonStratifiableError } from "sprefa-store-engine/src/lower/rulegraph.ts";
-import type { BridgeResult, HostDecl, LoadDiag, Retention, Value } from "../tasks.d.ts";
+import type { BridgeResult, HostDecl, LoadDiag, Retention, Value } from "./0_types.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Parser services — module scope, built once. EmptyFileSystem: the bridge never

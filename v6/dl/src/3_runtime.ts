@@ -29,7 +29,7 @@
  * were just cleared) plus the commit() correlation emit. No new storage shape, no new
  * algorithm: same DELETE, sequenced to keep the tap synchronous and the promise honest.
  *
- * Conversion boundary (owned here, per the package brief): tasks.d.ts's `Row` is a named
+ * Conversion boundary (owned here, per the package brief): 0_types.ts's `Row` is a named
  * record; lower.ts's `Row` (imported here as `LowerRow`) is a positional tuple ordered by
  * `RelDecl.columns`. `rowFromTuple`/tuple-building helpers below are the one place that
  * crosses it.
@@ -72,7 +72,7 @@ import type {
   Row,
   TickReport,
   Value,
-} from "../tasks.d.ts";
+} from "./0_types.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal state bag. One instance lives for the life of a DlRuntime; every exported

@@ -13,11 +13,22 @@
  * rxjs-maximal lowerings (named exported operators, the pipe is the doc);
  * min tests max coverage (one golden per epic; unit tests only where a golden
  * can't reach). This file + the plan doc ARE the jira board — update on land.
+ *
+ * M7 recomposition (2026-07-24, types-header consolidation): this file stopped
+ * mixing roles. It keeps ONLY the plan ledger (EpicLedger) plus the pin/law
+ * comment blocks the owner named as standing here (LiteralSeeds pin,
+ * NamedArgLaw, DiagHeadDefaultLaw, SpineRelName, ExtractBinDefault). Every
+ * other type this file used to declare now lives in src/0_types.ts (the
+ * package's C-header-style type system, one file, organized by pipeline
+ * section); this file re-exports each of them (`export type X = import(...)`)
+ * so external importers of tasks.d.ts keep working unchanged. NamedArgLaw and
+ * DiagHeadDefaultLaw are pure prose law-types (never imported as types by any
+ * src/test file, only referenced in comments) and stay declared ONLY here.
+ * SpineRelName and ExtractBinDefault ARE real cross-file types (src/4_ingest.ts
+ * and src/1_hosts.ts import them) but by the same owner ruling stay declared
+ * ONLY here too — those two src files import them straight from this file, a
+ * scoped, documented exception to "every src file imports from 0_types.ts".
  */
-
-import type { Observable } from "rxjs";
-import type { Program, RelDecl, RelRef } from "sprefa-store-engine/src/lower/ast.ts";
-import type { FactLine } from "sprefa-store-engine/src/engine/ingest.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Epic index (dependency order). Each `done` flips only with its listed evidence.
@@ -67,68 +78,38 @@ export interface EpicLedger {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Shared row/value shapes.
+// Shared row/value shapes — declared in src/0_types.ts; re-exported here.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type Value = string | number | boolean | null;
-export type Row = Record<string, Value>;
+export type Value = import("./src/0_types.ts").Value;
+export type Row = import("./src/0_types.ts").Row;
 
 /** Retention forms (owner ruling 2026-07-23): the decl's one capacity knob. */
-export type Retention = 0 | 1 | "all";
+export type Retention = import("./src/0_types.ts").Retention;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// M1 · bridge (grammar/dl.langium + src/0_ast_bridge.ts)
+// M1 · bridge (grammar/dl.langium + src/0_ast_bridge.ts) — types live in
+// src/0_types.ts; re-exported here so external importers keep working.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface HostDecl {
-  readonly name: string;
-  readonly columns: readonly { name: string; ty: "text" | "int" }[];
-  /** raw backtick executor body */
-  readonly template: string;
-  /** inferred from `{name}` / `$name` refs in template (datalog-first ruling:
-   *  no mode syntax in this slice) */
-  readonly inputCols: readonly string[];
-}
+export type HostDecl = import("./src/0_types.ts").HostDecl;
+export type LoadDiag = import("./src/0_types.ts").LoadDiag;
 
-export interface LoadDiag {
-  readonly code:
-    | "unknown-rel"
-    | "arity-mismatch"
-    | "minmax-frontier"      // Key parsed; Min/Max parsed but rejected this slice
-    | "mutation-frontier"    // name!(...) parsed but rejected this slice
-    | "named-arg"            // kwarg law violation: positional after named, duplicate
-                             // name, name+position slot collision, unknown column name
-    | "non-stratifiable"
-    | "parse";
-  readonly message: string;
-  readonly line: number;
-  readonly col: number;
-}
-
-export interface BridgeOk {
-  readonly kind: "ok";
-  /** probes already rewritten: `h?(in..,out..)` -> minted __req_h rule +
-   *  __resp_h EDB ref (the timecut, Lloyd-Topor free-variable law) */
-  readonly program: Program;
-  readonly hosts: readonly HostDecl[];
-  readonly retention: ReadonlyMap<string, Retention>;
-  readonly queries: readonly RelRef[];
-  readonly minted: readonly string[]; // deterministic: __req_<h>, __resp_<h>, __lit_<n>
-  /** ORCHESTRATOR PIN 2026-07-24 (ast.ts HeadTerm has no literal form, and Compare
-   *  filters without binding): a literal head/probe-input value (`"warn" = severity`
-   *  with severity otherwise unbound; a Lit arg to a probe) is rewritten to a minted
-   *  single-row constant rel `__lit_<n>(value)` joined in the body. This map holds
-   *  rel name -> its one row's value; the runtime seeds rel___lit_<n> at boot. Numbering
-   *  is first-appearance order, so re-bridge is stable. */
-  readonly literalSeeds: ReadonlyMap<string, Value>;
-}
-export interface BridgeErr { readonly kind: "err"; readonly diags: readonly LoadDiag[] }
-export type BridgeResult = BridgeOk | BridgeErr;
+/** LiteralSeeds pin (ORCHESTRATOR PIN 2026-07-24, kept standing here per owner
+ *  ruling): BridgeOk.literalSeeds maps a minted `__lit_<n>` rel name to its one
+ *  row's value (the literal-binding rewrite's seed data, e.g. `"warn" = severity`
+ *  with severity otherwise unbound, or a Lit arg to a probe); DlRuntime.boot
+ *  inserts these rows at boot. Numbering is first-appearance order, so
+ *  re-bridge is stable. Full field doc now lives with the BridgeOk type itself
+ *  in src/0_types.ts. */
+export type BridgeOk = import("./src/0_types.ts").BridgeOk;
+export type BridgeErr = import("./src/0_types.ts").BridgeErr;
+export type BridgeResult = import("./src/0_types.ts").BridgeResult;
 
 /** bridge() takes the builtin rel decls (spine + diag) as a second argument so
  *  `file(path)`/`span_line(...)`/`diag(...)` refs don't raise unknown-rel. A builtin
  *  headed by a program rule becomes IDB (derived); otherwise it stays EDB. */
-export type Bridge = (dlText: string, builtinRels: readonly RelDecl[]) => BridgeResult;
+export type Bridge = import("./src/0_types.ts").Bridge;
 
 /** OWNER SCOPE CHANGE 2026-07-24 (named args INTO M1, out of frontier). Law:
  *  `rel(col: term, ...)` legal in body atoms and heads; named args resolve to
@@ -162,132 +143,64 @@ export type DiagHeadDefaultLaw = "end_line=line end_col=col severity='warn' code
 //   span_line(path, start, line, col)  -- computed at ingest from file bytes: one row
 //                                         per distinct span offset seen in any node/site
 //                                         record of that file; line/col 0-based
+//
+// Kept declared HERE (not src/0_types.ts) by owner ruling at M7: this is a
+// pin/law block the ledger keeps standing. src/4_ingest.ts imports SpineRelName
+// straight from this file.
 // ─────────────────────────────────────────────────────────────────────────────
 export type SpineRelName = "file" | "node" | "edge" | "sig" | "site" | "const" | "span_line";
 
 /** extract binary (task 0.3): env DL_EXTRACT_BIN overrides; default is the worktree
  *  debug bin. extract is CONSUME-ONLY (owner amendment 2026-07-24): never edit its
- *  crate or worktree; limitations get filed, worked around, or deferred. */
+ *  crate or worktree; limitations get filed, worked around, or deferred.
+ *
+ *  Kept declared HERE (not src/0_types.ts) by owner ruling at M7: this is a
+ *  pin/law block the ledger keeps standing. src/1_hosts.ts and src/4_ingest.ts
+ *  import ExtractBinDefault straight from this file. */
 export type ExtractBinDefault =
   "/Users/chrishafley/projects/sprefa/.claude/worktrees/extract-golden-plan/v6/sprefa-extract/target/debug/extract";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// M2 · schema + runtime (src/2_schema.ts, src/3_runtime.ts)
+// M2 · schema + runtime (src/2_schema.ts, src/3_runtime.ts) — types live in
+// src/0_types.ts; re-exported here.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Tick shape (b), pinned in DECISIONS: flat rel_* current tables + this log. */
-export interface DeltaRow {
-  readonly rel: string;
-  readonly row_digest: number; // oracle.mix XOR law (ingest.ts note 6)
-  readonly tick: number;
-  readonly weight: 1 | -1;
-}
-
-export interface EdbBatch {
-  readonly insert: ReadonlyMap<string, readonly Row[]>;
-  readonly retract: ReadonlyMap<string, readonly Row[]>;
-}
-
-export interface TickReport {
-  readonly tick: number;
-  readonly changed: readonly [rel: string, delta: number][];
-}
-
-export interface DeltaEvent {
-  readonly tick: number;
-  readonly rel: string;
-  readonly inserts: readonly Row[];
-  readonly retracts: readonly Row[];
-}
-
-export interface DlRuntime {
-  /** THE single write site; one call = one tick (store-owned counter). */
-  commit(batch: EdbBatch): Promise<TickReport>;
-  rows(rel: string): Promise<Row[]>;
-  readonly deltas$: Observable<DeltaEvent>;
-  dispose(): Promise<void>;
-}
+export type DeltaRow = import("./src/0_types.ts").DeltaRow;
+export type EdbBatch = import("./src/0_types.ts").EdbBatch;
+export type TickReport = import("./src/0_types.ts").TickReport;
+export type DeltaEvent = import("./src/0_types.ts").DeltaEvent;
+export type DlRuntime = import("./src/0_types.ts").DlRuntime;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// M3 · ingest (src/4_ingest.ts) — F2 pin lives HERE as the mapping's types
+// M3 · ingest (src/4_ingest.ts) — F2 pin; types live in src/0_types.ts.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** extract's JSONL contract (recon: extract --schema, worktree bin). */
-export type ExtractRecord =
-  | { record: "node"; family: "cst" | "type" | "call" | "df"; span: Span; kind: string; name: string | null }
-  | { record: "edge"; family: "cst" | "df"; kind: string; from: Span; to: Span }
-  | { record: "sig"; family: "type"; owner: Span; slot: "param" | "ret"; pos: number; ty: string }
-  | { record: "site"; family: "call"; span: Span; callee: string; callee_path: string | null }
-  | { record: "const"; family: "type"; owner: Span; field: string | null; text: string; kind: "lit" | "template" };
-export interface Span { readonly start: number; readonly end: number }
-
-/** The F2 mapping (task 3.2): extract records -> the store's FactLine union.
- *  Pure; one test per record shape; answers ingest.ts note 1's ambiguities. */
-export type ToFactLines = (recs: readonly ExtractRecord[], path: string) => readonly FactLine[];
-
-/** Per-file re-ingest DIFF (supersedes ingest.ts's append-only stance for the
- *  per-file case): retraction rides commit, no diag-specific code (M5.4). */
-export type IngestFile = (path: string) => Promise<TickReport>;
+export type ExtractRecord = import("./src/0_types.ts").ExtractRecord;
+export type Span = import("./src/0_types.ts").Span;
+export type ToFactLines = import("./src/0_types.ts").ToFactLines;
+export type IngestFile = import("./src/0_types.ts").IngestFile;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// M4 · hosts (src/1_hosts.ts)
+// M4 · hosts (src/1_hosts.ts) — types live in src/0_types.ts.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Pluggable trait with assoc types (owner style law), TS spelling. */
-export interface HostDef<Req extends Row = Row, Resp extends Row = Row> {
-  readonly name: string;
-  readonly requestCols: readonly string[];
-  readonly responseCols: readonly string[];
-  run(req: Req): AsyncIterable<Resp>; // det and multi both fit
-}
-
-/** effect_cache row: digest = mix(host, ...requestTuple) — the v5
- *  pending_effect law. `?` = idempotent (cache hit skips; fork ruling). */
-export interface EffectCacheRow {
-  readonly digest: string;
-  readonly host: string;
-  readonly state: "pending" | "done" | "error";
-  readonly requested_tick: number;
-}
-
-/** Builtins shipped in-box; sh decls become HostDefs via shHost(decl).
- *  extract path override: env DL_EXTRACT_BIN, default the worktree debug bin. */
-export interface BuiltinHosts {
-  readonly sg: HostDef;      // ast-grep: sg run --pattern <p> --json <path>
-  readonly extract: HostDef; // extract <path> --family <fams>
-}
+export type HostDef<Req extends Row = Row, Resp extends Row = Row> = import("./src/0_types.ts").HostDef<Req, Resp>;
+export type EffectCacheRow = import("./src/0_types.ts").EffectCacheRow;
+export type BuiltinHosts = import("./src/0_types.ts").BuiltinHosts;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// M5 · diag (src/5_diag.ts) — v5 schema verbatim (src/engine/decls.rs:263)
+// M5 · diag (src/5_diag.ts) — v5 schema verbatim (src/engine/decls.rs:263); types
+// live in src/0_types.ts.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface DiagRow {
-  readonly path: string;
-  readonly line: number;     // 0-based
-  readonly col: number;
-  readonly end_line: number; // default: line
-  readonly end_col: number;
-  readonly severity: "error" | "warn" | "info" | "hint"; // default warn
-  readonly code: string | null;
-  readonly msg: string;
-  readonly hint: string | null;
-}
-export type DiagDecl = RelDecl; // the builtin decl instance lives in 5_diag.ts
-
-/** The LSP interface IS this view's column list ("LSP becomes its own
- *  interfacing"): v5 `dl --lsp --diag-db <sqlite>` polls PRAGMA data_version,
- *  SELECTs diag_v5, publishes per file. Additive Rust change in src/lsp.rs. */
-export type DiagV5View = "CREATE VIEW diag_v5 AS SELECT ... FROM rel_diag";
+export type DiagRow = import("./src/0_types.ts").DiagRow;
+export type DiagDecl = import("./src/0_types.ts").DiagDecl;
+export type DiagV5View = import("./src/0_types.ts").DiagV5View;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// M6 · http (src/6_http.ts) — curl is the CLI; localhost; no auth
+// M6 · http (src/6_http.ts) — curl is the CLI; localhost; no auth; type lives in
+// src/0_types.ts.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface HttpSurface {
-  "POST /edb/program": { req: "text/plain .dl"; res: { loaded: true } | { diags: LoadDiag[] } };
-  "POST /edb/file_changed": { req: { path: string }; res: TickReport };
-  "POST /edb/:rel": { req: { rows: Row[] }; res: TickReport };
-  "GET /idb/:rel": { res: { rows: Row[] } };
-  "GET /subscribe/:rel": { res: "SSE DeltaEvent stream; unsubscribes on socket close" };
-  "POST /query": { req: "? rel(args)."; res: { rows: Row[] } };
-}
+export type HttpSurface = import("./src/0_types.ts").HttpSurface;
