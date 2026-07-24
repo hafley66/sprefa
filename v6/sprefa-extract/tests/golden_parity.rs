@@ -46,6 +46,13 @@ const CASES: &[Case] = &[
         fixture_dir: "ts",
     },
     Case {
+        name: "docs",
+        path: "docs.ts",
+        fixture: include_bytes!("fixtures/ts/docs.ts"),
+        baseline: include_str!("fixtures/ts/docs.v5.jsonl"),
+        fixture_dir: "ts",
+    },
+    Case {
         name: "rust_sample",
         path: "sample.rs",
         fixture: include_bytes!("fixtures/rust/sample.rs"),
@@ -53,10 +60,24 @@ const CASES: &[Case] = &[
         fixture_dir: "rust",
     },
     Case {
+        name: "rust_docs",
+        path: "docs.rs",
+        fixture: include_bytes!("fixtures/rust/docs.rs"),
+        baseline: include_str!("fixtures/rust/docs.v5.jsonl"),
+        fixture_dir: "rust",
+    },
+    Case {
         name: "go_sample",
         path: "sample.go",
         fixture: include_bytes!("fixtures/go/sample.go"),
         baseline: include_str!("fixtures/go/sample.v5.jsonl"),
+        fixture_dir: "go",
+    },
+    Case {
+        name: "go_docs",
+        path: "docs.go",
+        fixture: include_bytes!("fixtures/go/docs.go"),
+        baseline: include_str!("fixtures/go/docs.v5.jsonl"),
         fixture_dir: "go",
     },
 ];

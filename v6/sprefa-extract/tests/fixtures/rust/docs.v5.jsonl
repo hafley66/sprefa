@@ -1,0 +1,82 @@
+call_def	function	apply	45
+call_def	function	make_engine	30
+call_def	function	trim	25
+call_def	lambda		46
+call_def	method	mode	38
+call_site	Engine	32
+call_site	func	47
+call_site	trim	31
+const_value	22		lit	hello
+df_args	23	0	22
+df_args	5	0	4
+df_edge	1011	996
+df_edge	1026	1026
+df_edge	1124	1153
+df_edge	1133	1124
+df_edge	1153	1153
+df_edge	1238	1310
+df_edge	1280	1273
+df_edge	1281	1295
+df_edge	1295	1295
+df_edge	1305	1305
+df_edge	1310	1305
+df_edge	830	861
+df_edge	861	861
+df_edge	923	972
+df_edge	957	1011
+df_edge	967	957
+df_edge	972	967
+df_edge	987	1026
+df_edge	996	987
+df_fields	8	name	7
+df_node	call_res		1305
+df_node	call_res		967
+df_node	closure	v6/sprefa-extract/tests/fixtures/rust/docs.rs::function::apply::closure::46_15	1280
+df_node	let_bind	engine	987
+df_node	let_bind	func	1273
+df_node	let_bind	picked	1124
+df_node	let_bind	trimmed	957
+df_node	new	Engine	996
+df_node	param	name	923
+df_node	param	text	1281
+df_node	param	value	1238
+df_node	param	value	830
+df_node	ret		1026
+df_node	ret		1153
+df_node	ret		1295
+df_node	ret		1305
+df_node	ret		861
+df_node	var_read	Fast	1133
+df_node	var_read	engine	1026
+df_node	var_read	name	972
+df_node	var_read	picked	1153
+df_node	var_read	text	1295
+df_node	var_read	trimmed	1011
+df_node	var_read	value	1310
+df_node	var_read	value	861
+df_param_pos	0	0
+df_param_pos	16	0
+df_param_pos	17	0
+df_param_pos	3	0
+doc	v6/sprefa-extract/tests/fixtures/rust/docs.rs::enum::Mode	16
+doc	v6/sprefa-extract/tests/fixtures/rust/docs.rs::function::make_engine	30
+doc	v6/sprefa-extract/tests/fixtures/rust/docs.rs::function::trim	25
+doc	v6/sprefa-extract/tests/fixtures/rust/docs.rs::method::Engine.mode	38
+doc	v6/sprefa-extract/tests/fixtures/rust/docs.rs::struct::Engine	11
+type_edge	Engine	String	field
+type_edge	Mode	Mode::Fast	variant
+type_edge	Mode	Mode::Slow	variant
+type_node	const	GREETING	22
+type_node	enum	Mode	16
+type_node	function	apply	45
+type_node	function	make_engine	30
+type_node	function	trim	25
+type_node	method	mode	38
+type_node	struct	Engine	11
+type_sig	25	param	0	String
+type_sig	25	ret	0	String
+type_sig	30	param	0	String
+type_sig	30	ret	0	Engine
+type_sig	38	ret	0	Mode
+type_sig	45	param	0	String
+type_sig	45	ret	0	String

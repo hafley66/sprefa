@@ -1,0 +1,101 @@
+call_def	function	add	12
+call_def	function	mirror	50
+call_def	method	Vec2	33
+call_def	method	magnitude	36
+call_def	method	scaled	41
+call_site	Vec2	42
+call_site	sqrt	37
+const_value	47		lit	hi
+df_args	21	-1	9
+df_args	21	0	20
+df_args	32	0	27
+df_args	32	1	31
+df_edge	1155	1148
+df_edge	1155	1155
+df_edge	1165	1155
+df_edge	1165	1165
+df_edge	1174	1165
+df_edge	1174	1174
+df_edge	1183	1165
+df_edge	1183	1183
+df_edge	1192	1183
+df_edge	1192	1192
+df_edge	1250	1299
+df_edge	1250	1312
+df_edge	1281	1274
+df_edge	1290	1281
+df_edge	1290	1290
+df_edge	1299	1290
+df_edge	1303	1281
+df_edge	1303	1303
+df_edge	1312	1303
+df_edge	729	777
+df_edge	743	784
+df_edge	777	770
+df_edge	777	777
+df_edge	784	777
+df_lits	20	concat	this.x * this.x + this.y * this.y
+df_lits	5	concat	left + right
+df_node	binop		1165
+df_node	binop		1183
+df_node	binop		1290
+df_node	binop		1303
+df_node	call_res		1155
+df_node	concat		1165
+df_node	concat		777
+df_node	expr		1165
+df_node	expr		1174
+df_node	expr		1183
+df_node	expr		1192
+df_node	expr		1290
+df_node	expr		1303
+df_node	member	x	1165
+df_node	member	x	1174
+df_node	member	x	1290
+df_node	member	y	1183
+df_node	member	y	1192
+df_node	member	y	1303
+df_node	new	Vec2	1281
+df_node	param	by	1250
+df_node	param	left	729
+df_node	param	right	743
+df_node	param	x	1049
+df_node	param	y	1067
+df_node	ret		1148
+df_node	ret		1274
+df_node	ret		770
+df_node	var_read	Math	1155
+df_node	var_read	by	1299
+df_node	var_read	by	1312
+df_node	var_read	left	777
+df_node	var_read	right	784
+df_param_pos	0	0
+df_param_pos	1	1
+df_param_pos	22	0
+df_param_pos	6	0
+df_param_pos	7	1
+doc	v6/sprefa-extract/tests/fixtures/ts/docs.ts::alias::Vec	23
+doc	v6/sprefa-extract/tests/fixtures/ts/docs.ts::class::Vec2	32
+doc	v6/sprefa-extract/tests/fixtures/ts/docs.ts::enum::Dir	26
+doc	v6/sprefa-extract/tests/fixtures/ts/docs.ts::function::add	12
+doc	v6/sprefa-extract/tests/fixtures/ts/docs.ts::function::mirror	50
+doc	v6/sprefa-extract/tests/fixtures/ts/docs.ts::interface::Point	17
+doc	v6/sprefa-extract/tests/fixtures/ts/docs.ts::method::Vec2.magnitude	36
+doc	v6/sprefa-extract/tests/fixtures/ts/docs.ts::method::Vec2.scaled	41
+type_edge	Dir	Dir::North	variant
+type_edge	Dir	Dir::South	variant
+type_edge	Vec	Point	field
+type_edge	mirror	Point	param
+type_edge	mirror	Point	returns
+type_node	alias	Vec	23
+type_node	class	Vec2	32
+type_node	const	greeting	47
+type_node	enum	Dir	26
+type_node	function	add	12
+type_node	function	mirror	50
+type_node	interface	Point	17
+type_node	method	magnitude	36
+type_node	method	scaled	41
+type_sig	41	ret	0	Vec2
+type_sig	50	param	0	Point
+type_sig	50	ret	0	Point
