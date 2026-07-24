@@ -1,0 +1,82 @@
+[
+  {
+    "tick": 1,
+    "changed": [
+      [
+        "grandparent",
+        2
+      ],
+      [
+        "parent",
+        3
+      ]
+    ]
+  },
+  {
+    "tick": 2,
+    "changed": []
+  },
+  {
+    "tick": 3,
+    "changed": [
+      [
+        "grandparent",
+        -2
+      ],
+      [
+        "parent",
+        -1
+      ]
+    ]
+  },
+  [
+    {
+      "rel": "grandparent",
+      "row_digest": 7152704923478850,
+      "tick": 1,
+      "weight": 1
+    },
+    {
+      "rel": "grandparent",
+      "row_digest": 7152704923478850,
+      "tick": 3,
+      "weight": -1
+    },
+    {
+      "rel": "grandparent",
+      "row_digest": 8801692086962035,
+      "tick": 1,
+      "weight": 1
+    },
+    {
+      "rel": "grandparent",
+      "row_digest": 8801692086962035,
+      "tick": 3,
+      "weight": -1
+    },
+    {
+      "rel": "parent",
+      "row_digest": 1714388622585291,
+      "tick": 1,
+      "weight": 1
+    },
+    {
+      "rel": "parent",
+      "row_digest": 65375622038010,
+      "tick": 1,
+      "weight": 1
+    },
+    {
+      "rel": "parent",
+      "row_digest": 7127230171785912,
+      "tick": 1,
+      "weight": 1
+    },
+    {
+      "rel": "parent",
+      "row_digest": 7127230171785912,
+      "tick": 3,
+      "weight": -1
+    }
+  ]
+]
