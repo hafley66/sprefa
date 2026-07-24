@@ -41,7 +41,12 @@ export interface EpicLedger {
    *  rel(0) physical DELETE runs inside applyDerivedTxn's txn (tap can't await IO
    *  before commit's correlation resolves); the tap stage does rx-side bookkeeping. */
   M2_tick_runtime: { done: true; evidence: "add/noop/remove golden: zero-delta noop + weight retract" };
-  M3_ingest_diff: { done: false; evidence: "re-POST same file = zero deltas; edit = per-file retract+insert" };
+  /** DONE 2026-07-24 (dl/m3-ingest b7e26d59 + integration NULL-safe fix, merged v11;
+   *  31/31, tsgo clean). Golden v1: const 1/edge 36/file 1/node 41/site 1/span_line 39;
+   *  v2 edit: edge -10/node -10/site -1/span_line -8. Integration find: runtime
+   *  pre-check + DELETE used `(cols) IN (VALUES...)` which never matches NULL columns;
+   *  replaced with sqlAnyRowMatch (`col IS val` OR-groups) in 3_runtime.ts. */
+  M3_ingest_diff: { done: true; evidence: "re-POST same file = zero deltas; edit = per-file retract+insert" };
   M4_hosts: { done: false; evidence: "sg? fires once per digest; builtin-vs-sh parity rows byte-equal" };
   /** 5.3 DONE 2026-07-24 (dl/m5-lsp f4fdddbe, merged): --diag-db mode in src/lsp.rs,
    *  persistent-connection data_version poll (per-connection pragma law), retraction =

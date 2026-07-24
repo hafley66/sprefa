@@ -179,6 +179,19 @@ function sqlTuple(row: Row, columns: readonly string[]): string {
   return `(${columns.map((column) => sqlLiteral(row[column] ?? null)).join(",")})`;
 }
 
+/** NULL-safe WHERE clause matching any of the candidate rows: one `(col IS lit AND ...)`
+ *  group per row, OR-joined. `(cols) IN (VALUES ...)` is NOT usable here: SQL row-value
+ *  comparison yields NULL (not true) when any column is NULL, so stored rows with NULL
+ *  columns (node.name, site.callee_path, const.field are all pinned nullable) would
+ *  silently never match — the pre-check would call them "new" forever and the physical
+ *  DELETE would skip them (M3 integration find, 2026-07-24). `IS` is SQLite's NULL-safe
+ *  equality. Still one statement per call site (the N+1 law holds). */
+function sqlAnyRowMatch(rows: readonly Row[], columns: readonly string[]): string {
+  return rows
+    .map((row) => `(${columns.map((column) => `${column} IS ${sqlLiteral(row[column] ?? null)}`).join(" AND ")})`)
+    .join(" OR ");
+}
+
 function rowKeyOf(row: Row, columns: readonly string[]): string {
   return JSON.stringify(columns.map((column) => row[column] ?? null));
 }
@@ -205,9 +218,8 @@ async function preCheckExistingKeys(
   candidates: readonly Row[],
 ): Promise<Set<string>> {
   if (candidates.length === 0) return new Set();
-  const values = candidates.map((row) => sqlTuple(row, columns)).join(",");
   const res = await db.execute(
-    `SELECT ${columns.join(",")} FROM rel_${relName} WHERE (${columns.join(",")}) IN (VALUES ${values})`,
+    `SELECT ${columns.join(",")} FROM rel_${relName} WHERE ${sqlAnyRowMatch(candidates, columns)}`,
   );
   const keys = new Set<string>();
   for (const rawRow of res.rows) keys.add(rowKeyOf(rowFromRaw(rawRow, columns), columns));
@@ -222,8 +234,7 @@ async function insertRows(db: Db, relName: string, columns: readonly string[], r
 
 async function deleteRows(db: Db, relName: string, columns: readonly string[], rows: readonly Row[]): Promise<void> {
   if (rows.length === 0) return;
-  const values = rows.map((row) => sqlTuple(row, columns)).join(",");
-  await db.execute(`DELETE FROM rel_${relName} WHERE (${columns.join(",")}) IN (VALUES ${values})`);
+  await db.execute(`DELETE FROM rel_${relName} WHERE ${sqlAnyRowMatch(rows, columns)}`);
 }
 
 async function insertDeltaRows(db: Db, rows: readonly DeltaRow[]): Promise<void> {

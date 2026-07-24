@@ -92,7 +92,11 @@ per-epic task lists below stay the detail record.
    3. ~~2.3 delta log + deltas$~~ ✓ store_meta tick counter, share()'d event stream
    4. ~~2.4 rel(0)/rel(1)~~ ✓ both exercised; rel(0) DELETE inside applyDerivedTxn (doc'd deviation)
    5. ~~2.5 derived-diff combinatorics~~ ✓ in/in, in/out, out/in enumerated
-4. **M3 · ingest — IN FLIGHT** (worktree dl-m3-ingest): extract spawn, F2 mapping (record->spine rel rows + computed span_line), per-file diff commit, delete-file case, v1->v2 golden
+4. **M3 · ingest — DONE** (31/31; golden ingest.bad-v1-v2.json: +41 node/+39 span_line then -10/-10/-1/-8 on edit; merged from dl/m3-ingest b7e26d59)
+   1. ~~3.1 extract spawn + JSONL~~ ✓ exit-code contract verified against the real binary (79 records for bad.ts)
+   2. ~~3.2 F2 pin~~ ✓ record->spine rel rows + computed span_line per distinct node/site offset + file row
+   3. ~~3.3 per-file diff + delete-file~~ ✓ ONE rt.commit; ENOENT = full retract, zero extract calls; INTEGRATION FIND: runtime `(cols) IN (VALUES...)` never matches NULL columns (SQL 3VL) -> sqlAnyRowMatch `col IS val` fix in 3_runtime.ts, regression pair kept
+   4. 3.4 wire POST /edb/file_changed — rides M6 (handler exists, routing pending)
 5. **M4 · hosts — IN FLIGHT** (worktree dl-m4-hosts): shHost, builtinSg (byteOffset mapping verified), builtinExtract, HostRunner digest cache, fire-once golden, builtin-vs-sh parity
 6. **M5 · diag + LSP — HALF DONE** (4 of 5 tasks; 25/25 dl tests on v11)
    1. ~~5.1 diagDecl + head defaults~~ ✓ defaults in bridge (M1.4); canonical builtinDecls in 5_diag.ts (86b9101c)

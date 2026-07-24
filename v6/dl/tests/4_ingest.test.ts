@@ -101,24 +101,14 @@ test("same file ingested twice = second TickReport has zero deltas", async () =>
   }
 });
 
-// BLOCKED (found while writing this test, not introduced by it — never patched here,
-// per ownership: 3_runtime.ts is out of this package's OWNERSHIP list): DlRuntime.commit's
-// preCheckExistingKeys (src/3_runtime.ts ~line 201) does
-//   SELECT cols FROM rel_X WHERE (cols) IN (VALUES (candidate rows...))
-// SQL row-value comparison treats NULL <> NULL as unknown/false (not true), so ANY
-// candidate row with a NULL identity column (node.name, site.callee_path, const.field are
-// all pinned nullable in tasks.d.ts) is ALWAYS reported "not existing," even when it is.
-// Effect: a genuine retract of such a row is silently dropped (no DELETE issued, and the
-// reported TickReport delta undercounts) — reproduced directly against a bare libsql
-// in-memory db (`(a,b) IN (VALUES ('x', NULL))` over a stored `('x', NULL)` row returns
-// zero rows). ingestFile's own diff (this file, lodash differenceWith/isEqual) is correct
-// and NULL-safe; the defect is entirely inside the runtime's existence precheck, which sits
-// downstream of ingestFile and outside this package's ownership. bad.ts's real node records
-// are ALL name:null, so this bites on every real per-file retraction — it is not avoidable
-// by choosing different fixture content. These two tests are written complete and correct;
-// they will pass unmodified the moment the runtime fix lands. See the M3 report's BLOCKED
-// line for the recommended fix (a NULL-safe `col IS val` WHERE clause) and options.
-test("edited file: per-file retract+insert only for that path (golden)", { skip: "BLOCKED: 3_runtime.ts preCheckExistingKeys drops retractions of NULL-column rows (see comment above)" }, async () => {
+// Regression context (found while writing this test, fixed at M3 integration): the
+// runtime's existence pre-check and physical DELETE originally used
+// `WHERE (cols) IN (VALUES ...)`, which never matches a stored row with a NULL column
+// (SQL row-value comparison yields unknown, not true). node.name is null for every real
+// record in bad.ts, so per-file retraction silently dropped rows. Fixed in
+// src/3_runtime.ts sqlAnyRowMatch (NULL-safe `col IS val` groups); this golden and the
+// delete-file test below are the standing regressions for it.
+test("edited file: per-file retract+insert only for that path (golden)", async () => {
   const { rt, dbPath } = await bootFixture(spineProgram());
   const tempPath = tempCorpusPath();
   try {
@@ -167,10 +157,9 @@ test("edited file: per-file retract+insert only for that path (golden)", { skip:
   }
 });
 
-// BLOCKED: same root cause as the golden test above (3_runtime.ts preCheckExistingKeys,
-// NULL-column retract candidates never recognized as existing) — a delete-file ingest of
-// bad.ts's rows (node.name is null throughout) can only partially retract.
-test("delete-file: a missing path retracts everything ingested for it", { skip: "BLOCKED: 3_runtime.ts preCheckExistingKeys drops retractions of NULL-column rows (see comment above the golden test)" }, async () => {
+// Regression pair of the golden test above (same NULL-safe-match root cause, fixed at
+// M3 integration): a delete-file ingest must retract null-column rows completely.
+test("delete-file: a missing path retracts everything ingested for it", async () => {
   const { rt, dbPath } = await bootFixture(spineProgram());
   const tempPath = tempCorpusPath();
   try {
