@@ -412,8 +412,8 @@ pub async fn assert(
         exec(
             &txn,
             &format!("DELETE FROM {next}; \
-             INSERT INTO {next}(key) \
-             SELECT DISTINCT d.child_key \
+             INSERT OR IGNORE INTO {next}(key) \
+             SELECT d.child_key \
              FROM {frontier} f CROSS JOIN {dep} d ON d.parent_key = f.key \
                CROSS JOIN {row} r ON r.key = d.child_key \
              WHERE r.weight = 0",
@@ -461,8 +461,8 @@ pub async fn retract_dred(
         exec(
             &txn,
             &format!("DELETE FROM {next}; \
-             INSERT INTO {next}(key) \
-             SELECT DISTINCT d.child_key \
+             INSERT OR IGNORE INTO {next}(key) \
+             SELECT d.child_key \
              FROM {frontier} f CROSS JOIN {dep} d ON d.parent_key = f.key \
                CROSS JOIN {row} r ON r.key = d.child_key \
              WHERE r.weight > 0",
@@ -485,8 +485,8 @@ pub async fn retract_dred(
     exec(&txn, &format!("DELETE FROM {}", ns.next)).await?;
     exec(
         &txn,
-        &format!("INSERT INTO {frontier}(key) \
-         SELECT DISTINCT c.key \
+        &format!("INSERT OR IGNORE INTO {frontier}(key) \
+         SELECT c.key \
          FROM {cone} c CROSS JOIN {dep} d ON d.child_key = c.key \
            CROSS JOIN {row} p ON p.key = d.parent_key \
          WHERE p.weight > 0",
@@ -498,8 +498,8 @@ pub async fn retract_dred(
         exec(
             &txn,
             &format!("DELETE FROM {next}; \
-             INSERT INTO {next}(key) \
-             SELECT DISTINCT d.child_key \
+             INSERT OR IGNORE INTO {next}(key) \
+             SELECT d.child_key \
              FROM {frontier} f CROSS JOIN {dep} d ON d.parent_key = f.key \
                CROSS JOIN {row} r ON r.key = d.child_key \
                CROSS JOIN {cone} c ON c.key = d.child_key \

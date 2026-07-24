@@ -53,7 +53,26 @@ against the oracle and keeps `cargo test` green.
 
 ## Baseline (this lab, 3 runs per cell, median [min-max])
 
-(to be measured before any change; see B0 below)
+Measured 2026-07-24, commit 31045387, runner `tools/lab_run.sh baseline 3`
+(raw log /tmp/lab-sqlperf/baseline.log). Reproduces the July matrix within ~2%.
+
+| cell | engine | ms median [min-max] | stmts | correct |
+|---|---|---:|---:|---|
+| DAG 60k | sqlite-count | 30.8 [30.7-31.5] | 29 | yes |
+| DAG 60k | sqlite-count-scc | 119.1 [118.6-120.2] | 39 | yes |
+| DAG 60k | sqlite-dred-loop | 132.2 [125.8-182.5] | 75 | yes |
+| DAG 60k | sqlite-dred-cte | 160.1 [154.5-162.4] | 6 | yes |
+| DAG 960k | sqlite-count | 450.1 [442.9-678.4] | 29 | yes |
+| DAG 960k | sqlite-count-scc | 1947.5 [1944.3-2118.9] | 39 | yes |
+| DAG 960k | sqlite-dred-loop | 2100.7 [2077.4-2107.2] | 75 | yes |
+| DAG 960k | sqlite-dred-cte | 2555.1 [2544.9-2565.1] | 6 | yes |
+| CYC 960k | sqlite-count | 394.5 [394.1-401.2] | 29 | NO (phantom cycle, known) |
+| CYC 960k | sqlite-count-scc | 2146.7 [2142.9-2167.5] | 39 | yes |
+| CYC 960k | sqlite-dred-loop | 2302.9 [2287.6-2308.8] | 75 | yes |
+| CYC 960k | sqlite-dred-cte | 2696.4 [2661.4-2716.7] | 6 | yes |
+
+Hash anchors matched: DAG 60k out `21ec8a4cffc3521a`, DAG 960k out
+`dd6a707234617ea5`, CYC 960k out `25ee690520b18777` (= oracle each run).
 
 ---
 
@@ -79,9 +98,30 @@ GraphNs API, confirm the plan line. Then (only if the plan is NOT covering) buil
 the explicit index variant and measure DAG 960k + CYC 960k on
 `sqlite-dred-loop`/`sqlite-count-scc`, plus `add_deps` setup wall time both ways.
 
-**Measured**: (pending)
+**Measured**: `explain_plans` (bundled SQLite 3.51.3, populated 720k-node cyclic
+graph) on the rederive base join:
 
-**Verdict**: (pending)
+```
+PLAN: SCAN c
+PLAN: SEARCH d USING COVERING INDEX ix_cx_dep_child (child_key=?)
+PLAN: SEARCH p USING INTEGER PRIMARY KEY (rowid=?)
+```
+
+and `PRAGMA index_xinfo(ix_cx_dep_child)` on the identical DDL:
+
+```
+0|1|child_key|0|BINARY|1
+1|0|parent_key|0|BINARY|0
+```
+
+The index physically stores `(child_key, parent_key)` because a secondary index
+on a WITHOUT ROWID table appends the missing primary-key columns.
+
+**Verdict**: REJECTED (the seed premise). The reverse walk is already index-only;
+`ix_cx_dep_child` IS the covering `(child_key, parent_key)` index under another
+name, and SQLite already plans it as COVERING. An explicit second index would
+duplicate those bytes and slow `add_deps` for zero read gain. No timing run
+needed; the plan line plus the physical layout decide it.
 
 ## H2: replacing `INSERT INTO ... SELECT DISTINCT` with `INSERT OR IGNORE` in `retract_dred` removes the temp-b-tree dedup and speeds the loop 5-15%
 
@@ -103,9 +143,27 @@ identical. `sqlite-count` unchanged (it uses GROUP BY, not DISTINCT).
 `sqlite-dred-loop`; EQP before/after showing the temp-b-tree line gone;
 full `cargo test`.
 
-**Measured**: (pending)
+**Measured** (3 runs, median [min-max], vs B0):
 
-**Verdict**: (pending)
+| cell | engine | B0 med | H2 med [min-max] | delta |
+|---|---|---:|---:|---:|
+| DAG 60k | sqlite-dred-loop | 132.2 | 122.2 [120.1-137.4] | -7.6% |
+| DAG 960k | sqlite-dred-loop | 2100.7 | 1970.3 [1958.0-1971.1] | -6.2% |
+| CYC 960k | sqlite-dred-loop | 2302.9 | 2142.8 [2132.1-2148.2] | -7.0% |
+| DAG 960k | sqlite-count (untouched) | 450.1 | 440.6 [437.3-453.4] | -2.1% (noise) |
+| DAG 960k | sqlite-count-scc (untouched) | 1947.5 | 1968.2 [1951.1-1972.9] | +1.1% (noise) |
+| DAG 960k | sqlite-dred-cte (untouched) | 2555.1 | 2516.9 [2506.0-2538.0] | -1.5% (noise) |
+
+Out-hashes equal the oracle on every run; `cargo test --release` fully green
+(23+3+1+1+3+6+7+1+4+4+1+1+1 passed, 1 pre-existing ignored). EQP after: zero
+`USE TEMP B-TREE FOR DISTINCT` lines remain in the cascade plan set (the only
+temp b-tree left is counting's GROUP BY aggregation, which does real work).
+
+**Verdict**: CONFIRMED. The deciding receipt is the pair: the plan line vanished
+AND dred-loop moved -6.2/-7.0% at 960k while every untouched engine stayed
+inside its spread. dred-loop now ties retract_scc (1970 vs 1968 DAG 960k;
+2143 vs 2133 CYC 960k), which is consistent with 916e3d5a's claim that scc's
+~6% edge over dred came from exactly this lever.
 
 ## H3: the scc/dred 4.4x gap vs counting on DAG cuts is cone amplification (work proportional to the whole reachable cone, twice), not a few expensive rounds
 
