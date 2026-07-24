@@ -1,0 +1,3 @@
+{
+  "_blocked": "Not yet populated. tests/4_ingest.test.ts's 'edited file: per-file retract+insert only for that path (golden)' test is currently skipped: it is blocked on a defect in src/3_runtime.ts's preCheckExistingKeys (outside this package's ownership), which silently drops retraction of any row with a NULL identity column (node.name is null throughout fixtures/corpus/bad.ts, so every real per-file retraction hits this). See the comment directly above that test, and the M3 delivery report's BLOCKED line, for the root cause and recommended fix. Once fixed, re-run that test with REGEN_GOLDEN=1 (after removing its skip option) to populate this file with the real [reportA.changed, reportB.changed] snapshot."
+}
