@@ -381,7 +381,9 @@ pub struct CallSite {
 /// the module path for path-only forms like go's imports). The seed's fuller
 /// `Binding` side table (local / source / imported, `_1_mask.rs`:67-76) is the
 /// 4b evolution path if TS's from-clause needs a separate source field —
-/// FLAGGED for human review.
+/// FLAGGED for human review. 4b-ii: `TsSource` collects these (see lang/ts.rs
+/// `module_specifiers`); the from-module field was NOT needed yet (nothing
+/// consumes specifiers before Resolve<CallF>), so it stays unadded.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Specifier {
     pub span: Span,
@@ -398,6 +400,18 @@ pub enum SpecifierKind {
     Namespace,
     SideEffect,
     Reexport,
+}
+
+impl SpecifierKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SpecifierKind::Named => "named",
+            SpecifierKind::Default => "default",
+            SpecifierKind::Namespace => "namespace",
+            SpecifierKind::SideEffect => "side_effect",
+            SpecifierKind::Reexport => "reexport",
+        }
+    }
 }
 
 /// The CallF side-channel: call sites + module specifiers (both phase-1
@@ -973,6 +987,15 @@ pub enum FlatFact {
         owner: SpanOut,
         field: Option<String>,
         text: String,
+        kind: String,
+    },
+    /// CallF module specifier (phase-1, as written): span, bound name, kind.
+    /// v6-ONLY rows (no v5 oracle facet) — the parity golden reports them,
+    /// never asserts them.
+    Specifier {
+        family: FamilyTag,
+        span: SpanOut,
+        name: String,
         kind: String,
     },
     /// A project-phase (cross-file) resolved edge: `to` lives in ANOTHER blob,

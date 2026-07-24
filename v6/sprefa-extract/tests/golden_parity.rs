@@ -15,7 +15,10 @@
 //!   DEFERRED v5-only {type_edge, doc, df_param_pos/args/fields/lits/loop/nest}
 //!           — reported, not asserted. type_edge lands at Resolve<TypeF> commit
 //!           4; df-aux is labels-not-graph; docs are a follow-up.
-//!   v6-only {cst} — v5 has NO TS tree-sitter grammar; incomparable. Reported.
+//!   v6-only {cst, specifier} — cst: v5 has NO TS tree-sitter grammar;
+//!           incomparable. specifier: module import/export-from rows (4b-ii);
+//!           v5's module_binding is a modgraph rel the captured normalize does
+//!           not emit, so there is no oracle facet. Both reported, not asserted.
 
 use std::collections::BTreeSet;
 
@@ -156,6 +159,9 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
             // phase-1); the Resolve<TypeF> twin-normalize lands with the
             // type_edge DEFERRED->PORTED flip.
             FlatFact::ProjectEdge { .. } => {}
+            // Module specifier rows are v6-ONLY (no v5 oracle facet): reported
+            // by the ledger test below, never asserted.
+            FlatFact::Specifier { .. } => {}
         }
     }
     set
@@ -261,15 +267,20 @@ fn deferred_and_v6_only_ledger() {
                 *deferred.entry(facet).or_default() += 1;
             }
         }
-        let cst_only = flatten(&dispatch(case.path, case.fixture, FamilyMask::ALL).expect("source"))
-            .into_iter()
+        let v6_facts = flatten(&dispatch(case.path, case.fixture, FamilyMask::ALL).expect("source"));
+        let cst_only = v6_facts
+            .iter()
             .filter(|f| {
                 matches!(f, FlatFact::Node { family: FamilyTag::Cst, .. }
                     | FlatFact::Edge { family: FamilyTag::Cst, .. })
             })
             .count();
+        let specifier_only = v6_facts
+            .iter()
+            .filter(|f| matches!(f, FlatFact::Specifier { .. }))
+            .count();
         eprintln!(
-            "[{}] migration ledger: v5-only deferred {deferred:?}; v6-only cst facts {cst_only}",
+            "[{}] migration ledger: v5-only deferred {deferred:?}; v6-only cst facts {cst_only}; v6-only specifier facts {specifier_only}",
             case.name
         );
     }

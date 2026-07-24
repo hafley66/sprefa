@@ -119,10 +119,13 @@ fn flatten_type(bundle: &FamilyBundle<TypeF>, strings: &Strings) -> Vec<FlatFact
 
 /// Flatten one CallF bundle to flat facts: callable def NODES (kind = the
 /// CallKind slug, name from the interner) + call SITE rows (the callee as
-/// written, unresolved in phase 1). The resolved caller->callee edges land with
-/// `Resolve<CallF>`.
+/// written, unresolved in phase 1) + module SPECIFIER rows (import/export-from
+/// as written; v6-only — no v5 oracle facet). The resolved caller->callee
+/// edges land with `Resolve<CallF>`.
 fn flatten_call(bundle: &FamilyBundle<CallF>, strings: &Strings) -> Vec<FlatFact> {
-    let mut out = Vec::with_capacity(bundle.nodes.len() + bundle.aux.sites.len());
+    let mut out = Vec::with_capacity(
+        bundle.nodes.len() + bundle.aux.sites.len() + bundle.aux.specifiers.len(),
+    );
     for node in &bundle.nodes {
         out.push(FlatFact::Node {
             family: CallF::TAG,
@@ -137,6 +140,14 @@ fn flatten_call(bundle: &FamilyBundle<CallF>, strings: &Strings) -> Vec<FlatFact
             span: SpanOut::new(site.span.start, site.span.end()),
             callee: strings.lookup(site.callee).to_string(),
             callee_path: site.callee_path.map(|id| strings.lookup(id).to_string()),
+        });
+    }
+    for spec in &bundle.aux.specifiers {
+        out.push(FlatFact::Specifier {
+            family: CallF::TAG,
+            span: SpanOut::new(spec.span.start, spec.span.end()),
+            name: strings.lookup(spec.name).to_string(),
+            kind: spec.kind.as_str().to_string(),
         });
     }
     out

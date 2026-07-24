@@ -90,8 +90,8 @@
 //! families - Cst / Type(+sigs) / Call / Df (+const) - all project + stream + snapshot through
 //! ONE uniform surface, AND each ported set matches a captured v5 oracle (see the (parity) /
 //! (rust) / (go) entries). NEXT: 4b Resolve<TypeF> for TsSource - the machinery
-//! landed (4b-i partial); the resolve ARM is STOPPED on the type-edge-candidate
-//! design gap (see (4b-i)); a human ruling unblocks it:
+//! + the 4b-ii specifier emission landed; the resolve ARM is STOPPED on the
+//! type-edge-candidate design gap (see (4b-i)); a human ruling unblocks it:
 //!   6a29d920  commit 1   CstF via ast-grep (one dep = rust/ts/tsx/js/go grammars);
 //!              clap bin streaming flat JSONL with --bench; snapshot. Piping proof.
 //!   f3ceb4fa  commit 2a  Parser/Project seam -> arena-passing GAT: oxc's
@@ -379,6 +379,32 @@
 //!             DefIndex finds it. RULING NEEDED (options in the 4b report):
 //!             likely a phase-1 unresolved type-edge-candidate row on TypeFAux -
 //!             the exact pattern the 4a ADDENDUM set for CallFAux.specifiers.
+//!   (4b-ii)  COMMIT 4b-ii: TS import/export SPECIFIERS land in phase 1.
+//!             lang/ts.rs `module_specifiers` rides the CallProjector's ONE oxc
+//!             parse into CallFAux.specifiers (the 4a ADDENDUM home; the seed's
+//!             BindingKind vocab Named/Default/Namespace/SideEffect/Reexport).
+//!             Port of v5's TS module_binding LOCAL-name semantics
+//!             (modgraph/ts.rs parse_ts_module_bindings): name = the bound local
+//!             as written (the module path for the path-only forms, per the row
+//!             doc). Covers ES static imports (type imports incl., tagged
+//!             identically - v5's string-level parse strips `type`) + export-
+//!             FROM re-exports; NOT covered (no row; matches v5's binding
+//!             table): `export {a}` without a source, require(...), import-
+//!             equals. FROM-MODULE GAP (4a ADDENDUM open sub-question): the row
+//!             carries NO source module / imported name (v5's source_module /
+//!             imported_name columns) - nothing consumes specifiers yet
+//!             (Resolve<CallF> = 4c), so the seed's Binding side table
+//!             (local/source/imported, `_1_mask.rs`:67-76) stays the evolution
+//!             path; NO source field added (the brief's stop condition did not
+//!             trigger). wire.rs: Specifier FlatFact arm (the Const aux
+//!             precedent) - V6-ONLY rows (v5's module_binding is a modgraph rel
+//!             the captured normalize never emits): golden_parity reports the
+//!             count in the ledger test, NEVER asserts. SNAPSHOTS BYTE-IDENTICAL
+//!             (no UPDATE_SNAP): no fixture carries an import/export-from, so
+//!             the collector mints zero rows on the fixture set - proven by the
+//!             byte-diff snapshot test; the collector itself is proven by a
+//!             scratch-file CLI check of all 9 forms (4 import kinds incl.
+//!             type-import, 4 reexport forms, 2 no-row forms). Gate green.
 //!   PENDING:   the name-resolved type EDGES (field/impl/variant/uses + the
 //!              resolved param/returns binding) still land at Resolve<TypeF>
 //!              (commit 4) by design. ts_const_facts_from is PORTED (see (const)).

@@ -22,7 +22,7 @@ use oxc_ast::ast::Program;
 use oxc_ast_visit::Visit as OxcVisit;
 use oxc_span::{GetSpan, SourceType};
 
-use crate::family::{CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfEdgeKind, DfF, DfNodeKind, SigSlot, TypeEntityKind, TypeF};
+use crate::family::{CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfEdgeKind, DfF, DfNodeKind, SigSlot, Specifier, SpecifierKind, TypeEntityKind, TypeF};
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{ParseError, Parser, Project};
 use crate::shape::{NameId, NodeRef, Span, Strings};
@@ -408,6 +408,91 @@ impl Project<CallF> for CallProjector {
         for span in lambdas.out {
             sink.nodes.push(Node::new(to_span(span), CallKind::Lambda));
         }
+        // Module specifiers (4b-ii): import/export-from rows, as written, into
+        // the CallF aux (the 4a ADDENDUM home). Same one parse, same top level.
+        module_specifiers(program, strings, sink);
+    }
+}
+
+// ── module specifiers (CallFAux.specifiers; commit 4b-ii) ───────────────────
+//
+// Port of v5's TS `module_binding` local-name semantics (src/graph/modgraph/
+// ts.rs `parse_ts_module_bindings`) onto the 4a Specifier row: `name` is the
+// BOUND local name as written (v5's local_name column; the module path for the
+// path-only forms, per the row doc); `kind` is the seed's BindingKind
+// vocabulary. THE FROM-MODULE GAP (the 4a ADDENDUM's open sub-question, flagged
+// for human review): the row carries NO source module and NO imported name
+// (v5's source_module/imported_name columns) — nothing consumes specifiers yet
+// (Resolve<CallF> lands at 4c), so the seed's fuller Binding side table
+// (local/source/imported, `_1_mask.rs`:67-76) stays the evolution path and no
+// field is added silently. Covered: ES static imports (named / default /
+// namespace / side-effect; type imports included — v5's string-level parse tags
+// them identically) and export-FROM re-exports (`export {a} from`,
+// `export * from`, `export * as ns from`). NOT covered (no row, matches v5's
+// binding table): `export {a}` without a source (a local export marker, no
+// module specifier), `require(...)`, and `import x = require(...)`.
+fn module_specifiers(program: &Program<'_>, strings: &mut Strings, sink: &mut FamilyBundle<CallF>) {
+    for stmt in &program.body {
+        match stmt {
+            ts::Statement::ImportDeclaration(import) => match &import.specifiers {
+                // `import './m'`: path-only form — name = the module path.
+                None => push_specifier(sink, strings, import.source.span, &import.source.value, SpecifierKind::SideEffect),
+                Some(specs) => {
+                    for spec in specs {
+                        match spec {
+                            ts::ImportDeclarationSpecifier::ImportSpecifier(named) => {
+                                push_specifier(sink, strings, named.span, &named.local.name, SpecifierKind::Named)
+                            }
+                            ts::ImportDeclarationSpecifier::ImportDefaultSpecifier(default) => {
+                                push_specifier(sink, strings, default.span, &default.local.name, SpecifierKind::Default)
+                            }
+                            ts::ImportDeclarationSpecifier::ImportNamespaceSpecifier(ns) => {
+                                push_specifier(sink, strings, ns.span, &ns.local.name, SpecifierKind::Namespace)
+                            }
+                        }
+                    }
+                }
+            },
+            ts::Statement::ExportNamedDeclaration(export) => {
+                // `export {a} from './m'` only; `export {a}` (no source) is a
+                // local export marker, not a module specifier.
+                if export.source.is_some() {
+                    for spec in &export.specifiers {
+                        let name = module_export_name(&spec.exported);
+                        push_specifier(sink, strings, spec.span, &name, SpecifierKind::Reexport);
+                    }
+                }
+            }
+            ts::Statement::ExportAllDeclaration(export) => match &export.exported {
+                // `export * as ns from './m'`: the bound name is the alias.
+                Some(exported) => {
+                    let name = module_export_name(exported);
+                    push_specifier(sink, strings, exported.span(), &name, SpecifierKind::Reexport);
+                }
+                // `export * from './m'`: path-only form — name = the module path.
+                None => push_specifier(sink, strings, export.source.span, &export.source.value, SpecifierKind::Reexport),
+            },
+            _ => {}
+        }
+    }
+}
+
+fn push_specifier(
+    sink: &mut FamilyBundle<CallF>,
+    strings: &mut Strings,
+    span: oxc_span::Span,
+    name: &str,
+    kind: SpecifierKind,
+) {
+    sink.aux.specifiers.push(Specifier { span: to_span(span), name: strings.intern(name), kind });
+}
+
+/// A `ModuleExportName`'s text as written (identifier or string-literal name).
+fn module_export_name(name: &ts::ModuleExportName) -> String {
+    match name {
+        ts::ModuleExportName::IdentifierName(id) => id.name.to_string(),
+        ts::ModuleExportName::IdentifierReference(id) => id.name.to_string(),
+        ts::ModuleExportName::StringLiteral(s) => s.value.to_string(),
     }
 }
 
