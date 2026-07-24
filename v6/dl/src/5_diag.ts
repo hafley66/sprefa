@@ -47,9 +47,11 @@ export const DIAG_V5_VIEW_SQL: string =
 
 /** The builtin spine rels ingest (4_ingest.ts) writes and programs join
  *  (tasks.d.ts SpineRelName pin, columns verbatim). Declared EDB; the bridge flips
- *  any of these to IDB if a program rule heads it. */
+ *  any of these to IDB if a program rule heads it. `file`'s content_hash column
+ *  (M8-alpha, IdentityWitnessLaw) is the witness a salted probe joins against so it
+ *  re-fires on a content edit rather than reusing a stale cached response. */
 export const spineDecls: readonly RelDecl[] = [
-  edbRel("file", ["path"]),
+  edbRel("file", ["path", "content_hash"]),
   edbRel("node", ["path", "family", "start", "end", "kind", "name"]),
   edbRel("edge", ["path", "family", "kind", "from_start", "from_end", "to_start", "to_end"]),
   edbRel("sig", ["path", "owner_start", "owner_end", "slot", "pos", "ty"]),

@@ -103,7 +103,8 @@
       },
       {
         "columns": [
-          "path"
+          "path",
+          "content_hash"
         ],
         "kind": {
           "buffer": {
@@ -277,6 +278,7 @@
         "columns": [
           "pattern",
           "path",
+          "salt_0",
           "start",
           "end",
           "text"
@@ -297,7 +299,8 @@
       {
         "columns": [
           "pattern",
-          "path"
+          "path",
+          "salt_0"
         ],
         "kind": {
           "buffer": {
@@ -406,6 +409,10 @@
               {
                 "kind": "var",
                 "name": "path"
+              },
+              {
+                "kind": "var",
+                "name": "content_hash"
               }
             ],
             "kind": "rel",
@@ -430,6 +437,10 @@
               {
                 "kind": "var",
                 "name": "path"
+              },
+              {
+                "kind": "var",
+                "name": "content_hash"
               },
               {
                 "kind": "var",
@@ -635,6 +646,10 @@
               {
                 "kind": "var",
                 "name": "path"
+              },
+              {
+                "kind": "var",
+                "name": "content_hash"
               }
             ],
             "kind": "rel",
@@ -660,6 +675,10 @@
           {
             "kind": "hvar",
             "name": "path"
+          },
+          {
+            "kind": "hvar",
+            "name": "content_hash"
           }
         ]
       }

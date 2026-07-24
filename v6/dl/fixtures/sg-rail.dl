@@ -9,10 +9,10 @@ rel(1) hit_count(hits: int).
 sh sg(pattern: text, path: text, start: int, end: int, text: text) =
   `sg run --pattern '{pattern}' --json $path`.
 
-# demand: one sg run per (pattern, path); responses join back positionally.
+# demand: one sg run per (pattern, path, content witness); salt re-fires on edit.
 console_hit(path, start, end, text) <-
-    file(path),
-    sg?("console.log($$$ARGS)", path, start, end, text).
+    file(path, content_hash),
+    sg?("console.log($$$ARGS)", path, content_hash, start, end, text).
 
 hit_count(hits: count(path)) <- console_hit(path).
 
