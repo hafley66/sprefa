@@ -94,7 +94,7 @@
 | [plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md](plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md) | 256 | v6 rxjs lowering + the TS cascade port (engineering plan) |
 | [plans/2026-07-23-v6-transports-as-rels.md](plans/2026-07-23-v6-transports-as-rels.md) | 123 | Transports as rels — http/ws/LSP/shell with zero effect syntax (F4/F10 working note, 2026-07-23) |
 | [plans/2026-07-24-fork-pipeline-syntax-findings.md](plans/2026-07-24-fork-pipeline-syntax-findings.md) | 80 | Fork findings: pipeline syntax + surface rulings (2026-07-24, session forked-for-sql-pipeline-syntax) |
-| [plans/2026-07-24-v6-dl-mvp-slice.md](plans/2026-07-24-v6-dl-mvp-slice.md) | 539 | v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24) |
+| [plans/2026-07-24-v6-dl-mvp-slice.md](plans/2026-07-24-v6-dl-mvp-slice.md) | 543 | v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
@@ -1572,12 +1572,12 @@
 139:## Epics
 141:### M0 · package scaffold `v6/dl/`
 191:### M1 · grammar (Langium) -> ast.ts bridge
-264:### M2 · schema + tick runtime
-343:### M3 · ingest: extract -> spine -> EDB
-391:### M4 · host rels: sh executor + builtin sg + extract
-444:### M5 · diag + v5 LSP front
-495:### M6 · http front
-526:## Frontier (deferred, with the evidence that will resolve each)
+268:### M2 · schema + tick runtime
+347:### M3 · ingest: extract -> spine -> EDB
+395:### M4 · host rels: sh executor + builtin sg + extract
+448:### M5 · diag + v5 LSP front
+499:### M6 · http front
+530:## Frontier (deferred, with the evidence that will resolve each)
 ```
 
 ### skills/mermaid-living-map.md

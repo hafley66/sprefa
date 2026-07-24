@@ -249,9 +249,13 @@ re-POST of a program = full re-bridge + runtime swap (M3).
 - 1.1 `grammar/dl.langium` + langium-cli generation wired into `pnpm grammar`;
   generated code committed (power-tool codegen blessed).
 - 1.2 AST mapping: decls/facts/rules/neg/cmp/aggs -> ast.ts constructors.
-- 1.3 positive `_`: additive change in `v6/sprefa-store/js/src/lower/ast.ts`
+- [x] 1.3 positive `_`: additive change in `v6/sprefa-store/js/src/lower/ast.ts`
   (`Arg = Var | Lit | Wild`) + equi-join/projection plumbing in lower.ts
   ("don't project, don't consistency-check") + tests. The ONE store-side edit.
+  DONE 2026-07-24 (branch dl/m1-store 49cd2101, merged v11): lower.ts needed
+  comment-only changes (tryBind was already structural over {args}); elision
+  falls out of the `col < args.length` loop bound; store 75/75, tsgo clean
+  after a 3-line wild guard in labs/stress.ts (integration commit 9bc51bf2).
 - 1.4 host decls + input inference (`{name}`/`$name` scan) + probe minting.
 - 1.5 load diagnostics: unknown rel, arity mismatch, Min/Max-used, mutation-probe
   -> LoadDiag rows (these are BRIDGE diags, not the diag rel).
