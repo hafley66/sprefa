@@ -12,6 +12,7 @@
   ],
   "rels": [
     "console_hit",
+    "hit_count",
     "file",
     "node",
     "edge",

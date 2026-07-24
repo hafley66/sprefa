@@ -98,6 +98,7 @@
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
+| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 51 | Z-set / IVM head-to-head — feasibility lab |
 | [sprefa-store/js/node_modules/.pnpm/@libsql+client@0.17.4/node_modules/@libsql/client/README.md](sprefa-store/js/node_modules/.pnpm/@libsql+client@0.17.4/node_modules/@libsql/client/README.md) | 128 |  |
 | [sprefa-store/js/node_modules/.pnpm/@libsql+darwin-arm64@0.5.29/node_modules/@libsql/darwin-arm64/README.md](sprefa-store/js/node_modules/.pnpm/@libsql+darwin-arm64@0.5.29/node_modules/@libsql/darwin-arm64/README.md) | 3 | `@libsql/darwin-arm64` |
 | [sprefa-store/js/node_modules/.pnpm/@libsql+hrana-client@0.10.0/node_modules/@libsql/hrana-client/README.md](sprefa-store/js/node_modules/.pnpm/@libsql+hrana-client@0.10.0/node_modules/@libsql/hrana-client/README.md) | 59 | Hrana client for TypeScript |
@@ -1619,6 +1620,14 @@
 126:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
 139:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
 152:## Breakpoint ramp — tight gun 700 MB
+```
+
+### sprefa-store/bench/out/REPORT.md
+```
+1:# Z-set / IVM head-to-head — feasibility lab
+15:## Charts
+22:## Data
+47:## Takeaways (derived)
 ```
 
 ### sprefa-store/js/node_modules/.pnpm/@libsql+client@0.17.4/node_modules/@libsql/client/README.md
