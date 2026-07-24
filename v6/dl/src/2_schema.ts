@@ -41,7 +41,7 @@ export function ddl(decls: readonly RelDecl[], retention: ReadonlyMap<string, Re
 
 /** A named Value, folded via the one hash law every plane agrees on (content_digest),
  *  then narrowed to a 53-bit-safe JS number: asUintN(64) makes the signed fold unsigned,
- *  asUintN(53) narrows to what a JS number carries exactly, per the pinned contract. */
+ *  asUintN(53) narrows to what a JS number holds exactly, per the pinned contract. */
 export function rowDigest(row: Row, columns: readonly string[]): number {
   const parts = columns.map((column) => valueToDigestPart(row[column] ?? null));
   const folded = content_digest(parts);

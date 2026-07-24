@@ -34,7 +34,13 @@ export interface EpicLedger {
    *  worked expectation. Two Langium keyword-shadowing bugs found+fixed (text/int/agg
    *  names as ID + bridge validation; retention as INT + regression test `b = 0`). */
   M1_grammar_bridge: { done: true; evidence: "golden/bridge.sg-rail.json snapshot green" };
-  M2_tick_runtime: { done: false; evidence: "add/noop/remove golden: zero-delta noop + weight retract" };
+  /** DONE 2026-07-24 (dl/m2-runtime 306183a9, merged v11; 22/22 dl tests, tsgo clean):
+   *  golden ticks [[grandparent,2],[parent,3]] / [] / [[grandparent,-2],[parent,-1]].
+   *  Named pipeline stages exported (applyEdbTxn/injectSources/diffAgainstTables/
+   *  applyDerivedTxn/clearScratchRels + pure diffDerivedRel). Deviation recorded:
+   *  rel(0) physical DELETE runs inside applyDerivedTxn's txn (tap can't await IO
+   *  before commit's correlation resolves); the tap stage does rx-side bookkeeping. */
+  M2_tick_runtime: { done: true; evidence: "add/noop/remove golden: zero-delta noop + weight retract" };
   M3_ingest_diff: { done: false; evidence: "re-POST same file = zero deltas; edit = per-file retract+insert" };
   M4_hosts: { done: false; evidence: "sg? fires once per digest; builtin-vs-sh parity rows byte-equal" };
   /** 5.3 DONE 2026-07-24 (dl/m5-lsp f4fdddbe, merged): --diag-db mode in src/lsp.rs,

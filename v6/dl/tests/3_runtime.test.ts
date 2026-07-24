@@ -118,7 +118,7 @@ test("rel(1) keeps only the newest row", async () => {
   }
 });
 
-test("deltas$ carries the same inserts/retracts the tables saw", async () => {
+test("deltas$ reports the same inserts/retracts the tables saw", async () => {
   const { rt, dbPath } = await bootParentFixture();
   try {
     const events: DeltaEvent[] = [];

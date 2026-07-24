@@ -352,6 +352,11 @@ re-derivation idempotent at the db layer.
 
 **Done**: a pure-datalog fixture (no hosts) runs: POST rows -> tick -> derived
 rows queryable -> retract on re-POST without the rows.
+**DONE 2026-07-24** (dl/m2-runtime 306183a9, merged v11, tasks 2.1-2.5 all landed;
+22/22, tsgo clean). Golden: tick1 [[grandparent,2],[parent,3]], tick2 [] (idempotent
+noop), tick3 [[grandparent,-2],[parent,-1]] + delta-log dump with matching +-1
+weight pairs. rel(0) clearing runs inside applyDerivedTxn's txn (deviation, doc'd);
+sync-settle generation counter bumps BEFORE BehaviorSubject.next (bug found+fixed).
 **Golden (M2)**: fixture program + 3 commits (add, noop, remove) -> snapshot of
 `[TickReport, delta table dump]` — proves idempotent re-commit (zero deltas) and
 weight-retract.
