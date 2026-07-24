@@ -10,47 +10,39 @@
  * pure data structures, ported verbatim.
  */
 
-import { createClient, type Client } from "@libsql/client";
+import { createClient } from "@libsql/client";
 import { cascade, reconcile, stmt_counter } from "./engine.ts";
 import { OPEN_PRAGMAS, create_all_tables } from "./spine.ts";
+import type {
+  AssertTrue,
+  EdgeRow,
+  GraphNsStatics,
+  GraphNs as GraphNsContract,
+  InternerStatics,
+  Interner as InternerContract,
+  NodeRow,
+  RelStoreStatics,
+  RelStore as RelStoreContract,
+  SpanRow,
+  SqliteDb,
+  StoreStatics,
+  Store as StoreContract,
+} from "./types.ts";
 
-/** The SQLite connection type (an @libsql/client `Client`, `intMode:"bigint"`). */
-export type SqliteDb = Client;
+/** Declared in ./types.ts (the header). Re-exported so every existing
+ *  `from "./lib.ts"` importer keeps working unchanged. */
+export type { EdgeRow, NodeRow, SpanRow, SqliteDb };
 
 /** The one constructor for that connection: every caller (dl included) opens SQLite
- *  through this alias, so `@libsql/client` is imported by this file alone. `url` is
- *  passed through verbatim (`file:/abs/path.sqlite` or `:memory:`). */
+ *  through this alias, so `@libsql/client` is imported at runtime by this file alone
+ *  (the header names the `Client` TYPE, which erases at build). `url` is passed
+ *  through verbatim (`file:/abs/path.sqlite` or `:memory:`). */
 export function open_db(url: string): SqliteDb {
   return createClient({ url });
 }
 
 /** Widest table is `node` at 7 columns; 100 rows/statement keeps bound params under 999. */
 const CHUNK_ROWS = 100;
-
-// ---- row types (spine entities) ---------------------------------------------
-export interface NodeRow {
-  node_id: number;
-  family: number;
-  file_id: number;
-  byte_start: number;
-  byte_len: number;
-  kind: number;
-  name_id: number | null;
-}
-
-export interface EdgeRow {
-  family: number;
-  src_id: number;
-  dst_id: number;
-  kind: number;
-}
-
-export interface SpanRow {
-  file_id: number;
-  start: number;
-  end: number;
-  string_id: number | null;
-}
 
 // =============================================================================
 // relstore — RelStore + GraphNs + stamp (the generic incremental relation store)
@@ -74,7 +66,7 @@ export import KEY_STRIDE = cascade.KEY_STRIDE;
  * temp. and CANNOT be qualified to an ATTACH'd schema, so prefix is the only namespace that
  * covers the working set.
  */
-export class GraphNs {
+export class GraphNs implements GraphNsContract {
   constructor(
     public readonly row: string,
     public readonly dep: string,
@@ -131,7 +123,7 @@ export async function stamp(db: SqliteDb, ns: GraphNs): Promise<void> {
 }
 
 /** A handle on one namespaced graph store: a connection + its GraphNs. */
-export class RelStore {
+export class RelStore implements RelStoreContract {
   constructor(private readonly _db: SqliteDb, private readonly _ns: GraphNs) {}
 
   /** Open (or create) a store at `db` stamped for namespace `ns`. */
@@ -229,6 +221,15 @@ export class RelStore {
 }
 }
 
+// ---- static-side proofs (./types.ts) -----------------------------------------
+// `implements` above covers each class's INSTANCE side only. These four aliases
+// check the static side (constructors, factories) against the header, so a
+// signature that drifts fails the typecheck instead of going quietly stale.
+export type GraphNsStaticsHold = AssertTrue<typeof relstore.GraphNs extends GraphNsStatics ? true : false>;
+export type RelStoreStaticsHold = AssertTrue<typeof relstore.RelStore extends RelStoreStatics ? true : false>;
+export type InternerStaticsHold = AssertTrue<typeof strings.Interner extends InternerStatics ? true : false>;
+export type StoreStaticsHold = AssertTrue<typeof Store extends StoreStatics ? true : false>;
+
 // ---- module-level re-exports (so `import { GraphNs, RelStore, stamp } from "./lib.ts"` works) ----
 export const GraphNs = relstore.GraphNs;
 export type GraphNs = relstore.GraphNs;
@@ -248,7 +249,7 @@ export namespace strings {
 //! the arena, never the source. New interns queue in `dirty` for ONE batched insert.
 
 /** The resident interner. Owns the string arena and assigns dense ids. */
-export class Interner {
+export class Interner implements InternerContract {
   private readonly rodeo = new Map<string, number>();
   private readonly by_id: string[] = [];
   private dirty: [number, string][] = [];
@@ -307,7 +308,7 @@ export class Interner {
  * hydrating the resident interner from the durable mirror. Writes are batched; ids/rows
  * are returned to callers, never a SeaORM type.
  */
-export class Store {
+export class Store implements StoreContract {
   private readonly interner: strings.Interner;
 
   private constructor(private readonly _db: SqliteDb) {

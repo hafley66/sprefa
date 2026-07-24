@@ -9,7 +9,7 @@
  * addition; it does not change the schema object set).
  */
 
-import type { SqliteDb } from "./lib.ts";
+import type { SqliteDb } from "./types.ts";
 import { createHash } from "node:crypto";
 
 /** The unified graph family discriminator, stored as a small i32 ordinal. */

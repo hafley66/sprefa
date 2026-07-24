@@ -15,7 +15,7 @@
 
 import { SqliteReach } from "./algo.ts";
 import { cascade, reach, reconcile } from "./engine.ts";
-import type { GraphNs, RelStore } from "./lib.ts";
+import type { GraphNs, RelStore } from "./types.ts";
 
 // =============================================================================
 // Trait A · Reach — read-only graph queries over cx_dep (prune = reached)

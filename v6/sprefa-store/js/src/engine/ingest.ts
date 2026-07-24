@@ -78,7 +78,7 @@
  *    value without reaching into this file's internals.
  */
 
-import type { RelStore, Store } from "./lib.ts";
+import type { RelStore, Store } from "./types.ts";
 import { key as cascade_key, KEY_STRIDE } from "./lib.ts";
 import { stmt_counter } from "./engine.ts";
 import { mix } from "./oracle.ts";

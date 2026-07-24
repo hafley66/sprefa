@@ -31,7 +31,13 @@
  */
 
 import type { InArgs } from "@libsql/client";
-import type { GraphNs, SqliteDb } from "./lib.ts";
+import type {
+  AssertTrue,
+  GraphNs,
+  SqliteDb,
+  TemporalStoreStatics,
+  TemporalStore as TemporalStoreContract,
+} from "./types.ts";
 import process from "node:process";
 
 /** The connection type every helper takes. */
@@ -1052,7 +1058,7 @@ function delta_json(deltas: ReadonlyArray<readonly [number, number]>): string {
 }
 
 /** A bitemporal fact store over one connection. */
-export class TemporalStore {
+export class TemporalStore implements TemporalStoreContract {
   private revision = 0;
 
   private constructor(private readonly db: Db) {}
@@ -1115,4 +1121,7 @@ export class TemporalStore {
     return this.db;
   }
 }
+
+/** Static-side proof (./types.ts): `implements` covers the instance side only. */
+export type TemporalStoreStaticsHold = AssertTrue<typeof TemporalStore extends TemporalStoreStatics ? true : false>;
 }

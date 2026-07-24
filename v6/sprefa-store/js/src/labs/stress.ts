@@ -52,7 +52,8 @@ import {
 import { lowerProgram, RecursiveStratumDeferred, type Row, type Sources } from "../lower/lower.ts";
 import { buildRuleGraph, scc, stratify, type Stratum } from "../lower/rulegraph.ts";
 
-import { RelStore, GraphNs, type SqliteDb as Db } from "../engine/lib.ts";
+import { RelStore, GraphNs } from "../engine/lib.ts";
+import type { SqliteDb as Db } from "../engine/types.ts";
 import { reconcile, stmt_counter } from "../engine/engine.ts";
 import { OPEN_PRAGMAS } from "../engine/spine.ts";
 import { memcap, benchgraph } from "../engine/measure.ts";
