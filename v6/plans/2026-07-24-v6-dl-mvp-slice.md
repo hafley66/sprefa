@@ -488,10 +488,15 @@ same sqlite file read-only; data_version poll at 500ms (save-driven cadence,
 matching v5's disk-truth stance).
 
 **Tasks**
-- 5.1 diagDecl builtin + partial-head defaults (severity warn, end_line=line) in
+- [x] 5.1 diagDecl builtin + partial-head defaults (severity warn, end_line=line) in
   the bridge (named-cols deferral: MVP rules write all 9 positionally or use a
-  minted default rule — pick in-code, document).
-- 5.2 diag_v5 view in ddl().
+  minted default rule — pick in-code, document). DONE 2026-07-24: defaults landed
+  in the bridge (M1.4, __lit minting); diagDecl + canonical builtinDecls single
+  source in src/5_diag.ts (dl/m5-diag 86b9101c, merged; tests/0_helpers now
+  re-exports it, two-copies consolidated at integration).
+- [x] 5.2 diag_v5 view: DIAG_V5_VIEW_SQL exported from 5_diag.ts, passed to boot's
+  extraDdl by integration (not baked into ddl() — keeps 2_schema program-agnostic).
+  DONE 2026-07-24, view proven over a real rel_diag with NULL-severity COALESCE.
 - [x] 5.3 v5 lsp.rs `--diag-db` mode (Rust, additive, no engine boot in that mode).
   DONE 2026-07-24 (branch dl/m5-lsp f4fdddbe, merged v11): --diag-db threads
   cli/mod.rs -> lib.rs -> lsp.rs run_lsp; branch returns before any engine boot;
@@ -503,8 +508,11 @@ matching v5's disk-truth stance).
 - 5.4 retraction wiring test: file fix -> ingestFile diff -> spine retract ->
   fixpoint drops diag row -> delta -> view -> LSP clears. ZERO diag-specific
   retraction code (the fork's "first retraction instance" claim, proven).
-- 5.5 `--check` reader: `GET /idb/diag` + a 10-line script exits 2 on any
+- [x] 5.5 `--check` reader: `GET /idb/diag` + a 10-line script exits 2 on any
   severity=error row (the open one-liner, closed here as http-flavored).
+  DONE 2026-07-24: scripts/check_diag.mjs (exit 2 error-row / 0 clean / 1
+  unreachable), tested against a canned http server (spawnSync deadlock trap
+  documented in the test).
 
 **Done**: editor shows a squiggle from a .dl rail over a fixture repo; fixing
 the file clears it without restart.

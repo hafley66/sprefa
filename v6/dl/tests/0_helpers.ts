@@ -5,25 +5,18 @@
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { edbRel } from "sprefa-store-engine/src/lower/ast.ts";
+import { builtinDecls } from "../src/5_diag.ts";
 import type { RelDecl } from "sprefa-store-engine/src/lower/ast.ts";
 import { bridge } from "../src/0_ast_bridge.ts";
 import type { BridgeOk, BridgeResult } from "../tasks.d.ts";
 
 /** The builtin spine rels (SpineRelName, tasks.d.ts) + diag, all declared EDB — the
- *  bridge itself decides which of these become IDB (headed by a user rule). Columns
- *  match the tasks.d.ts pin verbatim. */
+ *  bridge itself decides which of these become IDB (headed by a user rule). The
+ *  canonical decl list lives in src/5_diag.ts (builtinDecls); this is a re-export
+ *  kept under the test-helper name so test files read consistently (two-copies law:
+ *  the inline list this function used to build was consolidated at integration). */
 export function builtinRelsForTests(): readonly RelDecl[] {
-  return [
-    edbRel("file", ["path"]),
-    edbRel("node", ["path", "family", "start", "end", "kind", "name"]),
-    edbRel("edge", ["path", "family", "kind", "from_start", "from_end", "to_start", "to_end"]),
-    edbRel("sig", ["path", "owner_start", "owner_end", "slot", "pos", "ty"]),
-    edbRel("site", ["path", "start", "end", "callee", "callee_path"]),
-    edbRel("const", ["path", "owner_start", "owner_end", "field", "text", "kind"]),
-    edbRel("span_line", ["path", "start", "line", "col"]),
-    edbRel("diag", ["path", "line", "col", "end_line", "end_col", "severity", "code", "msg", "hint"]),
-  ];
+  return builtinDecls;
 }
 
 /** Read a fixture file by name, relative to v6/dl/fixtures/. */

@@ -11,7 +11,7 @@
  * null) are the BRIDGE's job (0_ast_bridge.ts, DiagHeadDefaultLaw) — not reimplemented here.
  *
  * `diagDecl` (and every spine decl below) is declared EDB at decl time; the bridge is what
- * flips a rel to IDB when a program rule heads it (BridgeOk.program carries the resolved
+ * flips a rel to IDB when a program rule heads it (BridgeOk.program holds the resolved
  * origin) — that law lives in 0_ast_bridge.ts and is documented, not re-implemented, here.
  *
  * This module is the one source every later package (ingest, http) imports builtin decls
