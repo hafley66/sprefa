@@ -1225,6 +1225,45 @@ sites but not against new code. **missing** = nothing.
   with a fixture whose RECURSION is non-vacuous — a vacuous recursive fixture
   passes even when the recursive step is completely broken.
 
+## 34. Behavior-only gates let a parallel storage world ship inside the engine
+
+- WHAT IT LOOKS LIKE: a multi-agent build ships a runtime whose every golden is
+  green — http transcripts byte-stable, retraction proven live, stress at
+  baseline — while the storage plane underneath is a from-scratch parallel
+  world: string-keyed tables, full-tuple PKs on rowid tables (index bytes ~48%
+  of the file at 41 nodes), absolute path TEXT repeated per edge row, and the
+  project's own golden-gated SQLite machinery (spine surrogates, interning,
+  cascade/reconcile) imported for exactly one function (`with_txn`) plus types.
+  Nothing is wrong at the surface. The engine core is v5's 39x amplification
+  disease rebuilt at birth.
+- HOW IT BIT US (2026-07-24, v6/dl MVP slice; caught by an owner storage
+  sitrep, not by any gate): the PLAN was the defect's origin — its M2 contract
+  specified the naive DDL literally (`rel_<name>(cols, PRIMARY KEY(all cols))`)
+  and named the store's machinery only as prose ("attach Store",
+  "ingestJsonl stays the bulk path" in one comment line). Sonnet packages
+  built exactly what the contract said; the orchestrator's review checked
+  style laws (banned words, rx shape, numbering), not architectural reuse;
+  and every acceptance gate measured BEHAVIOR at the http surface, where ids
+  are invisible by design. A parallel fact plane therefore passed every gate
+  that existed. Dispatched fix: M9 (wire the actual Store; spine + interning
+  as the fact plane; store extended additively where seams are missing).
+- THE LAW: storage schema is CONTRACT, not implementation detail. A plan that
+  touches the space plane must name the exact reused symbols (imports, table
+  names, id allocators) in the contract block — prose mentions do not bind
+  agents. And every epic whose package owns tables carries a SCHEMA-SHAPE
+  gate (dbstat: index/table ratio ceiling, bytes/row, presence of the spine
+  tables), because behavior gates cannot see storage by construction — the
+  better the abstraction, the more invisible the defect.
+- THE RAIL: pending with M9 — the scaled-corpus dbstat gate (index bytes <=
+  15% of file for the rel plane, spine tables present, no TEXT column whose
+  values repeat beyond the dictionary threshold) wired into the dl suite so
+  a schema regression fails a test, not an owner's eyeball.
+- SAY THIS TO AN AGENT: if your package creates tables, your prompt's contract
+  must show the DDL you are REPLACING reuse with, and your gates must include
+  a dbstat assertion. "All goldens green" proves the surface, never the
+  storage; grep what the runtime imports from the storage engine and count
+  the functions — one is a smell you can smell from orbit.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
