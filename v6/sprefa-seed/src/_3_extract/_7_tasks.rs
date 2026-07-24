@@ -83,7 +83,7 @@
 //!                must survive for the node-level type join. The Param/Returns EDGES
 //!                (span-to-span, resolved) still land at Resolve<TypeF> (commit 4).
 //!
-//! BUILD STATUS (2026-07-23, commits 1-3c + Tier-2 PARITY GOLD (TS) LANDED in
+//! BUILD STATUS (2026-07-24, commits 1-3c + Tier-2 PARITY GOLD (TS, incl. const facet) LANDED in
 //! v6/sprefa-extract/. The TS phase-1 families - Cst / Type(+sigs) / Call / Df -
 //! all project + stream + snapshot through ONE uniform surface, AND the ported
 //! facets now match a captured v5 oracle (see the (parity) entry). NEXT: broaden
@@ -160,16 +160,30 @@
 //!              line-exact for type/call (v5 drops the byte offset there). ONE
 //!              divergence found + fixed: CallKind::Free tag "free"->"function"
 //!              (v5 call_def.kind; v6 had coined "free" with no rationale).
-//!              DEFERRED v5-only (measured, destinations logged): type_edge (10 on
-//!              sample.ts; Resolve<TypeF> commit 4), df aux (args/fields/lits/
-//!              param_pos; labels-not-graph), const (0 here; D-arrow-type ruling),
-//!              docs (0; follow-up). v6-ONLY: cst (421 facts; v5 has NO TS
-//!              tree-sitter grammar -> incomparable). sample.ts exercises no
-//!              string-consts/lambdas/docs; broader fixtures are the follow-up.
+//!              DEFERRED v5-only (measured, destinations logged): type_edge
+//!              (Resolve<TypeF> commit 4), df aux (args/fields/lits/param_pos;
+//!              labels-not-graph), docs (follow-up). const is now PORTED (see the
+//!              (const) entry). v6-ONLY: cst (v5 has NO TS tree-sitter grammar ->
+//!              incomparable). Fixtures: sample.ts (graph shapes) + consts.ts
+//!              (the full const matrix: string/template/object-dotted-path/
+//!              string-enum/as-const/mutable+numeric-skip/nested-scope).
+//!   (const)   Const facet PORTED (v5 model restored). A string-bearing const/
+//!              `as const` binding -> a Const TypeEntity (Node<TypeF> kind=Const)
+//!              + one ConstValue per resolved string (lit cooked / template raw
+//!              slice; object literals -> dotted field paths; string-enum members
+//!              key off the enum entity). Non-string consts emit nothing (both v5
+//!              and v6). Port of v5 ts_const_facts_from (`lang/ts.rs` ConstWalker)
+//!              driven from TsSource::extract (needs source bytes for template
+//!              slices); `family.rs` ConstValue/ConstKind + TypeFAux.consts;
+//!              `wire.rs` FlatFact::Const. The D-arrow-type "consts stay df"
+//!              reading had dropped the string-const entity + values v5 kept - a
+//!              FALSE DICHOTOMY (a const is a declaration AND a value AND carries
+//!              its text; the df let_bind node is separate + unaffected). v6 drops
+//!              v5's scope/sym machinery (spans disambiguate). PARITY GREEN on
+//!              consts.ts (5 Const entities + 11 const_value rows, byte-match).
 //!   PENDING:   the name-resolved type EDGES (field/impl/variant/uses + the
 //!              resolved param/returns binding) still land at Resolve<TypeF>
-//!              (commit 4) by design. Also unported: ts_const_facts_from (the
-//!              string-const-value facet; origin-style consts stay df value nodes).
+//!              (commit 4) by design. ts_const_facts_from is PORTED (see (const)).
 //!   ORACLE:     scip-typescript 0.4.0 was run on the fixture (throwaway /tmp). The
 //!              real correctness gate is occurrence/resolution parity (the commit 4
 //!              ratchet), NOT a raw symbol diff (scip is a flat exhaustive symbol

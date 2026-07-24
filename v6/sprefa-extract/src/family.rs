@@ -165,11 +165,55 @@ impl SigSlot {
     }
 }
 
-/// The TypeF side-channel: arrow-type sigs (and, later, consts/docs). Rides the
-/// bundle's `aux`; the wire flattens it to `FlatFact::Sig`.
+// ── TypeF aux: the const-value facet (port of v5 ts_const_facts_from) ────────
+//
+// A `const` (or `as const`) binding whose initializer carries a string somewhere
+// gets a Const TypeEntity (the declaration) + one `ConstValue` row per resolved
+// string (the value). v5's model, restored: the D-arrow-type "consts stay df"
+// reading had dropped the string-const entity + values v5 kept. The df `let_bind`
+// node is SEPARATE (the const as a value POSITION) and unaffected — a string
+// const is simultaneously a declaration (TypeF), a value (df), and carries its
+// text here. Non-string-bearing consts (`const n = 3`, `const o = {x:0}`) emit
+// nothing (no string anywhere), in both v5 and v6.
+
+/// One resolved string value folded from a `const`/`as const` binding (or a
+/// string-enum member). `owner` is the owning entity's span (the Const entity for
+/// a plain/object const, the Enum entity for a string-enum member) — the join key
+/// back to `Node<TypeF>`. `field` is None for a bare `const x = "..."`, else a
+/// dotted path (`home`, `nested.a`) for an object-literal property, or the member
+/// name for an enum member. `text` is the cooked literal value (lit) or the raw
+/// source slice with `${}` holes intact (template). Port of v5 `ConstValueFact`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConstValue {
+    pub owner: Span,
+    pub field: Option<NameId>,
+    pub text: NameId,
+    pub kind: ConstKind,
+}
+
+/// `const_value_kind`. v5 `decls.rs` brand: `lit` (a cooked string literal) or
+/// `template` (a template literal's raw source slice, holes intact).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ConstKind {
+    Lit,
+    Template,
+}
+
+impl ConstKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ConstKind::Lit => "lit",
+            ConstKind::Template => "template",
+        }
+    }
+}
+
+/// The TypeF side-channel: arrow-type sigs + the const-value facet (docs land
+/// later). Rides the bundle's `aux`; the wire flattens each to its `FlatFact` arm.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TypeFAux {
     pub sigs: Vec<TypeSig>,
+    pub consts: Vec<ConstValue>,
 }
 
 impl Family for TypeF {

@@ -31,7 +31,7 @@
 
 use std::collections::BTreeSet;
 
-use sprefa_v5::graph::typegraph::{EntityKind, TypeLang, TsTypes};
+use sprefa_v5::graph::typegraph::{TypeLang, TsTypes};
 
 fn main() {
     let path = std::env::args().nth(1).expect("usage: v5_normalize <path>");
@@ -62,14 +62,14 @@ fn main() {
     for edge in &types.edges {
         lines.insert(format!("type_edge\t{}\t{}\t{}", edge.from, edge.to, edge.kind));
     }
-    // ── DEFERRED v5-only: const facet (D-arrow-type: value-consts stay df) ──
-    for entity in &types.entities {
-        if entity.kind == EntityKind::Const {
-            lines.insert(format!("const_node\t{}\t{}\t{}", entity.name, entity.sym, entity.line));
-        }
-    }
+    // ── const facet (PORTED): Const entities flow as type_node (kind=const) in
+    // the loop above; const_value rows join to their owner via the owner's line
+    // (v5 ConstValueFact.sym -> the owning entity's declaration line). ─────────
+    let sym_line: std::collections::HashMap<&str, u32> =
+        types.entities.iter().map(|e| (e.sym.as_str(), e.line)).collect();
     for c in &types.consts {
-        lines.insert(format!("const_value\t{}\t{}\t{}\t{}", c.sym, c.field, c.kind, c.text));
+        let owner_line = sym_line.get(c.sym.as_str()).copied().unwrap_or(0);
+        lines.insert(format!("const_value\t{owner_line}\t{}\t{}\t{}", c.field, c.kind, c.text));
     }
     // ── DEFERRED v5-only: docs ──────────────────────────────────────────────
     for doc in &types.docs {

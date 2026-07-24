@@ -22,10 +22,10 @@ use oxc_ast::ast::Program;
 use oxc_ast_visit::Visit as OxcVisit;
 use oxc_span::{GetSpan, SourceType};
 
-use crate::family::{CallF, CallKind, CallSite, CstF, DfEdgeKind, DfF, DfNodeKind, SigSlot, TypeEntityKind, TypeF};
+use crate::family::{CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfEdgeKind, DfF, DfNodeKind, SigSlot, TypeEntityKind, TypeF};
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{ParseError, Parser, Project};
-use crate::shape::{NodeRef, Span, Strings};
+use crate::shape::{NameId, NodeRef, Span, Strings};
 use crate::source::{ExtractOutput, FamilyMask, Source};
 use super::astgrep::{AstGrepParser, CstProjector};
 
@@ -1206,6 +1206,240 @@ fn push_entity(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// TypeF const facet: port of v5 ts_const_facts_from.
+//
+// A string-bearing `const`/`as const` binding -> a Const TypeEntity (the
+// declaration) + one ConstValue per resolved string (lit cooked value / template
+// raw source slice; object literals fan into dotted field paths; string-enum
+// members key off the enum entity). Non-string consts emit nothing (in both v5
+// and v6). This is v5's model, restored: the D-arrow-type "consts stay df"
+// reading had dropped the string-const entity + values v5 kept. The df let_bind
+// node is SEPARATE (the const as a value POSITION) and unaffected — a string
+// const is a declaration (here), a value (df), and carries its text (here), all
+// at once. Runs from TsSource::extract: it needs the source bytes for template
+// slices, which Project::project does not receive. v6 drops v5's scope/sym
+// machinery — spans disambiguate two same-named consts in two fns.
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Strip the type wrappers transparent to a const's runtime value (`as const`,
+/// `satisfies T`, parens). Port of v5 `ts_unwrap_const`.
+fn unwrap_const<'a>(e: &'a ts::Expression<'a>) -> &'a ts::Expression<'a> {
+    match e {
+        ts::Expression::TSAsExpression(t) => unwrap_const(&t.expression),
+        ts::Expression::TSSatisfiesExpression(t) => unwrap_const(&t.expression),
+        ts::Expression::ParenthesizedExpression(p) => unwrap_const(&p.expression),
+        other => other,
+    }
+}
+
+/// Whether an initializer is `... as const` — the only `let`/`var` form honest to
+/// fold besides a true `const`. Port of v5's `as_const` check.
+fn init_is_as_const(e: &ts::Expression) -> bool {
+    matches!(e, ts::Expression::TSAsExpression(t) if t.type_annotation.is_const_type_reference())
+}
+
+/// Whether an initializer carries a string somewhere (a literal, a template, or
+/// an object with a string-bearing property). Gates entity-minting: a const with
+/// no string anywhere emits no entity and no values. Port of v5
+/// `ts_expr_string_bearing` (spread never makes an object string-bearing).
+fn expr_string_bearing(e: &ts::Expression) -> bool {
+    match unwrap_const(e) {
+        ts::Expression::StringLiteral(_) | ts::Expression::TemplateLiteral(_) => true,
+        ts::Expression::ObjectExpression(o) => o.properties.iter().any(|p| match p {
+            ts::ObjectPropertyKind::ObjectProperty(prop) => expr_string_bearing(&prop.value),
+            ts::ObjectPropertyKind::SpreadProperty(_) => false,
+        }),
+        _ => false,
+    }
+}
+
+/// The (VariableDeclaration | export-wrapped VariableDeclaration) in a statement.
+fn var_decl_of<'a>(stmt: &'a ts::Statement<'a>) -> Option<&'a ts::VariableDeclaration<'a>> {
+    use ts::Statement as S;
+    match stmt {
+        S::VariableDeclaration(v) => Some(v),
+        S::ExportNamedDeclaration(exp) => match &exp.declaration {
+            Some(ts::Declaration::VariableDeclaration(v)) => Some(v),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The (TSEnumDeclaration | export-wrapped) in a statement.
+fn enum_decl_of<'a>(stmt: &'a ts::Statement<'a>) -> Option<&'a ts::TSEnumDeclaration<'a>> {
+    use ts::Statement as S;
+    match stmt {
+        S::TSEnumDeclaration(en) => Some(en),
+        S::ExportNamedDeclaration(exp) => match &exp.declaration {
+            Some(ts::Declaration::TSEnumDeclaration(en)) => Some(en),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Walks for string-bearing consts: top-level (depth 0, via `collect_const_facts`'
+/// loop) + nested inside fn/arrow bodies (depth > 0, via the visitor). Owns the
+/// collected Const entities + ConstValue rows; drains into the TypeF bundle. The
+/// `&mut Strings` is the shared per-file interner. Port of v5
+/// `TsNestedConstWalker` (scope names dropped: spans disambiguate).
+struct ConstWalker<'s> {
+    content: &'s str,
+    depth: u32,
+    strings: &'s mut Strings,
+    entities: Vec<Node<TypeF>>,
+    values: Vec<ConstValue>,
+}
+
+impl<'s> ConstWalker<'s> {
+    /// Recursively collect ConstValue rows from one initializer. `owner` is the
+    /// owning Const entity's span; `prefix` the dotted field path so far (None at
+    /// the top). Port of v5 `ts_collect_const_values` (spread skips dropped).
+    fn collect_values(&mut self, e: &ts::Expression, owner: Span, prefix: Option<NameId>) {
+        use oxc_span::GetSpan;
+        match unwrap_const(e) {
+            ts::Expression::StringLiteral(s) => {
+                self.values.push(ConstValue {
+                    owner,
+                    field: prefix,
+                    text: self.strings.intern(&s.value),
+                    kind: ConstKind::Lit,
+                });
+            }
+            ts::Expression::TemplateLiteral(t) => {
+                let span = t.span();
+                let text = self.content.get(span.start as usize..span.end as usize).unwrap_or_default();
+                self.values.push(ConstValue {
+                    owner,
+                    field: prefix,
+                    text: self.strings.intern(text),
+                    kind: ConstKind::Template,
+                });
+            }
+            ts::Expression::ObjectExpression(o) => {
+                for property in &o.properties {
+                    if let ts::ObjectPropertyKind::ObjectProperty(prop) = property {
+                        let key = match &prop.key {
+                            ts::PropertyKey::StaticIdentifier(i) => Some(i.name.to_string()),
+                            ts::PropertyKey::StringLiteral(s) => Some(s.value.to_string()),
+                            _ => None, // computed key: no static field name
+                        };
+                        if let Some(key) = key {
+                            let field = match prefix {
+                                None => Some(self.strings.intern(&key)),
+                                Some(parent) => Some(
+                                    self.strings.intern(&format!("{}.{key}", self.strings.lookup(parent))),
+                                ),
+                            };
+                            self.collect_values(&prop.value, owner, field);
+                        }
+                    }
+                    // spread: counted in v5; dropped here (facts-only).
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// One `const`/`as const` binding: a Const entity (if string-bearing + honest)
+    /// + its values. Arrow/fn-expr inits are TypeProjector's Function entities,
+    /// left alone. Port of v5 `ts_var_const_facts` (mutable-skip counter dropped).
+    fn var_facts(&mut self, v: &ts::VariableDeclaration) {
+        for declarator in &v.declarations {
+            let ts::BindingPattern::BindingIdentifier(name) = &declarator.id else { continue };
+            let Some(init) = &declarator.init else { continue };
+            if matches!(
+                init,
+                ts::Expression::ArrowFunctionExpression(_) | ts::Expression::FunctionExpression(_)
+            ) {
+                continue;
+            }
+            if !expr_string_bearing(init) {
+                continue;
+            }
+            if !v.kind.is_const() && !init_is_as_const(init) {
+                continue; // mutable binding: v5 counts const_mutable_skips; v6 drops (facts-only)
+            }
+            let owner = to_span(declarator.span);
+            self.entities
+                .push(Node::new(owner, TypeEntityKind::Const).with_name(self.strings.intern(&name.name)));
+            self.collect_values(init, owner, None);
+        }
+    }
+
+    /// String-enum members (`enum R { Home = '/home' }`): one ConstValue per
+    /// string-initialized member, keyed off the ENUM entity's span (the enum is
+    /// already a TypeF node from TypeProjector; no per-member entity). Port of v5
+    /// `ts_enum_const_values`.
+    fn enum_facts(&mut self, en: &ts::TSEnumDeclaration) {
+        let owner = to_span(en.span);
+        for member in &en.body.members {
+            let field = match &member.id {
+                ts::TSEnumMemberName::Identifier(id) => Some(id.name.to_string()),
+                ts::TSEnumMemberName::String(s) => Some(s.value.to_string()),
+                _ => None,
+            };
+            if let (Some(field), Some(init)) = (field, &member.initializer) {
+                if let ts::Expression::StringLiteral(s) = unwrap_const(init) {
+                    self.values.push(ConstValue {
+                        owner,
+                        field: Some(self.strings.intern(&field)),
+                        text: self.strings.intern(&s.value),
+                        kind: ConstKind::Lit,
+                    });
+                }
+            }
+        }
+    }
+}
+
+impl<'a, 's> OxcVisit<'a> for ConstWalker<'s> {
+    fn visit_function(&mut self, it: &ts::Function<'a>, flags: oxc_syntax::scope::ScopeFlags) {
+        self.depth += 1;
+        oxc_ast_visit::walk::walk_function(self, it, flags);
+        self.depth -= 1;
+    }
+
+    fn visit_arrow_function_expression(&mut self, it: &ts::ArrowFunctionExpression<'a>) {
+        self.depth += 1;
+        oxc_ast_visit::walk::walk_arrow_function_expression(self, it);
+        self.depth -= 1;
+    }
+
+    fn visit_variable_declaration(&mut self, it: &ts::VariableDeclaration<'a>) {
+        // depth 0 is the top-level loop's job; only act inside a fn/arrow body.
+        if self.depth > 0 {
+            self.var_facts(it);
+        }
+        oxc_ast_visit::walk::walk_variable_declaration(self, it);
+    }
+}
+
+/// Top-level driver: top-level `const`/`enum` declarations, then descend into
+/// fn/arrow bodies for nested consts. Appends Const entities + ConstValue rows
+/// to the TypeF bundle. Needs `content` for template raw slices.
+pub(crate) fn collect_const_facts(
+    program: &Program,
+    content: &str,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
+    let mut walker = ConstWalker { content, depth: 0, strings, entities: Vec::new(), values: Vec::new() };
+    for stmt in &program.body {
+        if let Some(v) = var_decl_of(stmt) {
+            walker.var_facts(v);
+        }
+        if let Some(en) = enum_decl_of(stmt) {
+            walker.enum_facts(en);
+        }
+    }
+    walker.visit_program(program);
+    sink.nodes.extend(walker.entities);
+    sink.aux.consts.extend(walker.values);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // TsSource: the TS/JS Source (cst via ast-grep + type/call/df via oxc). Epic U.
 //
 // The two-parser, masked shape. cst runs through ast-grep (one dep = the CST
@@ -1257,6 +1491,12 @@ impl Source for TsSource {
                 if mask.types {
                     let mut bundle = FamilyBundle::<TypeF>::default();
                     TypeProjector.project(&parsed, &mut strings, &mut bundle);
+                    // const facet (port of v5 ts_const_facts_from): needs the
+                    // source bytes for template slices. Appends Const entities +
+                    // ConstValue rows to the same TypeF bundle.
+                    if let Ok(src) = std::str::from_utf8(content) {
+                        collect_const_facts(&parsed, src, &mut strings, &mut bundle);
+                    }
                     types = Some(bundle);
                 }
                 if mask.call {

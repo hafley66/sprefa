@@ -69,6 +69,18 @@ pub enum FlatFact {
         callee: String,
         callee_path: Option<String>,
     },
+    /// A TypeF const-value row (port of v5 `const_value`): one resolved string
+    /// folded from a string-bearing `const`/`as const` binding (or a string-enum
+    /// member). `owner` joins to the Const (or Enum) entity's span; `field` is
+    /// None for a bare const, else a dotted path / enum member; `kind` is
+    /// `lit` (cooked) or `template` (raw source slice, holes intact).
+    Const {
+        family: FamilyTag,
+        owner: SpanOut,
+        field: Option<String>,
+        text: String,
+        kind: String,
+    },
 }
 
 /// Flatten one file's `ExtractOutput` to flat facts: every present family, in
@@ -138,7 +150,7 @@ fn flatten_cst(bundle: &FamilyBundle<CstF>, strings: &Strings) -> Vec<FlatFact> 
 /// callable's param/return type references). The name-resolved type edges
 /// (field / impl / uses / ...) land with `Resolve<TypeF>` (commit 4).
 fn flatten_type(bundle: &FamilyBundle<TypeF>, strings: &Strings) -> Vec<FlatFact> {
-    let mut out = Vec::with_capacity(bundle.nodes.len() + bundle.aux.sigs.len());
+    let mut out = Vec::with_capacity(bundle.nodes.len() + bundle.aux.sigs.len() + bundle.aux.consts.len());
     for node in &bundle.nodes {
         out.push(FlatFact::Node {
             family: TypeF::TAG,
@@ -154,6 +166,15 @@ fn flatten_type(bundle: &FamilyBundle<TypeF>, strings: &Strings) -> Vec<FlatFact
             slot: sig.slot.as_str().to_string(),
             pos: sig.pos,
             ty: strings.lookup(sig.ty).to_string(),
+        });
+    }
+    for c in &bundle.aux.consts {
+        out.push(FlatFact::Const {
+            family: TypeF::TAG,
+            owner: SpanOut::new(c.owner.start, c.owner.end()),
+            field: c.field.map(|id| strings.lookup(id).to_string()),
+            text: strings.lookup(c.text).to_string(),
+            kind: c.kind.as_str().to_string(),
         });
     }
     out
