@@ -179,17 +179,71 @@ function sqlTuple(row: Row, columns: readonly string[]): string {
   return `(${columns.map((column) => sqlLiteral(row[column] ?? null)).join(",")})`;
 }
 
-/** NULL-safe WHERE clause matching any of the candidate rows: one `(col IS lit AND ...)`
- *  group per row, OR-joined. `(cols) IN (VALUES ...)` is NOT usable here: SQL row-value
- *  comparison yields NULL (not true) when any column is NULL, so stored rows with NULL
- *  columns (node.name, site.callee_path, const.field are all pinned nullable) would
- *  silently never match — the pre-check would call them "new" forever and the physical
- *  DELETE would skip them (M3 integration find, 2026-07-24). `IS` is SQLite's NULL-safe
- *  equality. Still one statement per call site (the N+1 law holds). */
-function sqlAnyRowMatch(rows: readonly Row[], columns: readonly string[]): string {
-  return rows
-    .map((row) => `(${columns.map((column) => `${column} IS ${sqlLiteral(row[column] ?? null)}`).join(" AND ")})`)
-    .join(" OR ");
+// ─────────────────────────────────────────────────────────────────────────────
+// Row-set matching via a shared temp table (M9-before fix, 2026-07-24): the prior
+// scheme built one `(col IS lit AND ...)` group per candidate row, OR-joined into a
+// single WHERE clause. `(cols) IN (VALUES ...)` was never usable here — SQL row-value
+// comparison yields NULL (not true) when any column is NULL, so stored rows with NULL
+// columns (node.name, site.callee_path, const.field are all pinned nullable) would
+// silently never match, and the physical DELETE would skip them (M3 integration find,
+// 2026-07-24) — so `IS` (SQLite's NULL-safe equality) stayed, but the OR-of-groups
+// SHAPE scaled the SQL expression tree with candidate_rows x columns. An ordinary
+// ~11KB source file (node_modules/rxjs/src/index.ts, 1783 span_line rows) blew past
+// this build's compiled-in SQLITE_LIMIT_EXPR_DEPTH (`PRAGMA compile_options` reports
+// MAX_EXPR_DEPTH=1000) on a single commit's pre-check, crashing ingest of any file
+// whose single-rel insert batch cleared roughly 150-250 rows.
+//
+// Fix: load the candidate rows into ONE shared temp table (generic columns
+// c0..c<width-1>, positionally matching whatever `columns` a call passes) and JOIN
+// against it with the same NULL-safe `IS` per column, AND-joined — tree depth is now
+// O(columns), independent of row count. ONE temp table name is safe to reuse across
+// every rel and every call: a DlRuntime holds exactly one connection, and every
+// commit is serialized through the tick pipeline's concatMap (file header above), so
+// there is never a concurrent writer to race. Width is sized to the WIDEST rel this
+// runtime's relDecls know about; a narrower rel's call just leaves the unused higher
+// columns alone (never referenced in the join condition below).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ROW_MATCH_TEMP_TABLE = "_row_match_candidates";
+/** SQLite's compiled-in compound-select/VALUES-row cap (default 500): the ceiling on
+ *  how many `(...)` tuples one multi-row INSERT ... VALUES statement may hold. */
+const ROW_MATCH_INSERT_CHUNK = 500;
+
+function relMaxColumnWidth(relDecls: ReadonlyMap<string, RelDecl>): number {
+  let max = 1;
+  for (const decl of relDecls.values()) max = Math.max(max, decl.columns.length);
+  return max;
+}
+
+/** Clears the shared temp table (creating it on first use, sized to the widest rel
+ *  this runtime declares) and loads `rows` into its generic c0..c<n-1> columns,
+ *  chunked so no single INSERT's VALUES list trips the compound-select cap. A no-op
+ *  (leaves the temp table empty) when `rows` is empty. */
+async function loadRowMatchCandidates(
+  db: Db,
+  relDecls: ReadonlyMap<string, RelDecl>,
+  rows: readonly Row[],
+  columns: readonly string[],
+): Promise<void> {
+  const width = relMaxColumnWidth(relDecls);
+  const allColumns = Array.from({ length: width }, (_, i) => `c${i}`).join(", ");
+  await db.execute(`CREATE TEMP TABLE IF NOT EXISTS ${ROW_MATCH_TEMP_TABLE} (${allColumns})`);
+  await db.execute(`DELETE FROM ${ROW_MATCH_TEMP_TABLE}`);
+  if (rows.length === 0) return;
+  const usedColumns = columns.map((_, i) => `c${i}`).join(", ");
+  for (let start = 0; start < rows.length; start += ROW_MATCH_INSERT_CHUNK) {
+    const chunk = rows.slice(start, start + ROW_MATCH_INSERT_CHUNK);
+    const values = chunk.map((row) => sqlTuple(row, columns)).join(",");
+    await db.execute(`INSERT INTO ${ROW_MATCH_TEMP_TABLE}(${usedColumns}) VALUES ${values}`);
+  }
+}
+
+/** NULL-safe AND-join condition between `relAlias`'s named columns and the temp
+ *  table's positional c0..c<n-1> columns, referenced through `tempAlias` (same `IS`
+ *  semantics the old OR-of-row-predicates form used, just an O(columns) join
+ *  predicate instead of an O(rows) OR chain). */
+function rowMatchJoinCondition(columns: readonly string[], relAlias: string, tempAlias: string): string {
+  return columns.map((column, i) => `${relAlias}.${column} IS ${tempAlias}.c${i}`).join(" AND ");
 }
 
 function rowKeyOf(row: Row, columns: readonly string[]): string {
@@ -210,16 +264,20 @@ async function selectAllTuples(db: Db, relName: string, columns: readonly string
 }
 
 /** The batched pre-check SELECT law (ingest.ts note 3): one SELECT over the candidate
- *  tuples, never a per-row existence check. */
+ *  tuples, never a per-row existence check. Matches via the shared temp-table JOIN
+ *  (see the row-set-matching block above), not an OR-of-row-predicates blob. */
 async function preCheckExistingKeys(
   db: Db,
+  relDecls: ReadonlyMap<string, RelDecl>,
   relName: string,
   columns: readonly string[],
   candidates: readonly Row[],
 ): Promise<Set<string>> {
   if (candidates.length === 0) return new Set();
+  await loadRowMatchCandidates(db, relDecls, candidates, columns);
+  const selectColumns = columns.map((column) => `t.${column}`).join(",");
   const res = await db.execute(
-    `SELECT ${columns.join(",")} FROM rel_${relName} WHERE ${sqlAnyRowMatch(candidates, columns)}`,
+    `SELECT ${selectColumns} FROM rel_${relName} t JOIN ${ROW_MATCH_TEMP_TABLE} c ON ${rowMatchJoinCondition(columns, "t", "c")}`,
   );
   const keys = new Set<string>();
   for (const rawRow of res.rows) keys.add(rowKeyOf(rowFromRaw(rawRow, columns), columns));
@@ -232,9 +290,19 @@ async function insertRows(db: Db, relName: string, columns: readonly string[], r
   await db.execute(`INSERT INTO rel_${relName}(${columns.join(",")}) VALUES ${values} ON CONFLICT DO NOTHING`);
 }
 
-async function deleteRows(db: Db, relName: string, columns: readonly string[], rows: readonly Row[]): Promise<void> {
+async function deleteRows(
+  db: Db,
+  relDecls: ReadonlyMap<string, RelDecl>,
+  relName: string,
+  columns: readonly string[],
+  rows: readonly Row[],
+): Promise<void> {
   if (rows.length === 0) return;
-  await db.execute(`DELETE FROM rel_${relName} WHERE ${sqlAnyRowMatch(rows, columns)}`);
+  await loadRowMatchCandidates(db, relDecls, rows, columns);
+  const tableRef = `rel_${relName}`;
+  await db.execute(
+    `DELETE FROM ${tableRef} WHERE EXISTS (SELECT 1 FROM ${ROW_MATCH_TEMP_TABLE} c WHERE ${rowMatchJoinCondition(columns, tableRef, "c")})`,
+  );
 }
 
 async function insertDeltaRows(db: Db, rows: readonly DeltaRow[]): Promise<void> {
@@ -270,10 +338,10 @@ export async function applyEdbTxn(state: RuntimeState, request: CommitRequest): 
       const insertCandidates = request.batch.insert.get(relName) ?? [];
       const retractCandidates = request.batch.retract.get(relName) ?? [];
 
-      const existingForInsert = await preCheckExistingKeys(db, relName, columns, insertCandidates);
+      const existingForInsert = await preCheckExistingKeys(db, state.relDecls, relName, columns, insertCandidates);
       const genuinelyNew = insertCandidates.filter((row) => !existingForInsert.has(rowKeyOf(row, columns)));
 
-      const existingForRetract = await preCheckExistingKeys(db, relName, columns, retractCandidates);
+      const existingForRetract = await preCheckExistingKeys(db, state.relDecls, relName, columns, retractCandidates);
       const genuinelyRetracted = retractCandidates.filter((row) => existingForRetract.has(rowKeyOf(row, columns)));
 
       let additionalRetracts: Row[] = [];
@@ -289,7 +357,7 @@ export async function applyEdbTxn(state: RuntimeState, request: CommitRequest): 
 
       if (genuinelyNew.length > 0) await insertRows(db, relName, columns, genuinelyNew);
       const allRetracted = [...genuinelyRetracted, ...additionalRetracts];
-      if (allRetracted.length > 0) await deleteRows(db, relName, columns, allRetracted);
+      if (allRetracted.length > 0) await deleteRows(db, state.relDecls, relName, columns, allRetracted);
 
       for (const row of genuinelyNew) {
         deltaRows.push({ rel: relName, row_digest: rowDigest(row, columns), tick, weight: 1 });
@@ -413,7 +481,7 @@ export async function applyDerivedTxn(state: RuntimeState, diff: DerivedDiff): P
       if (!decl) throw new Error(`applyDerivedTxn: unknown derived rel '${relName}'`);
       const columns = decl.columns;
       if (insert.length > 0) await insertRows(db, relName, columns, insert);
-      if (retract.length > 0) await deleteRows(db, relName, columns, retract);
+      if (retract.length > 0) await deleteRows(db, state.relDecls, relName, columns, retract);
       for (const row of insert) deltaRows.push({ rel: relName, row_digest: rowDigest(row, columns), tick: diff.tick, weight: 1 });
       for (const row of retract) deltaRows.push({ rel: relName, row_digest: rowDigest(row, columns), tick: diff.tick, weight: -1 });
       const net = insert.length - retract.length;
