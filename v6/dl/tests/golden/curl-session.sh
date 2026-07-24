@@ -26,18 +26,26 @@
 #     empirically: with only the deletion, `diag` never empties (delta log shows a
 #     lone +1, no -1); with the added rename, it retracts cleanly (+1 then -1).
 #
-#  2. `console_hit` itself does NOT retract after the fix, and this is BY DESIGN,
-#     not a bug: HostRunner's effect_cache digest for a `sh`/builtin probe is keyed
-#     on (host, requestCols) = (sg, pattern, path) ONLY — never on file content —
-#     so `sg` never re-runs for the same path, no matter how the file changes
-#     (the "?" idempotence law, 1_hosts.ts). `console_hit`'s own rule body
-#     (`file(path), __resp_sg(...)`) is therefore still fully satisfied by the
-#     stale cached response after the edit, and it stays present. Only `diag`
-#     drops, because ITS extra join against `span_line` (which DOES update from
-#     the real file bytes on every ingestFile diff) loses its partner. So the
-#     `/query ? console_hit(...)` step below is expected to still return the
-#     STALE row after the fix, not `[]` — the golden fixture records exactly this
-#     (regenerated from a live run, not hand-typed).
+#  2. `console_hit` DOES retract after the fix (M8-beta, IdentityWitnessLaw +
+#     supersession, tasks.d.ts) — this used to NOT happen (a real bug, not a
+#     design choice: HostRunner's effect_cache digest was keyed on (host,
+#     requestCols) = (sg, pattern, path) ONLY, never on file content, so `sg`
+#     never re-ran for an edited file and `console_hit` stayed stuck on a stale
+#     response forever). Now `file(path, content_hash)` is a WITNESS column: `sg`'s
+#     probe passes content_hash as a salt arg, so `console_hit`'s own rule body
+#     (`file(path, content_hash), sg?(..., content_hash, ...)`, rewritten to
+#     `file(path, content_hash), __resp_sg(..., content_hash, ...)`) loses its join
+#     partner the INSTANT `file`'s content_hash flips in step 7's commit — the
+#     same structural reason `diag` already dropped via its `span_line` join
+#     (finding #1). That takes `console_hit` empty in the SAME tick as
+#     file_changed's own response (no extra host round-trip needed to observe
+#     it disappear). HostRunner's async supersession run (a LATER tick) is what
+#     then makes `__resp_sg` itself honest going forward: it retracts the stale
+#     v1-witnessed rows and inserts whatever the NEW witness's `sg` run finds
+#     (here: nothing, since the console.log call is gone) — see 1_hosts.ts's
+#     runEffectOnce. Step 8b below still polls `console_hit` bounded (not a bare
+#     one-shot query) precisely because that second, async landing is a real
+#     event this transcript should not race against.
 #
 # Bounded-poll law: no fixed sleeps waiting on tick-driven state (the sg host
 # commits its response on a LATER tick than file_changed's own response — every
@@ -178,9 +186,29 @@ if [[ "$diag_cleared" -ne 1 ]]; then
 fi
 echo "$DIAG_AFTER_FIX" | jq -S . | append_section "GET /idb/diag (polled until empty, after fix)"
 
+# ── 8b. poll GET /idb/console_hit until empty (bounded, no fixed sleep) ─────
+# See finding #2 in the file header: console_hit's own join loses its partner in
+# the SAME tick as file_changed (no host round-trip required for THIS drop), but
+# the bounded poll stays honest about the fact that HostRunner's async
+# supersession commit (a LATER tick) also touches __resp_sg, and this transcript
+# should not race that landing either.
+console_hit_cleared=0
+for _ in $(seq 1 200); do
+  count="$(curl -s "$BASE_URL/idb/console_hit" | jq '.rows | length')"
+  if [[ "$count" -eq 0 ]]; then
+    console_hit_cleared=1
+    break
+  fi
+  sleep 0.05
+done
+if [[ "$console_hit_cleared" -ne 1 ]]; then
+  echo "FATAL: console_hit never cleared after the fix" >&2
+  exit 1
+fi
+
 # ── 9. one-shot query after the fix ──────────────────────────────────────────
-# See finding #2 in the file header: console_hit is expected to still show the
-# STALE row here (the sg effect cache never re-runs for the same path).
+# See finding #2 in the file header: console_hit is now empty FOR REAL (the fix
+# landed) — not the stale row this transcript used to (honestly) record.
 QUERY_AFTER_RESPONSE="$(curl -s -X POST "$BASE_URL/query" -d '? console_hit(path, _, _, _).')"
 echo "$QUERY_AFTER_RESPONSE" | jq -S . | append_section "POST /query after fix: ? console_hit(path, _, _, _)."
 
@@ -202,9 +230,10 @@ else
   echo "diag retract event arrived over SSE: no" | append_section "GET /subscribe/diag (live capture, summarized -- exact framing/timing is not compared)"
 fi
 
-# ── 11. delta log dump: the thesis line -- diag died through weights ────────
-DELTA_DUMP="$(sqlite3 "$TEMP_DB" "SELECT rel,tick,weight FROM delta WHERE rel='diag' ORDER BY tick")"
-echo "$DELTA_DUMP" | append_section "sqlite3 delta WHERE rel='diag' ORDER BY tick"
+# ── 11. delta log dump: the thesis line -- diag AND console_hit/__resp_sg died
+# through weights, not special-cased retraction code (M8-beta supersession) ─────
+DELTA_DUMP="$(sqlite3 "$TEMP_DB" "SELECT rel,tick,weight FROM delta WHERE rel IN ('diag','console_hit','__resp_sg') ORDER BY tick,rel,weight")"
+echo "$DELTA_DUMP" | append_section "sqlite3 delta WHERE rel IN ('diag','console_hit','__resp_sg') ORDER BY tick,rel,weight"
 
 # ── 12. tear down the server (subscribe curl already killed above) ─────────
 kill "$SERVER_PID" 2>/dev/null || true
