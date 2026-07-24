@@ -1,0 +1,684 @@
+{
+  "hosts": [
+    {
+      "columns": [
+        {
+          "name": "pattern",
+          "ty": "text"
+        },
+        {
+          "name": "path",
+          "ty": "text"
+        },
+        {
+          "name": "start",
+          "ty": "int"
+        },
+        {
+          "name": "end",
+          "ty": "int"
+        },
+        {
+          "name": "text",
+          "ty": "text"
+        }
+      ],
+      "inputCols": [
+        "pattern",
+        "path"
+      ],
+      "name": "sg",
+      "template": "sg run --pattern '{pattern}' --json $path"
+    }
+  ],
+  "literalSeeds": [
+    [
+      "__lit_0",
+      "console.log($$$ARGS)"
+    ],
+    [
+      "__lit_1",
+      "warn"
+    ],
+    [
+      "__lit_2",
+      "no-console"
+    ],
+    [
+      "__lit_3",
+      "console.log left in source"
+    ],
+    [
+      "__lit_4",
+      null
+    ]
+  ],
+  "minted": [
+    "__lit_0",
+    "__req_sg",
+    "__resp_sg",
+    "__lit_1",
+    "__lit_2",
+    "__lit_3",
+    "__lit_4"
+  ],
+  "program": {
+    "rels": [
+      {
+        "columns": [
+          "path",
+          "start",
+          "end",
+          "text"
+        ],
+        "kind": {
+          "buffer": {
+            "onFull": "block",
+            "replay": 0
+          },
+          "materialization": "lazy",
+          "origin": "IDB",
+          "shape": "pipe",
+          "temperature": "cold"
+        },
+        "name": "console_hit",
+        "origin": "IDB"
+      },
+      {
+        "columns": [
+          "path"
+        ],
+        "kind": {
+          "buffer": {
+            "onFull": "block",
+            "replay": 0
+          },
+          "materialization": "materialized",
+          "origin": "EDB",
+          "shape": "event",
+          "temperature": "hot"
+        },
+        "name": "file",
+        "origin": "EDB"
+      },
+      {
+        "columns": [
+          "path",
+          "family",
+          "start",
+          "end",
+          "kind",
+          "name"
+        ],
+        "kind": {
+          "buffer": {
+            "onFull": "block",
+            "replay": 0
+          },
+          "materialization": "materialized",
+          "origin": "EDB",
+          "shape": "event",
+          "temperature": "hot"
+        },
+        "name": "node",
+        "origin": "EDB"
+      },
+      {
+        "columns": [
+          "path",
+          "family",
+          "kind",
+          "from_start",
+          "from_end",
+          "to_start",
+          "to_end"
+        ],
+        "kind": {
+          "buffer": {
+            "onFull": "block",
+            "replay": 0
+          },
+          "materialization": "materialized",
+          "origin": "EDB",
+          "shape": "event",
+          "temperature": "hot"
+        },
+        "name": "edge",
+        "origin": "EDB"
+      },
+      {
+        "columns": [
+          "path",
+          "owner_start",
+          "owner_end",
+          "slot",
+          "pos",
+          "ty"
+        ],
+        "kind": {
+          "buffer": {
+            "onFull": "block",
+            "replay": 0
+          },
+          "materialization": "materialized",
+          "origin": "EDB",
+          "shape": "event",
+          "temperature": "hot"
+        },
+        "name": "sig",
+        "origin": "EDB"
+      },
+      {
+        "columns": [
+          "path",
+          "start",
+          "end",
+          "callee",
+          "callee_path"
+        ],
+        "kind": {
+          "buffer": {
+            "onFull": "block",
+            "replay": 0
+          },
+          "materialization": "materialized",
+          "origin": "EDB",
+          "shape": "event",
+          "temperature": "hot"
+        },
+        "name": "site",
+        "origin": "EDB"
+      },
+      {
+        "columns": [
+          "path",
+          "owner_start",
+          "owner_end",
+          "field",
+          "text",
+          "kind"
+        ],
+        "kind": {
+          "buffer": {
+            "onFull": "block",
+            "replay": 0
+          },
+          "materialization": "materialized",
+          "origin": "EDB",
+          "shape": "event",
+          "temperature": "hot"
+        },
+        "name": "const",
+        "origin": "EDB"
+      },
+      {
+        "columns": [
+          "path",
+          "start",
+          "line",
+          "col"
+        ],
+        "kind": {
+          "buffer": {
+            "onFull": "block",
+            "replay": 0
+          },
+          "materialization": "materialized",
+          "origin": "EDB",
+          "shape": "event",
+          "temperature": "hot"
+        },
+        "name": "span_line",
+        "origin": "EDB"
+      },
+      {
+        "columns": [
+          "path",
+          "line",
+          "col",
+          "end_line",
+          "end_col",
+          "severity",
+          "code",
+          "msg",
+          "hint"
+        ],
+        "kind": {
+          "buffer": {
+            "onFull": "block",
+            "replay": 0
+          },
+          "materialization": "lazy",
+          "origin": "IDB",
+          "shape": "pipe",
+          "temperature": "cold"
+        },
+        "name": "diag",
+        "origin": "IDB"
+      },
+      {
+        "columns": [
+          "pattern",
+          "path",
+          "start",
+          "end",
+          "text"
+        ],
+        "kind": {
+          "buffer": {
+            "onFull": "block",
+            "replay": 0
+          },
+          "materialization": "materialized",
+          "origin": "EDB",
+          "shape": "event",
+          "temperature": "hot"
+        },
+        "name": "__resp_sg",
+        "origin": "EDB"
+      },
+      {
+        "columns": [
+          "pattern",
+          "path"
+        ],
+        "kind": {
+          "buffer": {
+            "onFull": "block",
+            "replay": 0
+          },
+          "materialization": "lazy",
+          "origin": "IDB",
+          "shape": "pipe",
+          "temperature": "cold"
+        },
+        "name": "__req_sg",
+        "origin": "IDB"
+      },
+      {
+        "columns": [
+          "value"
+        ],
+        "kind": {
+          "buffer": {
+            "onFull": "block",
+            "replay": 0
+          },
+          "materialization": "materialized",
+          "origin": "EDB",
+          "shape": "event",
+          "temperature": "hot"
+        },
+        "name": "__lit_0",
+        "origin": "EDB"
+      },
+      {
+        "columns": [
+          "value"
+        ],
+        "kind": {
+          "buffer": {
+            "onFull": "block",
+            "replay": 0
+          },
+          "materialization": "materialized",
+          "origin": "EDB",
+          "shape": "event",
+          "temperature": "hot"
+        },
+        "name": "__lit_1",
+        "origin": "EDB"
+      },
+      {
+        "columns": [
+          "value"
+        ],
+        "kind": {
+          "buffer": {
+            "onFull": "block",
+            "replay": 0
+          },
+          "materialization": "materialized",
+          "origin": "EDB",
+          "shape": "event",
+          "temperature": "hot"
+        },
+        "name": "__lit_2",
+        "origin": "EDB"
+      },
+      {
+        "columns": [
+          "value"
+        ],
+        "kind": {
+          "buffer": {
+            "onFull": "block",
+            "replay": 0
+          },
+          "materialization": "materialized",
+          "origin": "EDB",
+          "shape": "event",
+          "temperature": "hot"
+        },
+        "name": "__lit_3",
+        "origin": "EDB"
+      },
+      {
+        "columns": [
+          "value"
+        ],
+        "kind": {
+          "buffer": {
+            "onFull": "block",
+            "replay": 0
+          },
+          "materialization": "materialized",
+          "origin": "EDB",
+          "shape": "event",
+          "temperature": "hot"
+        },
+        "name": "__lit_4",
+        "origin": "EDB"
+      }
+    ],
+    "rules": [
+      {
+        "body": [
+          {
+            "args": [
+              {
+                "kind": "var",
+                "name": "path"
+              }
+            ],
+            "kind": "rel",
+            "rel": "file"
+          },
+          {
+            "args": [
+              {
+                "kind": "var",
+                "name": "pattern"
+              }
+            ],
+            "kind": "rel",
+            "rel": "__lit_0"
+          },
+          {
+            "args": [
+              {
+                "kind": "var",
+                "name": "pattern"
+              },
+              {
+                "kind": "var",
+                "name": "path"
+              },
+              {
+                "kind": "var",
+                "name": "start"
+              },
+              {
+                "kind": "var",
+                "name": "end"
+              },
+              {
+                "kind": "var",
+                "name": "text"
+              }
+            ],
+            "kind": "rel",
+            "rel": "__resp_sg"
+          }
+        ],
+        "head": "console_hit",
+        "headTerms": [
+          {
+            "kind": "hvar",
+            "name": "path"
+          },
+          {
+            "kind": "hvar",
+            "name": "start"
+          },
+          {
+            "kind": "hvar",
+            "name": "end"
+          },
+          {
+            "kind": "hvar",
+            "name": "text"
+          }
+        ]
+      },
+      {
+        "body": [
+          {
+            "args": [
+              {
+                "kind": "var",
+                "name": "path"
+              },
+              {
+                "kind": "var",
+                "name": "start"
+              },
+              {
+                "kind": "wild"
+              },
+              {
+                "kind": "var",
+                "name": "text"
+              }
+            ],
+            "kind": "rel",
+            "rel": "console_hit"
+          },
+          {
+            "args": [
+              {
+                "kind": "var",
+                "name": "path"
+              },
+              {
+                "kind": "var",
+                "name": "start"
+              },
+              {
+                "kind": "var",
+                "name": "line"
+              },
+              {
+                "kind": "var",
+                "name": "col"
+              }
+            ],
+            "kind": "rel",
+            "rel": "span_line"
+          },
+          {
+            "args": [
+              {
+                "kind": "var",
+                "name": "severity"
+              }
+            ],
+            "kind": "rel",
+            "rel": "__lit_1"
+          },
+          {
+            "args": [
+              {
+                "kind": "var",
+                "name": "code"
+              }
+            ],
+            "kind": "rel",
+            "rel": "__lit_2"
+          },
+          {
+            "args": [
+              {
+                "kind": "var",
+                "name": "msg"
+              }
+            ],
+            "kind": "rel",
+            "rel": "__lit_3"
+          },
+          {
+            "args": [
+              {
+                "kind": "var",
+                "name": "hint"
+              }
+            ],
+            "kind": "rel",
+            "rel": "__lit_4"
+          }
+        ],
+        "head": "diag",
+        "headTerms": [
+          {
+            "kind": "hvar",
+            "name": "path"
+          },
+          {
+            "kind": "hvar",
+            "name": "line"
+          },
+          {
+            "kind": "hvar",
+            "name": "col"
+          },
+          {
+            "kind": "hvar",
+            "name": "line"
+          },
+          {
+            "kind": "hvar",
+            "name": "col"
+          },
+          {
+            "kind": "hvar",
+            "name": "severity"
+          },
+          {
+            "kind": "hvar",
+            "name": "code"
+          },
+          {
+            "kind": "hvar",
+            "name": "msg"
+          },
+          {
+            "kind": "hvar",
+            "name": "hint"
+          }
+        ]
+      },
+      {
+        "body": [
+          {
+            "args": [
+              {
+                "kind": "var",
+                "name": "path"
+              }
+            ],
+            "kind": "rel",
+            "rel": "file"
+          },
+          {
+            "args": [
+              {
+                "kind": "var",
+                "name": "pattern"
+              }
+            ],
+            "kind": "rel",
+            "rel": "__lit_0"
+          }
+        ],
+        "head": "__req_sg",
+        "headTerms": [
+          {
+            "kind": "hvar",
+            "name": "pattern"
+          },
+          {
+            "kind": "hvar",
+            "name": "path"
+          }
+        ]
+      }
+    ]
+  },
+  "queries": [],
+  "retention": [
+    [
+      "__lit_0",
+      "all"
+    ],
+    [
+      "__lit_1",
+      "all"
+    ],
+    [
+      "__lit_2",
+      "all"
+    ],
+    [
+      "__lit_3",
+      "all"
+    ],
+    [
+      "__lit_4",
+      "all"
+    ],
+    [
+      "__req_sg",
+      "all"
+    ],
+    [
+      "__resp_sg",
+      "all"
+    ],
+    [
+      "console_hit",
+      "all"
+    ],
+    [
+      "const",
+      "all"
+    ],
+    [
+      "diag",
+      "all"
+    ],
+    [
+      "edge",
+      "all"
+    ],
+    [
+      "file",
+      "all"
+    ],
+    [
+      "node",
+      "all"
+    ],
+    [
+      "sig",
+      "all"
+    ],
+    [
+      "site",
+      "all"
+    ],
+    [
+      "span_line",
+      "all"
+    ]
+  ]
+}
