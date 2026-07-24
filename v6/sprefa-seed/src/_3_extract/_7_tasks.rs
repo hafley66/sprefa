@@ -303,6 +303,27 @@
 //!             NAME-ONLY: callee name -> DefIndex (CallEdgeKind::NameResolve), SCIP may
 //!             override (ScipOverride); receiver typing (receiver type -> method set) is OUT
 //!             OF SCOPE for commit 4 - no lang arm invents it.
+//!   (docsfix) Docs facet now MEASURED (still DEFERRED, not ported). The 4 pre-existing
+//!             fixtures exercised zero doc rows, so the deferred `doc` count read 0 -
+//!             unproven, not proven absent. New fixtures docs.ts / docs.rs / docs.go
+//!             (+ captured oracles, one Case each in golden_parity.rs) put doc comments
+//!             on entities the PORTED facets already cover, so each case re-checks
+//!             ported parity on doc-heavy input AND the deferred_and_v6_only_ledger
+//!             now reports non-zero doc counts: ts 8 (fn/interface/alias/enum/class/
+//!             2 methods/arrow-const; the jsdoc above a plain string const is DROPPED -
+//!             no anchor), rust 5 (struct/enum/2 fn/impl method; const/static/type-alias
+//!             items mint NO doc row - outside rust_item_docs' walk), go 6 (struct/
+//!             interface/alias/2 fn/method, incl one 2-line block). v5 producers, per
+//!             lang: ts `ts_docs_from` (src/graph/typegraph/ts/mod.rs:808) - oxc keeps
+//!             comments out of the AST, so each `/** */` block joins the nearest entity
+//!             anchor at/after the block end with only whitespace between (anchors:
+//!             top-level decls incl export-wrapped + class methods, ctors skipped);
+//!             rust `rust_docs_from` (src/graph/typegraph/rust/mod.rs:455) - syn
+//!             `#[doc]` attrs (desugared `///`) on struct/enum/union/trait/fn items +
+//!             impl methods; go `walk_go_docs` (src/graph/typegraph/go.rs:509) - the
+//!             contiguous `//` block (or one `/* */`) directly above a type spec /
+//!             func / method decl, via prev-sibling row adjacency. MEASUREMENT ONLY:
+//!             doc stays in the deferred set (reported, not asserted); nothing ported.
 //!   PENDING:   the name-resolved type EDGES (field/impl/variant/uses + the
 //!              resolved param/returns binding) still land at Resolve<TypeF>
 //!              (commit 4) by design. ts_const_facts_from is PORTED (see (const)).
