@@ -453,6 +453,9 @@ function compileRuleSql(rule: Rule, relDecls: ReadonlyMap<string, RelDecl>): str
         whereConds.push(`${alias}.${colName} = ${literalSql}`);
         return;
       }
+      if (arg.kind === "wild") {
+        throw new Error("stress sql backend: wildcard args not supported (synth never emits them)");
+      }
       const seen = firstOccurrence.get(arg.name);
       if (seen) whereConds.push(`${alias}.${colName} = ${seen.alias}.${seen.col}`);
       else firstOccurrence.set(arg.name, { alias, col: colName });
