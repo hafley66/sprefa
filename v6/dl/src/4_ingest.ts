@@ -33,6 +33,7 @@
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import readline from "node:readline";
 
 import { differenceWith, isEqual } from "lodash-es";
@@ -63,6 +64,13 @@ const SPINE_REL_SCHEMA: readonly { readonly name: SpineRelName; readonly columns
 const SPINE_COLUMNS_BY_NAME: ReadonlyMap<string, readonly string[]> = new Map(
   SPINE_REL_SCHEMA.map((entry) => [entry.name, entry.columns] as const),
 );
+
+/** The server's working directory is the root used by the stored path surface. */
+export const DL_ROOT = process.cwd();
+
+function rootRelativePath(filePath: string): string {
+  return path.relative(DL_ROOT, path.resolve(DL_ROOT, filePath));
+}
 
 /** This package's own spineDecls builder (see file header: integration replaces this
  *  with 5_diag.ts's `spineDecls`/`builtinDecls` export). */
@@ -151,7 +159,9 @@ function contentHashOf(buffer: Buffer): string {
 }
 
 export function toFactLines(records: readonly ExtractRecord[], filePath: string): readonly FactLine[] {
-  const buffer = fs.readFileSync(filePath);
+  const absPath = path.resolve(DL_ROOT, filePath);
+  const relPath = rootRelativePath(absPath);
+  const buffer = fs.readFileSync(absPath);
   const contentHash = contentHashOf(buffer);
   const lineStarts = buildLineStarts(buffer);
   const offsets = new Set<number>();
@@ -161,7 +171,7 @@ export function toFactLines(records: readonly ExtractRecord[], filePath: string)
     switch (record.record) {
       case "node":
         recordLines.push(
-          relLine("node", [filePath, record.family, record.span.start, record.span.end, record.kind, record.name]),
+          relLine("node", [relPath, record.family, record.span.start, record.span.end, record.kind, record.name]),
         );
         offsets.add(record.span.start);
         offsets.add(record.span.end);
@@ -169,7 +179,7 @@ export function toFactLines(records: readonly ExtractRecord[], filePath: string)
       case "edge":
         recordLines.push(
           relLine("edge", [
-            filePath,
+            relPath,
             record.family,
             record.kind,
             record.from.start,
@@ -180,21 +190,17 @@ export function toFactLines(records: readonly ExtractRecord[], filePath: string)
         );
         break;
       case "sig":
-        recordLines.push(
-          relLine("sig", [filePath, record.owner.start, record.owner.end, record.slot, record.pos, record.ty]),
-        );
+        recordLines.push(relLine("sig", [relPath, record.owner.start, record.owner.end, record.slot, record.pos, record.ty]));
         break;
       case "site":
         recordLines.push(
-          relLine("site", [filePath, record.span.start, record.span.end, record.callee, record.callee_path]),
+          relLine("site", [relPath, record.span.start, record.span.end, record.callee, record.callee_path]),
         );
         offsets.add(record.span.start);
         offsets.add(record.span.end);
         break;
       case "const":
-        recordLines.push(
-          relLine("const", [filePath, record.owner.start, record.owner.end, record.field, record.text, record.kind]),
-        );
+        recordLines.push(relLine("const", [relPath, record.owner.start, record.owner.end, record.field, record.text, record.kind]));
         break;
     }
   }
@@ -203,10 +209,10 @@ export function toFactLines(records: readonly ExtractRecord[], filePath: string)
     .sort((a, b) => a - b)
     .map((offset) => {
       const { line, col } = offsetToLineCol(lineStarts, offset);
-      return relLine("span_line", [filePath, offset, line, col]);
+      return relLine("span_line", [relPath, offset, line, col]);
     });
 
-  return [relLine("file", [filePath, contentHash]), ...recordLines, ...spanLineLines];
+  return [relLine("file", [relPath, contentHash]), ...recordLines, ...spanLineLines];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -251,11 +257,13 @@ function fileExistsOnDisk(filePath: string): boolean {
 
 export async function ingestFile(rt: DlRuntime, filePath: string): Promise<TickReport> {
   let newRowsByRel: ReadonlyMap<string, readonly Row[]> = new Map();
+  const absPath = path.resolve(DL_ROOT, filePath);
+  const relPath = rootRelativePath(absPath);
 
-  if (fileExistsOnDisk(filePath)) {
+  if (fileExistsOnDisk(absPath)) {
     const records: ExtractRecord[] = [];
-    for await (const record of extractFile(filePath)) records.push(record);
-    newRowsByRel = groupFactLinesByRel(toFactLines(records, filePath));
+    for await (const record of extractFile(absPath)) records.push(record);
+    newRowsByRel = groupFactLinesByRel(toFactLines(records, absPath));
   }
   // else: DELETE-FILE case (task 3.3) — newRowsByRel stays empty, so every current row
   // scoped to this path retracts below (empty newSet, non-empty oldSet -> full retract).
@@ -265,7 +273,7 @@ export async function ingestFile(rt: DlRuntime, filePath: string): Promise<TickR
 
   for (const { name: relName } of SPINE_REL_SCHEMA) {
     const newRows = (newRowsByRel.get(relName) ?? []) as Row[];
-    const oldRows = (await rt.rows(relName)).filter((row) => row.path === filePath);
+    const oldRows = (await rt.rows(relName)).filter((row) => row.path === relPath);
 
     const toInsert = differenceWith(newRows, oldRows, isEqual);
     const toRetract = differenceWith(oldRows, newRows, isEqual);

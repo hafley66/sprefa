@@ -14,11 +14,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { createClient } from "@libsql/client";
+import { open_db } from "sprefa-store-engine/src/engine/lib.ts";
 import { derivedRel, edbRel, headVar, relRef, v, type Program, type Rule } from "sprefa-store-engine/src/lower/ast.ts";
 
 import { DlRuntime } from "../src/3_runtime.ts";
-import type { BridgeOk, EdbBatch, Retention, Row, Value } from "../tasks.d.ts";
+import type { BridgeOk, ColumnType, EdbBatch, Retention, Row, Value } from "../tasks.d.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scratch db files.
@@ -75,9 +75,17 @@ export function fakeBridgeOk(
   program: Program,
   literalSeeds: ReadonlyMap<string, Value> = new Map(),
   retentionOverrides: Readonly<Record<string, Retention>> = {},
+  columnTypeOverrides: Readonly<Record<string, readonly ColumnType[]>> = {},
 ): BridgeOk {
   const retention = new Map<string, Retention>();
-  for (const decl of program.rels) retention.set(decl.name, retentionOverrides[decl.name] ?? "all");
+  const columnTypes = new Map<string, readonly ("text" | "int")[]>();
+  for (const decl of program.rels) {
+    retention.set(decl.name, retentionOverrides[decl.name] ?? "all");
+    // M9 columnType flow: real bridge() infers these; a hand-built program has no
+    // declared types, so a caller passes overrides for any rel with numeric columns.
+    // Default all-text is safe until the storage plane reads columnTypes (M9 wiring).
+    columnTypes.set(decl.name, columnTypeOverrides[decl.name] ?? decl.columns.map(() => "text"));
+  }
   return {
     kind: "ok",
     program,
@@ -86,6 +94,7 @@ export function fakeBridgeOk(
     queries: [],
     minted: [],
     literalSeeds,
+    columnTypes,
   };
 }
 
@@ -97,9 +106,10 @@ export async function bootFixture(
   program: Program,
   literalSeeds?: ReadonlyMap<string, Value>,
   retentionOverrides?: Readonly<Record<string, Retention>>,
+  columnTypeOverrides?: Readonly<Record<string, readonly ColumnType[]>>,
 ): Promise<{ readonly rt: DlRuntime; readonly dbPath: string }> {
   const dbPath = freshDbPath();
-  const bridge = fakeBridgeOk(program, literalSeeds, retentionOverrides);
+  const bridge = fakeBridgeOk(program, literalSeeds, retentionOverrides, columnTypeOverrides);
   const rt = await DlRuntime.boot({ dbPath, bridge });
   return { rt, dbPath };
 }
@@ -147,9 +157,12 @@ export interface DeltaLogEntry {
 /** Reads the whole `delta` log directly (bypassing DlRuntime, which has no generic
  *  table reader): a fresh short-lived connection, closed before returning. */
 export async function deltaDump(dbPath: string): Promise<DeltaLogEntry[]> {
-  const db = createClient({ url: `file:${dbPath}` });
+  const db = open_db(`file:${dbPath}`);
   try {
-    const res = await db.execute("SELECT rel, row_digest, tick, weight FROM delta ORDER BY tick, rel, row_digest, weight");
+    const res = await db.execute(
+      "SELECT s.content AS rel, d.row_digest, d.tick, d.weight FROM delta d JOIN strings s ON s.string_id = d.rel_id " +
+        "ORDER BY d.tick, s.content, d.row_digest, d.weight",
+    );
     return res.rows
       .map((row) => ({
         rel: String(row.rel),

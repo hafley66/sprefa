@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { createClient } from "@libsql/client";
+import { open_db } from "sprefa-store-engine/src/engine/lib.ts";
 import { diagDecl, DIAG_V5_VIEW_SQL } from "../src/5_diag.ts";
 
 const CHECK_DIAG_SCRIPT = fileURLToPath(new URL("../scripts/check_diag.mjs", import.meta.url));
@@ -24,7 +24,7 @@ test("diagDecl pins the v5 9-column schema in order (compat contract with src/ls
 });
 
 test("diag_v5 view SQL applies over a real rel_diag table and defaults NULL severity to warn", async () => {
-  const db = createClient({ url: ":memory:" });
+  const db = open_db(":memory:");
   try {
     await db.execute(`CREATE TABLE rel_diag (
       path TEXT, line INTEGER, col INTEGER, end_line INTEGER, end_col INTEGER,

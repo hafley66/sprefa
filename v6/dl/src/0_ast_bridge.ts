@@ -168,6 +168,35 @@ function readColumnType(type: Gen.ColumnType): ColumnTypeInfo {
   return { prim, wrapper: undefined };
 }
 
+/** A resolved column affinity (BridgeOk.columnTypes, M9 columnType flow). */
+type ColumnPrim = "text" | "int";
+
+/** Base-case column affinities for the builtin rels (spine + diag). These rels arrive
+ *  as `edbRel(name, columns)` with NO declared types (5_diag.ts), so their affinity is
+ *  known here from the ExtractRecord shapes (4_ingest.ts) / the v5 diag schema, not
+ *  inferred. Orders match 5_diag.ts's column lists exactly. `text` columns intern to a
+ *  `strings` id at storage; `int` columns store raw. */
+const SPINE_COLUMN_TYPES: Readonly<Record<string, readonly ColumnPrim[]>> = {
+  file: ["text", "text"],
+  node: ["text", "text", "int", "int", "text", "text"],
+  edge: ["text", "text", "text", "int", "int", "int", "int"],
+  sig: ["text", "int", "int", "text", "int", "text"],
+  site: ["text", "int", "int", "text", "text"],
+  const: ["text", "int", "int", "text", "text", "text"],
+  span_line: ["text", "int", "int", "int"],
+  diag: ["text", "int", "int", "int", "int", "text", "text", "text", "text"],
+};
+
+/** A literal value's column affinity (tie-break, M9): string -> text, number/boolean
+ *  -> int, null -> text (a null literal seed binds a nullable text column in this
+ *  slice; if it ever binds a numeric position that position's own resolved type wins,
+ *  handled by declared/base types taking precedence over a __lit fallback). */
+function primOfValue(value: Value): ColumnPrim {
+  if (typeof value === "string") return "text";
+  if (typeof value === "number" || typeof value === "boolean") return "int";
+  return "text";
+}
+
 function isLiteralNode(node: Gen.HeadArg): node is Gen.Literal {
   return node.$type === "StrLit" || node.$type === "IntLit" || node.$type === "BoolLit" || node.$type === "NullLit";
 }
@@ -310,6 +339,11 @@ function aggFnOf(name: string): "count" | "sum" | "min" | "max" {
 interface BridgeContext {
   readonly diags: LoadDiag[];
   readonly knownRelColumns: Map<string, DeclInfo>; // user decls + builtin decls (arity/unknown-rel universe)
+  /** M9 columnType flow: a rel's DECLARED column affinities, positional. Populated for
+   *  user `rel`/`sh` decls (the grammar's `col: text|int`); builtin rels arrive
+   *  type-less and resolve from SPINE_COLUMN_TYPES instead. Declared types win over
+   *  every inference (peer ruling: they are declared, not inferred). */
+  readonly declaredColumnTypes: Map<string, readonly ColumnPrim[]>;
   readonly headedRelNames: Set<string>; // rel names that appear as SOME user rule's head (-> IDB)
   readonly hostsByName: Map<string, HostDecl>;
   /** Salt-arg law (IdentityWitnessLaw, tasks.d.ts): the number of witness-salt args
@@ -332,6 +366,7 @@ function newContext(): BridgeContext {
   return {
     diags: [],
     knownRelColumns: new Map(),
+    declaredColumnTypes: new Map(),
     headedRelNames: new Set(),
     hostsByName: new Map(),
     hostSaltCount: new Map(),
@@ -411,6 +446,7 @@ function readRetention(retention: number | undefined): Retention {
 function processRelDecl(ctx: BridgeContext, decl: Gen.RelDecl): void {
   const columnNames = decl.columns.map((column) => column.name);
   ctx.knownRelColumns.set(decl.name, { columns: columnNames });
+  ctx.declaredColumnTypes.set(decl.name, decl.columns.map((column) => readColumnType(column.type).prim));
   ctx.retention.set(decl.name, readRetention(decl.retention));
   checkColumnsForFrontierWrappers(ctx, decl.columns);
 }
@@ -734,6 +770,129 @@ function processQueryStmt(ctx: BridgeContext, queryStmt: Gen.QueryStmt): AstRelR
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Column-type resolution (M9 columnType flow, tasks.d.ts EngineStorageLaw). Every
+// rel in the built program gets one affinity per column. Precedence (peer ruling):
+//   1. DECLARED types (user `rel`/`sh` decls `col: text|int`) — declared, not inferred.
+//   2. Builtin base types (SPINE_COLUMN_TYPES) for the spine/diag rels.
+//   3. Host rels __resp_<h>/__req_<h>: each column is the host's declared column type
+//      by name; a synthetic `salt_<n>` witness column is `text` (the witness in this
+//      slice is a content hash — a text value; a numeric salt would need its source
+//      column's type, a follow-up if one ever appears).
+//   4. __lit_<n>: primOfValue of its one seeded literal.
+//   5. Derived (headed) rels with no declared/base type: TRACE each head var to the
+//      body-atom source column that binds it. Tie-breaks (peer ruling): a head var
+//      bound by multiple body sources must AGREE (disagreement keeps the first
+//      resolved and would surface as a conflict in a stricter slice); count/sum -> int;
+//      min/max -> the arg's source type; unresolved position -> text.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Trace one head-var / agg-arg name to the affinity of the body column that binds it,
+ *  using the affinities resolved so far. Returns undefined if no typed source binds it. */
+function traceVarType(
+  varName: string,
+  body: readonly BodyPred[],
+  resolved: ReadonlyMap<string, readonly ColumnPrim[]>,
+): ColumnPrim | undefined {
+  for (const pred of body) {
+    if (pred.kind !== "rel") continue;
+    const sourceTypes = resolved.get(pred.rel);
+    if (!sourceTypes) continue;
+    for (let position = 0; position < pred.args.length; position++) {
+      const arg = pred.args[position]!;
+      if (arg.kind === "var" && arg.name === varName && sourceTypes[position] !== undefined) {
+        return sourceTypes[position];
+      }
+    }
+  }
+  return undefined;
+}
+
+function buildColumnTypes(
+  rels: readonly AstRelDecl[],
+  rules: readonly AstRule[],
+  ctx: BridgeContext,
+): Map<string, readonly ColumnPrim[]> {
+  const resolved = new Map<string, readonly ColumnPrim[]>();
+  const derivedPending: AstRelDecl[] = [];
+
+  // Passes 1-4: everything resolvable without tracing a rule body.
+  for (const decl of rels) {
+    const declared = ctx.declaredColumnTypes.get(decl.name);
+    if (declared) {
+      resolved.set(decl.name, declared);
+      continue;
+    }
+    const base = SPINE_COLUMN_TYPES[decl.name];
+    if (base) {
+      resolved.set(decl.name, base);
+      continue;
+    }
+    if (decl.name.startsWith("__lit_")) {
+      resolved.set(decl.name, [primOfValue(ctx.literalSeeds.get(decl.name) ?? null)]);
+      continue;
+    }
+    const hostName = hostNameOfMinted(decl.name);
+    const host = hostName ? ctx.hostsByName.get(hostName) : undefined;
+    if (host) {
+      const byName = new Map(host.columns.map((column) => [column.name, column.ty] as const));
+      resolved.set(
+        decl.name,
+        decl.columns.map((column) => byName.get(column) ?? "text"), // salt_<n> -> text
+      );
+      continue;
+    }
+    derivedPending.push(decl);
+  }
+
+  // Pass 5: derived head-var trace, iterated to a fixpoint (a derived rel may read
+  // another derived rel). Bounded by rel count; unresolved positions default to text.
+  const rulesByHead = new Map<string, AstRule[]>();
+  for (const rule of rules) (rulesByHead.get(rule.head) ?? rulesByHead.set(rule.head, []).get(rule.head)!).push(rule);
+  for (let pass = 0; pass < derivedPending.length + 1; pass++) {
+    let moved = false;
+    for (const decl of derivedPending) {
+      if (resolved.has(decl.name)) continue;
+      const headingRules = rulesByHead.get(decl.name) ?? [];
+      const types: (ColumnPrim | undefined)[] = decl.columns.map(() => undefined);
+      let anyKnown = false;
+      for (const rule of headingRules) {
+        rule.headTerms.forEach((term, position) => {
+          if (types[position] !== undefined) return;
+          const traced =
+            term.kind === "hagg"
+              ? term.fn === "count" || term.fn === "sum"
+                ? "int"
+                : traceVarType(term.arg.name, rule.body, resolved)
+              : traceVarType(term.name, rule.body, resolved);
+          if (traced !== undefined) {
+            types[position] = traced;
+            anyKnown = true;
+          }
+        });
+      }
+      if (anyKnown && types.every((type) => type !== undefined)) {
+        resolved.set(decl.name, types as ColumnPrim[]);
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+
+  // Fallback: any still-unresolved rel (no typed source reached it) is all-text.
+  for (const decl of rels) {
+    if (!resolved.has(decl.name)) resolved.set(decl.name, decl.columns.map(() => "text"));
+  }
+  return resolved;
+}
+
+/** `__req_<host>` / `__resp_<host>` -> `<host>`; anything else -> undefined. */
+function hostNameOfMinted(relName: string): string | undefined {
+  if (relName.startsWith("__req_")) return relName.slice("__req_".length);
+  if (relName.startsWith("__resp_")) return relName.slice("__resp_".length);
+  return undefined;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // bridge() — the public entry point.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -821,5 +980,6 @@ export function bridge(dlText: string, builtinRels: readonly AstRelDecl[]): Brid
     queries,
     minted: ctx.minted,
     literalSeeds: ctx.literalSeeds,
+    columnTypes: buildColumnTypes(rels, rules, ctx),
   };
 }

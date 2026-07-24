@@ -94,6 +94,7 @@
 | [plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md](plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md) | 256 | v6 rxjs lowering + the TS cascade port (engineering plan) |
 | [plans/2026-07-23-v6-transports-as-rels.md](plans/2026-07-23-v6-transports-as-rels.md) | 123 | Transports as rels — http/ws/LSP/shell with zero effect syntax (F4/F10 working note, 2026-07-23) |
 | [plans/2026-07-24-fork-pipeline-syntax-findings.md](plans/2026-07-24-fork-pipeline-syntax-findings.md) | 80 | Fork findings: pipeline syntax + surface rulings (2026-07-24, session forked-for-sql-pipeline-syntax) |
+| [plans/2026-07-24-m9-storage-plane-continuation.md](plans/2026-07-24-m9-storage-plane-continuation.md) | 90 | M9 storage-plane continuation — codex brief (2026-07-24) |
 | [plans/2026-07-24-v6-dl-mvp-slice.md](plans/2026-07-24-v6-dl-mvp-slice.md) | 658 | v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
@@ -1542,6 +1543,17 @@
 39:## Theory acquired (for the record)
 56:## v3/v4 archaeology (git receipts)
 70:## Still undetermined (blocks writing real programs: 1-3)
+```
+
+### plans/2026-07-24-m9-storage-plane-continuation.md
+```
+1:# M9 storage-plane continuation — codex brief (2026-07-24)
+8:## Goal
+14:## The design (execute exactly)
+53:## Hard laws
+68:## Gates (run, do not trust memory)
+81:## Commit protocol
+86:## Final summary shape
 ```
 
 ### plans/2026-07-24-v6-dl-mvp-slice.md

@@ -549,3 +549,27 @@ test("comments: `#` line comments (own-line and trailing) parse identically to t
   assertOk(resultWithoutComments);
   assert.deepEqual(stableSerialize(resultWithComments), stableSerialize(resultWithoutComments));
 });
+
+// M9 columnType flow (EngineStorageLaw, tasks.d.ts): BridgeOk.columnTypes resolves one
+// affinity per column for EVERY rel — declared (user `col:text|int`), base (spine/diag),
+// host (__resp/__req cols + text salt), and __lit (typeof value). The storage plane reads
+// this to declare affinity + decide which columns intern; a golden can't reach it.
+test("columnTypes: sg-rail rels resolve to correct per-column affinity", () => {
+  const result = bridgeFixture("sg-rail.dl");
+  assertOk(result);
+  const types = result.columnTypes;
+  // Declared user rels win (peer ruling: declared, not inferred).
+  assert.deepEqual(types.get("console_hit"), ["text", "int", "int", "text"]);
+  assert.deepEqual(types.get("hit_count"), ["int"]);
+  // Builtin spine/diag rels resolve from the base map (they arrive type-less).
+  assert.deepEqual(types.get("file"), ["text", "text"]);
+  assert.deepEqual(types.get("node"), ["text", "text", "int", "int", "text", "text"]);
+  assert.deepEqual(types.get("span_line"), ["text", "int", "int", "int"]);
+  assert.deepEqual(types.get("diag"), ["text", "int", "int", "int", "int", "text", "text", "text", "text"]);
+  // Host response rel: pattern/path text, salt_0 (content witness) text, start/end int, text text.
+  assert.deepEqual(types.get("__resp_sg"), ["text", "text", "text", "int", "int", "text"]);
+  assert.deepEqual(types.get("__req_sg"), ["text", "text", "text"]);
+  // __lit rels: every seed here is a string -> text.
+  assert.deepEqual(types.get("__lit_0"), ["text"]);
+  assert.deepEqual(types.get("__lit_1"), ["text"]);
+});

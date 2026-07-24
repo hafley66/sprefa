@@ -81,7 +81,12 @@ test("derived diff enumerates the membership combinatorics: in-old/in-new = noop
 });
 
 test("rel(0) scratch dies with its tick", async () => {
-  const { rt, dbPath } = await bootFixture(singleEdbRelProgram("scratch", ["value"]), undefined, { scratch: 0 });
+  const { rt, dbPath } = await bootFixture(
+    singleEdbRelProgram("scratch", ["value"]),
+    undefined,
+    { scratch: 0 },
+    { scratch: ["int"] },
+  );
   try {
     const report = await rt.commit(edbBatch({ scratch: [{ value: 1 }, { value: 2 }] }));
     assert.deepEqual(report.changed, [["scratch", 2]]);
@@ -103,7 +108,12 @@ test("rel(0) scratch dies with its tick", async () => {
 });
 
 test("rel(1) keeps only the newest row", async () => {
-  const { rt, dbPath } = await bootFixture(singleEdbRelProgram("latest", ["value"]), undefined, { latest: 1 });
+  const { rt, dbPath } = await bootFixture(
+    singleEdbRelProgram("latest", ["value"]),
+    undefined,
+    { latest: 1 },
+    { latest: ["int"] },
+  );
   try {
     await rt.commit(edbBatch({ latest: [{ value: 1 }] }));
     assert.deepEqual(await rt.rows("latest"), [{ value: 1 }]);

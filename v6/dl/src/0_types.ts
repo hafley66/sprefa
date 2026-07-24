@@ -33,6 +33,7 @@ import type { FactLine } from "sprefa-store-engine/src/engine/ingest.ts";
 
 export type Value = string | number | boolean | null;
 export type Row = Record<string, Value>;
+export type ColumnType = "text" | "int";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Decls / retention.
@@ -86,6 +87,15 @@ export interface BridgeOk {
    *  rel name -> its one row's value; the runtime seeds rel___lit_<n> at boot. Numbering
    *  is first-appearance order, so re-bridge is stable. */
   readonly literalSeeds: ReadonlyMap<string, Value>;
+  /** OWNER ESCALATION 2026-07-24 PM (M9, columnType flow): per-rel resolved column
+   *  affinity, positional and parallel to the rel's `program.rels` column list.
+   *  `"int"` = a numeric column stored raw INTEGER; `"text"` = a text column the
+   *  storage plane stores as a `strings` dictionary id (interned) and resolves back
+   *  to text at the read view. The storage DDL (2_schema.ts) reads this to declare
+   *  affinity per column and to decide which columns intern; without it every rel_*
+   *  column is untyped (the v5 amplification disease). Resolution law + tie-breaks
+   *  live at the inference site in 0_ast_bridge.ts (buildColumnTypes). */
+  readonly columnTypes: ReadonlyMap<string, readonly ColumnType[]>;
 }
 export interface BridgeErr { readonly kind: "err"; readonly diags: readonly LoadDiag[] }
 export type BridgeResult = BridgeOk | BridgeErr;
@@ -101,7 +111,7 @@ export type Bridge = (dlText: string, builtinRels: readonly RelDecl[]) => Bridge
 
 /** Tick shape (b), pinned in DECISIONS: flat rel_* current tables + this log. */
 export interface DeltaRow {
-  readonly rel: string;
+  readonly rel_id: number;
   readonly row_digest: number; // oracle.mix XOR law (ingest.ts note 6)
   readonly tick: number;
   readonly weight: 1 | -1;
@@ -165,8 +175,8 @@ export interface HostDef<Req extends Row = Row, Resp extends Row = Row> {
  *  full_digest within a live identity_digest group triggers supersession (1_hosts.ts's
  *  HostRunner) instead of a second independent fire. */
 export interface EffectCacheRow {
-  readonly full_digest: string;
-  readonly identity_digest: string;
+  readonly full_digest: number;
+  readonly identity_digest: number;
   readonly host: string;
   readonly state: "pending" | "done" | "error";
   readonly requested_tick: number;
@@ -185,7 +195,7 @@ export interface BuiltinHosts {
  *  resolution, per the escalation ruling): HostRunner receives the runtime
  *  only for deltas$/commit, and a libsql-shaped client for the effect_cache
  *  reads/writes it needs on its own — the same db the runtime booted with
- *  (tests pass that same client, or a fresh createClient() on the same file
+ *  (tests pass that same client, or a fresh open_db() on the same file
  *  path; both are documented as acceptable). */
 export interface CacheDb {
   execute(stmt: string | { sql: string; args: unknown[] }): Promise<{ rows: unknown[] }>;

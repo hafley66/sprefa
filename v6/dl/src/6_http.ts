@@ -24,7 +24,7 @@
  *
  * Second SQLite connection (sideDb): per the owner's own pinned resolution for
  * HostRunner's cacheDb (1_hosts.ts header: "the same db the runtime booted with...
- * or a fresh createClient() on the same file path; both are documented as
+ * or a fresh open_db() on the same file path; both are documented as
  * acceptable"), this file opens ONE extra libsql connection per program load and
  * reuses it for both HostRunner's effect_cache reads/writes AND this file's own
  * raw SELECT for POST /query (runtime.rows() has no WHERE-clause reader — the
@@ -34,14 +34,16 @@
  * connections speak to one SQLite file; libsql/sqlite's own locking arbitrates.
  */
 import * as http from "node:http";
+import path from "node:path";
 
-import { createClient, type Client } from "@libsql/client";
 import { filter } from "rxjs";
+
+import { open_db, type SqliteDb } from "sprefa-store-engine/src/engine/lib.ts";
 
 import { bridge } from "./0_ast_bridge.ts";
 import { builtinExtract, builtinSg, HostRunner, shHost, type CacheDb, type HostDef } from "./1_hosts.ts";
 import { DlRuntime } from "./3_runtime.ts";
-import { ingestFile } from "./4_ingest.ts";
+import { DL_ROOT, ingestFile } from "./4_ingest.ts";
 import { builtinDecls, DIAG_V5_VIEW_SQL } from "./5_diag.ts";
 import type { BridgeOk, DeltaEvent, DlServer, LoadDiag, Row, TickReport, Value } from "./0_types.ts";
 import type { RelDecl } from "sprefa-store-engine/src/lower/ast.ts";
@@ -72,7 +74,7 @@ interface ServerState {
   bridgeOk: BridgeOk | null;
   runtime: DlRuntime | null;
   hostRunner: HostRunner | null;
-  sideDb: Client | null;
+  sideDb: SqliteDb | null;
 }
 
 function newServerState(): ServerState {
@@ -115,6 +117,20 @@ function rowFromRawQueryResult(rawRow: unknown, columns: readonly string[]): Row
   const row: Record<string, Value> = {};
   for (const column of columns) row[column] = normalizeQueryValue(raw[column]);
   return row as Row;
+}
+
+function resolvePathSurface(rows: readonly Row[]): Row[] {
+  return rows.map((row) => {
+    if (typeof row.path !== "string") return row;
+    return { ...row, path: path.resolve(DL_ROOT, row.path) };
+  });
+}
+
+function normalizePathSurface(rows: readonly Row[]): Row[] {
+  return rows.map((row) => {
+    if (typeof row.path !== "string") return row;
+    return { ...row, path: path.relative(DL_ROOT, path.resolve(DL_ROOT, row.path)) };
+  });
 }
 
 /** Duplicated in miniature (not imported): 3_runtime.ts's sqlLiteral/sqlAnyRowMatch
@@ -163,7 +179,7 @@ async function handleProgramLoad(
   await disposeCurrentProgram(state);
 
   const runtime = await DlRuntime.boot({ dbPath: cfg.dbPath, bridge: result, extraDdl: [DIAG_V5_VIEW_SQL] });
-  const sideDb = createClient({ url: `file:${cfg.dbPath}` });
+  const sideDb = open_db(`file:${cfg.dbPath}`);
   // Order matters: HostRunner keys hosts by name (last write wins on a collision).
   // Builtins are listed LAST on purpose so they win over a same-named `sh` decl in
   // the loaded program. EMPIRICALLY FOUND (2026-07-24, running this exact golden):
@@ -216,7 +232,7 @@ async function handleEdbInsert(
   }
   const body = JSON.parse(await readBody(req)) as { rows?: Row[] };
   const report: TickReport = await state.runtime.commit({
-    insert: new Map([[relName, body.rows ?? []]]),
+    insert: new Map([[relName, normalizePathSurface(body.rows ?? [])]]),
     retract: new Map(),
   });
   writeJson(res, 200, report);
@@ -228,7 +244,7 @@ async function handleIdbRead(state: ServerState, relName: string, res: http.Serv
     return;
   }
   const rows = await state.runtime.rows(relName);
-  writeJson(res, 200, { rows });
+  writeJson(res, 200, { rows: resolvePathSurface(rows) });
 }
 
 function handleSubscribe(
@@ -302,7 +318,12 @@ async function handleQuery(state: ServerState, req: http.IncomingMessage, res: h
   queryRef.args.forEach((arg, index) => {
     const column = decl.columns[index];
     if (column === undefined) return; // trailing elision: unconstrained
-    if (arg.kind === "lit") whereClauses.push(`${column} IS ${sqlLiteralForQuery(arg.value)}`);
+    if (arg.kind === "lit") {
+      const value = column === "path" && typeof arg.value === "string"
+        ? path.relative(DL_ROOT, path.resolve(DL_ROOT, arg.value))
+        : arg.value;
+      whereClauses.push(`${column} IS ${sqlLiteralForQuery(value)}`);
+    }
     // "var"/"wild": unconstrained (a one-shot query has no other body atom to bind
     // a Var against, so a bound-looking var reads exactly like a wildcard here).
   });
@@ -311,7 +332,7 @@ async function handleQuery(state: ServerState, req: http.IncomingMessage, res: h
 
   const sqlResult = await state.sideDb.execute(sql);
   const rows = sqlResult.rows.map((rawRow) => rowFromRawQueryResult(rawRow, decl.columns));
-  writeJson(res, 200, { rows });
+  writeJson(res, 200, { rows: resolvePathSurface(rows) });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
