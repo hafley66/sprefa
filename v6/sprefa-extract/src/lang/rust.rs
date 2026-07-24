@@ -17,12 +17,13 @@
 //! generic). Deferred follow-ups: the docs facet (`rust_docs_from`); the df
 //! enrichment aux (args/fields/lits/param_pos/loops/nests).
 
+use syn::spanned::Spanned;
 use syn::{
     AngleBracketedGenericArguments, GenericArgument, Path, PathArguments, ReturnType, Type,
     TypeParamBound,
 };
 
-use crate::family::{ConstKind, ConstValue, CstF, SigSlot, TypeEntityKind, TypeF, TypeSig};
+use crate::family::{CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, SigSlot, TypeEntityKind, TypeF, TypeSig};
 use crate::rows::{FamilyBundle, Node};
 use crate::seams::{Parser, Project};
 use crate::shape::{Span, Strings};
@@ -373,6 +374,215 @@ fn const_values(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// CallF: callable definitions (nodes) + call sites (aux). Commit C.
+//
+// Ports v5 `rust_call_defs_from` (defs, incl. the nested-fn/closure walker) +
+// `rust_call_sites_from` (sites). v5's `mint_sym`/`lambda_sym`/`end` line are
+// deleted: a def is span + kind + name. The def span COVERS its body (ident
+// start -> block end) so the seam's span-containment can bind a site's caller;
+// the parity line reads `line_of(span.start)` = the ident line (v5's `def.line`).
+// Lambda defs (closures) keep kind=Lambda, name=None (v5's empty name).
+// ════════════════════════════════════════════════════════════════════════════
+
+/// A proc_macro2 span pair -> v6 byte Span covering `[start.start, end.end)`.
+/// The def span covers the whole callable body for span-containment resolution.
+fn def_span(line_starts: &[u32], start: proc_macro2::Span, end: proc_macro2::Span) -> Span {
+    let start_lc = start.start();
+    let end_lc = end.end();
+    let start_byte = line_col_to_byte(line_starts, start_lc.line as u32, start_lc.column as u32);
+    let end_byte = line_col_to_byte(line_starts, end_lc.line as u32, end_lc.column as u32);
+    Span { start: start_byte, len: end_byte.saturating_sub(start_byte) }
+}
+
+/// Project the CallF family: one def node per callable (Free / Method / Lambda)
+/// + one site per call expression. Port of v5 `rust_call_defs_from` +
+/// `rust_call_sites_from`.
+fn project_call(
+    parsed: &syn::File,
+    line_starts: &[u32],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    // Defs: the top-level driver emits Free (Item::Fn) + Method (impl/trait)
+    // defs and walks each body; the visitor collects nested named fns (Free) and
+    // closures (Lambda) reached inside a body. Port of v5's driver + RustCallDefs.
+    let mut defs = RustCallDefs { line_starts, out: Vec::new() };
+    for item in &parsed.items {
+        match item {
+            syn::Item::Fn(f) => {
+                let span = def_span(line_starts, f.sig.ident.span(), f.block.span());
+                defs.push(span, Some(f.sig.ident.to_string()), CallKind::Free);
+                syn::visit::visit_block(&mut defs, &f.block);
+            }
+            syn::Item::Impl(i) => {
+                for ii in &i.items {
+                    if let syn::ImplItem::Fn(m) = ii {
+                        let span = def_span(line_starts, m.sig.ident.span(), m.block.span());
+                        defs.push(span, Some(m.sig.ident.to_string()), CallKind::Method);
+                        syn::visit::visit_block(&mut defs, &m.block);
+                    }
+                }
+            }
+            // A trait fn: a signature-only declaration OR a default body, both
+            // Method-owned by the trait, so a call through the trait has a target.
+            syn::Item::Trait(t) => {
+                for ti in &t.items {
+                    if let syn::TraitItem::Fn(m) = ti {
+                        let name = m.sig.ident.to_string();
+                        let span = match &m.default {
+                            Some(block) => def_span(line_starts, m.sig.ident.span(), block.span()),
+                            None => def_span(line_starts, m.sig.ident.span(), m.sig.span()),
+                        };
+                        defs.push(span, Some(name), CallKind::Method);
+                        if let Some(block) = &m.default {
+                            syn::visit::visit_block(&mut defs, block);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    for def in defs.out {
+        let mut node = Node::new(def.span, def.kind);
+        if let Some(name) = def.name {
+            node = node.with_name(strings.intern(&name));
+        }
+        sink.nodes.push(node);
+    }
+
+    // Sites: one walk over the whole file for every call/method-call/struct-literal
+    // expression. The callee is the trailing name as written (unresolved in phase
+    // 1). Port of v5's CallCollector.
+    let mut collector = CallCollector { line_starts, sites: Vec::new() };
+    syn::visit::visit_file(&mut collector, parsed);
+    for site in collector.sites {
+        sink.aux.sites.push(CallSite {
+            span: site.span,
+            callee: strings.intern(&site.callee),
+            callee_path: site.callee_path.map(|path| strings.intern(&path)),
+        });
+    }
+}
+
+/// One collected def before it is interned into the bundle.
+struct CollectedDef {
+    span: Span,
+    name: Option<String>,
+    kind: CallKind,
+}
+
+/// Walks callable bodies for the callables the top-level driver misses: nested
+/// named fns (Free) and closures (Lambda). Port of v5 `RustCallDefs` (the sym
+/// stack is dropped: v6 needs no enclosing sym for a lambda def).
+struct RustCallDefs<'a> {
+    line_starts: &'a [u32],
+    out: Vec<CollectedDef>,
+}
+
+impl<'a> RustCallDefs<'a> {
+    fn push(&mut self, span: Span, name: Option<String>, kind: CallKind) {
+        self.out.push(CollectedDef { span, name, kind });
+    }
+}
+
+impl<'ast, 'a> syn::visit::Visit<'ast> for RustCallDefs<'a> {
+    // A nested named fn (`fn helper() {}` inside a body). File-level identity
+    // (df does not lift nested-fn bodies, so no owner-scoped sym to match). Port
+    // of v5 visit_item_fn.
+    fn visit_item_fn(&mut self, function: &'ast syn::ItemFn) {
+        let span = def_span(self.line_starts, function.sig.ident.span(), function.block.span());
+        self.push(span, Some(function.sig.ident.to_string()), CallKind::Free);
+        syn::visit::visit_item_fn(self, function);
+    }
+    // A closure (`|x| ...`). The def span covers the closure body so a call inside
+    // it binds to this lambda by containment. Port of v5 visit_expr_closure.
+    fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
+        let span = def_span(self.line_starts, closure.span(), closure.body.span());
+        self.push(span, None, CallKind::Lambda);
+        syn::visit::visit_expr_closure(self, closure);
+    }
+}
+
+/// One collected call site before it is interned into the aux.
+struct CollectedSite {
+    span: Span,
+    callee: String,
+    callee_path: Option<String>,
+}
+
+/// Walks the whole file for call expressions (`f(x)`, `recv.m(x)`, `Foo { .. }`).
+/// Port of v5 `CallCollector`.
+struct CallCollector<'a> {
+    line_starts: &'a [u32],
+    sites: Vec<CollectedSite>,
+}
+
+impl<'ast, 'a> syn::visit::Visit<'ast> for CallCollector<'a> {
+    fn visit_expr(&mut self, expr: &'ast syn::Expr) {
+        match expr {
+            // `f(args)` / `Foo(args)`: callee is the path's trailing segment.
+            syn::Expr::Call(call) => {
+                let function = peel_parens(&call.func);
+                if let syn::Expr::Path(path) = function {
+                    if let Some(segment) = path.path.segments.last() {
+                        let path_str = path_string(&path.path);
+                        self.sites.push(CollectedSite {
+                            span: syn_span(self.line_starts, call.func.span()),
+                            callee: segment.ident.to_string(),
+                            callee_path: (path.path.segments.len() > 1).then_some(path_str),
+                        });
+                    }
+                }
+                syn::visit::visit_expr(self, expr);
+            }
+            // `recv.m(args)`: callee is the method ident.
+            syn::Expr::MethodCall(call) => {
+                self.sites.push(CollectedSite {
+                    span: syn_span(self.line_starts, call.method.span()),
+                    callee: call.method.to_string(),
+                    callee_path: None,
+                });
+                syn::visit::visit_expr(self, expr);
+            }
+            // `Foo { x: 1 }`: struct literal constructor; callee is the type path's
+            // trailing segment.
+            syn::Expr::Struct(struct_expr) => {
+                if let Some(segment) = struct_expr.path.segments.last() {
+                    let path_str = path_string(&struct_expr.path);
+                    self.sites.push(CollectedSite {
+                        span: syn_span(self.line_starts, struct_expr.path.span()),
+                        callee: segment.ident.to_string(),
+                        callee_path: (struct_expr.path.segments.len() > 1).then_some(path_str),
+                    });
+                }
+                syn::visit::visit_expr(self, expr);
+            }
+            _ => syn::visit::visit_expr(self, expr),
+        }
+    }
+}
+
+/// Render a syn::Path as `a::b::c`. Port of v5 `path_string`.
+fn path_string(path: &syn::Path) -> String {
+    path.segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
+/// Strip nested `Expr::Paren` to find the inner expression. Port of v5
+/// `peel_parens`.
+fn peel_parens(expr: &syn::Expr) -> &syn::Expr {
+    let mut current = expr;
+    while let syn::Expr::Paren(paren) = current {
+        current = &paren.expr;
+    }
+    current
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // RustSource: the Rust Source (cst via ast-grep + type/call/df via syn).
 //
 // The two-parser, masked shape (mirrors TsSource). cst runs through ast-grep
@@ -429,8 +639,9 @@ impl Source for RustSource {
                         types = Some(bundle);
                     }
                     if mask.call {
-                        // commit C: CallF defs + sites.
-                        let _ = &parsed;
+                        let mut bundle = FamilyBundle::<CallF>::default();
+                        project_call(&parsed, &line_starts, &mut strings, &mut bundle);
+                        call = Some(bundle);
                     }
                     if mask.df {
                         // commit D: DfF nodes + Direct edges.
