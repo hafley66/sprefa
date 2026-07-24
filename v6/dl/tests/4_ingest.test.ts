@@ -18,7 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { extractFile, ingestFile, spineDeclsLocal, toFactLines } from "../src/4_ingest.ts";
+import { DL_ROOT, extractFile, ingestFile, spineDeclsLocal, toFactLines } from "../src/4_ingest.ts";
 import type { ExtractRecord, Row } from "../tasks.d.ts";
 import { bootFixture, cleanupDbFile } from "./1_helpers_db.ts";
 
@@ -26,6 +26,11 @@ const CORPUS_DIR = path.join(import.meta.dirname, "..", "fixtures", "corpus");
 const BAD_TS = path.join(CORPUS_DIR, "bad.ts");
 const BAD_V2_TS = path.join(CORPUS_DIR, "bad_v2.ts");
 const GOLDEN_PATH = path.join(import.meta.dirname, "..", "fixtures", "golden", "ingest.bad-v1-v2.json");
+const BAD_TS_REL = path.relative(DL_ROOT, BAD_TS);
+
+function rootRelative(filePath: string): string {
+  return path.relative(DL_ROOT, path.resolve(DL_ROOT, filePath));
+}
 
 function tempCorpusPath(): string {
   return path.join(os.tmpdir(), `dl-m3-ingest-${crypto.randomBytes(8).toString("hex")}.ts`);
@@ -42,6 +47,20 @@ function byJson(a: unknown, b: unknown): number {
  *  this with 5_diag.ts's spineDecls/builtinDecls). */
 function spineProgram() {
   return { rels: spineDeclsLocal, rules: [] };
+}
+
+const SPINE_COLUMN_TYPES = {
+  file: ["text", "text"],
+  node: ["text", "text", "int", "int", "text", "text"],
+  edge: ["text", "text", "text", "int", "int", "int", "int"],
+  sig: ["text", "int", "int", "text", "int", "text"],
+  site: ["text", "int", "int", "text", "text"],
+  const: ["text", "int", "int", "text", "text", "text"],
+  span_line: ["text", "int", "int", "int"],
+} as const;
+
+function bootSpineFixture() {
+  return bootFixture(spineProgram(), undefined, undefined, SPINE_COLUMN_TYPES);
 }
 
 test("F2 mapping: one record per shape maps to spine rel rows + span_line + file", () => {
@@ -68,18 +87,18 @@ test("F2 mapping: one record per shape maps to spine rel rows + span_line + file
   const expectedContentHash = crypto.createHash("sha256").update(fs.readFileSync(BAD_TS)).digest("hex");
 
   assert.deepEqual(lines, [
-    { t: "rel", name: "file", row: [BAD_TS, expectedContentHash] },
-    { t: "rel", name: "node", row: [BAD_TS, "cst", 147, 167, "call_expression", null] }, // null name covered
-    { t: "rel", name: "edge", row: [BAD_TS, "cst", "child", 0, 189, 0, 188] },
-    { t: "rel", name: "sig", row: [BAD_TS, 7, 188, "param", 0, "string"] },
-    { t: "rel", name: "site", row: [BAD_TS, 147, 158, "log", null] }, // null callee_path covered
-    { t: "rel", name: "const", row: [BAD_TS, 54, 79, null, "`hello ${name}`", "template"] },
+    { t: "rel", name: "file", row: [BAD_TS_REL, expectedContentHash] },
+    { t: "rel", name: "node", row: [BAD_TS_REL, "cst", 147, 167, "call_expression", null] }, // null name covered
+    { t: "rel", name: "edge", row: [BAD_TS_REL, "cst", "child", 0, 189, 0, 188] },
+    { t: "rel", name: "sig", row: [BAD_TS_REL, 7, 188, "param", 0, "string"] },
+    { t: "rel", name: "site", row: [BAD_TS_REL, 147, 158, "log", null] }, // null callee_path covered
+    { t: "rel", name: "const", row: [BAD_TS_REL, 54, 79, null, "`hello ${name}`", "template"] },
     // span_line: one row per DISTINCT offset from the node+site spans above (147, 158,
     // 167), sorted ascending. Line 3 (0-based) is `  console.log(message);`, byte-start
     // 145, so col = offset - 145.
-    { t: "rel", name: "span_line", row: [BAD_TS, 147, 3, 2] },
-    { t: "rel", name: "span_line", row: [BAD_TS, 158, 3, 13] },
-    { t: "rel", name: "span_line", row: [BAD_TS, 167, 3, 22] },
+    { t: "rel", name: "span_line", row: [BAD_TS_REL, 147, 3, 2] },
+    { t: "rel", name: "span_line", row: [BAD_TS_REL, 158, 3, 13] },
+    { t: "rel", name: "span_line", row: [BAD_TS_REL, 167, 3, 22] },
   ]);
 });
 
@@ -87,10 +106,10 @@ test("F2 mapping: one record per shape maps to spine rel rows + span_line + file
 // witness a salted probe joins against: these two tests are the witness's own
 // EXIST (this one) and FLOW (the next one) half.
 test("file row holds the sha-256 hex digest of the file's bytes", async () => {
-  const { rt, dbPath } = await bootFixture(spineProgram());
+  const { rt, dbPath } = await bootSpineFixture();
   try {
     await ingestFile(rt, BAD_TS);
-    const fileRows = ((await rt.rows("file")) as Row[]).filter((row) => row.path === BAD_TS);
+    const fileRows = ((await rt.rows("file")) as Row[]).filter((row) => row.path === BAD_TS_REL);
     assert.equal(fileRows.length, 1);
     const expectedHash = crypto.createHash("sha256").update(fs.readFileSync(BAD_TS)).digest("hex");
     assert.equal(fileRows[0]!.content_hash, expectedHash);
@@ -107,15 +126,16 @@ test("file row holds the sha-256 hex digest of the file's bytes", async () => {
 // delta STREAM (rt.deltas$), which reports the raw insert/retract sets regardless of
 // net, so this test asserts against that stream directly instead of TickReport.
 test("editing content flips the file row: old content_hash retracts, new one inserts (witness heartbeat)", async () => {
-  const { rt, dbPath } = await bootFixture(spineProgram());
+  const { rt, dbPath } = await bootSpineFixture();
   const tempPath = tempCorpusPath();
+  const tempRel = rootRelative(tempPath);
   try {
     fs.copyFileSync(BAD_TS, tempPath);
     await ingestFile(rt, tempPath);
     const hashV1 = crypto.createHash("sha256").update(fs.readFileSync(BAD_TS)).digest("hex");
     assert.deepEqual(
-      ((await rt.rows("file")) as Row[]).filter((row) => row.path === tempPath),
-      [{ path: tempPath, content_hash: hashV1 }],
+      ((await rt.rows("file")) as Row[]).filter((row) => row.path === tempRel),
+      [{ path: tempRel, content_hash: hashV1 }],
     );
 
     fs.copyFileSync(BAD_V2_TS, tempPath);
@@ -134,12 +154,12 @@ test("editing content flips the file row: old content_hash retracts, new one ins
     );
 
     assert.equal(fileDeltaEvents.length, 1, "expected exactly one `file` delta event for the edit tick");
-    assert.deepEqual(fileDeltaEvents[0]!.retracts, [{ path: tempPath, content_hash: hashV1 }]);
-    assert.deepEqual(fileDeltaEvents[0]!.inserts, [{ path: tempPath, content_hash: hashV2 }]);
+    assert.deepEqual(fileDeltaEvents[0]!.retracts, [{ path: tempRel, content_hash: hashV1 }]);
+    assert.deepEqual(fileDeltaEvents[0]!.inserts, [{ path: tempRel, content_hash: hashV2 }]);
 
     assert.deepEqual(
-      ((await rt.rows("file")) as Row[]).filter((row) => row.path === tempPath),
-      [{ path: tempPath, content_hash: hashV2 }],
+      ((await rt.rows("file")) as Row[]).filter((row) => row.path === tempRel),
+      [{ path: tempRel, content_hash: hashV2 }],
     );
   } finally {
     await rt.dispose();
@@ -149,7 +169,7 @@ test("editing content flips the file row: old content_hash retracts, new one ins
 });
 
 test("same file ingested twice = second TickReport has zero deltas", async () => {
-  const { rt, dbPath } = await bootFixture(spineProgram());
+  const { rt, dbPath } = await bootSpineFixture();
   try {
     const reportA = await ingestFile(rt, BAD_TS);
     assert.ok(reportA.changed.length > 0, "first ingest of a real file must change something");
@@ -175,14 +195,14 @@ test("same file ingested twice = second TickReport has zero deltas", async () =>
 // src/3_runtime.ts sqlAnyRowMatch (NULL-safe `col IS val` groups); this golden and the
 // delete-file test below are the standing regressions for it.
 test("edited file: per-file retract+insert only for that path (golden)", async () => {
-  const { rt, dbPath } = await bootFixture(spineProgram());
+  const { rt, dbPath } = await bootSpineFixture();
   const tempPath = tempCorpusPath();
   try {
     // Control file: a DIFFERENT path, ingested once and never touched again. Proves the
     // per-file diff never moves another file's rows.
     await ingestFile(rt, BAD_TS);
     const controlNodeRowsBefore = ((await rt.rows("node")) as Row[])
-      .filter((row) => row.path === BAD_TS)
+      .filter((row) => row.path === BAD_TS_REL)
       .sort(byJson);
 
     fs.copyFileSync(BAD_TS, tempPath);
@@ -201,7 +221,7 @@ test("edited file: per-file retract+insert only for that path (golden)", async (
     assert.ok(spanLineDelta !== undefined && spanLineDelta[1] < 0, "expected a negative span_line delta");
 
     const controlNodeRowsAfter = ((await rt.rows("node")) as Row[])
-      .filter((row) => row.path === BAD_TS)
+      .filter((row) => row.path === BAD_TS_REL)
       .sort(byJson);
     assert.deepEqual(
       controlNodeRowsAfter,
@@ -226,8 +246,9 @@ test("edited file: per-file retract+insert only for that path (golden)", async (
 // Regression pair of the golden test above (same NULL-safe-match root cause, fixed at
 // M3 integration): a delete-file ingest must retract null-column rows completely.
 test("delete-file: a missing path retracts everything ingested for it", async () => {
-  const { rt, dbPath } = await bootFixture(spineProgram());
+  const { rt, dbPath } = await bootSpineFixture();
   const tempPath = tempCorpusPath();
+  const tempRel = rootRelative(tempPath);
   try {
     fs.copyFileSync(BAD_TS, tempPath);
     const reportA = await ingestFile(rt, tempPath);
@@ -239,7 +260,7 @@ test("delete-file: a missing path retracts everything ingested for it", async ()
     for (const [rel, delta] of reportB.changed) assert.ok(delta < 0, `expected '${rel}' delta to be a full retraction`);
 
     for (const decl of spineDeclsLocal) {
-      const remaining = ((await rt.rows(decl.name)) as Row[]).filter((row) => row.path === tempPath);
+      const remaining = ((await rt.rows(decl.name)) as Row[]).filter((row) => row.path === tempRel);
       assert.deepEqual(remaining, [], `rel '${decl.name}' must have zero rows left for the deleted path`);
     }
   } finally {
@@ -249,7 +270,7 @@ test("delete-file: a missing path retracts everything ingested for it", async ()
 });
 
 test("extract exit 1 on a real (non-ENOENT) failure is thrown", async () => {
-  const { rt, dbPath } = await bootFixture(spineProgram());
+  const { rt, dbPath } = await bootSpineFixture();
   try {
     // A directory path: fs.statSync succeeds (so this is NOT the ENOENT delete-file
     // case), but extract itself exits 1 ("Is a directory") — verified empirically
@@ -291,7 +312,7 @@ test("extractFile: real extract binary emits exactly 79 records for bad.ts, spaw
 // is the standing regression that pins the file/row-count combination which used to
 // crash and must keep succeeding.
 test("regression (M9-before): ingesting a real ~1800-span_line-row file no longer trips the SQL expression-tree depth ceiling", async () => {
-  const { rt, dbPath } = await bootFixture(spineProgram());
+  const { rt, dbPath } = await bootSpineFixture();
   const rxjsIndexPath = path.join(import.meta.dirname, "..", "node_modules", "rxjs", "src", "index.ts");
   try {
     const report = await ingestFile(rt, rxjsIndexPath);

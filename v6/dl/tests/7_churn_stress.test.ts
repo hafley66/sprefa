@@ -74,7 +74,12 @@ test(
   "churn stress: N identities x M witness edits -- fire-once-per-witness, linear delta growth, bounded RSS",
   { timeout: 30_000 },
   async () => {
-    const bridgeOk = fakeBridgeOk(buildChurnProgram());
+    const bridgeOk = fakeBridgeOk(buildChurnProgram(), new Map(), {}, {
+      file: ["text", "text"],
+      __req_counter: ["text", "text"],
+      __resp_counter: ["text", "text", "int"],
+      churn_hit: ["text", "int"],
+    });
     const counting = makeCountingHost("counter");
     const fixture = await bootHostRunnerFixture(bridgeOk, [counting.host]);
 

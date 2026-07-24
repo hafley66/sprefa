@@ -582,7 +582,7 @@ export async function applyDerivedTxn(state: RuntimeState, diff: DerivedDiff): P
       if (retention === 0 && state.relDecls.has(relName)) scratchRelNames.push(relName);
     }
     for (const relName of scratchRelNames) {
-      await db.execute(`DELETE FROM rel_${relName}`);
+      await db.execute(`DELETE FROM relbase_${relName}`);
     }
 
     const changed = [...diff.edbChangedPairs, ...derivedPairs].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
