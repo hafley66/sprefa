@@ -382,6 +382,44 @@ only the recursion, not the base, is the deficit).
 
 ---
 
+## Final state (all adopted changes: H2 DISTINCT removal + H5 ping-pong)
+
+3 runs each, median [min-max], measured after the H7 revert; full `cargo test
+--release` green (14 suites); every correct engine's out_hash = oracle on every
+run of every experiment in this lab.
+
+| cell | engine | baseline med [spread] | final med [spread] | delta | stmts |
+|---|---|---:|---:|---:|---|
+| DAG 60k | sqlite-count | 30.8 [30.7-31.5] | 29.3 [29.2-34.0] | -4.8% | 29 -> 23 |
+| DAG 60k | sqlite-count-scc | 119.1 [118.6-120.2] | 116.9 [116.8-117.5] | -1.8% | 39 |
+| DAG 60k | sqlite-dred-loop | 132.2 [125.8-182.5] | 116.7 [116.0-116.7] | -11.7% | 75 -> 53 |
+| DAG 60k | sqlite-dred-cte | 160.1 [154.5-162.4] | 164.9 [160.2-171.1] | +3.0% (untouched) | 6 |
+| DAG 960k | sqlite-count | 450.1 [442.9-678.4] | 430.6 [428.1-434.0] | -4.3% | 29 -> 23 |
+| DAG 960k | sqlite-count-scc | 1947.5 [1944.3-2118.9] | 1810.0 [1801.4-1815.4] | -7.1% | 39 |
+| DAG 960k | sqlite-dred-loop | 2100.7 [2077.4-2107.2] | 1793.9 [1786.1-1827.1] | -14.6% | 75 -> 53 |
+| DAG 960k | sqlite-dred-cte | 2555.1 [2544.9-2565.1] | 2570.9 [2561.5-2650.1] | +0.6% (untouched) | 6 |
+| CYC 960k | sqlite-count | 394.5 [394.1-401.2] | 386.3 [384.4-388.9] | -2.1% (still WRONG on cycles, by design) | 29 -> 23 |
+| CYC 960k | sqlite-count-scc | 2146.7 [2142.9-2167.5] | 1969.1 [1965.3-1987.2] | -8.3% | 39 |
+| CYC 960k | sqlite-dred-loop | 2302.9 [2287.6-2308.8] | 1970.5 [1953.8-1974.8] | -14.4% | 75 -> 53 |
+| CYC 960k | sqlite-dred-cte | 2696.4 [2661.4-2716.7] | 2738.4 [2735.6-2739.7] | +1.6% (untouched) | 6 |
+
+Note the scc medians at 60k/CYC drifted ~1% above their mid-lab (h5) readings
+(110.8 -> 116.9 at 60k); ambient machine drift of that size shows up between
+waves, which is why every verdict above was decided against a same-wave
+reference, never across waves.
+
+Scoreboard: CONFIRMED H2 (+receipts), H3, H4 (with the dred-cte surprise), H5,
+H6 (with the 60k surprise). REJECTED H1 (premise false: index already covering)
+and H7 (cone-driven CTE base loses to the sequential index scan). The fastest
+CORRECT-on-cycles engine is now `sqlite-dred-loop`/`sqlite-count-scc` at ~1.79s
+DAG 960k, 1.97s CYC 960k, down from 1.95-2.30s. What is left of the
+dred-vs-counting gap (~4.2x) is cone amplification (H3), which needs g6's
+pure-DAG early-out or an equivalent algorithmic change, not SQL shaping.
+
+Not done here, still open: PERF-REPORT.md / perf.json regeneration (they hold
+the pre-lab July numbers; regenerate via `cargo run --release --example
+perf_report` when a full 863s matrix run is worth it).
+
 ## B0: baseline reproduction (no code change)
 
 (tables above in "Baseline"; raw logs /tmp/lab-sqlperf/*.log)
