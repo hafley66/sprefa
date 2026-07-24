@@ -19,6 +19,18 @@
  * forbids): this is a one-shot diagnostic script over a handful of tables, not a
  * per-request or per-tick hot path.
  *
+ * OWNER AMENDMENT (folded into M9-before, string-FK-ban gate prep): every table also
+ * carries its column affinity dump (`PRAGMA table_info`, one {name, type, pk} per
+ * column) — the AFTER-gate at integration fails on any join column with TEXT affinity
+ * (the ruling is ZERO string foreign keys: no TEXT column referencing another row —
+ * paths, rel names, host names, hex digests included). aggregates.text_affinity_columns
+ * flags every column, across every table, whose declared type is empty (the rel_*
+ * tables' columns carry NO declared type at all -- see src/2_schema.ts's `ddl()`: the
+ * CREATE TABLE column list is bare names, so PRAGMA table_info reports type="" for
+ * all of them, BLOB affinity by SQLite's rules, used in practice to store paths/hex
+ * digests as TEXT) or textually contains CHAR/CLOB/TEXT — the honest BEFORE picture
+ * this schema's join columns present, prior to any interned-id rework.
+ *
  * Output: pretty JSON to stdout, and to <out-json> when given.
  */
 import { createClient } from "@libsql/client";
@@ -80,6 +92,25 @@ async function rowCount(db, tableName) {
   return Number(res.rows[0]?.n ?? 0);
 }
 
+/** PRAGMA table_info(<table>) -> [{name, type, pk}] in column-definition order. `type`
+ *  is the RAW declared type string (often "" for this schema's untyped rel_* columns —
+ *  see the file header). `pk` is the 1-based position of the column within a composite
+ *  PRIMARY KEY (0 when the column is not part of the PK), straight from table_info's
+ *  own `pk` field. */
+async function columnInfo(db, tableName) {
+  const res = await db.execute(`PRAGMA table_info("${tableName.replace(/"/g, '""')}")`);
+  // table_info rows already come back in column-definition (cid) order; kept as-is.
+  return res.rows.map((row) => ({
+    name: String(row.name),
+    type: String(row.type ?? ""),
+    pk: Number(row.pk ?? 0),
+  }));
+}
+
+function isTextAffinity(declaredType) {
+  return declaredType === "" || /char|clob|text/i.test(declaredType);
+}
+
 function isRelPlaneName(name) {
   return /^rel_/.test(name);
 }
@@ -119,12 +150,14 @@ async function buildReport(dbPath) {
       }
       if (entry.type === "table") {
         const rows = await rowCount(db, row.name);
+        const columns = await columnInfo(db, row.name);
         tables.push({
           name: row.name,
           bytes: row.bytes,
           pages: row.pages,
           rows,
           bytes_per_row: rows > 0 ? row.bytes / rows : null,
+          columns,
         });
       } else {
         indexes.push({ name: row.name, bytes: row.bytes, pages: row.pages, owning_table: entry.tblName });
@@ -142,6 +175,18 @@ async function buildReport(dbPath) {
     const relIndexes = indexes.filter((i) => isRelPlaneName(i.owning_table));
     const relTableBytes = relTables.reduce((sum, t) => sum + t.bytes, 0);
     const relIndexBytes = relIndexes.reduce((sum, i) => sum + i.bytes, 0);
+
+    // Owner amendment: string-FK-ban gate prep. Every column, across every table,
+    // whose declared type is empty (this schema's rel_* columns carry none at all)
+    // or textually names a TEXT-ish SQLite type affinity (CHAR/CLOB/TEXT).
+    const textAffinityColumns = [];
+    for (const table of tables) {
+      for (const column of table.columns) {
+        if (isTextAffinity(column.type)) {
+          textAffinityColumns.push({ table: table.name, column: column.name, type: column.type || "(none)" });
+        }
+      }
+    }
 
     return {
       _meta: {
@@ -166,6 +211,7 @@ async function buildReport(dbPath) {
           // whose owning table matches /^rel_/.
           index_ratio: relTableBytes + relIndexBytes > 0 ? relIndexBytes / (relTableBytes + relIndexBytes) : null,
         },
+        text_affinity_columns: textAffinityColumns,
       },
     };
   } finally {
