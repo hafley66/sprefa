@@ -41,8 +41,17 @@ import { differenceWith, isEqual } from "lodash-es";
 import { edbRel, type RelDecl } from "sprefa-store-engine/src/lower/ast.ts";
 import type { FactLine } from "sprefa-store-engine/src/engine/ingest.ts";
 
-import type { DlRuntime } from "./3_runtime.ts";
-import type { ExtractRecord, Row, TickReport, Value } from "./0_types.ts";
+
+import type {
+  AssertTrue,
+  ExtractRecord,
+  IDlRuntime,
+  IngestFile,
+  Row,
+  TickReport,
+  ToFactLines,
+  Value,
+} from "./0_types.ts";
 import type { ExtractBinDefault, SpineRelName } from "../tasks.d.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -255,7 +264,7 @@ function fileExistsOnDisk(filePath: string): boolean {
   }
 }
 
-export async function ingestFile(rt: DlRuntime, filePath: string): Promise<TickReport> {
+export async function ingestFile(rt: IDlRuntime, filePath: string): Promise<TickReport> {
   let newRowsByRel: ReadonlyMap<string, readonly Row[]> = new Map();
   const absPath = path.resolve(DL_ROOT, filePath);
   const relPath = rootRelativePath(absPath);
@@ -283,3 +292,7 @@ export async function ingestFile(rt: DlRuntime, filePath: string): Promise<TickR
 
   return rt.commit({ insert, retract });
 }
+
+// ---- dataflow proof (src/0_types.ts) -----------------------------------------
+export type IngestFileHolds = AssertTrue<typeof ingestFile extends IngestFile ? true : false>;
+export type ToFactLinesHolds = AssertTrue<typeof toFactLines extends ToFactLines ? true : false>;

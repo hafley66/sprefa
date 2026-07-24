@@ -9,7 +9,13 @@
  * addition; it does not change the schema object set).
  */
 
-import type { SqliteDb } from "./types.ts";
+import type {
+  AssertTrue,
+  CreateAllTables,
+  IRelTableApi,
+  RelCol as RelColShape,
+  SqliteDb,
+} from "./types.ts";
 import { createHash } from "node:crypto";
 
 /** The unified graph family discriminator, stored as a small i32 ordinal. */
@@ -181,11 +187,9 @@ export namespace rels {
 //! The OPEN core: mint new rel tables at runtime. Every rel table is WITHOUT ROWID with a
 //! composite PK over its key columns (set semantics, no duplicate autoindex).
 
-/** A column in a dynamically-created rel table. */
-export type RelCol =
-  | { kind: "int"; name: string }
-  | { kind: "int_null"; name: string }
-  | { kind: "text"; name: string };
+/** A column in a dynamically-created rel table. Declared in ./types.ts (the header);
+ *  aliased here so `rels.RelCol` still resolves. */
+export type RelCol = RelColShape;
 
 export function rel_col_int(name: string): RelCol {
   return { kind: "int", name };
@@ -236,3 +240,7 @@ export const OPEN_PRAGMAS =
 
 /** Top-level re-export so `import { OPEN_PRAGMAS } from "./spine.ts"` resolves. */
 export const OPEN_PRAGMAS = unfuck_sqlite.OPEN_PRAGMAS;
+
+// ---- dataflow proofs (./types.ts) -------------------------------------------
+export type RelTableApiHolds = AssertTrue<typeof rels extends IRelTableApi ? true : false>;
+export type CreateAllTablesHolds = AssertTrue<typeof create_all_tables extends CreateAllTables ? true : false>;

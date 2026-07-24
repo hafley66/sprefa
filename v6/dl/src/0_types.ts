@@ -151,10 +151,6 @@ export interface Span { readonly start: number; readonly end: number }
  *  Pure; one test per record shape; answers ingest.ts note 1's ambiguities. */
 export type ToFactLines = (recs: readonly ExtractRecord[], path: string) => readonly FactLine[];
 
-/** Per-file re-ingest DIFF (supersedes ingest.ts's append-only stance for the
- *  per-file case): retraction rides commit, no diag-specific code (M5.4). */
-export type IngestFile = (path: string) => Promise<TickReport>;
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Hosts (M4 · src/1_hosts.ts)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -245,15 +241,99 @@ export interface DlServer {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Runtime interface — the structural DlRuntime contract (src/3_runtime.ts is the
-// concrete class; src/1_hosts.ts and src/4_ingest.ts depend on this interface only,
-// never the concrete class, to avoid an upward import per the numbering law).
+// Class contracts — I-prefixed, one per class in this package. src/3_runtime.ts
+// and src/1_hosts.ts hold the concrete classes; every other file depends on the
+// interface only, never the class, so nothing imports upward past the numbering
+// law. Same convention as sprefa-store-engine/src/engine/types.ts.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface DlRuntime {
+export interface IDlRuntime {
   /** THE single write site; one call = one tick (store-owned counter). */
   commit(batch: EdbBatch): Promise<TickReport>;
   rows(rel: string): Promise<Row[]>;
   readonly deltas$: Observable<DeltaEvent>;
   dispose(): Promise<void>;
 }
+
+/** The static side of the DlRuntime class. Its constructor is private: `boot` is the
+ *  only way in (it must await DDL, lowering, and the interner hydrate). */
+export interface IDlRuntimeStatics {
+  boot(cfg: {
+    dbPath: string;
+    bridge: BridgeOk;
+    extraDdl?: readonly string[];
+  }): Promise<IDlRuntime>;
+}
+
+/**
+ * The effect driver. Subscribes `runtime.deltas$`, sees `__req_<host>` rows appear, runs
+ * the host process, and commits `__resp_<host>` rows back. It is a SUBSCRIBER, not a
+ * queue: the effect_cache row is the dedupe, and concatMap is the serialization lock.
+ *
+ * It holds the runtime only for deltas$/commit, so the parameter is typed by IDlRuntime
+ * rather than the class, and takes its own CacheDb handle for the effect_cache reads and
+ * writes it does on its own.
+ */
+export interface IHostRunner {
+  /** Idempotent: a second call while already subscribed is a no-op. */
+  start(): void;
+  /** Unsubscribes. Safe to call without a prior start(). */
+  dispose(): void;
+}
+
+/** The static side of the HostRunner class: its constructor is the whole surface. */
+export interface IHostRunnerStatics {
+  new (runtime: IDlRuntime, hosts: readonly HostDef[], cacheDb: CacheDb): IHostRunner;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DATAFLOW · the top-level functions that move data across the interfaces above.
+//
+// One named type per entry point, so the header shows what a stage consumes and
+// what it produces without opening the implementation. Each implementing file
+// exports an `AssertTrue<...>` alias proving its function still matches; nothing
+// else binds a free function to a declared type.
+//
+// The pipeline in one read: text enters through `Bridge`; a file enters through
+// `IngestFile`; both land in `IDlRuntime.commit`, the single write site. `Ddl`
+// mints the tables that commit writes into. `ShHost` turns a parsed `sh` decl
+// into a `HostDef` that `IHostRunner` can run. `StartServer` wires all of it to
+// the http surface above.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** decl set -> the DDL statement list (delta, effect_cache, store_meta, tick seed, views). */
+export type Ddl = (
+  decls: readonly RelDecl[],
+  retention: ReadonlyMap<string, Retention>,
+  columnTypes?: ReadonlyMap<string, readonly ColumnType[]>,
+) => string[];
+
+/** One file on disk -> extract records -> spine rows -> one tick. Retracts what the file
+ *  no longer says, including the delete-file case (a missing path retracts everything).
+ *
+ *  Per-file re-ingest is a DIFF (this supersedes ingest.ts's append-only stance for the
+ *  per-file case): retraction rides commit, with no diag-specific code (M5.4).
+ *
+ *  This declaration used to sit up in the ingest section MISSING its first parameter,
+ *  written `(path: string) => Promise<TickReport>` while the real `ingestFile` had taken
+ *  `(rt, filePath)` since M3. Nothing caught it because no implementation was ever
+ *  checked against it. The `IngestFileHolds` proof in 4_ingest.ts is why it cannot drift
+ *  again, and is the reason this section exists at all. */
+export type IngestFile = (rt: IDlRuntime, filePath: string) => Promise<TickReport>;
+
+/** A parsed `sh` decl -> a runnable host. The template's `{col}` splices into the command
+ *  line and `$col` goes to the environment; output is parsed as JSON, JSONL, or columns. */
+export type ShHost = (decl: HostDecl) => HostDef;
+
+/** Boot the http front on `cfg.port` against `cfg.dbPath`. The server owns one mutable
+ *  slot, empty until a program loads via POST /edb/program. */
+export type StartServer = (cfg: { dbPath: string; port: number }) => Promise<DlServer>;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Static-side proof helper. `implements` covers a class's instance side and
+// cannot see statics, and nothing at all binds a free function to a declared
+// type. The `false` branch is what makes it bite: `never extends true` is true,
+// so a `never` branch would prove nothing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type AssertTrue<Holds extends true> = Holds;

@@ -31,7 +31,17 @@
  */
 
 import type { InArgs } from "@libsql/client";
-import type { AssertTrue, IGraphNs, ITemporalStore, ITemporalStoreStatics, SqliteDb } from "./types.ts";
+import type {
+  AssertTrue,
+  Condensed as CondensedShape,
+  ICascadeApi,
+  IGraphNs,
+  IReachApi,
+  IReconcileApi,
+  ITemporalStore,
+  ITemporalStoreStatics,
+  SqliteDb,
+} from "./types.ts";
 import process from "node:process";
 
 /** The connection type every helper takes. */
@@ -557,13 +567,10 @@ function reach_cte(ns: IGraphNs): string {
         JOIN ${ns.dep} dep ON dep.parent_key = reach.dst)`;
 }
 
-/** Condensation, all component ids expressed as MIN-member representative keys. */
-export interface Condensed {
-  comp_of: [number, number][]; // (node_key, comp_repr)
-  size: [number, number][]; // (comp_repr, member_count)
-  cyclic: [number, boolean][]; // (comp_repr, is_cyclic)
-  cadj: [number, number][]; // (parent_comp_repr, child_comp_repr), deduped, no self
-}
+/** Condensation, all component ids expressed as MIN-member representative keys.
+ *  Declared in ./types.ts (the header); aliased here so `reach.Condensed` still resolves
+ *  (a namespace cannot carry an `export { }` re-export, only a type alias). */
+export type Condensed = CondensedShape;
 
 /** Forward transitive closure from `start` (strict; includes start iff its SCC is cyclic). */
 export async function reaches_from(db: Db, ns: IGraphNs, start: number): Promise<number[]> {
@@ -1119,3 +1126,10 @@ export class TemporalStore implements ITemporalStore {
 /** Static-side proof (./types.ts): `implements` covers the instance side only. */
 export type TemporalStoreStaticsHold = AssertTrue<typeof TemporalStore extends ITemporalStoreStatics ? true : false>;
 }
+
+// ---- dataflow proofs (./types.ts) -------------------------------------------
+// Nothing binds a free function to a declared type, so these aliases do it: each
+// namespace must still satisfy the surface the header publishes for it.
+export type CascadeApiHolds = AssertTrue<typeof cascade extends ICascadeApi ? true : false>;
+export type ReachApiHolds = AssertTrue<typeof reach extends IReachApi ? true : false>;
+export type ReconcileApiHolds = AssertTrue<typeof reconcile extends IReconcileApi ? true : false>;

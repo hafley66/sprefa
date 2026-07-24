@@ -23,7 +23,7 @@
 import type { RelDecl } from "sprefa-store-engine/src/lower/ast.ts";
 import { rels as rel_tables } from "sprefa-store-engine/src/engine/spine.ts";
 import { foldRowDigest } from "./0_digest.ts";
-import type { ColumnType, Retention, Row } from "./0_types.ts";
+import type { AssertTrue, ColumnType, Ddl, Retention, Row } from "./0_types.ts";
 
 /** The physical fact-table columns are all INTEGER; text values are dictionary ids. */
 export function relBaseColumns(
@@ -83,3 +83,6 @@ export function ddl(
 export function rowDigest(row: Row, columns: readonly string[]): number {
   return foldRowDigest(row, columns);
 }
+
+// ---- dataflow proof (src/0_types.ts) -----------------------------------------
+export type DdlHolds = AssertTrue<typeof ddl extends Ddl ? true : false>;

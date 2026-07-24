@@ -35,7 +35,19 @@ import { fileURLToPath } from "node:url";
 import { EMPTY, Subscription, concatMap, filter, from, mergeMap, type Observable } from "rxjs";
 
 import { foldRowDigest } from "./0_digest.ts";
-import type { CacheDb, DlRuntime, EdbBatch, HostDecl, HostDef, Row, Value } from "./0_types.ts";
+import type {
+  AssertTrue,
+  CacheDb,
+  EdbBatch,
+  HostDecl,
+  HostDef,
+  IDlRuntime,
+  IHostRunner,
+  IHostRunnerStatics,
+  Row,
+  ShHost,
+  Value,
+} from "./0_types.ts";
 import type { ExtractBinDefault } from "../tasks.d.ts";
 
 export type { CacheDb, HostDef };
@@ -360,12 +372,12 @@ interface PendingEffect {
   readonly tick: number;
 }
 
-export class HostRunner {
+export class HostRunner implements IHostRunner {
   private readonly hostsByRequestRel: ReadonlyMap<string, HostDef>;
   private subscription: Subscription | null = null;
 
   constructor(
-    private readonly runtime: DlRuntime,
+    private readonly runtime: IDlRuntime,
     hosts: readonly HostDef[],
     private readonly cacheDb: CacheDb,
   ) {
@@ -494,3 +506,7 @@ export class HostRunner {
     }
   }
 }
+
+// ---- contract proofs (src/0_types.ts) ----------------------------------------
+export type HostRunnerStaticsHold = AssertTrue<typeof HostRunner extends IHostRunnerStatics ? true : false>;
+export type ShHostHolds = AssertTrue<typeof shHost extends ShHost ? true : false>;

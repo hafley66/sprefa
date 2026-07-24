@@ -87,7 +87,7 @@ import type {
   CmpOp,
 } from "sprefa-store-engine/src/lower/ast.ts";
 import { buildRuleGraph, scc, stratify, NonStratifiableError } from "sprefa-store-engine/src/lower/rulegraph.ts";
-import type { BridgeResult, HostDecl, LoadDiag, Retention, Value } from "./0_types.ts";
+import type { AssertTrue, Bridge, BridgeResult, HostDecl, LoadDiag, Retention, Value } from "./0_types.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Parser services — module scope, built once. EmptyFileSystem: the bridge never
@@ -983,3 +983,6 @@ export function bridge(dlText: string, builtinRels: readonly AstRelDecl[]): Brid
     columnTypes: buildColumnTypes(rels, rules, ctx),
   };
 }
+
+// ---- dataflow proof (src/0_types.ts) -----------------------------------------
+export type BridgeHolds = AssertTrue<typeof bridge extends Bridge ? true : false>;

@@ -68,7 +68,9 @@ import type {
   ColumnType,
   DeltaEvent,
   DeltaRow,
-  DlRuntime as DlRuntimeContract,
+  IDlRuntime,
+  IDlRuntimeStatics,
+  AssertTrue,
   EdbBatch,
   Retention,
   Row,
@@ -643,7 +645,7 @@ function literalSeedRows(
 // mutable state; every field here is instance-scoped.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export class DlRuntime implements DlRuntimeContract {
+export class DlRuntime implements IDlRuntime {
   private readonly commits$: Subject<CommitRequest>;
   private readonly keepAlive: Subscription;
   private nextCommitId: number;
@@ -800,3 +802,7 @@ export class DlRuntime implements DlRuntimeContract {
     this.state.db.close();
   }
 }
+
+// ---- static-side proof (src/0_types.ts) --------------------------------------
+// `implements` above covers the instance side; this covers `boot`.
+export type DlRuntimeStaticsHold = AssertTrue<typeof DlRuntime extends IDlRuntimeStatics ? true : false>;

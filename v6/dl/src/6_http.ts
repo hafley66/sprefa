@@ -45,7 +45,17 @@ import { builtinExtract, builtinSg, HostRunner, shHost, type CacheDb, type HostD
 import { DlRuntime } from "./3_runtime.ts";
 import { DL_ROOT, ingestFile } from "./4_ingest.ts";
 import { builtinDecls, DIAG_V5_VIEW_SQL } from "./5_diag.ts";
-import type { BridgeOk, DeltaEvent, DlServer, LoadDiag, Row, TickReport, Value } from "./0_types.ts";
+import type {
+  AssertTrue,
+  BridgeOk,
+  DeltaEvent,
+  DlServer,
+  LoadDiag,
+  Row,
+  StartServer,
+  TickReport,
+  Value,
+} from "./0_types.ts";
 import type { RelDecl } from "sprefa-store-engine/src/lower/ast.ts";
 
 // DlServer (startServer()'s public return shape) is declared in 0_types.ts (M7: a
@@ -413,3 +423,6 @@ export async function startServer(cfg: { dbPath: string; port: number }): Promis
     },
   };
 }
+
+// ---- dataflow proof (src/0_types.ts) -----------------------------------------
+export type StartServerHolds = AssertTrue<typeof startServer extends StartServer ? true : false>;

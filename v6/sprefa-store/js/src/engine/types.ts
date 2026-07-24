@@ -308,13 +308,197 @@ export interface ITemporalStoreStatics {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DATAFLOW · the free functions that move data across the interfaces above.
+//
+// Classes hold state; these do the work. Each namespace below is declared as one
+// interface so the module's whole surface reads in a block, and the implementing
+// file proves `typeof <namespace> extends I<Namespace>Api`. The connection and
+// the namespace are ARGUMENTS, not fields: state lives in SQLite, and these
+// functions borrow the handle. That is the shape the whole store is built on,
+// so it is the shape a reader should meet here first.
+//
+// Read the flow bottom-up: a caller opens with `OpenDb` -> `Stamp` (or
+// `IStoreStatics.open` / `IRelStoreStatics.attach`), loads through `IIngestApi`
+// or the batched `IStore` writers, mutates through `ICascadeApi`, asks questions
+// through `IReachApi`, and tracks staleness through `IReconcileApi`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Data shapes the surfaces below carry. Declared here, re-exported by the file that owns
+ *  the functions, so this header stays free of package-local imports. */
+
+/** Condensation, all component ids expressed as MIN-member representative keys. */
+export interface Condensed {
+  comp_of: [number, number][]; // (node_key, comp_repr)
+  size: [number, number][]; // (comp_repr, member_count)
+  cyclic: [number, boolean][]; // (comp_repr, is_cyclic)
+  cadj: [number, number][]; // (parent_comp_repr, child_comp_repr), deduped, no self
+}
+
+/** A column in a dynamically-created rel table. */
+export type RelCol =
+  | { kind: "int"; name: string }
+  | { kind: "int_null"; name: string }
+  | { kind: "text"; name: string };
+
+/** One parsed line of the ingest stream. */
+export type FactLine =
+  | { t: "str"; id: number; s: string }
+  | { t: "file"; hash: string; size: number; lines: number }
+  | { t: "node"; family: number; file: number; start: number; len: number; kind: number; name: number | null }
+  | { t: "edge"; family: number; src: number; dst: number; kind: number }
+  | { t: "rel"; name: string; row: readonly unknown[] };
+
+export interface IngestReport {
+  lines: number;
+  stmts: number;
+  changed: [number, number][];
+}
+
+// ---- open / stamp (src/engine/lib.ts, src/engine/spine.ts) ------------------
+
+/** The one sqlite constructor. `url` is `file:/abs/path.sqlite` or `:memory:`. */
+export type OpenDb = (url: string) => SqliteDb;
+
+/** Stamp the split two-plane schema (cascade `cx_*` + reconcile `rx_*` + TEMP working set +
+ *  indexes) under namespace `ns` onto `db`, pragmas first. */
+export type Stamp = (db: SqliteDb, ns: IGraphNs) => Promise<void>;
+
+/** Create the 9 spine tables (strings/files/nodes/edges/spans/repos/revs/junction/meta). */
+export type CreateAllTables = (db: SqliteDb) => Promise<void>;
+
+// ---- cascade (src/engine/engine.ts) ----------------------------------------
+
+/**
+ * The FACT plane as free functions: Z-set weights over `cx_row`, support edges over
+ * `cx_dep`. `IRelStore` is the object-shaped wrapper over exactly these.
+ */
+export interface ICascadeApi {
+  /** `key = tag * KEY_STRIDE + id`, the dense encoding both planes agree on. */
+  key(tag: number, id: number): number;
+  readonly KEY_STRIDE: number;
+  /** Run `body` inside one transaction, rolling back on throw. */
+  with_txn<Result>(db: SqliteDb, body: () => Promise<Result>): Promise<Result>;
+  create_schema(db: SqliteDb, ns: IGraphNs): Promise<void>;
+  insert_rows(
+    db: SqliteDb,
+    ns: IGraphNs,
+    rows: ReadonlyArray<readonly [number, number, number]>,
+  ): Promise<void>;
+  insert_deps(
+    db: SqliteDb,
+    ns: IGraphNs,
+    edges: ReadonlyArray<readonly [number, number, number, number]>,
+  ): Promise<void>;
+  /** Forward add: propagate aliveness from `seeds`. Returns rounds. */
+  assert(db: SqliteDb, ns: IGraphNs, seeds: ReadonlyArray<readonly [number, number]>): Promise<number>;
+  /** Counting retraction. Fast, correct on ACYCLIC support graphs only. */
+  retract(db: SqliteDb, ns: IGraphNs, seeds: ReadonlyArray<readonly [number, number]>): Promise<number>;
+  /** Counting retraction with an on-disk SCC-scoped nested fixpoint. Cycle-safe. */
+  retract_scc(db: SqliteDb, ns: IGraphNs, seeds: ReadonlyArray<readonly [number, number]>): Promise<number>;
+  /** Delete-and-Rederive, driver round loop. Cycle-safe. */
+  retract_dred(db: SqliteDb, ns: IGraphNs, seeds: ReadonlyArray<readonly [number, number]>): Promise<number>;
+  /** Delete-and-Rederive as two recursive CTEs. Same answer as retract_dred. */
+  retract_dred_cte(db: SqliteDb, ns: IGraphNs, seeds: ReadonlyArray<readonly [number, number]>): Promise<number>;
+}
+
+// ---- reach (src/engine/engine.ts) ------------------------------------------
+
+/**
+ * Read-only structure queries over `cx_dep`. Every function has a resident pure-JS oracle in
+ * tests/engine/golden.test.ts and must agree with it byte-for-byte.
+ */
+export interface IReachApi {
+  /** Forward transitive closure from `start` (strict; includes start iff its SCC is cyclic). */
+  reaches_from(db: SqliteDb, ns: IGraphNs, start: number): Promise<number[]>;
+  /** Reverse closure: everything that reaches `target`. */
+  reached_by(db: SqliteDb, ns: IGraphNs, target: number): Promise<number[]>;
+  multi_source_walk(
+    db: SqliteDb,
+    ns: IGraphNs,
+    starts: ReadonlyArray<readonly [number, number, number]>,
+    halt: ReadonlyArray<number> | null,
+    depth_cap: number | null,
+  ): Promise<[number, number, number][]>;
+  multi_source_halt_bfs(
+    db: SqliteDb,
+    ns: IGraphNs,
+    starts: ReadonlyArray<readonly [number, number]>,
+    halt: ReadonlyArray<number>,
+  ): Promise<[number, number][]>;
+  scc_labels(db: SqliteDb, ns: IGraphNs): Promise<[number, number][]>;
+  build_condensed(db: SqliteDb, ns: IGraphNs): Promise<Condensed>;
+  count_pairs(db: SqliteDb, ns: IGraphNs): Promise<bigint>;
+}
+
+// ---- reconcile (src/engine/engine.ts) --------------------------------------
+
+/**
+ * The CONTROL plane as free functions: salsa-in-SQL over `rx_memo`/`rx_dep`. Digests decide
+ * staleness; `verify` returning false is the early cutoff.
+ */
+export interface IReconcileApi {
+  create_schema(db: SqliteDb, ns: IGraphNs): Promise<void>;
+  seed(
+    db: SqliteDb,
+    ns: IGraphNs,
+    id: number,
+    digest: bigint,
+    deps: ReadonlyArray<number>,
+    rev: number,
+  ): Promise<void>;
+  mark_changed(db: SqliteDb, ns: IGraphNs, ids: ReadonlyArray<number>, rev: number): Promise<void>;
+  /** The stale FRONTIER (one hop), not the whole cone. */
+  dirty(db: SqliteDb, ns: IGraphNs): Promise<number[]>;
+  /** Record a recomputed digest; returns whether it MOVED. */
+  verify(db: SqliteDb, ns: IGraphNs, id: number, new_digest: bigint, rev: number): Promise<boolean>;
+  /** Ascending-id sweep over the dirty cone, calling `recompute` per cell. */
+  propagate(
+    db: SqliteDb,
+    ns: IGraphNs,
+    seeds: ReadonlyArray<number>,
+    rev: number,
+    recompute: (id: number, dep_digests: bigint[]) => bigint,
+  ): Promise<number>;
+  answer(db: SqliteDb, ns: IGraphNs): Promise<bigint>;
+}
+
+// ---- rel tables (src/engine/spine.ts, namespace rels) ----------------------
+
+/** The OPEN core: mint rel tables at runtime. Every one is WITHOUT ROWID with a composite
+ *  PK over its key columns (set semantics, no duplicate autoindex). */
+export interface IRelTableApi {
+  rel_col_int(name: string): RelCol;
+  rel_col_int_null(name: string): RelCol;
+  rel_col_text(name: string): RelCol;
+  create_rel_table(
+    db: SqliteDb,
+    name: string,
+    cols: ReadonlyArray<RelCol>,
+    pk: ReadonlyArray<string>,
+  ): Promise<void>;
+  drop_rel_table(db: SqliteDb, name: string): Promise<void>;
+}
+
+// ---- ingest (src/engine/ingest.ts) -----------------------------------------
+
+/** The load path: a JSONL stream into both planes, batched. Takes BOTH stores, since a load
+ *  writes spine rows through `IStore` and reconcile cells through `IRelStore`. */
+export type IngestJsonl = (
+  store: IStore,
+  rels: IRelStore,
+  lines: AsyncIterable<string>,
+  rev: number,
+) => Promise<IngestReport>;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Static-side proof helper.
 //
-// `implements` covers the instance side of a class and cannot see statics. Each
-// implementation file exports one `AssertTrue<...>` alias per class instead, so
-// a factory signature that drifts from this header fails the typecheck rather
-// than going quietly out of date. The `false` branch is what makes it bite:
-// `never extends true` is true, so a `never` branch would prove nothing.
+// `implements` covers the instance side of a class and cannot see statics, and
+// nothing at all binds a free function to a declared type. Each implementation
+// file exports one `AssertTrue<...>` alias per class and per surface above, so a
+// signature that drifts from this header fails the typecheck rather than going
+// quietly out of date. The `false` branch is what makes it bite: `never extends
+// true` is true, so a `never` branch would prove nothing.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type AssertTrue<Holds extends true> = Holds;

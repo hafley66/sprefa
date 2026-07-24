@@ -274,7 +274,8 @@ export type DeltaRow = import("./src/0_types.ts").DeltaRow;
 export type EdbBatch = import("./src/0_types.ts").EdbBatch;
 export type TickReport = import("./src/0_types.ts").TickReport;
 export type DeltaEvent = import("./src/0_types.ts").DeltaEvent;
-export type DlRuntime = import("./src/0_types.ts").DlRuntime;
+export type IDlRuntime = import("./src/0_types.ts").IDlRuntime;
+export type IHostRunner = import("./src/0_types.ts").IHostRunner;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // M3 · ingest (src/4_ingest.ts) — F2 pin; types live in src/0_types.ts.

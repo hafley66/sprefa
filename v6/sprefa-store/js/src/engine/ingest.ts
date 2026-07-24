@@ -78,7 +78,14 @@
  *    value without reaching into this file's internals.
  */
 
-import type { IRelStore, IStore } from "./types.ts";
+import type {
+  AssertTrue,
+  FactLine as FactLineShape,
+  IngestJsonl,
+  IngestReport as IngestReportShape,
+  IRelStore,
+  IStore,
+} from "./types.ts";
 import { key as cascade_key, KEY_STRIDE } from "./lib.ts";
 import { stmt_counter } from "./engine.ts";
 import { mix } from "./oracle.ts";
@@ -86,18 +93,10 @@ import { rels as rel_tables } from "./spine.ts";
 type RelCol = rel_tables.RelCol;
 
 // ---- the candidate FactLine union (contract, verbatim) ----------------------------------
-export type FactLine =
-  | { t: "str"; id: number; s: string }
-  | { t: "file"; hash: string; size: number; lines: number }
-  | { t: "node"; family: number; file: number; start: number; len: number; kind: number; name: number | null }
-  | { t: "edge"; family: number; src: number; dst: number; kind: number }
-  | { t: "rel"; name: string; row: readonly unknown[] };
-
-export interface IngestReport {
-  lines: number;
-  stmts: number;
-  changed: [number, number][];
-}
+/** Both declared in ./types.ts (the header); aliased here so every existing
+ *  `from "./ingest.ts"` importer keeps working (v6/dl imports FactLine by that path). */
+export type FactLine = FactLineShape;
+export type IngestReport = IngestReportShape;
 
 /** Rows per batched SELECT/INSERT; keeps bound-param counts and IN-list sizes small. */
 const CHUNK_ROWS = 100;
@@ -529,3 +528,6 @@ export async function ingestJsonl(
     changed: changed_list,
   };
 }
+
+// ---- dataflow proof (./types.ts) --------------------------------------------
+export type IngestJsonlHolds = AssertTrue<typeof ingestJsonl extends IngestJsonl ? true : false>;

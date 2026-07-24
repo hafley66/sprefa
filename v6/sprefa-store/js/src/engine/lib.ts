@@ -24,9 +24,11 @@ import type {
   IRelStoreStatics,
   IStore,
   IStoreStatics,
+  OpenDb,
   NodeRow,
   SpanRow,
   SqliteDb,
+  Stamp,
 } from "./types.ts";
 
 /** Declared in ./types.ts (the header). Re-exported so every existing
@@ -226,6 +228,10 @@ export type GraphNsStaticsHold = AssertTrue<typeof relstore.GraphNs extends IGra
 export type RelStoreStaticsHold = AssertTrue<typeof relstore.RelStore extends IRelStoreStatics ? true : false>;
 export type InternerStaticsHold = AssertTrue<typeof strings.Interner extends IInternerStatics ? true : false>;
 export type StoreStaticsHold = AssertTrue<typeof Store extends IStoreStatics ? true : false>;
+
+// ---- dataflow proofs (./types.ts) -------------------------------------------
+export type OpenDbHolds = AssertTrue<typeof open_db extends OpenDb ? true : false>;
+export type StampHolds = AssertTrue<typeof relstore.stamp extends Stamp ? true : false>;
 
 // ---- module-level re-exports (so `import { GraphNs, RelStore, stamp } from "./lib.ts"` works) ----
 export const GraphNs = relstore.GraphNs;
