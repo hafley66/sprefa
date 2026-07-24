@@ -80,6 +80,8 @@ export interface LoadDiag {
     | "arity-mismatch"
     | "minmax-frontier"      // Key parsed; Min/Max parsed but rejected this slice
     | "mutation-frontier"    // name!(...) parsed but rejected this slice
+    | "named-arg"            // kwarg law violation: positional after named, duplicate
+                             // name, name+position slot collision, unknown column name
     | "non-stratifiable"
     | "parse";
   readonly message: string;
@@ -111,6 +113,18 @@ export type BridgeResult = BridgeOk | BridgeErr;
  *  `file(path)`/`span_line(...)`/`diag(...)` refs don't raise unknown-rel. A builtin
  *  headed by a program rule becomes IDB (derived); otherwise it stays EDB. */
 export type Bridge = (dlText: string, builtinRels: readonly RelDecl[]) => BridgeResult;
+
+/** OWNER SCOPE CHANGE 2026-07-24 (named args INTO M1, out of frontier). Law:
+ *  `rel(col: term, ...)` legal in body atoms and heads; named args resolve to
+ *  positional slots at load (v5 semantics, ~1727 uses). Mixing: positional first,
+ *  named after, NO positional after a named; duplicate name, name+position slot
+ *  collision, or unknown column name -> LoadDiag "named-arg". Partial heads: an
+ *  atom's/head's unfilled slots are wild in bodies; a diag head's unfilled slots
+ *  take the DiagHeadDefaultLaw below; any other head's unfilled slot is a binding
+ *  error. Grammar constraint (forward-compat): the `ident: term` production is ONE
+ *  shared rule named `Member`, written to be reused verbatim by the future JSON5
+ *  object-literal member rule (DECISIONS "JSON5 shapes"). */
+export type NamedArgLaw = "positional-first, named-after, resolve-to-slots-at-load, Member production shared";
 
 /** ORCHESTRATOR PIN 2026-07-24 — diag head-default law (bridge rewrite, task 5.1
  *  "pick in-code" resolved): when a diag-head rule leaves a head var unbound, the
