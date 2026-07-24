@@ -7,21 +7,15 @@
  */
 
 import { reach } from "./engine.ts";
-import type {
-  AssertTrue,
-  GraphNs,
-  SqliteDb,
-  SqliteReachStatics,
-  SqliteReach as SqliteReachContract,
-} from "./types.ts";
+import type { AssertTrue, IGraphNs, ISqliteReach, ISqliteReachStatics, SqliteDb } from "./types.ts";
 
 /**
  * SQLite reach engine over `cx_dep` (the on-disk covering set). The `Reach` trait interface
  * lives in tasks.ts (the parity ledger); SqliteReach satisfies it structurally. Its methods
  * are the on-disk `cx_dep` formulations in `engine.reach`, borrowing the connection + ns.
  */
-export class SqliteReach implements SqliteReachContract {
-  constructor(private readonly db: SqliteDb, private readonly ns: GraphNs) {}
+export class SqliteReach implements ISqliteReach {
+  constructor(private readonly db: SqliteDb, private readonly ns: IGraphNs) {}
 
   async reaches_from(start: number): Promise<number[]> {
     return reach.reaches_from(this.db, this.ns, start);
@@ -38,4 +32,4 @@ export class SqliteReach implements SqliteReachContract {
 }
 
 /** Static-side proof (./types.ts): `implements` covers the instance side only. */
-export type SqliteReachStaticsHold = AssertTrue<typeof SqliteReach extends SqliteReachStatics ? true : false>;
+export type SqliteReachStaticsHold = AssertTrue<typeof SqliteReach extends ISqliteReachStatics ? true : false>;

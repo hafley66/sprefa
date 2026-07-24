@@ -16,17 +16,17 @@ import { OPEN_PRAGMAS, create_all_tables } from "./spine.ts";
 import type {
   AssertTrue,
   EdgeRow,
-  GraphNsStatics,
-  GraphNs as GraphNsContract,
-  InternerStatics,
-  Interner as InternerContract,
+  IGraphNs,
+  IGraphNsStatics,
+  IInterner,
+  IInternerStatics,
+  IRelStore,
+  IRelStoreStatics,
+  IStore,
+  IStoreStatics,
   NodeRow,
-  RelStoreStatics,
-  RelStore as RelStoreContract,
   SpanRow,
   SqliteDb,
-  StoreStatics,
-  Store as StoreContract,
 } from "./types.ts";
 
 /** Declared in ./types.ts (the header). Re-exported so every existing
@@ -66,7 +66,7 @@ export import KEY_STRIDE = cascade.KEY_STRIDE;
  * temp. and CANNOT be qualified to an ATTACH'd schema, so prefix is the only namespace that
  * covers the working set.
  */
-export class GraphNs implements GraphNsContract {
+export class GraphNs implements IGraphNs {
   constructor(
     public readonly row: string,
     public readonly dep: string,
@@ -123,7 +123,7 @@ export async function stamp(db: SqliteDb, ns: GraphNs): Promise<void> {
 }
 
 /** A handle on one namespaced graph store: a connection + its GraphNs. */
-export class RelStore implements RelStoreContract {
+export class RelStore implements IRelStore {
   constructor(private readonly _db: SqliteDb, private readonly _ns: GraphNs) {}
 
   /** Open (or create) a store at `db` stamped for namespace `ns`. */
@@ -225,10 +225,10 @@ export class RelStore implements RelStoreContract {
 // `implements` above covers each class's INSTANCE side only. These four aliases
 // check the static side (constructors, factories) against the header, so a
 // signature that drifts fails the typecheck instead of going quietly stale.
-export type GraphNsStaticsHold = AssertTrue<typeof relstore.GraphNs extends GraphNsStatics ? true : false>;
-export type RelStoreStaticsHold = AssertTrue<typeof relstore.RelStore extends RelStoreStatics ? true : false>;
-export type InternerStaticsHold = AssertTrue<typeof strings.Interner extends InternerStatics ? true : false>;
-export type StoreStaticsHold = AssertTrue<typeof Store extends StoreStatics ? true : false>;
+export type GraphNsStaticsHold = AssertTrue<typeof relstore.GraphNs extends IGraphNsStatics ? true : false>;
+export type RelStoreStaticsHold = AssertTrue<typeof relstore.RelStore extends IRelStoreStatics ? true : false>;
+export type InternerStaticsHold = AssertTrue<typeof strings.Interner extends IInternerStatics ? true : false>;
+export type StoreStaticsHold = AssertTrue<typeof Store extends IStoreStatics ? true : false>;
 
 // ---- module-level re-exports (so `import { GraphNs, RelStore, stamp } from "./lib.ts"` works) ----
 export const GraphNs = relstore.GraphNs;
@@ -249,7 +249,7 @@ export namespace strings {
 //! the arena, never the source. New interns queue in `dirty` for ONE batched insert.
 
 /** The resident interner. Owns the string arena and assigns dense ids. */
-export class Interner implements InternerContract {
+export class Interner implements IInterner {
   private readonly rodeo = new Map<string, number>();
   private readonly by_id: string[] = [];
   private dirty: [number, string][] = [];
@@ -308,7 +308,7 @@ export class Interner implements InternerContract {
  * hydrating the resident interner from the durable mirror. Writes are batched; ids/rows
  * are returned to callers, never a SeaORM type.
  */
-export class Store implements StoreContract {
+export class Store implements IStore {
   private readonly interner: strings.Interner;
 
   private constructor(private readonly _db: SqliteDb) {

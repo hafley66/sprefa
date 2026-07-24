@@ -31,13 +31,7 @@
  */
 
 import type { InArgs } from "@libsql/client";
-import type {
-  AssertTrue,
-  GraphNs,
-  SqliteDb,
-  TemporalStoreStatics,
-  TemporalStore as TemporalStoreContract,
-} from "./types.ts";
+import type { AssertTrue, IGraphNs, ITemporalStore, ITemporalStoreStatics, SqliteDb } from "./types.ts";
 import process from "node:process";
 
 /** The connection type every helper takes. */
@@ -157,7 +151,7 @@ async function execBatch(db: Db, stmts: ReadonlyArray<string>): Promise<void> {
  * connection, so the churny working tables are TEMP (RAM-resident under temp_store=MEMORY,
  * never WAL-logged). Default ns ("") reproduces the live cx_ set byte-for-byte.
  */
-export async function create_schema(db: Db, ns: GraphNs): Promise<void> {
+export async function create_schema(db: Db, ns: IGraphNs): Promise<void> {
   // 256 MB page cache (cache_size negative = KiB) + 1 GB read mmap.
   await db.executeMultiple("PRAGMA cache_size=-262144; PRAGMA mmap_size=1073741824;");
   await db.executeMultiple(`CREATE TABLE ${ns.row} (
@@ -185,7 +179,7 @@ export async function create_schema(db: Db, ns: GraphNs): Promise<void> {
 /** Batch-insert rows `(tag, id, weight)`. One batch = one atomic write for the load. */
 export async function insert_rows(
   db: Db,
-  ns: GraphNs,
+  ns: IGraphNs,
   rows: ReadonlyArray<readonly [number, number, number]>,
 ): Promise<void> {
   const stmts: string[] = [];
@@ -200,7 +194,7 @@ export async function insert_rows(
 /** Batch-insert dependency edges `(parent_tag, parent_id, child_tag, child_id)`. */
 export async function insert_deps(
   db: Db,
-  ns: GraphNs,
+  ns: IGraphNs,
   edges: ReadonlyArray<readonly [number, number, number, number]>,
 ): Promise<void> {
   const stmts: string[] = [];
@@ -218,7 +212,7 @@ export async function insert_deps(
  */
 export async function retract(
   db: Db,
-  ns: GraphNs,
+  ns: IGraphNs,
   seeds: ReadonlyArray<readonly [number, number]>,
 ): Promise<number> {
   return with_txn(db, () => retract_body(db, ns, seeds));
@@ -226,7 +220,7 @@ export async function retract(
 
 async function retract_body(
   db: Db,
-  ns: GraphNs,
+  ns: IGraphNs,
   seeds: ReadonlyArray<readonly [number, number]>,
 ): Promise<number> {
   await exec(db, `DELETE FROM ${ns.frontier}`);
@@ -287,7 +281,7 @@ async function retract_body(
 /** Cycle-correct two-pass retraction (over-delete the cone, then rederive survivors). */
 export async function retract_scc(
   db: Db,
-  ns: GraphNs,
+  ns: IGraphNs,
   seeds: ReadonlyArray<readonly [number, number]>,
 ): Promise<number> {
   return retract_scc_two_pass(db, ns, seeds);
@@ -295,7 +289,7 @@ export async function retract_scc(
 
 async function retract_scc_two_pass(
   db: Db,
-  ns: GraphNs,
+  ns: IGraphNs,
   seeds: ReadonlyArray<readonly [number, number]>,
 ): Promise<number> {
   return with_txn(db, () => retract_scc_two_pass_body(db, ns, seeds));
@@ -303,7 +297,7 @@ async function retract_scc_two_pass(
 
 async function retract_scc_two_pass_body(
   db: Db,
-  ns: GraphNs,
+  ns: IGraphNs,
   seeds: ReadonlyArray<readonly [number, number]>,
 ): Promise<number> {
   const seed_vals = seeds.map(([t, id]) => key(t, id).toString()).join(",");
@@ -382,7 +376,7 @@ async function retract_scc_two_pass_body(
  */
 export async function assert(
   db: Db,
-  ns: GraphNs,
+  ns: IGraphNs,
   seeds: ReadonlyArray<readonly [number, number]>,
 ): Promise<number> {
   return with_txn(db, () => assert_body(db, ns, seeds));
@@ -390,7 +384,7 @@ export async function assert(
 
 async function assert_body(
   db: Db,
-  ns: GraphNs,
+  ns: IGraphNs,
   seeds: ReadonlyArray<readonly [number, number]>,
 ): Promise<number> {
   await exec(db, `DELETE FROM ${ns.frontier}`);
@@ -426,7 +420,7 @@ async function assert_body(
  */
 export async function retract_dred(
   db: Db,
-  ns: GraphNs,
+  ns: IGraphNs,
   seeds: ReadonlyArray<readonly [number, number]>,
 ): Promise<number> {
   return with_txn(db, () => retract_dred_body(db, ns, seeds));
@@ -434,7 +428,7 @@ export async function retract_dred(
 
 async function retract_dred_body(
   db: Db,
-  ns: GraphNs,
+  ns: IGraphNs,
   seeds: ReadonlyArray<readonly [number, number]>,
 ): Promise<number> {
   await exec(db, `DELETE FROM ${ns.frontier}`);
@@ -507,7 +501,7 @@ async function retract_dred_body(
  */
 export async function retract_dred_cte(
   db: Db,
-  ns: GraphNs,
+  ns: IGraphNs,
   seeds: ReadonlyArray<readonly [number, number]>,
 ): Promise<number> {
   const seed_in = `(${seeds.map(([t, id]) => key(t, id).toString()).join(",")})`;
@@ -555,7 +549,7 @@ export namespace reach {
 //! MUST agree with it byte-for-byte.
 
 /** The recursive-closure CTE over the ns's dep table. */
-function reach_cte(ns: GraphNs): string {
+function reach_cte(ns: IGraphNs): string {
   return `WITH RECURSIVE reach(src,dst) AS (\
         SELECT parent_key,child_key FROM ${ns.dep} \
         UNION \
@@ -572,7 +566,7 @@ export interface Condensed {
 }
 
 /** Forward transitive closure from `start` (strict; includes start iff its SCC is cyclic). */
-export async function reaches_from(db: Db, ns: GraphNs, start: number): Promise<number[]> {
+export async function reaches_from(db: Db, ns: IGraphNs, start: number): Promise<number[]> {
   const sql = `WITH RECURSIVE reach(key) AS (\
             SELECT child_key FROM ${ns.dep} WHERE parent_key = ${start} \
             UNION \
@@ -584,7 +578,7 @@ export async function reaches_from(db: Db, ns: GraphNs, start: number): Promise<
 }
 
 /** Reverse transitive closure into `target` (rides ix_*_dep_child). */
-export async function reached_by(db: Db, ns: GraphNs, target: number): Promise<number[]> {
+export async function reached_by(db: Db, ns: IGraphNs, target: number): Promise<number[]> {
   const sql = `WITH RECURSIVE reach(key) AS (\
             SELECT parent_key FROM ${ns.dep} WHERE child_key = ${target} \
             UNION \
@@ -600,7 +594,7 @@ let walkTableId = 0;
 /** Multi-source min-depth BFS. halt stops expansion AT a halt node; depth_cap bounds it. */
 export async function multi_source_walk(
   db: Db,
-  ns: GraphNs,
+  ns: IGraphNs,
   starts: ReadonlyArray<readonly [number, number, number]>,
   halt: ReadonlyArray<number> | null,
   depth_cap: number | null,
@@ -654,7 +648,7 @@ export async function multi_source_walk(
 /** halt-only, depth-agnostic special case of `multi_source_walk`. */
 export async function multi_source_halt_bfs(
   db: Db,
-  ns: GraphNs,
+  ns: IGraphNs,
   starts: ReadonlyArray<readonly [number, number]>,
   halt: ReadonlyArray<number>,
 ): Promise<[number, number][]> {
@@ -669,7 +663,7 @@ export async function multi_source_halt_bfs(
  * name, so the computed column carries an explicit `AS repr` alias. The SQL semantics
  * (GROUP BY/ORDER BY on node.key, the COALESCE expression) are unchanged.
  */
-export async function scc_labels(db: Db, ns: GraphNs): Promise<[number, number][]> {
+export async function scc_labels(db: Db, ns: IGraphNs): Promise<[number, number][]> {
   const sql = `${reach_cte(ns)} \
          SELECT node.key AS key, COALESCE(MIN(CASE WHEN backward.src IS NOT NULL THEN forward.dst END), node.key) AS repr \
          FROM ${ns.row} node \
@@ -682,7 +676,7 @@ export async function scc_labels(db: Db, ns: GraphNs): Promise<[number, number][
 }
 
 /** Condensation derived from `scc_labels` + cx_dep group-bys. */
-export async function build_condensed(db: Db, ns: GraphNs): Promise<Condensed> {
+export async function build_condensed(db: Db, ns: IGraphNs): Promise<Condensed> {
   const comp_of = await scc_labels(db, ns);
   const repr_by_node = new Map<number, number>();
   for (const [node, repr] of comp_of) repr_by_node.set(node, repr);
@@ -728,7 +722,7 @@ export async function build_condensed(db: Db, ns: GraphNs): Promise<Condensed> {
  * node-pair table. i128 in Rust -> bigint here. The bitset is u64 words in bigint
  * (JS number `<<` is 32-bit; bigint `<<` carries the full 64-bit word).
  */
-export async function count_pairs(db: Db, ns: GraphNs): Promise<bigint> {
+export async function count_pairs(db: Db, ns: IGraphNs): Promise<bigint> {
   const cond = await build_condensed(db, ns);
 
   const reprs = new Set<number>();
@@ -848,7 +842,7 @@ async function query_bigints(db: Db, sql: string): Promise<bigint[]> {
   return res.rows.map((r) => r[0] as bigint);
 }
 
-export async function create_schema(db: Db, ns: GraphNs): Promise<void> {
+export async function create_schema(db: Db, ns: IGraphNs): Promise<void> {
   await db.executeMultiple(`CREATE TABLE ${ns.memo} (
             id          INTEGER PRIMARY KEY,
             digest      INTEGER NOT NULL,
@@ -869,7 +863,7 @@ export async function create_schema(db: Db, ns: GraphNs): Promise<void> {
  */
 export async function seed(
   db: Db,
-  ns: GraphNs,
+  ns: IGraphNs,
   id: number,
   digest: bigint,
   deps: ReadonlyArray<number>,
@@ -892,7 +886,7 @@ async function execBatch(db: Db, stmts: ReadonlyArray<string>): Promise<void> {
 }
 
 /** An input's digest moved at `rev`: bump its changed_at so the CTE sees it stale. */
-export async function mark_changed(db: Db, ns: GraphNs, ids: ReadonlyArray<number>, rev: number): Promise<void> {
+export async function mark_changed(db: Db, ns: IGraphNs, ids: ReadonlyArray<number>, rev: number): Promise<void> {
   const in_list = ids.map((i) => i.toString()).join(",");
   await exec(db, `UPDATE ${ns.memo} SET changed_at=${rev} WHERE id IN (${in_list})`);
 }
@@ -903,7 +897,7 @@ export async function mark_changed(db: Db, ns: GraphNs, ids: ReadonlyArray<numbe
  * the full closure; the lazy step gives early cutoff. (Low-level query; the parity-proven
  * driver is `propagate`.)
  */
-export async function dirty(db: Db, ns: GraphNs): Promise<number[]> {
+export async function dirty(db: Db, ns: IGraphNs): Promise<number[]> {
   return query_ids(
     db,
     `SELECT DISTINCT dep.reader
@@ -920,7 +914,7 @@ export async function dirty(db: Db, ns: GraphNs): Promise<number[]> {
  * moved, changed_at = rev (readers stay dirty). If not, changed_at is untouched (EARLY
  * CUTOFF). verified_at = rev either way.
  */
-export async function verify(db: Db, ns: GraphNs, id: number, new_digest: bigint, rev: number): Promise<boolean> {
+export async function verify(db: Db, ns: IGraphNs, id: number, new_digest: bigint, rev: number): Promise<boolean> {
   stmt_counter.incr();
   const res = await db.execute(`SELECT digest FROM ${ns.memo} WHERE id=${id}`);
   const old_row = res.rows[0] as { digest: bigint } | undefined;
@@ -991,7 +985,7 @@ class AscendingIdQueue {
 
 export async function propagate(
   db: Db,
-  ns: GraphNs,
+  ns: IGraphNs,
   seeds: ReadonlyArray<number>,
   rev: number,
   recompute: (id: number, dep_digests: bigint[]) => bigint,
@@ -1018,7 +1012,7 @@ export async function propagate(
 }
 
 /** XOR of every durable rx_memo digest — proves the on-disk memo is the truth. */
-export async function answer(db: Db, ns: GraphNs): Promise<bigint> {
+export async function answer(db: Db, ns: IGraphNs): Promise<bigint> {
   const digests = await query_bigints(db, `SELECT digest FROM ${ns.memo}`);
   let acc = 0n;
   for (const d of digests) acc = BigInt.asUintN(64, acc ^ BigInt.asUintN(64, d));
@@ -1058,7 +1052,7 @@ function delta_json(deltas: ReadonlyArray<readonly [number, number]>): string {
 }
 
 /** A bitemporal fact store over one connection. */
-export class TemporalStore implements TemporalStoreContract {
+export class TemporalStore implements ITemporalStore {
   private revision = 0;
 
   private constructor(private readonly db: Db) {}
@@ -1123,5 +1117,5 @@ export class TemporalStore implements TemporalStoreContract {
 }
 
 /** Static-side proof (./types.ts): `implements` covers the instance side only. */
-export type TemporalStoreStaticsHold = AssertTrue<typeof TemporalStore extends TemporalStoreStatics ? true : false>;
+export type TemporalStoreStaticsHold = AssertTrue<typeof TemporalStore extends ITemporalStoreStatics ? true : false>;
 }

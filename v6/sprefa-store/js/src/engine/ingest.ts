@@ -32,7 +32,7 @@
  *    libsql local adapter's `executeMultiple` (`node_modules/@libsql/client/lib-esm/
  *    sqlite3.js:161`) always returns `undefined` — no `rowsAffected`, no `RETURNING` rows —
  *    so there is no way to learn WHICH of a chunk's candidate rows were newly inserted from
- *    the write call itself when using the existing `Store.*_insert_batch` helpers (they all
+ *    the write call itself when using the existing `IStore.*_insert_batch` helpers (they all
  *    go through `executeMultiple`). Verified empirically this session (a plain `db.execute`
  *    with `RETURNING` DOES report the new rows precisely — `res.rows` gave exactly the
  *    non-conflicting rows in both a files-shaped and a node-shaped probe table — but the
@@ -63,7 +63,7 @@
  * 5. Brand-new cells are SEEDED (`reconcile.seed`-shaped: a fresh `rx_memo` row, digest from
  *    content, no deps — a base fact reads nothing), not merely `mark_changed`-ed: a cell
  *    with no prior memo row is invisible to `dirty()` even after `mark_changed` (its
- *    `changed_at` UPDATE matches zero rows — there is nothing to update). `RelStore` only
+ *    `changed_at` UPDATE matches zero rows — there is nothing to update). `IRelStore` only
  *    exposes `seed_memo` per single (rel,row) — calling it once per new cell would be a
  *    per-row write — so this file writes its own batched multi-row `INSERT INTO rx_memo` via
  *    `rels.conn()`/`rels.ns()` (both public), mirroring `reconcile.seed`'s own statement
@@ -78,7 +78,7 @@
  *    value without reaching into this file's internals.
  */
 
-import type { RelStore, Store } from "./types.ts";
+import type { IRelStore, IStore } from "./types.ts";
 import { key as cascade_key, KEY_STRIDE } from "./lib.ts";
 import { stmt_counter } from "./engine.ts";
 import { mix } from "./oracle.ts";
@@ -238,7 +238,7 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
  *  table); a string is "new this call" iff its assigned id is >= the count that existed
  *  before this call started (ids are dense/monotonic — see Interner in lib.ts). */
 async function resolve_strs(
-  store: Store,
+  store: IStore,
   strs: { id: number; s: string }[],
   changed: Map<number, [number, number]>,
 ): Promise<{ local_to_string_id: Map<number, number> }> {
@@ -259,7 +259,7 @@ async function resolve_strs(
 }
 
 async function resolve_files(
-  store: Store,
+  store: IStore,
   files: ParsedFile[],
   changed: Map<number, [number, number]>,
 ): Promise<{ local_to_file_id: Map<number, number> }> {
@@ -283,7 +283,7 @@ async function resolve_files(
 }
 
 async function resolve_nodes(
-  store: Store,
+  store: IStore,
   nodes: ParsedNode[],
   local_to_file_id: Map<number, number>,
   local_to_string_id: Map<number, number>,
@@ -355,7 +355,7 @@ async function resolve_nodes(
 }
 
 async function resolve_edges(
-  store: Store,
+  store: IStore,
   edges: ParsedEdge[],
   local_to_node_id: Map<number, number>,
   changed: Map<number, [number, number]>,
@@ -422,7 +422,7 @@ function sql_literal(v: unknown): string {
   return `'${String(v).replace(/'/g, "''")}'`;
 }
 
-async function resolve_rels(store: Store, rel_lines: ParsedRel[], changed: Map<number, [number, number]>): Promise<void> {
+async function resolve_rels(store: IStore, rel_lines: ParsedRel[], changed: Map<number, [number, number]>): Promise<void> {
   const db = store.db();
   const by_name = new Map<string, readonly unknown[][]>();
   for (const r of rel_lines) {
@@ -467,8 +467,8 @@ async function resolve_rels(store: Store, rel_lines: ParsedRel[], changed: Map<n
 
 /** Batched multi-row `rx_memo` seed for brand-new cells (design decision 5). Mirrors
  *  `reconcile.seed`'s statement shape but covers the WHOLE new-cell set in CHUNK_ROWS
- *  batches instead of one `RelStore.seed_memo` call per cell (that would be per-row). */
-async function seed_new_cells(rels: RelStore, cells: readonly [number, number][], rev: number): Promise<void> {
+ *  batches instead of one `IRelStore.seed_memo` call per cell (that would be per-row). */
+async function seed_new_cells(rels: IRelStore, cells: readonly [number, number][], rev: number): Promise<void> {
   const ns = rels.ns();
   for (const chunk of chunks(cells, CHUNK_ROWS)) {
     if (chunk.length === 0) continue;
@@ -496,8 +496,8 @@ async function seed_new_cells(rels: RelStore, cells: readonly [number, number][]
  *          genuinely-revised existing one).
  */
 export async function ingestJsonl(
-  store: Store,
-  rels: RelStore,
+  store: IStore,
+  rels: IRelStore,
   lines: AsyncIterable<string>,
   rev: number,
 ): Promise<IngestReport> {

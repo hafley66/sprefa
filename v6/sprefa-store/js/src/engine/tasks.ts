@@ -15,7 +15,7 @@
 
 import { SqliteReach } from "./algo.ts";
 import { cascade, reach, reconcile } from "./engine.ts";
-import type { GraphNs, RelStore } from "./types.ts";
+import type { IGraphNs, IRelStore } from "./types.ts";
 
 // =============================================================================
 // Trait A · Reach — read-only graph queries over cx_dep (prune = reached)
@@ -92,8 +92,8 @@ export class Evidence {
 
 /** The remaining plan, as a trait. A method's ARGS are body predicates; RETURN = head. */
 export interface GraphStorePlan {
-  /** thread GraphNs through cascade + reconcile + reach (Epic 2). */
-  thread_namespace(ns: GraphNs): Namespaced;
+  /** thread IGraphNs through cascade + reconcile + reach (Epic 2). */
+  thread_namespace(ns: IGraphNs): Namespaced;
   /** two stores in one db retract without cross-talk (Epic 3). */
   two_stores_independent(proof: Namespaced): Independent;
   /** does per-tuple reconcile beat per-rel on the split shape? the real lever. */
@@ -162,11 +162,11 @@ export interface GraphStorePlan {
 /**
  * The wired impl: every method delegates to the REAL engine functions in engine/algo/lib,
  * exactly as the shipped Rust code defines them (the Rust `todo!()` bodies are placeholders
- * for these). Holds one RelStore; Reach rides a SqliteReach over its connection + namespace.
+ * for these). Holds one IRelStore; Reach rides a SqliteReach over its connection + namespace.
  */
 export class Tasks implements Reach, Cascade, Reconcile, GraphStore {
   private readonly reacher: SqliteReach;
-  constructor(private readonly store: RelStore) {
+  constructor(private readonly store: IRelStore) {
     this.reacher = new SqliteReach(store.conn(), store.ns());
   }
 
@@ -238,7 +238,7 @@ export class Tasks implements Reach, Cascade, Reconcile, GraphStore {
 
   // ---- GraphStore (aspirational API; the traversal methods are real) ----
   create(_node_value_cols: ReadonlyArray<string>, _per_tuple: boolean): void {
-    // The split two-plane schema is stamped by `stamp` (RelStore.attach). A generic node
+    // The split two-plane schema is stamped by `stamp` (IRelStore.attach). A generic node
     // store is the frontier in GraphStorePlan; no-op here pending that measurement.
   }
   async upsert_node(key: number, values: ReadonlyArray<number>): Promise<void> {

@@ -64,7 +64,7 @@ export interface SpanRow {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GraphNs — the table-name namespace for one graph store (src/engine/lib.ts).
+// IGraphNs — the table-name namespace for one graph store (src/engine/lib.ts).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -76,7 +76,7 @@ export interface SpanRow {
  * temp. and CANNOT be qualified to an ATTACH'd schema, so prefix is the only namespace that
  * covers the working set.
  */
-export interface GraphNs {
+export interface IGraphNs {
   readonly row: string;
   readonly dep: string;
   readonly memo: string;
@@ -94,7 +94,7 @@ export interface GraphNs {
 }
 
 /** The static side of the GraphNs class: its constructor and two factories. */
-export interface GraphNsStatics {
+export interface IGraphNsStatics {
   new (
     row: string,
     dep: string,
@@ -110,26 +110,26 @@ export interface GraphNsStatics {
     scc_frontier: string,
     scc_next: string,
     scc_live: string,
-  ): GraphNs;
+  ): IGraphNs;
   /** `prefix` is prepended verbatim to every base name; pass `"b_"` for a namespace, `""` for
    *  default. Quoted because an unquoted `new(...)` in an interface is a construct signature,
    *  and this one is a static method that happens to be spelled `new`. */
-  "new"(prefix: string): GraphNs;
+  "new"(prefix: string): IGraphNs;
   /** Empty prefix = the live cx_/rx_ set (the status quo). */
-  default(): GraphNs;
+  default(): IGraphNs;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RelStore — a handle on one namespaced graph store (src/engine/lib.ts).
+// IRelStore — a handle on one namespaced graph store (src/engine/lib.ts).
 // Two planes, both generic over dense `(rel, row)` keys: FACT (Z-set) and
 // CONTROL (salsa-in-sql). Satisfies the Cascade and Reconcile parity traits in
 // tasks.ts structurally; this interface is the concrete class surface.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface RelStore {
+export interface IRelStore {
   conn(): SqliteDb;
   /** The namespace this store's `cx_*`/`rx_*` tables live under. */
-  ns(): GraphNs;
+  ns(): IGraphNs;
 
   // ---- FACT plane (generic Z-set over (rel,row)) ----------------------------
 
@@ -171,16 +171,16 @@ export interface RelStore {
 }
 
 /** The static side of the RelStore class: its constructor and two open paths. */
-export interface RelStoreStatics {
-  new (db: SqliteDb, ns: GraphNs): RelStore;
+export interface IRelStoreStatics {
+  new (db: SqliteDb, ns: IGraphNs): IRelStore;
   /** Open (or create) a store at `db` stamped for namespace `ns`. */
-  attach_with(db: SqliteDb, ns: GraphNs): Promise<RelStore>;
+  attach_with(db: SqliteDb, ns: IGraphNs): Promise<IRelStore>;
   /** Open (or create) a store at `db` with the default namespace (cx_ + rx_). */
-  attach(db: SqliteDb): Promise<RelStore>;
+  attach(db: SqliteDb): Promise<IRelStore>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Interner — resident string interning (src/engine/lib.ts, namespace strings).
+// IInterner — resident string interning (src/engine/lib.ts, namespace strings).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -188,7 +188,7 @@ export interface RelStoreStatics {
  * dense index (0-based, contiguous). The `strings` table is the durable MIRROR of the
  * arena, never the source. New interns queue for ONE batched insert.
  */
-export interface Interner {
+export interface IInterner {
   /** Intern `text`, returning its dense `string_id`. Queues `(id, text)` first time seen. */
   intern(text: string): number;
   /** `string_id -> text`, straight from the resident arena, no DB round-trip. */
@@ -205,12 +205,12 @@ export interface Interner {
 }
 
 /** The static side of the Interner class. */
-export interface InternerStatics {
-  new (): Interner;
+export interface IInternerStatics {
+  new (): IInterner;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Store — the spine store, 9 tables (src/engine/lib.ts).
+// IStore — the spine store, 9 tables (src/engine/lib.ts).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -218,7 +218,7 @@ export interface InternerStatics {
  * hydrating the resident interner from the durable mirror. Writes are batched; ids/rows
  * are returned to callers, never a SeaORM type.
  */
-export interface Store {
+export interface IStore {
   db(): SqliteDb;
 
   // ---- strings: resident intern + batched durable flush --------------------
@@ -258,13 +258,13 @@ export interface Store {
 }
 
 /** The static side of the Store class. Its constructor is private: `open` is the only way in. */
-export interface StoreStatics {
+export interface IStoreStatics {
   /** Open a store, apply pragmas, create the spine, hydrate the interner mirror. */
-  open(db: SqliteDb): Promise<Store>;
+  open(db: SqliteDb): Promise<IStore>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SqliteReach — reachability over cx_dep (src/engine/algo.ts).
+// ISqliteReach — reachability over cx_dep (src/engine/algo.ts).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -273,7 +273,7 @@ export interface StoreStatics {
  * (`Reach`) lives in tasks.ts and is wider than this class: the four methods below are the
  * subset SqliteReach implements directly.
  */
-export interface SqliteReach {
+export interface ISqliteReach {
   reaches_from(start: number): Promise<number[]>;
   reached_by(target: number): Promise<number[]>;
   scc_labels(): Promise<[number, number][]>;
@@ -281,12 +281,12 @@ export interface SqliteReach {
 }
 
 /** The static side of the SqliteReach class. */
-export interface SqliteReachStatics {
-  new (db: SqliteDb, ns: GraphNs): SqliteReach;
+export interface ISqliteReachStatics {
+  new (db: SqliteDb, ns: IGraphNs): ISqliteReach;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TemporalStore — bitemporal fact store (src/engine/engine.ts, namespace temporal).
+// ITemporalStore — bitemporal fact store (src/engine/engine.ts, namespace temporal).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -294,7 +294,7 @@ export interface SqliteReachStatics {
  * ROWID with a partial index over the live set; `commit(deltas)` is one batched atomic
  * write. Role: the versioned base layer UNDER the graph, with no parity trait.
  */
-export interface TemporalStore {
+export interface ITemporalStore {
   commit(deltas: ReadonlyArray<readonly [number, number]>): Promise<void>;
   live(): Promise<number>;
   total_rows(): Promise<number>;
@@ -303,8 +303,8 @@ export interface TemporalStore {
 }
 
 /** The static side of the TemporalStore class. Its constructor is private. */
-export interface TemporalStoreStatics {
-  attach(db: SqliteDb): Promise<TemporalStore>;
+export interface ITemporalStoreStatics {
+  attach(db: SqliteDb): Promise<ITemporalStore>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
