@@ -129,6 +129,43 @@ export type BridgeResult = import("./src/0_types.ts").BridgeResult;
  *  headed by a program rule becomes IDB (derived); otherwise it stays EDB. */
 export type Bridge = import("./src/0_types.ts").Bridge;
 
+/** OWNER ESCALATION 2026-07-24 PM (M9, SEVERITY MAX, engine-core storage): the dl
+ *  rel plane shipped strings-as-keys with full-tuple PKs on rowid tables (measured:
+ *  69-byte absolute-path TEXT per rel_edge row, index bytes 48% of file at 41 nodes,
+ *  untyped columns) — v5's amplification disease (57%-index, 39x db/corpus) rebuilt
+ *  beside its cure. The storage plane IS the engine core. Ruled design:
+ *  1. Ride the store's machinery (interning/surrogate ids; spine-orm law: a table
+ *     holds the id, NEVER the text beside it — v6/plans/2026-07-21-spine-orm.md).
+ *  2. Dictionary string_ids for every text column (path first); span dictionary
+ *     spans(span_id, path_id, start, end) so edge/site/const/node store span-id
+ *     pairs, never path+offset composites.
+ *  3. WITHOUT ROWID wherever PK = full tuple; subset PKs where a subset key exists.
+ *  4. Paths stored DL_ROOT-relative (absolute never stored); the http layer resolves
+ *     back to absolute at the response boundary so the surface stays byte-identical;
+ *     diag_v5 emits the relative path and lsp.rs's cwd-join makes it absolute (LSP
+ *     runs with cwd = DL_ROOT).
+ *  5. Declared affinity (INTEGER/TEXT) on every column.
+ *  6. Surface text resolves through generated read views; /idb, /query, diag_v5
+ *     and all goldens byte-identical above the views.
+ *  7. Delta log keeps row_digest; rel name interned to rel_id (it is free with the
+ *     dictionary in place).
+ *  Gates: dbstat before/after on a scaled corpus (hundreds of .ts files), rel-plane
+ *  index bytes <= 15% of file, bytes/row per table, churn + store stress gun re-run,
+ *  commit p50/p95 re-measured (regression = receipts + escalate).
+ *  AMENDMENT (owner, same day, hard evidence): the runtime uses the store's rx
+ *  lowering but ONE engine function total (with_txn, 3_runtime.ts:60); ingest.ts is
+ *  imported for types only; the live db holds zero store tables. M3 silently dropped
+ *  the plan's "ingestJsonl stays the bulk path" and built a parallel string-keyed
+ *  ingest. M9 therefore WIRES THE ACTUAL STORE: Store/GraphNs attach; the spine
+ *  schema (surrogate ids + interning) is the fact plane; ingestJsonl or its
+ *  per-file-diff extension is the write path; dl's rel_* plane serves DERIVED and
+ *  host/scratch rels only, riding the same dictionary ids. A store seam that cannot
+ *  serve (per-file diff, retention hooks, line/col table) gets an ADDITIVE store
+ *  extension, never a re-implementation beside it; every extension recorded in the
+ *  final report, which also audits the M2/M3 divergence (prompt vs built vs review). */
+export type EngineStorageLaw =
+  "ids in tables, text at surface; WITHOUT ROWID full-tuple PKs; affinity declared; paths root-relative";
+
 /** OWNER ESCALATION 2026-07-24 PM (M8, identity-vs-witness): the effect cache was
  *  memoizing the ADDRESS without the VALUE WITNESS (digest = (host, template inputs)
  *  only), so sg?-over-file-content kept stale response rows after a file fix
