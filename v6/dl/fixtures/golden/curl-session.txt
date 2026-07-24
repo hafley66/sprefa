@@ -1,0 +1,147 @@
+=== POST /edb/program ===
+{
+  "loaded": true,
+  "minted": [
+    "__lit_0",
+    "__req_sg",
+    "__resp_sg",
+    "__lit_1",
+    "__lit_2",
+    "__lit_3",
+    "__lit_4"
+  ],
+  "rels": [
+    "console_hit",
+    "file",
+    "node",
+    "edge",
+    "sig",
+    "site",
+    "const",
+    "span_line",
+    "diag",
+    "__resp_sg",
+    "__req_sg",
+    "__lit_0",
+    "__lit_1",
+    "__lit_2",
+    "__lit_3",
+    "__lit_4"
+  ]
+}
+
+=== POST /edb/file_changed (1st: console.log present) ===
+{
+  "changed": [
+    [
+      "__req_sg",
+      1
+    ],
+    [
+      "const",
+      1
+    ],
+    [
+      "edge",
+      36
+    ],
+    [
+      "file",
+      1
+    ],
+    [
+      "node",
+      41
+    ],
+    [
+      "site",
+      1
+    ],
+    [
+      "span_line",
+      39
+    ]
+  ],
+  "tick": 1
+}
+
+=== GET /idb/diag (polled until non-empty) ===
+{
+  "rows": [
+    {
+      "code": "no-console",
+      "col": 2,
+      "end_col": 2,
+      "end_line": 3,
+      "hint": null,
+      "line": 3,
+      "msg": "console.log left in source",
+      "path": "TMPPATH/bad.ts",
+      "severity": "warn"
+    }
+  ]
+}
+
+=== POST /query before fix: ? console_hit(path, _, _, _). ===
+{
+  "rows": [
+    {
+      "end": 167,
+      "path": "TMPPATH/bad.ts",
+      "start": 147,
+      "text": "console.log(message)"
+    }
+  ]
+}
+
+=== POST /edb/file_changed (2nd: console.log removed) ===
+{
+  "changed": [
+    [
+      "diag",
+      -1
+    ],
+    [
+      "edge",
+      -10
+    ],
+    [
+      "node",
+      -10
+    ],
+    [
+      "site",
+      -1
+    ],
+    [
+      "span_line",
+      -8
+    ]
+  ],
+  "tick": 3
+}
+
+=== GET /idb/diag (polled until empty, after fix) ===
+{
+  "rows": []
+}
+
+=== POST /query after fix: ? console_hit(path, _, _, _). ===
+{
+  "rows": [
+    {
+      "end": 167,
+      "path": "TMPPATH/bad.ts",
+      "start": 147,
+      "text": "console.log(message)"
+    }
+  ]
+}
+
+=== GET /subscribe/diag (live capture, summarized -- exact framing/timing is not compared) ===
+diag retract event arrived over SSE: yes
+
+=== sqlite3 delta WHERE rel='diag' ORDER BY tick ===
+diag|2|1
+diag|3|-1
+
