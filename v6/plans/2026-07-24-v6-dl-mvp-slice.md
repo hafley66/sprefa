@@ -110,7 +110,7 @@ per-epic task lists below stay the detail record.
    3. ~~5.3 v5 lsp --diag-db mode~~ ✓ dl/m5-lsp f4fdddbe; persistent-connection data_version law; lsp_capture.mjs; dl binary built
    4. 5.4 retraction wiring golden — NOT STARTED (rides final integration: needs M3+M4+M6)
    5. ~~5.5 --check reader~~ ✓ check_diag.mjs exit 2/0/1, spawnSync deadlock trap doc'd
-7. **M6 · http — NOT STARTED** (dispatches after M3+M4 merge; then curl-session golden = the epic-of-epics gate)
+7. **M6 · http — IN FLIGHT** (worktree dl-m6-http): node:http router, SSE with teardown count, /query NULL-safe SELECT, curl-session.sh epic-of-epics golden (regenerable; re-pins after kwargs merge)
 8. **M1-kwargs · named args (owner scope change 2026-07-24) — IN FLIGHT** (worktree dl-m1-kwargs): `rel(col: term)` in bodies+heads, python mixing law, shared `Member` production (future JSON5 object-member twin), `#` comments, showcase fixture rewrite (sg-rail.dl = the one end-to-end artifact: retention rel(1) + kwargs + host + probe + wildcard + diag defaults), goldens re-pinned, store untouched
 9. **M7 · types header consolidation (owner directive, CLEANUP PHASE — runs only after everything above is green)** — NOT STARTED: one C-header-style `src/0_types.ts` (name chosen over `0.types.ts` to match the existing underscore numbering) holding ALL interfacing/impl-contract types (rel/retention/row/delta/tick, bridge shapes, host trait, diag, http surface); every src file imports types from it; tasks.d.ts recomposes to plan-ledger-only (EpicLedger + pins) referencing 0_types; its own reviewed package, all gates re-run after
 
