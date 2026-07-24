@@ -32,6 +32,9 @@ export interface EpicLedger {
   M2_tick_runtime: { done: false; evidence: "add/noop/remove golden: zero-delta noop + weight retract" };
   M3_ingest_diff: { done: false; evidence: "re-POST same file = zero deltas; edit = per-file retract+insert" };
   M4_hosts: { done: false; evidence: "sg? fires once per digest; builtin-vs-sh parity rows byte-equal" };
+  /** 5.3 DONE 2026-07-24 (dl/m5-lsp f4fdddbe, merged): --diag-db mode in src/lsp.rs,
+   *  persistent-connection data_version poll (per-connection pragma law), retraction =
+   *  empty publish; scripts/lsp_capture.mjs harness. 5.1/5.2/5.4/5.5 open. */
   M5_diag_lsp: { done: false; evidence: "curl transcript golden + LSP publish/clear pair + delta dump" };
   M6_http: { done: false; evidence: "tests/golden/curl-session.sh green against live server" };
 }
@@ -85,7 +88,7 @@ export interface BridgeOk {
   /** ORCHESTRATOR PIN 2026-07-24 (ast.ts HeadTerm has no literal form, and Compare
    *  filters without binding): a literal head/probe-input value (`"warn" = severity`
    *  with severity otherwise unbound; a Lit arg to a probe) is rewritten to a minted
-   *  single-row constant rel `__lit_<n>(value)` joined in the body. This map carries
+   *  single-row constant rel `__lit_<n>(value)` joined in the body. This map holds
    *  rel name -> its one row's value; the runtime seeds rel___lit_<n> at boot. Numbering
    *  is first-appearance order, so re-bridge is stable. */
   readonly literalSeeds: ReadonlyMap<string, Value>;

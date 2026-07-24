@@ -8,7 +8,7 @@
  *     |> map(equi-join + selection + projection)   // set-valued: the full Row[] per emission
  *     |> map(group-aggregate, when a head has Agg) // max/min/sum/count, group-by non-agg vars
  *
- * Recursive strata (SCC > 1 or a self-loop) lower when the in-memory backend can carry
+ * Recursive strata (SCC > 1 or a self-loop) lower when the in-memory backend can run
  * them: every member lazy IDB, no aggregates (non-monotone under recursion). The stratum
  * becomes ONE fixpoint pipe — combineLatest(external body rels) |> map(bottom-up naive
  * fixpoint over the stratum's rules) — and each member rel projects its set out of it.
@@ -28,7 +28,7 @@
  * external/member row set) — the safety check already ran.
  *
  * ── NOTES on the pinned ops ──────────────────────────────────────────────────────
- * combineLatest is used literally for joins. `map` carries equi-join + selection +
+ * combineLatest is used literally for joins. `map` holds equi-join + selection +
  * projection (and aggregation) because a rel emission is the FULL current row set
  * (set semantics): rxjs `filter`/`reduce`/`scan` operate at EMISSION granularity, but
  * selection and group-aggregation are ELEMENT-level transforms over the row set, so
@@ -79,7 +79,7 @@ export interface LoweredProgram {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// A binding: variable name -> value, produced by the equi-join. Carries every bound
+// A binding: variable name -> value, produced by the equi-join. Keeps every bound
 // variable so selection (Compare) and aggregation can read vars NOT projected to the head.
 // ─────────────────────────────────────────────────────────────────────────────
 type Binding = Map<string, unknown>;
