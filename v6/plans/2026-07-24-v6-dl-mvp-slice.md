@@ -117,13 +117,18 @@ per-epic task lists below stay the detail record.
    4. ~~4.4 builtinExtract exposure~~ ✓ 79 records for bad.ts as (path, record_json) rows
    5. ~~4.5 parity golden~~ ✓ byte-equal: builtinSg vs sh decl with jq reshaping in the template (sg-specific shape lives in the shell line, not the executor)
    6. M7 note: digest fold duplicated in 1_hosts.ts (numbering law vs 2_schema import) — consolidate at M7
-6. **M5 · diag + LSP — HALF DONE** (4 of 5 tasks; 25/25 dl tests on v11)
+6. **M5 · diag + LSP — DONE** (all 5 tasks; slice golden proven live 2026-07-24: delta diag/2/+1 -> diag/3/-1, /idb/diag [], LSP publish/clear pair pinned in fixtures/golden/lsp.publish-clear.jsonl)
    1. ~~5.1 diagDecl + head defaults~~ ✓ defaults in bridge (M1.4); canonical builtinDecls in 5_diag.ts (86b9101c)
    2. ~~5.2 diag_v5 view~~ ✓ DIAG_V5_VIEW_SQL -> boot extraDdl; NULL-severity COALESCE proven
    3. ~~5.3 v5 lsp --diag-db mode~~ ✓ dl/m5-lsp f4fdddbe; persistent-connection data_version law; lsp_capture.mjs; dl binary built
-   4. 5.4 retraction wiring golden — NOT STARTED (rides final integration: needs M3+M4+M6)
+   4. ~~5.4 retraction wiring golden~~ ✓ live: file fix -> ingest diff -> spine retract -> diag -1 through weights, LSP cleared; ZERO diag-specific code (the fork's first-retraction-instance claim, proven)
    5. ~~5.5 --check reader~~ ✓ check_diag.mjs exit 2/0/1, spawnSync deadlock trap doc'd
-7. **M6 · http — IN FLIGHT** (worktree dl-m6-http): node:http router, SSE with teardown count, /query NULL-safe SELECT, curl-session.sh epic-of-epics golden (regenerable; re-pins after kwargs merge)
+7. **M6 · http — DONE** (52/52; curl-session.sh green 3x in-branch + 2x after the kwargs re-pin; merged from dl/m6-http fcea017f+c298665b)
+   1. ~~6.1 router + error surfaces~~ ✓ full-word routes, 400 {diags}, 409 no-program
+   2. ~~6.2 SSE teardown~~ ✓ activeSubscribeCount returns to baseline on socket close
+   3. ~~6.3 /query~~ ✓ parsed via the grammar's query rule, NULL-safe `col IS lit` WHERE
+   4. ~~6.4 main.ts boot~~ ✓ DL_DB_PATH/DL_PORT env, route log at listen
+   5. findings: plain line-deletion cannot retract diag (freed offset re-occupied — the golden's edit also renames an identifier); console_hit persists by effect-cache design (digest = (host, pattern, path), not content) so only diag retracts — the plan transcript's `/query -> []` was aspirational; fixture's `sh sg` decl shadowed builtinSg until builtins were listed last
 8. **M1-kwargs · named args (owner scope change 2026-07-24) — DONE** (48/48 after merge; dl/m1-kwargs 94f1bf8b)
    1. ~~kwargs in bodies/heads/probes/queries~~ ✓ single shared resolveNamedArgs; python mixing law -> LoadDiag "named-arg"
    2. ~~shared Member production~~ ✓ one grammar rule, comment pins JSON5 object-member reuse; Member-vs-ArgTerm ID-prefix ambiguity tested both ways
@@ -566,7 +571,8 @@ matching v5's disk-truth stance).
   empirically), so reopen-per-poll would never see a change; retraction = empty
   publish for paths that vanished; scripts/lsp_capture.mjs harness (no deps).
   cargo check clean on the touched files; manually verified publish/clear/update.
-- 5.4 retraction wiring test: file fix -> ingestFile diff -> spine retract ->
+- [x] 5.4 (DONE 2026-07-24, live session; delta diag/2/+1 -> diag/3/-1; LSP pair
+  pinned fixtures/golden/lsp.publish-clear.jsonl) retraction wiring test: file fix -> ingestFile diff -> spine retract ->
   fixpoint drops diag row -> delta -> view -> LSP clears. ZERO diag-specific
   retraction code (the fork's "first retraction instance" claim, proven).
 - [x] 5.5 `--check` reader: `GET /idb/diag` + a 10-line script exits 2 on any

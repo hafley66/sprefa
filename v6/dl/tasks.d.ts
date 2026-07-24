@@ -53,11 +53,17 @@ export interface EpicLedger {
    *  M7 note: 1_hosts.ts duplicates the 53-bit digest fold (numbering law blocks
    *  importing 2_schema); consolidate into the 0-level types/util module at M7. */
   M4_hosts: { done: true; evidence: "sg? fires once per digest; builtin-vs-sh parity rows byte-equal" };
-  /** 5.3 DONE 2026-07-24 (dl/m5-lsp f4fdddbe, merged): --diag-db mode in src/lsp.rs,
-   *  persistent-connection data_version poll (per-connection pragma law), retraction =
-   *  empty publish; scripts/lsp_capture.mjs harness. 5.1/5.2/5.4/5.5 open. */
-  M5_diag_lsp: { done: false; evidence: "curl transcript golden + LSP publish/clear pair + delta dump" };
-  M6_http: { done: false; evidence: "tests/golden/curl-session.sh green against live server" };
+  /** DONE 2026-07-24, all five tasks. 5.3: dl/m5-lsp f4fdddbe (persistent-connection
+   *  data_version law). 5.1/5.2/5.5: dl/m5-diag 86b9101c. 5.4 CLOSED at final
+   *  integration: live session proof — delta rows diag/2/+1 then diag/3/-1, GET
+   *  /idb/diag [] after fix, LSP capture pair pinned in
+   *  fixtures/golden/lsp.publish-clear.jsonl. Zero diag-specific retraction code. */
+  M5_diag_lsp: { done: true; evidence: "curl transcript golden + LSP publish/clear pair + delta dump" };
+  /** DONE 2026-07-24 (dl/m6-http fcea017f+c298665b, merged; 52/52; curl-session.sh
+   *  green 3x in-branch + 2x re-pinned post-kwargs). Findings recorded: line-deletion
+   *  offset coincidence (edit must shift bytes), console_hit persists by cache design
+   *  (only diag retracts), fixture sh sg shadowed builtinSg (builtins now listed last). */
+  M6_http: { done: true; evidence: "tests/golden/curl-session.sh green against live server" };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

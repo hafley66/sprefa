@@ -1,0 +1,2 @@
+{"uri":"file://TMPPATH/bad.ts","diagnosticCount":1,"diagnostics":[{"range":{"start":{"line":3,"character":2},"end":{"line":3,"character":2}},"severity":2,"code":"no-console","source":"dl","message":"console.log left in source"}]}
+{"uri":"file://TMPPATH/bad.ts","diagnosticCount":0,"diagnostics":[]}
