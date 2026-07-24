@@ -3,85 +3,21 @@
 //! the parity-golden normalize. `serde` lives on this flat envelope; the generic
 //! `Node<F>` never crosses the seam or the stream.
 //!
-//! `NodeRef` is flattened to a span at the wire (the local id is meaningless
-//! outside one file's node vec), so the JSONL row is span-addressed and
-//! self-describing.
+//! The envelope types (`SpanOut`, `FlatFact`) now live in `crate::types`; this
+//! module re-exports them and holds the flatten LOGIC. `NodeRef` is flattened to a
+//! span at the wire (the local id is meaningless outside one file's node vec), so
+//! the JSONL row is span-addressed and self-describing.
 //!
 //! Epic U: the public surface is `flatten(&ExtractOutput)` + `flatten_jsonl`. The
 //! per-family flatteners stay as private helpers; the four per-family `_jsonl`
 //! variants are gone (one sorted path serves all).
 
-use serde::Serialize;
-
 use crate::family::{CallF, CstEdgeKind, CstF, DfF, Family, TypeF};
 use crate::rows::FamilyBundle;
-use crate::shape::{FamilyTag, Strings};
+use crate::shape::Strings;
 use crate::source::ExtractOutput;
 
-/// A span on the wire: inclusive-exclusive byte offsets into the file.
-#[derive(Copy, Clone, Serialize, Debug)]
-pub struct SpanOut {
-    pub start: u32,
-    pub end: u32,
-}
-
-impl SpanOut {
-    pub fn new(start: u32, end: u32) -> Self {
-        Self { start, end }
-    }
-}
-
-/// One flat fact. The `record` tag discriminates node vs edge vs sig; `family`
-/// carries the family plane. Serialized as JSONL (`{"record":"node",...}` /
-/// `{"record":"edge",...}` / `{"record":"sig",...}`).
-#[derive(Serialize, Debug)]
-#[serde(tag = "record", rename_all = "lowercase")]
-pub enum FlatFact {
-    Node {
-        family: FamilyTag,
-        span: SpanOut,
-        kind: String,
-        name: Option<String>,
-    },
-    Edge {
-        family: FamilyTag,
-        kind: String,
-        from: SpanOut,
-        to: SpanOut,
-    },
-    /// A family aux row. TypeF arrow-type sig today: `owner` is the callable
-    /// node's span, `slot` is param/ret, `pos` the param index, `ty` the
-    /// referenced type's bare name (unresolved in phase 1). Future aux (consts,
-    /// df param_pos/args) ride the same arm.
-    Sig {
-        family: FamilyTag,
-        owner: SpanOut,
-        slot: String,
-        pos: u32,
-        ty: String,
-    },
-    /// A CallF call site (phase-1 unresolved). `span` locates the call, `callee`
-    /// is the trailing name as written (the resolution key), `callee_path` the
-    /// full qualified path when >1 segment (filled by resolution).
-    Site {
-        family: FamilyTag,
-        span: SpanOut,
-        callee: String,
-        callee_path: Option<String>,
-    },
-    /// A TypeF const-value row (port of v5 `const_value`): one resolved string
-    /// folded from a string-bearing `const`/`as const` binding (or a string-enum
-    /// member). `owner` joins to the Const (or Enum) entity's span; `field` is
-    /// None for a bare const, else a dotted path / enum member; `kind` is
-    /// `lit` (cooked) or `template` (raw source slice, holes intact).
-    Const {
-        family: FamilyTag,
-        owner: SpanOut,
-        field: Option<String>,
-        text: String,
-        kind: String,
-    },
-}
+pub use crate::types::{FlatFact, SpanOut};
 
 /// Flatten one file's `ExtractOutput` to flat facts: every present family, in
 /// family order (cst, type, call, df). The single flatten the stdout stream, the
@@ -147,10 +83,11 @@ fn flatten_cst(bundle: &FamilyBundle<CstF>, strings: &Strings) -> Vec<FlatFact> 
 
 /// Flatten one TypeF bundle to flat facts: entity NODES (kind = the
 /// TypeEntityKind slug, name from the interner) + the arrow-type SIGS (each
-/// callable's param/return type references). The name-resolved type edges
-/// (field / impl / uses / ...) land with `Resolve<TypeF>` (commit 4).
+/// callable's param/return type references) + the CONST value rows. The name-
+/// resolved type edges (field / impl / uses / ...) land with `Resolve<TypeF>`.
 fn flatten_type(bundle: &FamilyBundle<TypeF>, strings: &Strings) -> Vec<FlatFact> {
-    let mut out = Vec::with_capacity(bundle.nodes.len() + bundle.aux.sigs.len() + bundle.aux.consts.len());
+    let mut out =
+        Vec::with_capacity(bundle.nodes.len() + bundle.aux.sigs.len() + bundle.aux.consts.len());
     for node in &bundle.nodes {
         out.push(FlatFact::Node {
             family: TypeF::TAG,
@@ -183,7 +120,7 @@ fn flatten_type(bundle: &FamilyBundle<TypeF>, strings: &Strings) -> Vec<FlatFact
 /// Flatten one CallF bundle to flat facts: callable def NODES (kind = the
 /// CallKind slug, name from the interner) + call SITE rows (the callee as
 /// written, unresolved in phase 1). The resolved caller->callee edges land with
-/// `Resolve<CallF>` (commit 4).
+/// `Resolve<CallF>`.
 fn flatten_call(bundle: &FamilyBundle<CallF>, strings: &Strings) -> Vec<FlatFact> {
     let mut out = Vec::with_capacity(bundle.nodes.len() + bundle.aux.sites.len());
     for node in &bundle.nodes {

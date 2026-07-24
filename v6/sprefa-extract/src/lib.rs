@@ -23,6 +23,7 @@ pub mod rows;
 pub mod seams;
 pub mod shape;
 pub mod source;
+pub mod types;
 pub mod wire;
 
 pub use dispatch::dispatch;
