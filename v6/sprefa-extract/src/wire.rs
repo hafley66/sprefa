@@ -12,7 +12,7 @@
 //! per-family flatteners stay as private helpers; the four per-family `_jsonl`
 //! variants are gone (one sorted path serves all).
 
-use crate::family::{CallF, CstEdgeKind, CstF, DfF, Family, TypeF};
+use crate::family::{CallF, CstEdgeKind, CstF, DfF, Family, ProjectEdge, TypeF};
 use crate::rows::FamilyBundle;
 use crate::shape::Strings;
 use crate::source::ExtractOutput;
@@ -140,6 +140,31 @@ fn flatten_call(bundle: &FamilyBundle<CallF>, strings: &Strings) -> Vec<FlatFact
         });
     }
     out
+}
+
+/// Flatten one file's resolved TypeF project edges (phase-2 output) to the ONE
+/// project-edge arm. `from` resolves the src `NodeRef` through the PRODUCING
+/// file's own TypeF bundle; `to_blob` is the resolved target's content key
+/// (hex). Deliberately OUT of `flatten`/`flatten_jsonl` (dispatch stays
+/// phase-1 in 4b); the parity golden calls this directly on a `Resolve<TypeF>`
+/// result. 4c generalizes to CallF when `Resolve<CallF>` lands.
+pub fn flatten_project_type(
+    edges: &[ProjectEdge<TypeF>],
+    bundle: &FamilyBundle<TypeF>,
+) -> Vec<FlatFact> {
+    edges
+        .iter()
+        .map(|edge| {
+            let from = bundle.node(edge.src);
+            FlatFact::ProjectEdge {
+                family: TypeF::TAG,
+                kind: edge.kind.as_str().to_string(),
+                from: SpanOut::new(from.span.start, from.span.end()),
+                to_blob: edge.dst_blob.to_hex(),
+                to: SpanOut::new(edge.dst_span.start, edge.dst_span.end()),
+            }
+        })
+        .collect()
 }
 
 /// Flatten one DfF bundle to flat facts: value-flow NODES (kind = the DfNodeKind

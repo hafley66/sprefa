@@ -152,6 +152,10 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
                     field.as_deref().unwrap_or(""),
                 ));
             }
+            // Phase-2 rows: `flatten` never produces these (dispatch stays
+            // phase-1); the Resolve<TypeF> twin-normalize lands with the
+            // type_edge DEFERRED->PORTED flip.
+            FlatFact::ProjectEdge { .. } => {}
         }
     }
     set

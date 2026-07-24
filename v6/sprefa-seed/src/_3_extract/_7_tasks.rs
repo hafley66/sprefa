@@ -89,7 +89,9 @@
 //! lambda/docs parity fixtures) LANDED in v6/sprefa-extract/. The TS + Rust + Go phase-1
 //! families - Cst / Type(+sigs) / Call / Df (+const) - all project + stream + snapshot through
 //! ONE uniform surface, AND each ported set matches a captured v5 oracle (see the (parity) /
-//! (rust) / (go) entries). NEXT: 4b Resolve<TypeF> for TsSource:
+//! (rust) / (go) entries). NEXT: 4b Resolve<TypeF> for TsSource - the machinery
+//! landed (4b-i partial); the resolve ARM is STOPPED on the type-edge-candidate
+//! design gap (see (4b-i)); a human ruling unblocks it:
 //!   6a29d920  commit 1   CstF via ast-grep (one dep = rust/ts/tsx/js/go grammars);
 //!              clap bin streaming flat JSONL with --bench; snapshot. Piping proof.
 //!   f3ceb4fa  commit 2a  Parser/Project seam -> arena-passing GAT: oxc's
@@ -341,6 +343,42 @@
 //!              self-verifying waiver now covers ts with NO mechanism change.
 //!              Snapshots untouched: sample.ts's arrows are exported-var inits
 //!              (not df-covered), so the port adds zero rows to existing output.
+//!   (4b-i)   COMMIT 4b-i PARTIAL (machinery only: brief steps a-c; the Resolve arm
+//!             d-f is STOPPED on a design ruling - supreme ruling 2026-07-24:
+//!             cannot-model = STOP-and-report, never a silent skip/waiver).
+//!             blake3 dep (human-approved; same major as v5's root Cargo.toml) +
+//!             `BlobHash::of`/`to_hex` (types.rs "NOT computed yet" closed; the
+//!             phase-1 cache still lands with BlobSource). The four ADDENDUM
+//!             helpers implemented per their 4a docs, pure + zero AST:
+//!             build_def_index walks every output's CallF defs + TypeF entities
+//!             into name -> Vec<DefSite{blob,span,family}>; covering_def sorts
+//!             def spans by (start,end), binary-searches the start<=site cut,
+//!             prefix-scans the tightest cover; def_named same-file scan;
+//!             corpus_defs the index join (empty slice on miss). wire.rs: ONE
+//!             new FlatFact arm per the 4a ruling - ProjectEdge{family, kind:
+//!             String, from, to_blob, to} - + flatten_project_type, kept OUT of
+//!             flatten_jsonl (dispatch stays phase-1; exercised by the parity
+//!             golden once the arm lands). Gate green; .snap diff EMPTY; dep
+//!             rails clean (banned grep empty; lockfile dupes = syn only,
+//!             pre-existing). STOP - DESIGN GAP in the approved 4a surface:
+//!             resolve(&ExtractOutput, &ProjectCx) gets NO path and NO bytes,
+//!             and phase-1 output carries type-edge CANDIDATES for param/returns
+//!             only (TypeFAux.sigs). v5's field (alias refs, class/iface props,
+//!             ctor param-props), variant (enum members), impl, generic, uses
+//!             candidates exist in NO phase-1 row: enum members + alias/heritage
+//!             refs are not entities/sigs/consts (plain enums mint zero rows;
+//!             string enums only their STRING members), and CST nodes carry no
+//!             text. Unmodelable oracle rows (would be silent skips): sample 5
+//!             (Dir::N/S/E/W variant + Vec->Point field), docs 4 (Dir::N/S +
+//!             Vec->Point), consts 1 (Routes::Numeric - numeric member, no const
+//!             row). Second gap: v5's `Owner::Member` variant targets are
+//!             SYNTHETIC strings (v5 type_edge.to is free TEXT, never node-
+//!             joined); no DefSite exists for an honest ProjectEdge.dst. Third:
+//!             the same-file fast path cannot fill dst_blob honestly - the
+//!             output carries no blob; only a span-join back through the
+//!             DefIndex finds it. RULING NEEDED (options in the 4b report):
+//!             likely a phase-1 unresolved type-edge-candidate row on TypeFAux -
+//!             the exact pattern the 4a ADDENDUM set for CallFAux.specifiers.
 //!   PENDING:   the name-resolved type EDGES (field/impl/variant/uses + the
 //!              resolved param/returns binding) still land at Resolve<TypeF>
 //!              (commit 4) by design. ts_const_facts_from is PORTED (see (const)).

@@ -7,7 +7,9 @@
 //! one compiled file is the source of truth, and pending work is COMMENTED OUT
 //! (ModuleF, Flow edges). Resolve<F> landed in commit 4a as a HOLLOW design-freeze
 //! surface (S5 below): the trait + ProjectCx + ProjectEdge<F> exist, bodies are
-//! todo!(), and NOTHING calls resolve yet.
+//! todo!(), and NOTHING calls resolve yet. Commit 4b-i fills the shared machinery
+//! (BlobHash::of, the DefIndex builder + the three pure lookup helpers, the
+//! FlatFact project-edge arm); the Resolve impls themselves land per-lang.
 //!
 //! Leaf scope: a corpus at a version -> normalized graph facts. Pure CPU, no SQL,
 //! no datalog, no async (the engine, another worktree).
@@ -46,9 +48,30 @@ impl Span {
 }
 
 /// Content key: blake3 truncated to 16 raw bytes (store `files.content_hash`).
-/// Declared here; the hash is NOT computed yet (the cache lands with BlobSource).
+/// Computed by `BlobHash::of` (commit 4b-i; the human-approved blake3 dep); the
+/// (BlobHash, lang, mask) phase-1 cache that consumes it still lands with
+/// BlobSource.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct BlobHash(pub [u8; 16]);
+
+impl BlobHash {
+    /// Hash file bytes: blake3's 32-byte digest truncated to the first 16.
+    pub fn of(content: &[u8]) -> Self {
+        let digest = blake3::hash(content);
+        let mut bytes = [0u8; 16];
+        bytes.copy_from_slice(&digest.as_bytes()[..16]);
+        Self(bytes)
+    }
+
+    /// Lowercase hex (32 chars) — the wire form of the content key.
+    pub fn to_hex(self) -> String {
+        let mut out = String::with_capacity(32);
+        for b in self.0 {
+            out.push_str(&format!("{b:02x}"));
+        }
+        out
+    }
+}
 
 /// A digest of the file set that affects resolution (which files exist + their
 /// manifest membership), folded from the corpus so two identical blobs in
@@ -711,7 +734,8 @@ pub struct IndexBag {
 // ── the corpus name index + shared resolve helpers (ADDENDUM 4a) ────────────
 // Declared so the three lang resolve arms (4b TS, 4c SCIP/call, 4d rust/go)
 // share ONE index + ONE set of pure helpers instead of copy-pasting resolution
-// logic. All hollow: todo!() bodies, no call sites.
+// logic. Implemented in 4b-i (pure, zero AST); call sites land with the resolve
+// arms themselves.
 
 /// One definition site in the corpus: the blob + span of a def node, plus the
 /// erased `family` leg of its node identity `(family, span, kind)`. The family
@@ -745,8 +769,28 @@ pub struct DefIndex {
 /// built once per refresh is exactly what the cx exists to carry, and a param
 /// would invite per-call rebuilds beside the cx.
 pub fn build_def_index(outputs: &[(BlobHash, &ExtractOutput)]) -> DefIndex {
-    let _ = outputs;
-    todo!("4b: walk CallF defs + TypeF entities of every output; names via each output's strings")
+    let mut index = DefIndex::default();
+    for (blob, output) in outputs {
+        if let Some(call) = &output.call {
+            for node in &call.nodes {
+                if let Some(name) = node.name {
+                    index.map.entry(output.strings.lookup(name).to_string()).or_default().push(
+                        DefSite { blob: *blob, span: node.span, family: CallF::TAG },
+                    );
+                }
+            }
+        }
+        if let Some(types) = &output.types {
+            for node in &types.nodes {
+                if let Some(name) = node.name {
+                    index.map.entry(output.strings.lookup(name).to_string()).or_default().push(
+                        DefSite { blob: *blob, span: node.span, family: TypeF::TAG },
+                    );
+                }
+            }
+        }
+    }
+    index
 }
 
 /// Caller binding: the CallF def node whose span most tightly CONTAINS `site`
@@ -755,8 +799,27 @@ pub fn build_def_index(outputs: &[(BlobHash, &ExtractOutput)]) -> DefIndex {
 /// every lang emits body-covering def spans by design, so one sorted-span
 /// search serves ts, rust, and go uniformly. Pure fn over the bundle; zero AST.
 pub fn covering_def(defs: &FamilyBundle<CallF>, site: Span) -> Option<NodeRef> {
-    let _ = (defs, site);
-    todo!("4b: sort def spans once, binary-search the innermost cover")
+    // Sort (span, ref) by (start, end); every container of `site` starts at or
+    // before it, so binary-search that cut and scan the prefix for the tightest
+    // cover. Def spans nest properly (a body-covering def never partially
+    // overlaps another), so min span length IS the innermost def.
+    let mut sorted: Vec<(Span, NodeRef)> = defs
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(ix, node)| (node.span, NodeRef(ix as u32)))
+        .collect();
+    sorted.sort_by_key(|(span, _)| (span.start, span.end()));
+    let cut = sorted.partition_point(|(span, _)| span.start <= site.start);
+    let mut best: Option<(Span, NodeRef)> = None;
+    for &(span, r) in &sorted[..cut] {
+        if site.end() <= span.end()
+            && best.map_or(true, |(b, _)| span.end() - span.start < b.end() - b.start)
+        {
+            best = Some((span, r));
+        }
+    }
+    best.map(|(_, r)| r)
 }
 
 /// Same-file name lookup: the CallF def node in `defs` whose interned name is
@@ -764,16 +827,17 @@ pub fn covering_def(defs: &FamilyBundle<CallF>, site: Span) -> Option<NodeRef> {
 /// ONCE here, used by all three lang resolve arms. Pure fn over the bundle +
 /// its interner; zero AST.
 pub fn def_named(defs: &FamilyBundle<CallF>, strings: &Strings, name: &str) -> Option<NodeRef> {
-    let _ = (defs, strings, name);
-    todo!("4b: scan def nodes, NameId -> &str compare")
+    defs.nodes
+        .iter()
+        .position(|node| node.name.map_or(false, |id| strings.lookup(id) == name))
+        .map(|ix| NodeRef(ix as u32))
 }
 
 /// Cross-file name lookup: every def site in the corpus named `name` (the
 /// `DefIndex` join behind Resolve<CallF>'s NameResolve). Written ONCE here,
 /// used by all three lang resolve arms. Pure fn over the index; zero AST.
 pub fn corpus_defs<'a>(index: &'a DefIndex, name: &str) -> &'a [DefSite] {
-    let _ = (index, name);
-    todo!("4b: index.map.get(name), empty slice on miss")
+    index.map.get(name).map(Vec::as_slice).unwrap_or(&[])
 }
 
 /// Phase 2: "here is a codebase, get data" — the cross-file resolution half of
@@ -910,6 +974,18 @@ pub enum FlatFact {
         field: Option<String>,
         text: String,
         kind: String,
+    },
+    /// A project-phase (cross-file) resolved edge: `to` lives in ANOTHER blob,
+    /// content-keyed by `to_blob` (hex). The 4a wire ruling: ONE arm carries
+    /// TypeEdgeKind + CallEdgeKind as strings (never per-family arms, never a
+    /// side channel). Emitted only when a `Resolve<F>` result is flattened —
+    /// `flatten_jsonl` (the CLI stream) stays phase-1 and never produces these.
+    ProjectEdge {
+        family: FamilyTag,
+        kind: String,
+        from: SpanOut,
+        to_blob: String,
+        to: SpanOut,
     },
 }
 

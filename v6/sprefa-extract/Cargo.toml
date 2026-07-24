@@ -48,6 +48,10 @@ tree-sitter-go = "0.23"
 # seam + the parity-golden normalize + the stdout JSONL all read this one shape.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# blake3 backs BlobHash (the content key behind ProjectEdge.dst_blob + the
+# phase-1/phase-2 cache keys). Same major as v5 (root Cargo.toml: blake3 = "1").
+# Human-approved dep (4b ruling 2026-07-24).
+blake3 = "1"
 
 # clap is BIN-only: gated behind `cli` so `cargo tree --lib` stays free of it.
 # The bin adds only clap; the lib never touches it.
