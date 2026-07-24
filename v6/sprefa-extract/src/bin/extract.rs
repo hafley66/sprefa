@@ -25,8 +25,10 @@ OUTPUT
   families by matching spans.
 
 LANGUAGE COVERAGE (first-match, by extension)
-  ts/tsx/mts/cts/js/jsx/mjs/cjs    full     families: cst, type, call, df
-  rust/go/python/c/... (any ast-grep grammar)   cst only
+  ts/tsx/mts/cts/js/jsx/mjs/cjs    full     families: cst, type, call, df, const
+  rs                               full     families: cst, type, call, df, const
+  go                               full     families: cst, type, call, df (no const facet)
+  python/c/... (any ast-grep grammar)        cst only
   any other extension              no output, exit 0 (not an error)
 
   Selecting a family a language does not emit makes that family simply absent.

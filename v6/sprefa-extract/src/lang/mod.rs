@@ -1,8 +1,9 @@
 //! The language roster. First-match (v5 `type_langs()`, typegraph/mod.rs:491):
 //! the lang-specific `Source` precedes the ast-grep CST fallback. A `.rs` hits
-//! `RustSource` (cst via ast-grep + type/call/df via syn); a `.ts` hits
-//! `TsSource` (cst via ast-grep + type/call/df via oxc); anything else with an
-//! ast-grep grammar falls to `AstgrepSource` (cst-only).
+//! `RustSource` (cst via ast-grep + type/call/df via syn); a `.go` hits
+//! `GoSource` (cst via ast-grep + type/call/df via tree-sitter-go); a `.ts`
+//! hits `TsSource` (cst via ast-grep + type/call/df via oxc); anything else
+//! with an ast-grep grammar falls to `AstgrepSource` (cst-only).
 
 pub mod astgrep;
 pub mod go;
