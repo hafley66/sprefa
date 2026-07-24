@@ -15,6 +15,60 @@
 | [DECISIONS.md](DECISIONS.md) | 175 | v6 pinned decisions — STOP re-deriving these |
 | [MAP.md](MAP.md) | 245 | v6 — the living map (algorithms · unification · exploration · DONE) |
 | [README.md](README.md) | 110 | V6 |
+| [dl/node_modules/.pnpm/@ast-grep+cli-darwin-arm64@0.39.9/node_modules/@ast-grep/cli-darwin-arm64/README.md](dl/node_modules/.pnpm/@ast-grep+cli-darwin-arm64@0.39.9/node_modules/@ast-grep/cli-darwin-arm64/README.md) | 3 | `@ast-grep/cli-darwin-arm64` |
+| [dl/node_modules/.pnpm/@ast-grep+cli@0.39.9/node_modules/@ast-grep/cli/README.md](dl/node_modules/.pnpm/@ast-grep+cli@0.39.9/node_modules/@ast-grep/cli/README.md) | 11 | @ast-grep/cli |
+| [dl/node_modules/.pnpm/@libsql+client@0.17.4/node_modules/@libsql/client/README.md](dl/node_modules/.pnpm/@libsql+client@0.17.4/node_modules/@libsql/client/README.md) | 128 |  |
+| [dl/node_modules/.pnpm/@libsql+darwin-arm64@0.5.29/node_modules/@libsql/darwin-arm64/README.md](dl/node_modules/.pnpm/@libsql+darwin-arm64@0.5.29/node_modules/@libsql/darwin-arm64/README.md) | 3 | `@libsql/darwin-arm64` |
+| [dl/node_modules/.pnpm/@libsql+hrana-client@0.10.0/node_modules/@libsql/hrana-client/README.md](dl/node_modules/.pnpm/@libsql+hrana-client@0.10.0/node_modules/@libsql/hrana-client/README.md) | 59 | Hrana client for TypeScript |
+| [dl/node_modules/.pnpm/@libsql+isomorphic-ws@0.1.5/node_modules/@libsql/isomorphic-ws/README.md](dl/node_modules/.pnpm/@libsql+isomorphic-ws@0.1.5/node_modules/@libsql/isomorphic-ws/README.md) | 16 | `@libsql/isomorphic-ws` |
+| [dl/node_modules/.pnpm/@types+lodash-es@4.17.12/node_modules/@types/lodash-es/README.md](dl/node_modules/.pnpm/@types+lodash-es@4.17.12/node_modules/@types/lodash-es/README.md) | 15 | Installation |
+| [dl/node_modules/.pnpm/@types+lodash@4.17.24/node_modules/@types/lodash/README.md](dl/node_modules/.pnpm/@types+lodash@4.17.24/node_modules/@types/lodash/README.md) | 15 | Installation |
+| [dl/node_modules/.pnpm/@types+node@24.13.3/node_modules/@types/node/README.md](dl/node_modules/.pnpm/@types+node@24.13.3/node_modules/@types/node/README.md) | 15 | Installation |
+| [dl/node_modules/.pnpm/@types+ws@8.18.1/node_modules/@types/ws/README.md](dl/node_modules/.pnpm/@types+ws@8.18.1/node_modules/@types/ws/README.md) | 15 | Installation |
+| [dl/node_modules/.pnpm/@typescript+native-preview-darwin-arm64@7.0.0-dev.20260707.2/node_modules/@typescript/native-preview-darwin-arm64/README.md](dl/node_modules/.pnpm/@typescript+native-preview-darwin-arm64@7.0.0-dev.20260707.2/node_modules/@typescript/native-preview-darwin-arm64/README.md) | 3 | `@typescript/native-preview-darwin-arm64` |
+| [dl/node_modules/.pnpm/@typescript+native-preview@7.0.0-dev.20260707.2/node_modules/@typescript/native-preview/README.md](dl/node_modules/.pnpm/@typescript+native-preview@7.0.0-dev.20260707.2/node_modules/@typescript/native-preview/README.md) | 24 | TypeScript (Native Preview) |
+| [dl/node_modules/.pnpm/@typescript+native-preview@7.0.0-dev.20260707.2/node_modules/@typescript/native-preview/vendor/vscode-jsonrpc/README.md](dl/node_modules/.pnpm/@typescript+native-preview@7.0.0-dev.20260707.2/node_modules/@typescript/native-preview/vendor/vscode-jsonrpc/README.md) | 54 | VSCode JSON RPC |
+| [dl/node_modules/.pnpm/chalk@5.6.2/node_modules/chalk/readme.md](dl/node_modules/.pnpm/chalk@5.6.2/node_modules/chalk/readme.md) | 297 |  |
+| [dl/node_modules/.pnpm/chevrotain-allstar@0.4.4_chevrotain@12.0.0/node_modules/chevrotain-allstar/README.md](dl/node_modules/.pnpm/chevrotain-allstar@0.4.4_chevrotain@12.0.0/node_modules/chevrotain-allstar/README.md) | 22 | Chevrotain Allstar |
+| [dl/node_modules/.pnpm/chevrotain@12.0.0/node_modules/chevrotain/BREAKING_CHANGES.md](dl/node_modules/.pnpm/chevrotain@12.0.0/node_modules/chevrotain/BREAKING_CHANGES.md) | 1 |  |
+| [dl/node_modules/.pnpm/chevrotain@12.0.0/node_modules/chevrotain/CHANGELOG.md](dl/node_modules/.pnpm/chevrotain@12.0.0/node_modules/chevrotain/CHANGELOG.md) | 1 |  |
+| [dl/node_modules/.pnpm/chevrotain@12.0.0/node_modules/chevrotain/README.md](dl/node_modules/.pnpm/chevrotain@12.0.0/node_modules/chevrotain/README.md) | 20 | Chevrotain |
+| [dl/node_modules/.pnpm/chevrotain@12.0.0/node_modules/chevrotain/diagrams/README.md](dl/node_modules/.pnpm/chevrotain@12.0.0/node_modules/chevrotain/diagrams/README.md) | 1 |  |
+| [dl/node_modules/.pnpm/commander@15.0.0/node_modules/commander/Readme.md](dl/node_modules/.pnpm/commander@15.0.0/node_modules/commander/Readme.md) | 1172 | Commander.js |
+| [dl/node_modules/.pnpm/detect-libc@2.0.2/node_modules/detect-libc/README.md](dl/node_modules/.pnpm/detect-libc@2.0.2/node_modules/detect-libc/README.md) | 163 | detect-libc |
+| [dl/node_modules/.pnpm/detect-libc@2.1.2/node_modules/detect-libc/README.md](dl/node_modules/.pnpm/detect-libc@2.1.2/node_modules/detect-libc/README.md) | 163 | detect-libc |
+| [dl/node_modules/.pnpm/fs-extra@11.3.6/node_modules/fs-extra/README.md](dl/node_modules/.pnpm/fs-extra@11.3.6/node_modules/fs-extra/README.md) | 294 |  |
+| [dl/node_modules/.pnpm/graceful-fs@4.2.11/node_modules/graceful-fs/README.md](dl/node_modules/.pnpm/graceful-fs@4.2.11/node_modules/graceful-fs/README.md) | 143 | graceful-fs |
+| [dl/node_modules/.pnpm/js-base64@3.9.1/node_modules/js-base64/LICENSE.md](dl/node_modules/.pnpm/js-base64@3.9.1/node_modules/js-base64/LICENSE.md) | 27 |  |
+| [dl/node_modules/.pnpm/js-base64@3.9.1/node_modules/js-base64/README.md](dl/node_modules/.pnpm/js-base64@3.9.1/node_modules/js-base64/README.md) | 170 | base64.js |
+| [dl/node_modules/.pnpm/jsonfile@6.2.1/node_modules/jsonfile/README.md](dl/node_modules/.pnpm/jsonfile@6.2.1/node_modules/jsonfile/README.md) | 230 |  |
+| [dl/node_modules/.pnpm/jsonschema@1.5.0/node_modules/jsonschema/README.md](dl/node_modules/.pnpm/jsonschema@1.5.0/node_modules/jsonschema/README.md) | 451 | jsonschema |
+| [dl/node_modules/.pnpm/langium-cli@4.3.0/node_modules/langium-cli/README.md](dl/node_modules/.pnpm/langium-cli@4.3.0/node_modules/langium-cli/README.md) | 111 | Langium CLI |
+| [dl/node_modules/.pnpm/langium-railroad@4.3.0/node_modules/langium-railroad/README.md](dl/node_modules/.pnpm/langium-railroad@4.3.0/node_modules/langium-railroad/README.md) | 5 | Langium Railroad Diagrams |
+| [dl/node_modules/.pnpm/langium@4.3.1/node_modules/langium/README.md](dl/node_modules/.pnpm/langium@4.3.1/node_modules/langium/README.md) | 50 | Langium |
+| [dl/node_modules/.pnpm/libsql@0.5.29/node_modules/libsql/README.md](dl/node_modules/.pnpm/libsql@0.5.29/node_modules/libsql/README.md) | 171 | libSQL API for JavaScript/TypeScript |
+| [dl/node_modules/.pnpm/lodash-es@4.18.1/node_modules/lodash-es/README.md](dl/node_modules/.pnpm/lodash-es@4.18.1/node_modules/lodash-es/README.md) | 10 | lodash-es v4.18.1 |
+| [dl/node_modules/.pnpm/lodash@4.18.1/node_modules/lodash/README.md](dl/node_modules/.pnpm/lodash@4.18.1/node_modules/lodash/README.md) | 39 | lodash v4.18.1 |
+| [dl/node_modules/.pnpm/promise-limit@2.7.0/node_modules/promise-limit/README.md](dl/node_modules/.pnpm/promise-limit@2.7.0/node_modules/promise-limit/README.md) | 97 |  |
+| [dl/node_modules/.pnpm/railroad-diagrams@1.0.0/node_modules/railroad-diagrams/README.md](dl/node_modules/.pnpm/railroad-diagrams@1.0.0/node_modules/railroad-diagrams/README.md) | 86 |  |
+| [dl/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/CHANGELOG.md](dl/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/CHANGELOG.md) | 2750 | [7.8.0](https://github.com/reactivex/rxjs/compare/7.7.0...7.8.0) (2022-12-15) |
+| [dl/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/CODE_OF_CONDUCT.md](dl/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/CODE_OF_CONDUCT.md) | 73 | Contributor Covenant Code of Conduct |
+| [dl/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/README.md](dl/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/README.md) | 107 | <img src="docs_app/src/assets/images/logos/Rx_Logo_S.png" alt="RxJS Logo" width="86" height="86"> RxJS: Reactive Extensions For JavaScript |
+| [dl/node_modules/.pnpm/tslib@2.8.1/node_modules/tslib/README.md](dl/node_modules/.pnpm/tslib@2.8.1/node_modules/tslib/README.md) | 164 | tslib |
+| [dl/node_modules/.pnpm/tslib@2.8.1/node_modules/tslib/SECURITY.md](dl/node_modules/.pnpm/tslib@2.8.1/node_modules/tslib/SECURITY.md) | 41 |  |
+| [dl/node_modules/.pnpm/undici-types@7.18.2/node_modules/undici-types/README.md](dl/node_modules/.pnpm/undici-types@7.18.2/node_modules/undici-types/README.md) | 6 | undici-types |
+| [dl/node_modules/.pnpm/universalify@2.0.1/node_modules/universalify/README.md](dl/node_modules/.pnpm/universalify@2.0.1/node_modules/universalify/README.md) | 76 | universalify |
+| [dl/node_modules/.pnpm/vscode-jsonrpc@9.0.0/node_modules/vscode-jsonrpc/README.md](dl/node_modules/.pnpm/vscode-jsonrpc@9.0.0/node_modules/vscode-jsonrpc/README.md) | 54 | VSCode JSON RPC |
+| [dl/node_modules/.pnpm/vscode-jsonrpc@9.0.1/node_modules/vscode-jsonrpc/README.md](dl/node_modules/.pnpm/vscode-jsonrpc@9.0.1/node_modules/vscode-jsonrpc/README.md) | 54 | VSCode JSON RPC |
+| [dl/node_modules/.pnpm/vscode-languageserver-protocol@3.18.1/node_modules/vscode-languageserver-protocol/README.md](dl/node_modules/.pnpm/vscode-languageserver-protocol@3.18.1/node_modules/vscode-languageserver-protocol/README.md) | 16 | VSCode Language Server - Protocol Module |
+| [dl/node_modules/.pnpm/vscode-languageserver-protocol@3.18.2/node_modules/vscode-languageserver-protocol/README.md](dl/node_modules/.pnpm/vscode-languageserver-protocol@3.18.2/node_modules/vscode-languageserver-protocol/README.md) | 16 | VSCode Language Server - Protocol Module |
+| [dl/node_modules/.pnpm/vscode-languageserver-textdocument@1.0.13/node_modules/vscode-languageserver-textdocument/README.md](dl/node_modules/.pnpm/vscode-languageserver-textdocument@1.0.13/node_modules/vscode-languageserver-textdocument/README.md) | 30 | Text Document implementation for a LSP Node server |
+| [dl/node_modules/.pnpm/vscode-languageserver-types@3.18.0/node_modules/vscode-languageserver-types/README.md](dl/node_modules/.pnpm/vscode-languageserver-types@3.18.0/node_modules/vscode-languageserver-types/README.md) | 17 | VSCode Language Server Types |
+| [dl/node_modules/.pnpm/vscode-languageserver@10.0.1/node_modules/vscode-languageserver/README.md](dl/node_modules/.pnpm/vscode-languageserver@10.0.1/node_modules/vscode-languageserver/README.md) | 16 | VSCode Language Server |
+| [dl/node_modules/.pnpm/vscode-uri@3.1.0/node_modules/vscode-uri/LICENSE.md](dl/node_modules/.pnpm/vscode-uri@3.1.0/node_modules/vscode-uri/LICENSE.md) | 8 |  |
+| [dl/node_modules/.pnpm/vscode-uri@3.1.0/node_modules/vscode-uri/README.md](dl/node_modules/.pnpm/vscode-uri@3.1.0/node_modules/vscode-uri/README.md) | 67 |  |
+| [dl/node_modules/.pnpm/vscode-uri@3.1.0/node_modules/vscode-uri/SECURITY.md](dl/node_modules/.pnpm/vscode-uri@3.1.0/node_modules/vscode-uri/SECURITY.md) | 41 |  |
+| [dl/node_modules/.pnpm/ws@8.21.1/node_modules/ws/README.md](dl/node_modules/.pnpm/ws@8.21.1/node_modules/ws/README.md) | 548 | ws: a Node.js WebSocket library |
 | [findings/HYPOTHESES.md](findings/HYPOTHESES.md) | 27 | v6 HYPOTHESES — the idea ledger (don't lose a good one) |
 | [findings/INSIGHTS.md](findings/INSIGHTS.md) | 175 | v6 INSIGHTS — SQL · Rust · Graph (one living ledger) |
 | [findings/PINS.md](findings/PINS.md) | 6 | Pins |
@@ -40,10 +94,37 @@
 | [plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md](plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md) | 256 | v6 rxjs lowering + the TS cascade port (engineering plan) |
 | [plans/2026-07-23-v6-transports-as-rels.md](plans/2026-07-23-v6-transports-as-rels.md) | 123 | Transports as rels — http/ws/LSP/shell with zero effect syntax (F4/F10 working note, 2026-07-23) |
 | [plans/2026-07-24-fork-pipeline-syntax-findings.md](plans/2026-07-24-fork-pipeline-syntax-findings.md) | 80 | Fork findings: pipeline syntax + surface rulings (2026-07-24, session forked-for-sql-pipeline-syntax) |
-| [plans/2026-07-24-v6-dl-mvp-slice.md](plans/2026-07-24-v6-dl-mvp-slice.md) | 543 | v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24) |
+| [plans/2026-07-24-v6-dl-mvp-slice.md](plans/2026-07-24-v6-dl-mvp-slice.md) | 550 | v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
+| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 51 | Z-set / IVM head-to-head — feasibility lab |
+| [sprefa-store/js/node_modules/.pnpm/@libsql+client@0.17.4/node_modules/@libsql/client/README.md](sprefa-store/js/node_modules/.pnpm/@libsql+client@0.17.4/node_modules/@libsql/client/README.md) | 128 |  |
+| [sprefa-store/js/node_modules/.pnpm/@libsql+darwin-arm64@0.5.29/node_modules/@libsql/darwin-arm64/README.md](sprefa-store/js/node_modules/.pnpm/@libsql+darwin-arm64@0.5.29/node_modules/@libsql/darwin-arm64/README.md) | 3 | `@libsql/darwin-arm64` |
+| [sprefa-store/js/node_modules/.pnpm/@libsql+hrana-client@0.10.0/node_modules/@libsql/hrana-client/README.md](sprefa-store/js/node_modules/.pnpm/@libsql+hrana-client@0.10.0/node_modules/@libsql/hrana-client/README.md) | 59 | Hrana client for TypeScript |
+| [sprefa-store/js/node_modules/.pnpm/@libsql+isomorphic-ws@0.1.5/node_modules/@libsql/isomorphic-ws/README.md](sprefa-store/js/node_modules/.pnpm/@libsql+isomorphic-ws@0.1.5/node_modules/@libsql/isomorphic-ws/README.md) | 16 | `@libsql/isomorphic-ws` |
+| [sprefa-store/js/node_modules/.pnpm/@types+better-sqlite3@7.6.13/node_modules/@types/better-sqlite3/README.md](sprefa-store/js/node_modules/.pnpm/@types+better-sqlite3@7.6.13/node_modules/@types/better-sqlite3/README.md) | 15 | Installation |
+| [sprefa-store/js/node_modules/.pnpm/@types+node@26.1.1/node_modules/@types/node/README.md](sprefa-store/js/node_modules/.pnpm/@types+node@26.1.1/node_modules/@types/node/README.md) | 15 | Installation |
+| [sprefa-store/js/node_modules/.pnpm/@types+ws@8.18.1/node_modules/@types/ws/README.md](sprefa-store/js/node_modules/.pnpm/@types+ws@8.18.1/node_modules/@types/ws/README.md) | 15 | Installation |
+| [sprefa-store/js/node_modules/.pnpm/@typescript+native-preview-darwin-arm64@7.0.0-dev.20260707.2/node_modules/@typescript/native-preview-darwin-arm64/README.md](sprefa-store/js/node_modules/.pnpm/@typescript+native-preview-darwin-arm64@7.0.0-dev.20260707.2/node_modules/@typescript/native-preview-darwin-arm64/README.md) | 3 | `@typescript/native-preview-darwin-arm64` |
+| [sprefa-store/js/node_modules/.pnpm/@typescript+native-preview@7.0.0-dev.20260707.2/node_modules/@typescript/native-preview/README.md](sprefa-store/js/node_modules/.pnpm/@typescript+native-preview@7.0.0-dev.20260707.2/node_modules/@typescript/native-preview/README.md) | 24 | TypeScript (Native Preview) |
+| [sprefa-store/js/node_modules/.pnpm/@typescript+native-preview@7.0.0-dev.20260707.2/node_modules/@typescript/native-preview/vendor/vscode-jsonrpc/README.md](sprefa-store/js/node_modules/.pnpm/@typescript+native-preview@7.0.0-dev.20260707.2/node_modules/@typescript/native-preview/vendor/vscode-jsonrpc/README.md) | 54 | VSCode JSON RPC |
+| [sprefa-store/js/node_modules/.pnpm/better-sqlite3@13.0.1/node_modules/better-sqlite3/README.md](sprefa-store/js/node_modules/.pnpm/better-sqlite3@13.0.1/node_modules/better-sqlite3/README.md) | 99 | better-sqlite3 [![Build Status](https://github.com/JoshuaWise/better-sqlite3/actions/workflows/build.yml/badge.svg)](https://github.com/JoshuaWise/better-sqlite3/actions/workflows/build.yml?query=branch%3Amaster) |
+| [sprefa-store/js/node_modules/.pnpm/detect-libc@2.0.2/node_modules/detect-libc/README.md](sprefa-store/js/node_modules/.pnpm/detect-libc@2.0.2/node_modules/detect-libc/README.md) | 163 | detect-libc |
+| [sprefa-store/js/node_modules/.pnpm/js-base64@3.9.1/node_modules/js-base64/LICENSE.md](sprefa-store/js/node_modules/.pnpm/js-base64@3.9.1/node_modules/js-base64/LICENSE.md) | 27 |  |
+| [sprefa-store/js/node_modules/.pnpm/js-base64@3.9.1/node_modules/js-base64/README.md](sprefa-store/js/node_modules/.pnpm/js-base64@3.9.1/node_modules/js-base64/README.md) | 170 | base64.js |
+| [sprefa-store/js/node_modules/.pnpm/libsql@0.5.29/node_modules/libsql/README.md](sprefa-store/js/node_modules/.pnpm/libsql@0.5.29/node_modules/libsql/README.md) | 171 | libSQL API for JavaScript/TypeScript |
+| [sprefa-store/js/node_modules/.pnpm/node-addon-api@8.9.0/node_modules/node-addon-api/LICENSE.md](sprefa-store/js/node_modules/.pnpm/node-addon-api@8.9.0/node_modules/node-addon-api/LICENSE.md) | 9 |  |
+| [sprefa-store/js/node_modules/.pnpm/node-addon-api@8.9.0/node_modules/node-addon-api/README.md](sprefa-store/js/node_modules/.pnpm/node-addon-api@8.9.0/node_modules/node-addon-api/README.md) | 95 | **node-addon-api module** |
+| [sprefa-store/js/node_modules/.pnpm/node-addon-api@8.9.0/node_modules/node-addon-api/tools/README.md](sprefa-store/js/node_modules/.pnpm/node-addon-api@8.9.0/node_modules/node-addon-api/tools/README.md) | 73 | Tools |
+| [sprefa-store/js/node_modules/.pnpm/promise-limit@2.7.0/node_modules/promise-limit/README.md](sprefa-store/js/node_modules/.pnpm/promise-limit@2.7.0/node_modules/promise-limit/README.md) | 97 |  |
+| [sprefa-store/js/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/CHANGELOG.md](sprefa-store/js/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/CHANGELOG.md) | 2750 | [7.8.0](https://github.com/reactivex/rxjs/compare/7.7.0...7.8.0) (2022-12-15) |
+| [sprefa-store/js/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/CODE_OF_CONDUCT.md](sprefa-store/js/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/CODE_OF_CONDUCT.md) | 73 | Contributor Covenant Code of Conduct |
+| [sprefa-store/js/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/README.md](sprefa-store/js/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/README.md) | 107 | <img src="docs_app/src/assets/images/logos/Rx_Logo_S.png" alt="RxJS Logo" width="86" height="86"> RxJS: Reactive Extensions For JavaScript |
+| [sprefa-store/js/node_modules/.pnpm/tslib@2.8.1/node_modules/tslib/README.md](sprefa-store/js/node_modules/.pnpm/tslib@2.8.1/node_modules/tslib/README.md) | 164 | tslib |
+| [sprefa-store/js/node_modules/.pnpm/tslib@2.8.1/node_modules/tslib/SECURITY.md](sprefa-store/js/node_modules/.pnpm/tslib@2.8.1/node_modules/tslib/SECURITY.md) | 41 |  |
+| [sprefa-store/js/node_modules/.pnpm/undici-types@8.3.0/node_modules/undici-types/README.md](sprefa-store/js/node_modules/.pnpm/undici-types@8.3.0/node_modules/undici-types/README.md) | 6 | undici-types |
+| [sprefa-store/js/node_modules/.pnpm/ws@8.21.1/node_modules/ws/README.md](sprefa-store/js/node_modules/.pnpm/ws@8.21.1/node_modules/ws/README.md) | 548 | ws: a Node.js WebSocket library |
 
 ## Full header index
 
@@ -130,6 +211,960 @@
 71:## Crate map
 88:## Docs
 101:## Agent skills
+```
+
+### dl/node_modules/.pnpm/@ast-grep+cli-darwin-arm64@0.39.9/node_modules/@ast-grep/cli-darwin-arm64/README.md
+```
+1:# `@ast-grep/cli-darwin-arm64`
+```
+
+### dl/node_modules/.pnpm/@ast-grep+cli@0.39.9/node_modules/@ast-grep/cli/README.md
+```
+1:# @ast-grep/cli
+7:## ast-grep(sg)
+```
+
+### dl/node_modules/.pnpm/@libsql+client@0.17.4/node_modules/@libsql/client/README.md
+```
+52:## Features
+59:## Install
+65:## Quickstart
+96:## Examples
+110:## Documentation
+114:## Support
+118:## Contributors
+```
+
+### dl/node_modules/.pnpm/@libsql+darwin-arm64@0.5.29/node_modules/@libsql/darwin-arm64/README.md
+```
+1:# `@libsql/darwin-arm64`
+```
+
+### dl/node_modules/.pnpm/@libsql+hrana-client@0.10.0/node_modules/@libsql/hrana-client/README.md
+```
+1:# Hrana client for TypeScript
+15:## Usage
+```
+
+### dl/node_modules/.pnpm/@libsql+isomorphic-ws@0.1.5/node_modules/@libsql/isomorphic-ws/README.md
+```
+1:# `@libsql/isomorphic-ws`
+```
+
+### dl/node_modules/.pnpm/@types+lodash-es@4.17.12/node_modules/@types/lodash-es/README.md
+```
+1:# Installation
+4:# Summary
+7:# Details
+10:### Additional Details
+14:# Credits
+```
+
+### dl/node_modules/.pnpm/@types+lodash@4.17.24/node_modules/@types/lodash/README.md
+```
+1:# Installation
+4:# Summary
+7:# Details
+10:### Additional Details
+14:# Credits
+```
+
+### dl/node_modules/.pnpm/@types+node@24.13.3/node_modules/@types/node/README.md
+```
+1:# Installation
+4:# Summary
+7:# Details
+10:### Additional Details
+14:# Credits
+```
+
+### dl/node_modules/.pnpm/@types+ws@8.18.1/node_modules/@types/ws/README.md
+```
+1:# Installation
+4:# Summary
+7:# Details
+10:### Additional Details
+14:# Credits
+```
+
+### dl/node_modules/.pnpm/@typescript+native-preview-darwin-arm64@7.0.0-dev.20260707.2/node_modules/@typescript/native-preview-darwin-arm64/README.md
+```
+1:# `@typescript/native-preview-darwin-arm64`
+```
+
+### dl/node_modules/.pnpm/@typescript+native-preview@7.0.0-dev.20260707.2/node_modules/@typescript/native-preview/README.md
+```
+1:# TypeScript (Native Preview)
+9:## Usage
+19:## Issues and Feedback
+```
+
+### dl/node_modules/.pnpm/@typescript+native-preview@7.0.0-dev.20260707.2/node_modules/@typescript/native-preview/vendor/vscode-jsonrpc/README.md
+```
+1:# VSCode JSON RPC
+48:# History
+53:## License
+```
+
+### dl/node_modules/.pnpm/chalk@5.6.2/node_modules/chalk/readme.md
+```
+18:## Info
+23:## Highlights
+36:## Install
+44:## Usage
+112:## API
+114:### chalk.`<style>[.<style>...](string, [string...])`
+122:### chalk.level
+143:### supportsColor
+151:### chalkStderr and supportsColorStderr
+155:### modifierNames, foregroundColorNames, backgroundColorNames, and colorNames
+171:## Styles
+173:### Modifiers
+186:### Colors
+205:### Background colors
+224:## 256 and Truecolor color support
+246:## Browser support
+250:## Windows
+254:## FAQ
+256:### Why not switch to a smaller coloring package?
+270:### But the smaller coloring package has benchmarks showing it is faster
+274:## Related
+294:## Maintainers
+```
+
+### dl/node_modules/.pnpm/chevrotain-allstar@0.4.4_chevrotain@12.0.0/node_modules/chevrotain-allstar/README.md
+```
+1:# Chevrotain Allstar
+7:## Usage
+```
+
+### dl/node_modules/.pnpm/chevrotain@12.0.0/node_modules/chevrotain/BREAKING_CHANGES.md
+```
+```
+
+### dl/node_modules/.pnpm/chevrotain@12.0.0/node_modules/chevrotain/CHANGELOG.md
+```
+```
+
+### dl/node_modules/.pnpm/chevrotain@12.0.0/node_modules/chevrotain/README.md
+```
+1:# Chevrotain
+8:## Install
+```
+
+### dl/node_modules/.pnpm/chevrotain@12.0.0/node_modules/chevrotain/diagrams/README.md
+```
+```
+
+### dl/node_modules/.pnpm/commander@15.0.0/node_modules/commander/Readme.md
+```
+1:# Commander.js
+61:## Installation
+67:## Quick Start
+147:## Declaring _program_ variable
+176:## Options
+210:### Common option types, boolean and value
+253:### Default option value
+275:### Other option types, negatable boolean and boolean|value
+338:### Required option
+358:### Variadic option
+392:### Version option
+412:### More configuration
+455:### Custom option processing
+519:## Commands
+563:### Command-arguments
+644:### Action handler
+696:### Stand-alone executable (sub)commands
+721:### Life cycle hooks
+750:## Automated help
+783:### Custom help
+826:### Display help after errors
+856:### Display help from code
+864:### .name
+880:### .usage
+896:### .description and .summary
+910:### .helpOption(flags, description)
+921:### .helpCommand()
+933:### Help Groups
+943:### More configuration
+952:## Custom event listeners
+962:## Bits and pieces
+964:### .parse() and .parseAsync()
+984:### Parsing Configuration
+1019:### Legacy options as properties
+1038:### TypeScript
+1054:### createCommand()
+1067:### Node options such as `--harmony`
+1074:### Debugging stand-alone executable subcommands
+1083:### npm run-script
+1094:### Display error
+1106:### Override exit and output handling
+1150:### Additional documentation
+1160:## Support
+1168:### Commander for enterprise
+```
+
+### dl/node_modules/.pnpm/detect-libc@2.0.2/node_modules/detect-libc/README.md
+```
+1:# detect-libc
+17:## Install
+23:## API
+25:### GLIBC
+33:### MUSL
+41:### family
+63:### familySync
+81:### version
+102:### versionSync
+119:### isNonGlibcLinux
+137:### isNonGlibcLinuxSync
+151:## Licensing
+```
+
+### dl/node_modules/.pnpm/detect-libc@2.1.2/node_modules/detect-libc/README.md
+```
+1:# detect-libc
+17:## Install
+23:## API
+25:### GLIBC
+33:### MUSL
+41:### family
+63:### familySync
+81:### version
+102:### versionSync
+119:### isNonGlibcLinux
+137:### isNonGlibcLinuxSync
+151:## Licensing
+```
+
+### dl/node_modules/.pnpm/fs-extra@11.3.6/node_modules/fs-extra/README.md
+```
+30:### CommonJS
+62:### ESM
+136:### Async
+154:### Sync
+175:### What happened to `walk()` and `walkSync()`?
+183:### CLI
+187:### TypeScript
+192:### File / Directory Watching
+196:### Obtain Filesystem (Devices, Partitions) Information
+200:### Misc.
+223:### Running the Test Suite
+235:### Windows
+```
+
+### dl/node_modules/.pnpm/graceful-fs@4.2.11/node_modules/graceful-fs/README.md
+```
+1:# graceful-fs
+10:## Improvements over [fs module](https://nodejs.org/api/fs.html)
+26:## USAGE
+38:## Sync methods
+46:## Global Patching
+63:## Changes
+95:### v4
+101:### v3
+110:### v2.1.0
+116:### v2.0
+121:### v1.1
+139:### 1.0
+```
+
+### dl/node_modules/.pnpm/js-base64@3.9.1/node_modules/js-base64/LICENSE.md
+```
+```
+
+### dl/node_modules/.pnpm/js-base64@3.9.1/node_modules/js-base64/README.md
+```
+4:# base64.js
+10:## Install
+16:## Usage
+18:### In Browser
+34:### As an ES6 Module
+63:### node.js (commonjs)
+80:## SYNOPSIS
+120:### Built-in Extensions
+153:## `.decode()` vs `.atob` (and `.encode()` vs `btoa()`)
+166:## Brief History
+```
+
+### dl/node_modules/.pnpm/jsonfile@6.2.1/node_modules/jsonfile/README.md
+```
+36:### readFile(filename, [options], callback)
+64:### readFileSync(filename, [options])
+78:### writeFile(filename, obj, [options], callback)
+166:### writeFileSync(filename, obj, [options])
+```
+
+### dl/node_modules/.pnpm/jsonschema@1.5.0/node_modules/jsonschema/README.md
+```
+3:# jsonschema
+7:## Contributing & bugs
+11:### Bug reports
+15:## Usage
+17:### Simple
+29:### Even simpler
+36:### Complex example, with split schemas and references
+85:### Example for Array schema
+101:## Features
+103:### Definitions
+107:### Types
+111:### Handling `undefined`
+127:### Formats
+162:### Results
+225:### Custom keywords
+253:### Dereferencing schemas
+273:### Disallowing unknown attributes
+302:### Default base URI
+319:### Rewrite Hook
+361:### Pre-Property Validation Hook
+390:### Skip validation of certain keywords
+396:### Fail on unknown keywords
+413:## Tests
+421:## Contributions
+429:## License
+```
+
+### dl/node_modules/.pnpm/langium-cli@4.3.0/node_modules/langium-cli/README.md
+```
+1:# Langium CLI
+15:## Generating Language Infrastructure
+26:### Configuration
+```
+
+### dl/node_modules/.pnpm/langium-railroad@4.3.0/node_modules/langium-railroad/README.md
+```
+1:# Langium Railroad Diagrams
+```
+
+### dl/node_modules/.pnpm/langium@4.3.1/node_modules/langium/README.md
+```
+1:# Langium
+7:## Getting Started
+32:## How Does it Work?
+48:## Examples
+```
+
+### dl/node_modules/.pnpm/libsql@0.5.29/node_modules/libsql/README.md
+```
+1:# libSQL API for JavaScript/TypeScript
+18:## Features
+25:## Installing
+49:## Documentation
+53:## Getting Started
+143:## Developing
+161:## License
+165:### Contribution
+```
+
+### dl/node_modules/.pnpm/lodash-es@4.18.1/node_modules/lodash-es/README.md
+```
+1:# lodash-es v4.18.1
+```
+
+### dl/node_modules/.pnpm/lodash@4.18.1/node_modules/lodash/README.md
+```
+1:# lodash v4.18.1
+5:## Installation
+36:## Support
+```
+
+### dl/node_modules/.pnpm/promise-limit@2.7.0/node_modules/promise-limit/README.md
+```
+96:## We're Hiring!
+```
+
+### dl/node_modules/.pnpm/railroad-diagrams@1.0.0/node_modules/railroad-diagrams/README.md
+```
+```
+
+### dl/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/CHANGELOG.md
+```
+1:## [7.8.2](https://github.com/reactivex/rxjs/compare/7.8.1...7.8.2) (2025-02-22)
+3:### Bug Fixes
+9:## [7.8.1](https://github.com/reactivex/rxjs/compare/7.8.0...7.8.1) (2023-04-26)
+11:### Bug Fixes
+16:# [7.8.0](https://github.com/reactivex/rxjs/compare/7.7.0...7.8.0) (2022-12-15)
+18:### Features
+27:# [7.7.0](https://github.com/reactivex/rxjs/compare/7.6.0...7.7.0) (2022-12-15)
+29:### Features
+36:# [7.6.0](https://github.com/reactivex/rxjs/compare/7.5.7...7.6.0) (2022-12-03)
+38:### Bug Fixes
+43:### Features
+47:## [7.5.7](https://github.com/reactivex/rxjs/compare/7.5.6...7.5.7) (2022-09-25)
+49:### Bug Fixes
+53:### Performance Improvements
+57:## [7.5.6](https://github.com/reactivex/rxjs/compare/7.5.5...7.5.6) (2022-07-11)
+59:### Bug Fixes
+66:## [7.5.5](https://github.com/reactivex/rxjs/compare/7.5.4...7.5.5) (2022-03-08)
+68:### Bug Fixes
+74:### Performance Improvements
+78:## [7.5.4](https://github.com/reactivex/rxjs/compare/7.5.3...7.5.4) (2022-02-09)
+80:### Performance Improvements
+84:## [7.5.3](https://github.com/reactivex/rxjs/compare/7.5.2...7.5.3) (2022-02-08)
+86:### Bug Fixes
+90:## [7.5.2](https://github.com/reactivex/rxjs/compare/7.5.1...7.5.2) (2022-01-11)
+92:### Bug Fixes
+97:## [7.5.1](https://github.com/reactivex/rxjs/compare/7.5.0...7.5.1) (2021-12-28)
+99:### Bug Fixes
+103:# [7.5.0](https://github.com/reactivex/rxjs/compare/7.4.0...7.5.0) (2021-12-27)
+105:### Bug Fixes
+113:### Features
+117:# [7.4.0](https://github.com/reactivex/rxjs/compare/7.3.1...7.4.0) (2021-10-06)
+119:### Features
+123:## [7.3.1](https://github.com/reactivex/rxjs/compare/7.3.0...7.3.1) (2021-10-01)
+125:### Bug Fixes
+133:# [7.3.0](https://github.com/reactivex/rxjs/compare/7.2.0...7.3.0) (2021-07-28)
+135:### Bug Fixes
+140:### Features
+145:# [7.2.0](https://github.com/reactivex/rxjs/compare/7.1.0...7.2.0) (2021-07-05)
+147:### Bug Fixes
+152:### Features
+156:# [7.1.0](https://github.com/reactivex/rxjs/compare/7.0.1...7.1.0) (2021-05-21)
+158:### Bug Fixes
+162:### Features
+168:## [7.0.1](https://github.com/reactivex/rxjs/compare/7.0.0...7.0.1) (2021-05-12)
+170:### Bug Fixes
+179:# [7.0.0](https://github.com/reactivex/rxjs/compare/7.0.0-rc.3...7.0.0) (2021-04-29)
+181:### Bug Fixes
+186:# [7.0.0-rc.3](https://github.com/reactivex/rxjs/compare/7.0.0-rc.2...7.0.0-rc.3) (2021-04-28)
+188:### Bug Fixes
+194:### Features
+198:### BREAKING CHANGES
+202:# [7.0.0-rc.2](https://github.com/reactivex/rxjs/compare/7.0.0-rc.1...7.0.0-rc.2) (2021-04-20)
+204:### Bug Fixes
+208:### Reverts
+212:# [7.0.0-rc.1](https://github.com/reactivex/rxjs/compare/7.0.0-rc.0...7.0.0-rc.1) (2021-04-19)
+214:### Bug Fixes
+218:# [7.0.0-rc.0](https://github.com/reactivex/rxjs/compare/7.0.0-beta.15...7.0.0-rc.0) (2021-04-19)
+220:### Bug Fixes
+228:### Features
+232:# [7.0.0-beta.15](https://github.com/reactivex/rxjs/compare/7.0.0-beta.14...7.0.0-beta.15) (2021-03-31)
+234:### Bug Fixes
+238:# [7.0.0-beta.14](https://github.com/reactivex/rxjs/compare/7.0.0-beta.13...7.0.0-beta.14) (2021-03-30)
+240:### Bug Fixes
+244:### Features
+250:# [7.0.0-beta.13](https://github.com/reactivex/rxjs/compare/7.0.0-beta.12...7.0.0-beta.13) (2021-03-15)
+252:### Bug Fixes
+267:### Features
+271:### BREAKING CHANGES
+275:# [7.0.0-beta.12](https://github.com/reactivex/rxjs/compare/7.0.0-beta.11...7.0.0-beta.12) (2021-02-27)
+279:### Bug Fixes
+286:# [7.0.0-beta.11](https://github.com/reactivex/rxjs/compare/7.0.0-beta.10...7.0.0-beta.11) (2021-02-24)
+288:### Bug Fixes
+303:### Features
+308:### BREAKING CHANGES
+314:# [7.0.0-beta.10](https://github.com/reactivex/rxjs/compare/7.0.0-beta.9...7.0.0-beta.10) (2021-01-18)
+316:### Bug Fixes
+321:### Features
+328:### Performance Improvements
+332:### BREAKING CHANGES
+337:# [7.0.0-beta.9](https://github.com/reactivex/rxjs/compare/7.0.0-beta.8...7.0.0-beta.9) (2020-12-07)
+339:### Bug Fixes
+355:### Features
+361:### BREAKING CHANGES
+384:# [7.0.0-beta.8](https://github.com/reactivex/rxjs/compare/7.0.0-beta.7...7.0.0-beta.8) (2020-10-15)
+386:### Bug Fixes
+403:### Code Refactoring
+408:### Features
+413:### BREAKING CHANGES
+420:# [7.0.0-beta.7](https://github.com/reactivex/rxjs/compare/7.0.0-beta.5...7.0.0-beta.7) (2020-09-23)
+422:### Bug Fixes
+426:### Code Refactoring
+431:### BREAKING CHANGES
+435:# [7.0.0-beta.6](https://github.com/reactivex/rxjs/compare/7.0.0-beta.5...7.0.0-beta.6) (2020-09-23)
+437:### Bug Fixes
+446:### Code Refactoring
+450:### Features
+455:### BREAKING CHANGES
+461:# [7.0.0-beta.5](https://github.com/reactivex/rxjs/compare/7.0.0-beta.4...7.0.0-beta.5) (2020-09-03)
+463:### Bug Fixes
+484:### Code Refactoring
+490:### Features
+499:### Performance Improvements
+503:### BREAKING CHANGES
+526:# [7.0.0-beta.4](https://github.com/reactivex/rxjs/compare/7.0.0-beta.1...7.0.0-beta.4) (2020-08-02)
+528:### Bug Fixes
+536:### Code Refactoring
+541:### Features
+547:### BREAKING CHANGES
+553:# [7.0.0-beta.3](https://github.com/reactivex/rxjs/compare/7.0.0-beta.1...7.0.0-beta.3) (2020-07-30)
+555:### Bug Fixes
+560:### Code Refactoring
+565:### Features
+569:### BREAKING CHANGES
+573:# [7.0.0-beta.2](https://github.com/reactivex/rxjs/compare/7.0.0-beta.1...7.0.0-beta.2) (2020-07-03)
+575:### Bug Fixes
+579:# [7.0.0-beta.1](https://github.com/reactivex/rxjs/compare/7.0.0-beta.0...7.0.0-beta.1) (2020-07-02)
+581:### Bug Fixes
+600:### Features
+608:### BREAKING CHANGES
+625:# [7.0.0-beta.0](https://github.com/reactivex/rxjs/compare/7.0.0-alpha.1...7.0.0-beta.0) (2020-04-03)
+627:### Bug Fixes
+644:### Features
+652:### BREAKING CHANGES
+657:# [7.0.0-alpha.1](https://github.com/reactivex/rxjs/compare/7.0.0-alpha.0...7.0.0-alpha.1) (2019-12-27)
+659:### Bug Fixes
+669:### Features
+673:# [7.0.0-alpha.0](https://github.com/reactivex/rxjs/compare/6.5.2...7.0.0-alpha.0) (2019-09-18)
+675:### Bug Fixes
+687:### Features
+696:### BREAKING CHANGES
+706:## [6.5.3](https://github.com/reactivex/rxjs/compare/6.5.2...6.5.3) (2019-09-03)
+708:### Bug Fixes
+713:## [6.5.2](https://github.com/reactivex/rxjs/compare/6.5.0...6.5.2) (2019-05-10)
+715:### Bug Fixes
+728:## [6.5.1](https://github.com/reactivex/rxjs/compare/6.5.0...6.5.1) (2019-04-23)
+730:### Bug Fixes
+735:# [6.5.0](https://github.com/reactivex/rxjs/compare/6.4.0...6.5.0) (2019-04-23)
+737:### Bug Fixes
+746:### Features
+754:### Performance Improvements
+758:# [6.4.0](https://github.com/reactivex/rxjs/compare/6.3.3...6.4.0) (2019-01-30)
+760:### Bug Fixes
+785:### Features
+792:### Performance Improvements
+800:## [6.3.3](https://github.com/reactivex/rxjs/compare/6.3.2...6.3.3) (2018-09-25)
+802:### Bug Fixes
+813:## [6.3.2](https://github.com/reactivex/rxjs/compare/6.3.1...6.3.2) (2018-09-04)
+815:### Bug Fixes
+821:## [6.3.1](https://github.com/reactivex/rxjs/compare/6.3.0...6.3.1) (2018-08-31)
+823:### Bug Fixes
+829:# [6.3.0](https://github.com/reactivex/rxjs/compare/6.2.2...6.3.0) (2018-08-30)
+831:### Bug Fixes
+855:### Features
+863:## [6.2.2](https://github.com/reactivex/rxjs/compare/6.2.1...6.2.2) (2018-07-13)
+865:### Bug Fixes
+872:## [6.2.1](https://github.com/reactivex/rxjs/compare/6.2.0...6.2.1) (2018-06-12)
+874:### Bug Fixes
+888:### Performance Improvements
+894:# [6.2.0](https://github.com/ReactiveX/RxJS/compare/6.1.0...6.2.0) (2018-05-22)
+896:### Bug Fixes
+907:### Features
+913:# [6.1.0](https://github.com/ReactiveX/RxJS/compare/6.0.0...6.1.0) (2018-05-03)
+915:### Bug Fixes
+920:### Features
+926:# [6.0.0](https://github.com/ReactiveX/RxJS/compare/6.0.0-uncanny-rc.7...v6.0.0) (2018-04-24)
+928:### Bug Fixes
+932:### Code Refactoring
+936:### Features
+941:### BREAKING CHANGES
+947:# [6.0.0-uncanny-rc.7](https://github.com/ReactiveX/RxJS/compare/6.0.0-ucandoit-rc.6...v6.0.0-uncanny-rc.7) (2018-04-13)
+949:### Bug Fixes
+959:# [6.0.0-ucandoit-rc.6](https://github.com/ReactiveX/RxJS/compare/6.0.0-uber-rc.5...v6.0.0-ucandoit-rc.6) (2018-04-13)
+961:### Bug Fixes
+967:# [6.0.0-uber-rc.5](https://github.com/ReactiveX/RxJS/compare/6.0.0-turbo-rc.4...6.0.0-uber-rc.5) (2018-04-13)
+969:### Bug Fixes
+975:# [6.0.0-turbo-rc.4](https://github.com/ReactiveX/RxJS/compare/6.0.0-terrific-rc.3...6.0.0-turbo-rc.4) (2018-04-12)
+977:### Bug Fixes
+984:# [6.0.0-terrific-rc.3](https://github.com/ReactiveX/RxJS/compare/6.0.0-tenacious-rc.2...v6.0.0-terrific-rc.3) (2018-04-11)
+986:### Features
+992:# [6.0.0-tenacious-rc.2](https://github.com/ReactiveX/RxJS/compare/6.0.0-tactical-rc.1...v6.0.0-tenacious-rc.2) (2018-04-11)
+994:### Bug Fixes
+999:### BREAKING CHANGES
+1005:# [6.0.0-tactical-rc.1](https://github.com/ReactiveX/RxJS/compare/6.0.0-rc.0...6.0.0-tactical-rc.1) (2018-04-07)
+1009:### Bug Fixes
+1023:### Features
+1030:# [6.0.0-rc.0](https://github.com/ReactiveX/RxJS/compare/6.0.0-beta.4...6.0.0-rc.0) (2018-03-31)
+1032:### Bug Fixes
+1040:### Features
+1044:### Performance Improvements
+1049:### BREAKING CHANGES
+1060:# [6.0.0-beta.4](https://github.com/ReactiveX/RxJS/compare/6.0.0-beta.3...v6.0.0-beta.4) (2018-03-29)
+1062:### Bug Fixes
+1067:### Features
+1072:### BREAKING CHANGES
+1078:# [6.0.0-beta.3](https://github.com/ReactiveX/RxJS/compare/6.0.0-beta.1...6.0.0-beta.3) (2018-03-27)
+1080:### Bug Fixes
+1089:# [6.0.0-beta.2](https://github.com/ReactiveX/RxJS/compare/6.0.0-beta.1...6.0.0-beta.2) (2018-03-24)
+1091:### Bug Fixes
+1099:# [6.0.0-beta.1](https://github.com/ReactiveX/RxJS/compare/6.0.0-beta.0...v6.0.0-beta.1) (2018-03-21)
+1101:### Bug Fixes
+1107:### Features
+1114:# [6.0.0-beta.0](https://github.com/ReactiveX/RxJS/compare/6.0.0-alpha.3...6.0.0-beta.0) (2018-03-16)
+1116:### Bug Fixes
+1138:### Code Refactoring
+1143:### Features
+1176:### BREAKING CHANGES
+1197:# [6.0.0-alpha.4](https://github.com/ReactiveX/RxJS/compare/6.0.0-alpha.3...v6.0.0-alpha.4) (2018-03-13)
+1199:### Bug Fixes
+1214:### Code Refactoring
+1219:### Features
+1240:### BREAKING CHANGES
+1260:# [6.0.0-alpha.3](https://github.com/ReactiveX/RxJS/compare/6.0.0-alpha.2...v6.0.0-alpha.3) (2018-02-06)
+1262:### Bug Fixes
+1276:### Features
+1284:### BREAKING CHANGES
+1297:# [6.0.0-alpha.2](https://github.com/ReactiveX/RxJS/compare/6.0.0-alpha.1...6.0.0-alpha.2) (2018-01-14)
+1299:### Bug Fixes
+1305:# [6.0.0-alpha.1](https://github.com/ReactiveX/RxJS/compare/5.5.3...v6.0.0-alpha.1) (2018-01-12)
+1307:### Bug Fixes
+1320:### Chores
+1324:### Code Refactoring
+1330:### Features
+1351:### BREAKING CHANGES
+1384:## [5.5.6](https://github.com/ReactiveX/RxJS/compare/5.5.5...v5.5.6) (2017-12-21)
+1386:### Bug Fixes
+1392:## [5.5.5](https://github.com/ReactiveX/RxJS/compare/5.5.4...v5.5.5) (2017-12-06)
+1394:### Support Added
+1400:## [5.5.4](https://github.com/ReactiveX/RxJS/compare/5.5.3...v5.5.4) (2017-12-05)
+1402:### Bug Fixes
+1409:## [5.5.3](https://github.com/ReactiveX/RxJS/compare/5.5.2...v5.5.3) (2017-12-01)
+1411:### Bug Fixes
+1420:## [5.5.2](https://github.com/ReactiveX/RxJS/compare/5.5.1...v5.5.2) (2017-10-25)
+1422:### Bug Fixes
+1431:## [5.5.1](https://github.com/ReactiveX/RxJS/compare/5.5.0...v5.5.1) (2017-10-24)
+1433:### Bug Fixes
+1440:# [5.5.0](https://github.com/ReactiveX/RxJS/compare/5.5.0-beta.7...v5.5.0) (2017-10-18)
+1442:### Bug Fixes
+1446:### Features
+1452:# [5.5.0-beta.7](https://github.com/ReactiveX/RxJS/compare/5.5.0-beta.5...5.5.0-beta.7) (2017-10-13)
+1456:### Bug Fixes
+1467:# [5.5.0-beta.5](https://github.com/ReactiveX/RxJS/compare/5.5.0-beta.4...v5.5.0-beta.5) (2017-10-06)
+1469:### Bug Fixes
+1473:### Features
+1479:# [5.5.0-beta.4](https://github.com/ReactiveX/RxJS/compare/5.5.0-beta.3...v5.5.0-beta.4) (2017-10-06)
+1481:### Bug Fixes
+1489:# [5.5.0-beta.3](https://github.com/ReactiveX/RxJS/compare/5.5.0-beta.2...v5.5.0-beta.3) (2017-10-03)
+1491:### Bug Fixes
+1499:# [5.5.0-beta.2](https://github.com/ReactiveX/RxJS/compare/5.5.0-beta.1...v5.5.0-beta.2) (2017-09-27)
+1501:### Bug Fixes
+1507:# [5.5.0-beta.1](https://github.com/ReactiveX/RxJS/compare/5.5.0-beta.0...v5.5.0-beta.1) (2017-09-27)
+1509:### Bug Fixes
+1517:### Features
+1523:# [5.5.0-beta.0](https://github.com/ReactiveX/RxJS/compare/5.4.3...5.5.0-beta.0) (2017-09-22)
+1527:### Bug Fixes
+1533:### Features
+1639:## [5.4.3](https://github.com/ReactiveX/RxJS/compare/5.4.2...v5.4.3) (2017-08-10)
+1641:### Bug Fixes
+1648:## [5.4.2](https://github.com/ReactiveX/RxJS/compare/5.4.1...v5.4.2) (2017-07-05)
+1650:### Bug Fixes
+1657:## [5.4.1](https://github.com/ReactiveX/RxJS/compare/5.4.0...v5.4.1) (2017-06-14)
+1659:### Bug Fixes
+1672:# [5.4.0](https://github.com/ReactiveX/RxJS/) (2017-05-09)
+1674:### Features
+1682:## [5.3.3](https://github.com/ReactiveX/RxJS/compare/5.3.1...5.3.3) (2017-05-09)
+1684:### Bug Fixes
+1694:## [5.3.1](https://github.com/ReactiveX/RxJS/compare/5.3.0...v5.3.1) (2017-05-02)
+1696:### Bug Fixes
+1705:# [5.3.0](https://github.com/ReactiveX/RxJS/compare/5.2.0...v5.3.0) (2017-04-03)
+1707:### Bug Fixes
+1717:### Features
+1722:### Performance Improvements
+1726:### April Fools
+1732:# [5.2.0](https://github.com/ReactiveX/RxJS/compare/5.1.1...v5.2.0) (2017-02-21)
+1734:### Bug Fixes
+1748:### Features
+1755:## [5.1.1](https://github.com/ReactiveX/RxJS/compare/5.1.0...v5.1.1) (2017-02-13)
+1757:### Bug Fixes
+1765:# [5.1.0](https://github.com/ReactiveX/RxJS/compare/5.0.3...v5.1.0) (2017-02-01)
+1767:### Bug Fixes
+1780:### Features
+1787:## [5.0.3](https://github.com/ReactiveX/RxJS/compare/5.0.2...v5.0.3) (2017-01-05)
+1789:### Bug Fixes
+1797:## [5.0.2](https://github.com/ReactiveX/RxJS/compare/5.0.1...v5.0.2) (2016-12-23)
+1799:### Bug Fixes
+1806:## [5.0.1](https://github.com/ReactiveX/RxJS/compare/5.0.0...v5.0.1) (2016-12-13)
+1808:### Bug Fixes
+1814:# [5.0.0](https://github.com/ReactiveX/RxJS/compare/5.0.0-rc.5...v5.0.0) (2016-12-13)
+1816:### Bug Fixes
+1823:# [5.0.0-rc.5](https://github.com/ReactiveX/RxJS/compare/5.0.0-rc.4...v5.0.0-rc.5) (2016-12-07)
+1825:### Bug Fixes
+1833:### Features
+1837:### BREAKING CHANGES
+1845:# [5.0.0-rc.4](https://github.com/ReactiveX/RxJS/compare/5.0.0-rc.3...v5.0.0-rc.4) (2016-11-19)
+1847:### Bug Fixes
+1854:# [5.0.0-rc.3](https://github.com/ReactiveX/RxJS/compare/5.0.0-rc.2...v5.0.0-rc.3) (2016-11-15)
+1856:### Bug Fixes
+1860:### Features
+1869:# [5.0.0-rc.2](https://github.com/ReactiveX/RxJS/compare/5.0.0-rc.1...v5.0.0-rc.2) (2016-11-05)
+1871:### Bug Fixes
+1893:### Features
+1899:### BREAKING CHANGES
+1916:# [5.0.0-rc.1](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.12...v5.0.0-rc.1) (2016-10-11)
+1918:### Bug Fixes
+1931:### Features
+1942:### BREAKING CHANGES
+1960:# [5.0.0-beta.12](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.11...v5.0.0-beta.12) (2016-09-09)
+1962:### Bug Fixes
+1973:### Features
+1980:# [5.0.0-beta.11](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.10...v5.0.0-beta.11) (2016-08-09)
+1982:### Bug Fixes
+1995:### Features
+2000:### BREAKING CHANGES
+2008:# [5.0.0-beta.10](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.9...v5.0.0-beta.10) (2016-07-06)
+2010:### Bug Fixes
+2022:# [5.0.0-beta.9](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.8...v5.0.0-beta.9) (2016-06-14)
+2024:### Bug Fixes
+2032:### Performance Improvements
+2038:# [5.0.0-beta.8](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.7...v5.0.0-beta.8) (2016-05-22)
+2040:### Bug Fixes
+2050:### Features
+2057:### Performance Improvements
+2061:### BREAKING CHANGES
+2072:# [5.0.0-beta.7](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.6...v5.0.0-beta.7) (2016-04-27)
+2074:### Bug Fixes
+2079:### Features
+2085:# [5.0.0-beta.6](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.5...v5.0.0-beta.6) (2016-04-12)
+2087:### Bug Fixes
+2095:### Features
+2099:### Performance Improvements
+2105:# [5.0.0-beta.5](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.4...v5.0.0-beta.5) (2016-04-05)
+2107:### Bug Fixes
+2111:### BREAKING CHANGES
+2118:# [5.0.0-beta.4](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.3...v5.0.0-beta.4) (2016-03-29)
+2120:### Bug Fixes
+2130:### Features
+2136:### Performance Improvements
+2140:### BREAKING CHANGES
+2146:# [5.0.0-beta.3](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.2...v5.0.0-beta.3) (2016-03-21)
+2148:### Bug Fixes
+2165:### Features
+2172:### BREAKING CHANGES
+2178:# [5.0.0-beta.2](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.1...v5.0.0-beta.2) (2016-02-10)
+2180:### Bug Fixes
+2202:### Features
+2215:### Performance Improvements
+2244:### BREAKING CHANGES
+2253:# [5.0.0-beta.1](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.0...v5.0.0-beta.1) (2016-01-13)
+2255:### Bug Fixes
+2280:### Features
+2294:### BREAKING CHANGES
+2301:# [5.0.0-beta.0](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.14...v5.0.0-beta.0) (2015-12-15)
+2303:### Bug Fixes
+2316:### Features
+2324:### BREAKING CHANGES
+2335:# [5.0.0-alpha.14](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.13...v5.0.0-alpha.14) (2015-12-09)
+2337:### Bug Fixes
+2344:### Features
+2353:### BREAKING CHANGES
+2361:# [5.0.0-alpha.13](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.12...v5.0.0-alpha.13) (2015-12-08)
+2363:### Bug Fixes
+2373:### Features
+2386:### BREAKING CHANGES
+2395:# [5.0.0-alpha.12](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.10...v5.0.0-alpha.12) (2015-12-04)
+2397:### Bug Fixes
+2416:### Features
+2433:### Performance Improvements
+2439:# [5.0.0-alpha.11](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.10...v5.0.0-alpha.11) (2015-12-01)
+2441:### Bug Fixes
+2455:### Features
+2465:### Performance Improvements
+2471:# [5.0.0-alpha.10](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.9...v5.0.0-alpha.10) (2015-11-10)
+2473:### Bug Fixes
+2479:# [5.0.0-alpha.9](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.8...v5.0.0-alpha.9) (2015-11-10)
+2481:### Bug Fixes
+2485:### Features
+2491:# [5.0.0-alpha.8](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.7...v5.0.0-alpha.8) (2015-11-06)
+2493:### Bug Fixes
+2501:### Features
+2506:### BREAKING CHANGES
+2516:# [5.0.0-alpha.7](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.6...v5.0.0-alpha.7) (2015-10-27)
+2518:### Bug Fixes
+2529:### Features
+2537:# [5.0.0-alpha.6](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.5...v5.0.0-alpha.6) (2015-10-17)
+2539:### Bug Fixes
+2546:# [5.0.0-alpha.5](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.4...v5.0.0-alpha.5) (2015-10-16)
+2548:### Bug Fixes
+2559:# [5.0.0-alpha.4](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.3...5.0.0-alpha.4) (2015-10-15)
+2561:### Bug Fixes
+2570:### Features
+2575:### Performance Improvements
+2587:# [5.0.0-alpha.3](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.2...5.0.0-alpha.3) (2015-10-13)
+2589:### Bug Fixes
+2612:### Features
+2625:### Performance Improvements
+2629:### BREAKING CHANGES
+2639:# [5.0.0-alpha.2](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.1...5.0.0-alpha.2) (2015-09-30)
+2641:### Bug Fixes
+2645:### Features
+2654:# [5.0.0-alpha.1](https://github.com/ReactiveX/RxJS/compare/0.0.0-prealpha.3...5.0.0-alpha.1) (2015-09-23)
+2656:### Bug Fixes
+2672:### Features
+2688:# [0.0.0-prealpha.3](https://github.com/ReactiveX/RxJS/compare/0.0.0-prealpha.2...0.0.0-prealpha.3) (2015-09-11)
+2690:### Bug Fixes
+2696:# [0.0.0-prealpha.2](https://github.com/ReactiveX/RxJS/compare/0.0.0-prealpha.1...0.0.0-prealpha.2) (2015-09-11)
+2698:### Bug Fixes
+2703:### Features
+2712:# [0.0.0-prealpha.1](https://github.com/ReactiveX/RxJS/compare/0441dea...0.0.0-prealpha.1) (2015-09-02)
+2714:### Bug Fixes
+2721:### Features
+```
+
+### dl/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/CODE_OF_CONDUCT.md
+```
+1:# Contributor Covenant Code of Conduct
+3:## Our Pledge
+12:## Our Standards
+34:## Our Responsibilities
+46:## Scope
+55:## Enforcement
+68:## Attribution
+```
+
+### dl/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/README.md
+```
+1:# <img src="docs_app/src/assets/images/logos/Rx_Logo_S.png" alt="RxJS Logo" width="86" height="86"> RxJS: Reactive Extensions For JavaScript
+7:# The Roadmap from RxJS 7 to 8
+11:# RxJS 7
+13:### FOR 6.X PLEASE GO TO [THE 6.x BRANCH](https://github.com/ReactiveX/rxjs/tree/6.x)
+24:## Versions In This Repository
+31:## Important
+35:## Installation and Usage
+37:### ES6 via npm
+71:### CDN
+91:## Goals
+99:## Building/Testing
+105:## Adding documentation
+```
+
+### dl/node_modules/.pnpm/tslib@2.8.1/node_modules/tslib/README.md
+```
+1:# tslib
+33:# Installing
+37:## npm
+40:# TypeScript 3.9.2 or later
+43:# TypeScript 3.8.4 or earlier
+46:# TypeScript 2.3.2 or earlier
+50:## yarn
+53:# TypeScript 3.9.2 or later
+56:# TypeScript 3.8.4 or earlier
+59:# TypeScript 2.3.2 or earlier
+63:## bower
+66:# TypeScript 3.9.2 or later
+69:# TypeScript 3.8.4 or earlier
+72:# TypeScript 2.3.2 or earlier
+76:## JSPM
+79:# TypeScript 3.9.2 or later
+82:# TypeScript 3.8.4 or earlier
+85:# TypeScript 2.3.2 or earlier
+89:# Usage
+139:## Deployment
+150:# Contribute
+160:# Documentation
+```
+
+### dl/node_modules/.pnpm/tslib@2.8.1/node_modules/tslib/SECURITY.md
+```
+3:## Security
+9:## Reporting Security Issues
+33:## Preferred Languages
+37:## Policy
+```
+
+### dl/node_modules/.pnpm/undici-types@7.18.2/node_modules/undici-types/README.md
+```
+1:# undici-types
+```
+
+### dl/node_modules/.pnpm/universalify@2.0.1/node_modules/universalify/README.md
+```
+1:# universalify
+12:## Installation
+18:## API
+20:### `universalify.fromCallback(fn)`
+46:### `universalify.fromPromise(fn)`
+74:## License
+```
+
+### dl/node_modules/.pnpm/vscode-jsonrpc@9.0.0/node_modules/vscode-jsonrpc/README.md
+```
+1:# VSCode JSON RPC
+48:# History
+53:## License
+```
+
+### dl/node_modules/.pnpm/vscode-jsonrpc@9.0.1/node_modules/vscode-jsonrpc/README.md
+```
+1:# VSCode JSON RPC
+48:# History
+53:## License
+```
+
+### dl/node_modules/.pnpm/vscode-languageserver-protocol@3.18.1/node_modules/vscode-languageserver-protocol/README.md
+```
+1:# VSCode Language Server - Protocol Module
+11:## History
+15:## License
+```
+
+### dl/node_modules/.pnpm/vscode-languageserver-protocol@3.18.2/node_modules/vscode-languageserver-protocol/README.md
+```
+1:# VSCode Language Server - Protocol Module
+11:## History
+15:## License
+```
+
+### dl/node_modules/.pnpm/vscode-languageserver-textdocument@1.0.13/node_modules/vscode-languageserver-textdocument/README.md
+```
+1:# Text Document implementation for a LSP Node server
+11:## History
+13:### 1.04
+17:### 1.03
+21:### 1.0.2
+25:### 1.0.0
+29:## License
+```
+
+### dl/node_modules/.pnpm/vscode-languageserver-types@3.18.0/node_modules/vscode-languageserver-types/README.md
+```
+1:# VSCode Language Server Types
+12:## History
+16:## License
+```
+
+### dl/node_modules/.pnpm/vscode-languageserver@10.0.1/node_modules/vscode-languageserver/README.md
+```
+1:# VSCode Language Server
+12:## History
+16:## License
+```
+
+### dl/node_modules/.pnpm/vscode-uri@3.1.0/node_modules/vscode-uri/LICENSE.md
+```
+```
+
+### dl/node_modules/.pnpm/vscode-uri@3.1.0/node_modules/vscode-uri/README.md
+```
+1:## vscode-uri
+19:## Usage
+48:## Usage: Util
+61:## Contributing
+65:## Code of Conduct
+```
+
+### dl/node_modules/.pnpm/vscode-uri@3.1.0/node_modules/vscode-uri/SECURITY.md
+```
+3:## Security
+9:## Reporting Security Issues
+33:## Preferred Languages
+37:## Policy
+```
+
+### dl/node_modules/.pnpm/ws@8.21.1/node_modules/ws/README.md
+```
+1:# ws: a Node.js WebSocket library
+21:## Table of Contents
+47:## Protocol support
+53:## Installing
+59:### Opt-in for performance
+93:## API docs
+98:## WebSocket compression
+160:## Usage examples
+162:### Sending and receiving text data
+180:### Sending binary data
+200:### Simple server
+218:### External HTTP/S server
+244:### Multiple servers sharing a single HTTP/S server
+285:### Client authentication
+330:### Server broadcast
+374:### Round-trip time
+401:### Use the Node.js streams API
+416:### Other examples
+423:## FAQ
+425:### How to get the IP address of the client?
+452:### How to detect and close broken connections?
+522:### How to connect via a proxy?
+527:## Changelog
+531:## License
 ```
 
 ### findings/HYPOTHESES.md
@@ -541,8 +1576,8 @@
 347:### M3 · ingest: extract -> spine -> EDB
 395:### M4 · host rels: sh executor + builtin sg + extract
 448:### M5 · diag + v5 LSP front
-499:### M6 · http front
-530:## Frontier (deferred, with the evidence that will resolve each)
+506:### M6 · http front
+537:## Frontier (deferred, with the evidence that will resolve each)
 ```
 
 ### skills/mermaid-living-map.md
@@ -579,5 +1614,684 @@
 126:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
 139:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
 152:## Breakpoint ramp — tight gun 700 MB
+```
+
+### sprefa-store/bench/out/REPORT.md
+```
+1:# Z-set / IVM head-to-head — feasibility lab
+15:## Charts
+22:## Data
+47:## Takeaways (derived)
+```
+
+### sprefa-store/js/node_modules/.pnpm/@libsql+client@0.17.4/node_modules/@libsql/client/README.md
+```
+52:## Features
+59:## Install
+65:## Quickstart
+96:## Examples
+110:## Documentation
+114:## Support
+118:## Contributors
+```
+
+### sprefa-store/js/node_modules/.pnpm/@libsql+darwin-arm64@0.5.29/node_modules/@libsql/darwin-arm64/README.md
+```
+1:# `@libsql/darwin-arm64`
+```
+
+### sprefa-store/js/node_modules/.pnpm/@libsql+hrana-client@0.10.0/node_modules/@libsql/hrana-client/README.md
+```
+1:# Hrana client for TypeScript
+15:## Usage
+```
+
+### sprefa-store/js/node_modules/.pnpm/@libsql+isomorphic-ws@0.1.5/node_modules/@libsql/isomorphic-ws/README.md
+```
+1:# `@libsql/isomorphic-ws`
+```
+
+### sprefa-store/js/node_modules/.pnpm/@types+better-sqlite3@7.6.13/node_modules/@types/better-sqlite3/README.md
+```
+1:# Installation
+4:# Summary
+7:# Details
+10:### Additional Details
+14:# Credits
+```
+
+### sprefa-store/js/node_modules/.pnpm/@types+node@26.1.1/node_modules/@types/node/README.md
+```
+1:# Installation
+4:# Summary
+7:# Details
+10:### Additional Details
+14:# Credits
+```
+
+### sprefa-store/js/node_modules/.pnpm/@types+ws@8.18.1/node_modules/@types/ws/README.md
+```
+1:# Installation
+4:# Summary
+7:# Details
+10:### Additional Details
+14:# Credits
+```
+
+### sprefa-store/js/node_modules/.pnpm/@typescript+native-preview-darwin-arm64@7.0.0-dev.20260707.2/node_modules/@typescript/native-preview-darwin-arm64/README.md
+```
+1:# `@typescript/native-preview-darwin-arm64`
+```
+
+### sprefa-store/js/node_modules/.pnpm/@typescript+native-preview@7.0.0-dev.20260707.2/node_modules/@typescript/native-preview/README.md
+```
+1:# TypeScript (Native Preview)
+9:## Usage
+19:## Issues and Feedback
+```
+
+### sprefa-store/js/node_modules/.pnpm/@typescript+native-preview@7.0.0-dev.20260707.2/node_modules/@typescript/native-preview/vendor/vscode-jsonrpc/README.md
+```
+1:# VSCode JSON RPC
+48:# History
+53:## License
+```
+
+### sprefa-store/js/node_modules/.pnpm/better-sqlite3@13.0.1/node_modules/better-sqlite3/README.md
+```
+1:# better-sqlite3 [![Build Status](https://github.com/JoshuaWise/better-sqlite3/actions/workflows/build.yml/badge.svg)](https://github.com/JoshuaWise/better-sqlite3/actions/workflows/build.yml?query=branch%3Amaster)
+12:## Help this project stay strong! &#128170;
+20:## How other libraries compare
+29:## Installation
+37:## Usage
+60:## Why should I use this instead of [node-sqlite3](https://github.com/mapbox/node-sqlite3)?
+79:## Upgrading
+86:# Documentation
+97:# License
+```
+
+### sprefa-store/js/node_modules/.pnpm/detect-libc@2.0.2/node_modules/detect-libc/README.md
+```
+1:# detect-libc
+17:## Install
+23:## API
+25:### GLIBC
+33:### MUSL
+41:### family
+63:### familySync
+81:### version
+102:### versionSync
+119:### isNonGlibcLinux
+137:### isNonGlibcLinuxSync
+151:## Licensing
+```
+
+### sprefa-store/js/node_modules/.pnpm/js-base64@3.9.1/node_modules/js-base64/LICENSE.md
+```
+```
+
+### sprefa-store/js/node_modules/.pnpm/js-base64@3.9.1/node_modules/js-base64/README.md
+```
+4:# base64.js
+10:## Install
+16:## Usage
+18:### In Browser
+34:### As an ES6 Module
+63:### node.js (commonjs)
+80:## SYNOPSIS
+120:### Built-in Extensions
+153:## `.decode()` vs `.atob` (and `.encode()` vs `btoa()`)
+166:## Brief History
+```
+
+### sprefa-store/js/node_modules/.pnpm/libsql@0.5.29/node_modules/libsql/README.md
+```
+1:# libSQL API for JavaScript/TypeScript
+18:## Features
+25:## Installing
+49:## Documentation
+53:## Getting Started
+143:## Developing
+161:## License
+165:### Contribution
+```
+
+### sprefa-store/js/node_modules/.pnpm/node-addon-api@8.9.0/node_modules/node-addon-api/LICENSE.md
+```
+```
+
+### sprefa-store/js/node_modules/.pnpm/node-addon-api@8.9.0/node_modules/node-addon-api/README.md
+```
+1:# **node-addon-api module**
+17:## API References
+22:## Current version: 8.9.0
+34:## Badges
+53:## Contributing
+58:## Team members
+60:### Active
+76:### Emeritus
+91:## License
+```
+
+### sprefa-store/js/node_modules/.pnpm/node-addon-api@8.9.0/node_modules/node-addon-api/tools/README.md
+```
+1:# Tools
+3:## clang-format
+7:## Migration Script
+11:### How To Use
+26:### Quick Fixes
+33:### Major Reconstructions
+```
+
+### sprefa-store/js/node_modules/.pnpm/promise-limit@2.7.0/node_modules/promise-limit/README.md
+```
+96:## We're Hiring!
+```
+
+### sprefa-store/js/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/CHANGELOG.md
+```
+1:## [7.8.2](https://github.com/reactivex/rxjs/compare/7.8.1...7.8.2) (2025-02-22)
+3:### Bug Fixes
+9:## [7.8.1](https://github.com/reactivex/rxjs/compare/7.8.0...7.8.1) (2023-04-26)
+11:### Bug Fixes
+16:# [7.8.0](https://github.com/reactivex/rxjs/compare/7.7.0...7.8.0) (2022-12-15)
+18:### Features
+27:# [7.7.0](https://github.com/reactivex/rxjs/compare/7.6.0...7.7.0) (2022-12-15)
+29:### Features
+36:# [7.6.0](https://github.com/reactivex/rxjs/compare/7.5.7...7.6.0) (2022-12-03)
+38:### Bug Fixes
+43:### Features
+47:## [7.5.7](https://github.com/reactivex/rxjs/compare/7.5.6...7.5.7) (2022-09-25)
+49:### Bug Fixes
+53:### Performance Improvements
+57:## [7.5.6](https://github.com/reactivex/rxjs/compare/7.5.5...7.5.6) (2022-07-11)
+59:### Bug Fixes
+66:## [7.5.5](https://github.com/reactivex/rxjs/compare/7.5.4...7.5.5) (2022-03-08)
+68:### Bug Fixes
+74:### Performance Improvements
+78:## [7.5.4](https://github.com/reactivex/rxjs/compare/7.5.3...7.5.4) (2022-02-09)
+80:### Performance Improvements
+84:## [7.5.3](https://github.com/reactivex/rxjs/compare/7.5.2...7.5.3) (2022-02-08)
+86:### Bug Fixes
+90:## [7.5.2](https://github.com/reactivex/rxjs/compare/7.5.1...7.5.2) (2022-01-11)
+92:### Bug Fixes
+97:## [7.5.1](https://github.com/reactivex/rxjs/compare/7.5.0...7.5.1) (2021-12-28)
+99:### Bug Fixes
+103:# [7.5.0](https://github.com/reactivex/rxjs/compare/7.4.0...7.5.0) (2021-12-27)
+105:### Bug Fixes
+113:### Features
+117:# [7.4.0](https://github.com/reactivex/rxjs/compare/7.3.1...7.4.0) (2021-10-06)
+119:### Features
+123:## [7.3.1](https://github.com/reactivex/rxjs/compare/7.3.0...7.3.1) (2021-10-01)
+125:### Bug Fixes
+133:# [7.3.0](https://github.com/reactivex/rxjs/compare/7.2.0...7.3.0) (2021-07-28)
+135:### Bug Fixes
+140:### Features
+145:# [7.2.0](https://github.com/reactivex/rxjs/compare/7.1.0...7.2.0) (2021-07-05)
+147:### Bug Fixes
+152:### Features
+156:# [7.1.0](https://github.com/reactivex/rxjs/compare/7.0.1...7.1.0) (2021-05-21)
+158:### Bug Fixes
+162:### Features
+168:## [7.0.1](https://github.com/reactivex/rxjs/compare/7.0.0...7.0.1) (2021-05-12)
+170:### Bug Fixes
+179:# [7.0.0](https://github.com/reactivex/rxjs/compare/7.0.0-rc.3...7.0.0) (2021-04-29)
+181:### Bug Fixes
+186:# [7.0.0-rc.3](https://github.com/reactivex/rxjs/compare/7.0.0-rc.2...7.0.0-rc.3) (2021-04-28)
+188:### Bug Fixes
+194:### Features
+198:### BREAKING CHANGES
+202:# [7.0.0-rc.2](https://github.com/reactivex/rxjs/compare/7.0.0-rc.1...7.0.0-rc.2) (2021-04-20)
+204:### Bug Fixes
+208:### Reverts
+212:# [7.0.0-rc.1](https://github.com/reactivex/rxjs/compare/7.0.0-rc.0...7.0.0-rc.1) (2021-04-19)
+214:### Bug Fixes
+218:# [7.0.0-rc.0](https://github.com/reactivex/rxjs/compare/7.0.0-beta.15...7.0.0-rc.0) (2021-04-19)
+220:### Bug Fixes
+228:### Features
+232:# [7.0.0-beta.15](https://github.com/reactivex/rxjs/compare/7.0.0-beta.14...7.0.0-beta.15) (2021-03-31)
+234:### Bug Fixes
+238:# [7.0.0-beta.14](https://github.com/reactivex/rxjs/compare/7.0.0-beta.13...7.0.0-beta.14) (2021-03-30)
+240:### Bug Fixes
+244:### Features
+250:# [7.0.0-beta.13](https://github.com/reactivex/rxjs/compare/7.0.0-beta.12...7.0.0-beta.13) (2021-03-15)
+252:### Bug Fixes
+267:### Features
+271:### BREAKING CHANGES
+275:# [7.0.0-beta.12](https://github.com/reactivex/rxjs/compare/7.0.0-beta.11...7.0.0-beta.12) (2021-02-27)
+279:### Bug Fixes
+286:# [7.0.0-beta.11](https://github.com/reactivex/rxjs/compare/7.0.0-beta.10...7.0.0-beta.11) (2021-02-24)
+288:### Bug Fixes
+303:### Features
+308:### BREAKING CHANGES
+314:# [7.0.0-beta.10](https://github.com/reactivex/rxjs/compare/7.0.0-beta.9...7.0.0-beta.10) (2021-01-18)
+316:### Bug Fixes
+321:### Features
+328:### Performance Improvements
+332:### BREAKING CHANGES
+337:# [7.0.0-beta.9](https://github.com/reactivex/rxjs/compare/7.0.0-beta.8...7.0.0-beta.9) (2020-12-07)
+339:### Bug Fixes
+355:### Features
+361:### BREAKING CHANGES
+384:# [7.0.0-beta.8](https://github.com/reactivex/rxjs/compare/7.0.0-beta.7...7.0.0-beta.8) (2020-10-15)
+386:### Bug Fixes
+403:### Code Refactoring
+408:### Features
+413:### BREAKING CHANGES
+420:# [7.0.0-beta.7](https://github.com/reactivex/rxjs/compare/7.0.0-beta.5...7.0.0-beta.7) (2020-09-23)
+422:### Bug Fixes
+426:### Code Refactoring
+431:### BREAKING CHANGES
+435:# [7.0.0-beta.6](https://github.com/reactivex/rxjs/compare/7.0.0-beta.5...7.0.0-beta.6) (2020-09-23)
+437:### Bug Fixes
+446:### Code Refactoring
+450:### Features
+455:### BREAKING CHANGES
+461:# [7.0.0-beta.5](https://github.com/reactivex/rxjs/compare/7.0.0-beta.4...7.0.0-beta.5) (2020-09-03)
+463:### Bug Fixes
+484:### Code Refactoring
+490:### Features
+499:### Performance Improvements
+503:### BREAKING CHANGES
+526:# [7.0.0-beta.4](https://github.com/reactivex/rxjs/compare/7.0.0-beta.1...7.0.0-beta.4) (2020-08-02)
+528:### Bug Fixes
+536:### Code Refactoring
+541:### Features
+547:### BREAKING CHANGES
+553:# [7.0.0-beta.3](https://github.com/reactivex/rxjs/compare/7.0.0-beta.1...7.0.0-beta.3) (2020-07-30)
+555:### Bug Fixes
+560:### Code Refactoring
+565:### Features
+569:### BREAKING CHANGES
+573:# [7.0.0-beta.2](https://github.com/reactivex/rxjs/compare/7.0.0-beta.1...7.0.0-beta.2) (2020-07-03)
+575:### Bug Fixes
+579:# [7.0.0-beta.1](https://github.com/reactivex/rxjs/compare/7.0.0-beta.0...7.0.0-beta.1) (2020-07-02)
+581:### Bug Fixes
+600:### Features
+608:### BREAKING CHANGES
+625:# [7.0.0-beta.0](https://github.com/reactivex/rxjs/compare/7.0.0-alpha.1...7.0.0-beta.0) (2020-04-03)
+627:### Bug Fixes
+644:### Features
+652:### BREAKING CHANGES
+657:# [7.0.0-alpha.1](https://github.com/reactivex/rxjs/compare/7.0.0-alpha.0...7.0.0-alpha.1) (2019-12-27)
+659:### Bug Fixes
+669:### Features
+673:# [7.0.0-alpha.0](https://github.com/reactivex/rxjs/compare/6.5.2...7.0.0-alpha.0) (2019-09-18)
+675:### Bug Fixes
+687:### Features
+696:### BREAKING CHANGES
+706:## [6.5.3](https://github.com/reactivex/rxjs/compare/6.5.2...6.5.3) (2019-09-03)
+708:### Bug Fixes
+713:## [6.5.2](https://github.com/reactivex/rxjs/compare/6.5.0...6.5.2) (2019-05-10)
+715:### Bug Fixes
+728:## [6.5.1](https://github.com/reactivex/rxjs/compare/6.5.0...6.5.1) (2019-04-23)
+730:### Bug Fixes
+735:# [6.5.0](https://github.com/reactivex/rxjs/compare/6.4.0...6.5.0) (2019-04-23)
+737:### Bug Fixes
+746:### Features
+754:### Performance Improvements
+758:# [6.4.0](https://github.com/reactivex/rxjs/compare/6.3.3...6.4.0) (2019-01-30)
+760:### Bug Fixes
+785:### Features
+792:### Performance Improvements
+800:## [6.3.3](https://github.com/reactivex/rxjs/compare/6.3.2...6.3.3) (2018-09-25)
+802:### Bug Fixes
+813:## [6.3.2](https://github.com/reactivex/rxjs/compare/6.3.1...6.3.2) (2018-09-04)
+815:### Bug Fixes
+821:## [6.3.1](https://github.com/reactivex/rxjs/compare/6.3.0...6.3.1) (2018-08-31)
+823:### Bug Fixes
+829:# [6.3.0](https://github.com/reactivex/rxjs/compare/6.2.2...6.3.0) (2018-08-30)
+831:### Bug Fixes
+855:### Features
+863:## [6.2.2](https://github.com/reactivex/rxjs/compare/6.2.1...6.2.2) (2018-07-13)
+865:### Bug Fixes
+872:## [6.2.1](https://github.com/reactivex/rxjs/compare/6.2.0...6.2.1) (2018-06-12)
+874:### Bug Fixes
+888:### Performance Improvements
+894:# [6.2.0](https://github.com/ReactiveX/RxJS/compare/6.1.0...6.2.0) (2018-05-22)
+896:### Bug Fixes
+907:### Features
+913:# [6.1.0](https://github.com/ReactiveX/RxJS/compare/6.0.0...6.1.0) (2018-05-03)
+915:### Bug Fixes
+920:### Features
+926:# [6.0.0](https://github.com/ReactiveX/RxJS/compare/6.0.0-uncanny-rc.7...v6.0.0) (2018-04-24)
+928:### Bug Fixes
+932:### Code Refactoring
+936:### Features
+941:### BREAKING CHANGES
+947:# [6.0.0-uncanny-rc.7](https://github.com/ReactiveX/RxJS/compare/6.0.0-ucandoit-rc.6...v6.0.0-uncanny-rc.7) (2018-04-13)
+949:### Bug Fixes
+959:# [6.0.0-ucandoit-rc.6](https://github.com/ReactiveX/RxJS/compare/6.0.0-uber-rc.5...v6.0.0-ucandoit-rc.6) (2018-04-13)
+961:### Bug Fixes
+967:# [6.0.0-uber-rc.5](https://github.com/ReactiveX/RxJS/compare/6.0.0-turbo-rc.4...6.0.0-uber-rc.5) (2018-04-13)
+969:### Bug Fixes
+975:# [6.0.0-turbo-rc.4](https://github.com/ReactiveX/RxJS/compare/6.0.0-terrific-rc.3...6.0.0-turbo-rc.4) (2018-04-12)
+977:### Bug Fixes
+984:# [6.0.0-terrific-rc.3](https://github.com/ReactiveX/RxJS/compare/6.0.0-tenacious-rc.2...v6.0.0-terrific-rc.3) (2018-04-11)
+986:### Features
+992:# [6.0.0-tenacious-rc.2](https://github.com/ReactiveX/RxJS/compare/6.0.0-tactical-rc.1...v6.0.0-tenacious-rc.2) (2018-04-11)
+994:### Bug Fixes
+999:### BREAKING CHANGES
+1005:# [6.0.0-tactical-rc.1](https://github.com/ReactiveX/RxJS/compare/6.0.0-rc.0...6.0.0-tactical-rc.1) (2018-04-07)
+1009:### Bug Fixes
+1023:### Features
+1030:# [6.0.0-rc.0](https://github.com/ReactiveX/RxJS/compare/6.0.0-beta.4...6.0.0-rc.0) (2018-03-31)
+1032:### Bug Fixes
+1040:### Features
+1044:### Performance Improvements
+1049:### BREAKING CHANGES
+1060:# [6.0.0-beta.4](https://github.com/ReactiveX/RxJS/compare/6.0.0-beta.3...v6.0.0-beta.4) (2018-03-29)
+1062:### Bug Fixes
+1067:### Features
+1072:### BREAKING CHANGES
+1078:# [6.0.0-beta.3](https://github.com/ReactiveX/RxJS/compare/6.0.0-beta.1...6.0.0-beta.3) (2018-03-27)
+1080:### Bug Fixes
+1089:# [6.0.0-beta.2](https://github.com/ReactiveX/RxJS/compare/6.0.0-beta.1...6.0.0-beta.2) (2018-03-24)
+1091:### Bug Fixes
+1099:# [6.0.0-beta.1](https://github.com/ReactiveX/RxJS/compare/6.0.0-beta.0...v6.0.0-beta.1) (2018-03-21)
+1101:### Bug Fixes
+1107:### Features
+1114:# [6.0.0-beta.0](https://github.com/ReactiveX/RxJS/compare/6.0.0-alpha.3...6.0.0-beta.0) (2018-03-16)
+1116:### Bug Fixes
+1138:### Code Refactoring
+1143:### Features
+1176:### BREAKING CHANGES
+1197:# [6.0.0-alpha.4](https://github.com/ReactiveX/RxJS/compare/6.0.0-alpha.3...v6.0.0-alpha.4) (2018-03-13)
+1199:### Bug Fixes
+1214:### Code Refactoring
+1219:### Features
+1240:### BREAKING CHANGES
+1260:# [6.0.0-alpha.3](https://github.com/ReactiveX/RxJS/compare/6.0.0-alpha.2...v6.0.0-alpha.3) (2018-02-06)
+1262:### Bug Fixes
+1276:### Features
+1284:### BREAKING CHANGES
+1297:# [6.0.0-alpha.2](https://github.com/ReactiveX/RxJS/compare/6.0.0-alpha.1...6.0.0-alpha.2) (2018-01-14)
+1299:### Bug Fixes
+1305:# [6.0.0-alpha.1](https://github.com/ReactiveX/RxJS/compare/5.5.3...v6.0.0-alpha.1) (2018-01-12)
+1307:### Bug Fixes
+1320:### Chores
+1324:### Code Refactoring
+1330:### Features
+1351:### BREAKING CHANGES
+1384:## [5.5.6](https://github.com/ReactiveX/RxJS/compare/5.5.5...v5.5.6) (2017-12-21)
+1386:### Bug Fixes
+1392:## [5.5.5](https://github.com/ReactiveX/RxJS/compare/5.5.4...v5.5.5) (2017-12-06)
+1394:### Support Added
+1400:## [5.5.4](https://github.com/ReactiveX/RxJS/compare/5.5.3...v5.5.4) (2017-12-05)
+1402:### Bug Fixes
+1409:## [5.5.3](https://github.com/ReactiveX/RxJS/compare/5.5.2...v5.5.3) (2017-12-01)
+1411:### Bug Fixes
+1420:## [5.5.2](https://github.com/ReactiveX/RxJS/compare/5.5.1...v5.5.2) (2017-10-25)
+1422:### Bug Fixes
+1431:## [5.5.1](https://github.com/ReactiveX/RxJS/compare/5.5.0...v5.5.1) (2017-10-24)
+1433:### Bug Fixes
+1440:# [5.5.0](https://github.com/ReactiveX/RxJS/compare/5.5.0-beta.7...v5.5.0) (2017-10-18)
+1442:### Bug Fixes
+1446:### Features
+1452:# [5.5.0-beta.7](https://github.com/ReactiveX/RxJS/compare/5.5.0-beta.5...5.5.0-beta.7) (2017-10-13)
+1456:### Bug Fixes
+1467:# [5.5.0-beta.5](https://github.com/ReactiveX/RxJS/compare/5.5.0-beta.4...v5.5.0-beta.5) (2017-10-06)
+1469:### Bug Fixes
+1473:### Features
+1479:# [5.5.0-beta.4](https://github.com/ReactiveX/RxJS/compare/5.5.0-beta.3...v5.5.0-beta.4) (2017-10-06)
+1481:### Bug Fixes
+1489:# [5.5.0-beta.3](https://github.com/ReactiveX/RxJS/compare/5.5.0-beta.2...v5.5.0-beta.3) (2017-10-03)
+1491:### Bug Fixes
+1499:# [5.5.0-beta.2](https://github.com/ReactiveX/RxJS/compare/5.5.0-beta.1...v5.5.0-beta.2) (2017-09-27)
+1501:### Bug Fixes
+1507:# [5.5.0-beta.1](https://github.com/ReactiveX/RxJS/compare/5.5.0-beta.0...v5.5.0-beta.1) (2017-09-27)
+1509:### Bug Fixes
+1517:### Features
+1523:# [5.5.0-beta.0](https://github.com/ReactiveX/RxJS/compare/5.4.3...5.5.0-beta.0) (2017-09-22)
+1527:### Bug Fixes
+1533:### Features
+1639:## [5.4.3](https://github.com/ReactiveX/RxJS/compare/5.4.2...v5.4.3) (2017-08-10)
+1641:### Bug Fixes
+1648:## [5.4.2](https://github.com/ReactiveX/RxJS/compare/5.4.1...v5.4.2) (2017-07-05)
+1650:### Bug Fixes
+1657:## [5.4.1](https://github.com/ReactiveX/RxJS/compare/5.4.0...v5.4.1) (2017-06-14)
+1659:### Bug Fixes
+1672:# [5.4.0](https://github.com/ReactiveX/RxJS/) (2017-05-09)
+1674:### Features
+1682:## [5.3.3](https://github.com/ReactiveX/RxJS/compare/5.3.1...5.3.3) (2017-05-09)
+1684:### Bug Fixes
+1694:## [5.3.1](https://github.com/ReactiveX/RxJS/compare/5.3.0...v5.3.1) (2017-05-02)
+1696:### Bug Fixes
+1705:# [5.3.0](https://github.com/ReactiveX/RxJS/compare/5.2.0...v5.3.0) (2017-04-03)
+1707:### Bug Fixes
+1717:### Features
+1722:### Performance Improvements
+1726:### April Fools
+1732:# [5.2.0](https://github.com/ReactiveX/RxJS/compare/5.1.1...v5.2.0) (2017-02-21)
+1734:### Bug Fixes
+1748:### Features
+1755:## [5.1.1](https://github.com/ReactiveX/RxJS/compare/5.1.0...v5.1.1) (2017-02-13)
+1757:### Bug Fixes
+1765:# [5.1.0](https://github.com/ReactiveX/RxJS/compare/5.0.3...v5.1.0) (2017-02-01)
+1767:### Bug Fixes
+1780:### Features
+1787:## [5.0.3](https://github.com/ReactiveX/RxJS/compare/5.0.2...v5.0.3) (2017-01-05)
+1789:### Bug Fixes
+1797:## [5.0.2](https://github.com/ReactiveX/RxJS/compare/5.0.1...v5.0.2) (2016-12-23)
+1799:### Bug Fixes
+1806:## [5.0.1](https://github.com/ReactiveX/RxJS/compare/5.0.0...v5.0.1) (2016-12-13)
+1808:### Bug Fixes
+1814:# [5.0.0](https://github.com/ReactiveX/RxJS/compare/5.0.0-rc.5...v5.0.0) (2016-12-13)
+1816:### Bug Fixes
+1823:# [5.0.0-rc.5](https://github.com/ReactiveX/RxJS/compare/5.0.0-rc.4...v5.0.0-rc.5) (2016-12-07)
+1825:### Bug Fixes
+1833:### Features
+1837:### BREAKING CHANGES
+1845:# [5.0.0-rc.4](https://github.com/ReactiveX/RxJS/compare/5.0.0-rc.3...v5.0.0-rc.4) (2016-11-19)
+1847:### Bug Fixes
+1854:# [5.0.0-rc.3](https://github.com/ReactiveX/RxJS/compare/5.0.0-rc.2...v5.0.0-rc.3) (2016-11-15)
+1856:### Bug Fixes
+1860:### Features
+1869:# [5.0.0-rc.2](https://github.com/ReactiveX/RxJS/compare/5.0.0-rc.1...v5.0.0-rc.2) (2016-11-05)
+1871:### Bug Fixes
+1893:### Features
+1899:### BREAKING CHANGES
+1916:# [5.0.0-rc.1](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.12...v5.0.0-rc.1) (2016-10-11)
+1918:### Bug Fixes
+1931:### Features
+1942:### BREAKING CHANGES
+1960:# [5.0.0-beta.12](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.11...v5.0.0-beta.12) (2016-09-09)
+1962:### Bug Fixes
+1973:### Features
+1980:# [5.0.0-beta.11](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.10...v5.0.0-beta.11) (2016-08-09)
+1982:### Bug Fixes
+1995:### Features
+2000:### BREAKING CHANGES
+2008:# [5.0.0-beta.10](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.9...v5.0.0-beta.10) (2016-07-06)
+2010:### Bug Fixes
+2022:# [5.0.0-beta.9](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.8...v5.0.0-beta.9) (2016-06-14)
+2024:### Bug Fixes
+2032:### Performance Improvements
+2038:# [5.0.0-beta.8](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.7...v5.0.0-beta.8) (2016-05-22)
+2040:### Bug Fixes
+2050:### Features
+2057:### Performance Improvements
+2061:### BREAKING CHANGES
+2072:# [5.0.0-beta.7](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.6...v5.0.0-beta.7) (2016-04-27)
+2074:### Bug Fixes
+2079:### Features
+2085:# [5.0.0-beta.6](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.5...v5.0.0-beta.6) (2016-04-12)
+2087:### Bug Fixes
+2095:### Features
+2099:### Performance Improvements
+2105:# [5.0.0-beta.5](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.4...v5.0.0-beta.5) (2016-04-05)
+2107:### Bug Fixes
+2111:### BREAKING CHANGES
+2118:# [5.0.0-beta.4](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.3...v5.0.0-beta.4) (2016-03-29)
+2120:### Bug Fixes
+2130:### Features
+2136:### Performance Improvements
+2140:### BREAKING CHANGES
+2146:# [5.0.0-beta.3](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.2...v5.0.0-beta.3) (2016-03-21)
+2148:### Bug Fixes
+2165:### Features
+2172:### BREAKING CHANGES
+2178:# [5.0.0-beta.2](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.1...v5.0.0-beta.2) (2016-02-10)
+2180:### Bug Fixes
+2202:### Features
+2215:### Performance Improvements
+2244:### BREAKING CHANGES
+2253:# [5.0.0-beta.1](https://github.com/ReactiveX/RxJS/compare/5.0.0-beta.0...v5.0.0-beta.1) (2016-01-13)
+2255:### Bug Fixes
+2280:### Features
+2294:### BREAKING CHANGES
+2301:# [5.0.0-beta.0](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.14...v5.0.0-beta.0) (2015-12-15)
+2303:### Bug Fixes
+2316:### Features
+2324:### BREAKING CHANGES
+2335:# [5.0.0-alpha.14](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.13...v5.0.0-alpha.14) (2015-12-09)
+2337:### Bug Fixes
+2344:### Features
+2353:### BREAKING CHANGES
+2361:# [5.0.0-alpha.13](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.12...v5.0.0-alpha.13) (2015-12-08)
+2363:### Bug Fixes
+2373:### Features
+2386:### BREAKING CHANGES
+2395:# [5.0.0-alpha.12](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.10...v5.0.0-alpha.12) (2015-12-04)
+2397:### Bug Fixes
+2416:### Features
+2433:### Performance Improvements
+2439:# [5.0.0-alpha.11](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.10...v5.0.0-alpha.11) (2015-12-01)
+2441:### Bug Fixes
+2455:### Features
+2465:### Performance Improvements
+2471:# [5.0.0-alpha.10](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.9...v5.0.0-alpha.10) (2015-11-10)
+2473:### Bug Fixes
+2479:# [5.0.0-alpha.9](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.8...v5.0.0-alpha.9) (2015-11-10)
+2481:### Bug Fixes
+2485:### Features
+2491:# [5.0.0-alpha.8](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.7...v5.0.0-alpha.8) (2015-11-06)
+2493:### Bug Fixes
+2501:### Features
+2506:### BREAKING CHANGES
+2516:# [5.0.0-alpha.7](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.6...v5.0.0-alpha.7) (2015-10-27)
+2518:### Bug Fixes
+2529:### Features
+2537:# [5.0.0-alpha.6](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.5...v5.0.0-alpha.6) (2015-10-17)
+2539:### Bug Fixes
+2546:# [5.0.0-alpha.5](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.4...v5.0.0-alpha.5) (2015-10-16)
+2548:### Bug Fixes
+2559:# [5.0.0-alpha.4](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.3...5.0.0-alpha.4) (2015-10-15)
+2561:### Bug Fixes
+2570:### Features
+2575:### Performance Improvements
+2587:# [5.0.0-alpha.3](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.2...5.0.0-alpha.3) (2015-10-13)
+2589:### Bug Fixes
+2612:### Features
+2625:### Performance Improvements
+2629:### BREAKING CHANGES
+2639:# [5.0.0-alpha.2](https://github.com/ReactiveX/RxJS/compare/5.0.0-alpha.1...5.0.0-alpha.2) (2015-09-30)
+2641:### Bug Fixes
+2645:### Features
+2654:# [5.0.0-alpha.1](https://github.com/ReactiveX/RxJS/compare/0.0.0-prealpha.3...5.0.0-alpha.1) (2015-09-23)
+2656:### Bug Fixes
+2672:### Features
+2688:# [0.0.0-prealpha.3](https://github.com/ReactiveX/RxJS/compare/0.0.0-prealpha.2...0.0.0-prealpha.3) (2015-09-11)
+2690:### Bug Fixes
+2696:# [0.0.0-prealpha.2](https://github.com/ReactiveX/RxJS/compare/0.0.0-prealpha.1...0.0.0-prealpha.2) (2015-09-11)
+2698:### Bug Fixes
+2703:### Features
+2712:# [0.0.0-prealpha.1](https://github.com/ReactiveX/RxJS/compare/0441dea...0.0.0-prealpha.1) (2015-09-02)
+2714:### Bug Fixes
+2721:### Features
+```
+
+### sprefa-store/js/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/CODE_OF_CONDUCT.md
+```
+1:# Contributor Covenant Code of Conduct
+3:## Our Pledge
+12:## Our Standards
+34:## Our Responsibilities
+46:## Scope
+55:## Enforcement
+68:## Attribution
+```
+
+### sprefa-store/js/node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/README.md
+```
+1:# <img src="docs_app/src/assets/images/logos/Rx_Logo_S.png" alt="RxJS Logo" width="86" height="86"> RxJS: Reactive Extensions For JavaScript
+7:# The Roadmap from RxJS 7 to 8
+11:# RxJS 7
+13:### FOR 6.X PLEASE GO TO [THE 6.x BRANCH](https://github.com/ReactiveX/rxjs/tree/6.x)
+24:## Versions In This Repository
+31:## Important
+35:## Installation and Usage
+37:### ES6 via npm
+71:### CDN
+91:## Goals
+99:## Building/Testing
+105:## Adding documentation
+```
+
+### sprefa-store/js/node_modules/.pnpm/tslib@2.8.1/node_modules/tslib/README.md
+```
+1:# tslib
+33:# Installing
+37:## npm
+40:# TypeScript 3.9.2 or later
+43:# TypeScript 3.8.4 or earlier
+46:# TypeScript 2.3.2 or earlier
+50:## yarn
+53:# TypeScript 3.9.2 or later
+56:# TypeScript 3.8.4 or earlier
+59:# TypeScript 2.3.2 or earlier
+63:## bower
+66:# TypeScript 3.9.2 or later
+69:# TypeScript 3.8.4 or earlier
+72:# TypeScript 2.3.2 or earlier
+76:## JSPM
+79:# TypeScript 3.9.2 or later
+82:# TypeScript 3.8.4 or earlier
+85:# TypeScript 2.3.2 or earlier
+89:# Usage
+139:## Deployment
+150:# Contribute
+160:# Documentation
+```
+
+### sprefa-store/js/node_modules/.pnpm/tslib@2.8.1/node_modules/tslib/SECURITY.md
+```
+3:## Security
+9:## Reporting Security Issues
+33:## Preferred Languages
+37:## Policy
+```
+
+### sprefa-store/js/node_modules/.pnpm/undici-types@8.3.0/node_modules/undici-types/README.md
+```
+1:# undici-types
+```
+
+### sprefa-store/js/node_modules/.pnpm/ws@8.21.1/node_modules/ws/README.md
+```
+1:# ws: a Node.js WebSocket library
+21:## Table of Contents
+47:## Protocol support
+53:## Installing
+59:### Opt-in for performance
+93:## API docs
+98:## WebSocket compression
+160:## Usage examples
+162:### Sending and receiving text data
+180:### Sending binary data
+200:### Simple server
+218:### External HTTP/S server
+244:### Multiple servers sharing a single HTTP/S server
+285:### Client authentication
+330:### Server broadcast
+374:### Round-trip time
+401:### Use the Node.js streams API
+416:### Other examples
+423:## FAQ
+425:### How to get the IP address of the client?
+452:### How to detect and close broken connections?
+522:### How to connect via a proxy?
+527:## Changelog
+531:## License
 ```
 

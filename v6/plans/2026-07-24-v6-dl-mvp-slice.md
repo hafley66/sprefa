@@ -475,7 +475,14 @@ matching v5's disk-truth stance).
   the bridge (named-cols deferral: MVP rules write all 9 positionally or use a
   minted default rule — pick in-code, document).
 - 5.2 diag_v5 view in ddl().
-- 5.3 v5 lsp.rs `--diag-db` mode (Rust, additive, no engine boot in that mode).
+- [x] 5.3 v5 lsp.rs `--diag-db` mode (Rust, additive, no engine boot in that mode).
+  DONE 2026-07-24 (branch dl/m5-lsp f4fdddbe, merged v11): --diag-db threads
+  cli/mod.rs -> lib.rs -> lsp.rs run_lsp; branch returns before any engine boot;
+  500ms poll on a PERSISTENT read-only rusqlite connection — `PRAGMA data_version`
+  is per-connection (a fresh connection's first read never moves; verified
+  empirically), so reopen-per-poll would never see a change; retraction = empty
+  publish for paths that vanished; scripts/lsp_capture.mjs harness (no deps).
+  cargo check clean on the touched files; manually verified publish/clear/update.
 - 5.4 retraction wiring test: file fix -> ingestFile diff -> spine retract ->
   fixpoint drops diag row -> delta -> view -> LSP clears. ZERO diag-specific
   retraction code (the fork's "first retraction instance" claim, proven).
