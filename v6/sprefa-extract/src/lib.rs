@@ -29,13 +29,14 @@ pub mod wire;
 pub use dispatch::dispatch;
 pub use family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfEdgeKind, DfF, DfNodeKind,
-    Family, ProjectEdge, SigSlot, TypeEdgeKind, TypeEntityKind, TypeFAux, TypeF, TypeSig,
+    Family, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeKind, TypeEntityKind,
+    TypeFAux, TypeF, TypeSig,
 };
 pub use lang::{source_for, sources, AstgrepSource, GoSource, RustSource, TsSource};
 pub use rows::{Edge, FamilyBundle, Node};
 pub use seams::{
-    BlobSource, FileSet, IndexBag, ManifestMap, ParseError, Parser, Project, ProjectCx,
-    ProjectDigest, Resolve,
+    BlobSource, DefIndex, DefSite, FileSet, IndexBag, ManifestMap, ParseError, Parser, Project,
+    ProjectCx, ProjectDigest, Resolve, build_def_index, corpus_defs, covering_def, def_named,
 };
 pub use shape::{BlobHash, FamilyTag, NameId, NodeRef, Span, Strings};
 pub use source::{ExtractOutput, FamilyMask, Source};

@@ -324,6 +324,10 @@ impl CallKind {
 }
 
 /// How a resolved call edge's callee was bound. Emitted by Resolve<CallF>.
+/// ADDENDUM 4a (site-key discipline): method resolution is NAME-ONLY — the
+/// callee name binds via the corpus `DefIndex` (`NameResolve`) and SCIP may
+/// override that binding (`ScipOverride`). Receiver typing (type-of-receiver ->
+/// method set) is OUT OF SCOPE for commit 4: no lang resolve arm invents it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CallEdgeKind {
     /// The callee name resolved to exactly one def in the corpus.
@@ -334,6 +338,10 @@ pub enum CallEdgeKind {
 
 /// One call expression. `callee` = trailing segment as written (resolution key);
 /// `callee_path` = full qualified path when >1 segment (filled by resolution).
+/// ADDENDUM 4a (site-key discipline): `callee_path` is collected UNIFORMLY at
+/// phase 1 — every lang fills it for multi-segment paths as written (rust
+/// already does; ts/go emit None today and catch up with their resolve arms) —
+/// so no resolve arm re-derives path text from its own AST.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallSite {
     pub span: Span,
@@ -341,10 +349,47 @@ pub struct CallSite {
     pub callee_path: Option<NameId>,
 }
 
-/// The CallF side-channel: call sites (phase-1 unresolved).
+/// A phase-1 module specifier (import / use / from / require), AS WRITTEN — the
+/// resolution input the Resolve<TypeF>/Resolve<CallF> arms bind through.
+/// ADDENDUM 4a: the row shape ONLY is declared (no lang emission code) so 4b+
+/// collects these rows in PHASE 1; without phase-1 rows every resolve arm
+/// would re-walk its own AST in phase 2 — the triplication the phase split
+/// exists to prevent. `name` is the specifier text as written (the bound name;
+/// the module path for path-only forms like go's imports). The seed's fuller
+/// `Binding` side table (local / source / imported, `_1_mask.rs`:67-76) is the
+/// 4b evolution path if TS's from-clause needs a separate source field —
+/// FLAGGED for human review.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Specifier {
+    pub span: Span,
+    pub name: NameId,
+    pub kind: SpecifierKind,
+}
+
+/// How the name enters scope. The seed's `BindingKind` vocabulary
+/// (`_0_shape.rs`:127-129; v5 `module_binding.kind`), renamed for the row.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SpecifierKind {
+    Named,
+    Default,
+    Namespace,
+    SideEffect,
+    Reexport,
+}
+
+/// The CallF side-channel: call sites + module specifiers (both phase-1
+/// unresolved). ADDENDUM 4a RULING (flagged for human review): specifier rows
+/// live HERE, on the existing CallF aux — NOT on a revived ModuleF (D-module:
+/// the binding half is aux side metadata, not a standalone resolution family)
+/// and NOT on ExtractOutput (a new field there would break the four lang
+/// files' exhaustive `ExtractOutput { .. }` literals). Resolve arms of BOTH
+/// families read them: `resolve` takes the whole `ExtractOutput`, and any
+/// resolution run masks call+types anyway (the `DefIndex` is built from both
+/// families' output).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CallFAux {
     pub sites: Vec<CallSite>,
+    pub specifiers: Vec<Specifier>,
 }
 
 impl Family for CallF {
@@ -450,7 +495,10 @@ impl Family for DfF {
 // the binding half into aux metadata. Whether it becomes a standalone Family is
 // undecided. Per spec `_2_traits.rs`:80-84 module RESOLVES once it lands; the
 // 4a Resolve surface (S5 below) deliberately declares NO ModuleF arm - see the
-// `Resolve` trait doc. Sketch:
+// `Resolve` trait doc. ADDENDUM 4a RULING: phase-1 specifier rows live in
+// `CallFAux.specifiers` (the binding half as aux side metadata, exactly as
+// D-module says); ModuleF stays collapsed. Flagged for human review; revival
+// stays possible. Sketch:
 //
 // #[derive(Default, Copy, Clone, Debug)]
 // pub struct ModuleF;
@@ -645,9 +693,88 @@ pub struct ProjectCx<'a> {
 pub struct FileSet;
 /// Manifest path -> raw manifest contents. Hollow in 4a (spec `_2_traits.rs`:58).
 pub struct ManifestMap;
-/// Type-erased bag of `OnceLock<LangIndex>` slots, one per language. Hollow in
-/// 4a (spec `_2_traits.rs`:61).
-pub struct IndexBag;
+/// The whole-project index bag (spec `_2_traits.rs`:59-61). ADDENDUM 4a
+/// (design-audit must-encode): TWO kinds of slot, kept distinct at the type
+/// level so 4b-4d cannot grow three lang-specific name indexes —
+/// - `def_index`: THE corpus name index. ONE lang-agnostic slot, built ONCE per
+///   refresh by `build_def_index` from ALL files' phase-1 ExtractOutputs (CallF
+///   defs + TypeF entities) — never per-lang, never by re-parsing
+///   `ProjectCx.reader` bytes.
+/// - per-language erased slots (RustCrates / ts_packages / GoIndex): the seed's
+///   per-lang OnceLock shape (`_2_traits.rs`:46-51) covers THIS kind only; they
+///   land in 4b+ behind the same OnceLock discipline.
+#[derive(Default)]
+pub struct IndexBag {
+    pub def_index: std::sync::OnceLock<DefIndex>,
+}
+
+// ── the corpus name index + shared resolve helpers (ADDENDUM 4a) ────────────
+// Declared so the three lang resolve arms (4b TS, 4c SCIP/call, 4d rust/go)
+// share ONE index + ONE set of pure helpers instead of copy-pasting resolution
+// logic. All hollow: todo!() bodies, no call sites.
+
+/// One definition site in the corpus: the blob + span of a def node, plus the
+/// erased `family` leg of its node identity `(family, span, kind)`. The family
+/// leg is REQUIRED: a class constructor is BOTH a TypeF entity and a CallF def
+/// at the SAME span (the two facets join on one coordinate), so (blob, span)
+/// alone does not name one node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DefSite {
+    pub blob: BlobHash,
+    pub span: Span,
+    pub family: FamilyTag,
+}
+
+/// THE corpus name index: def name -> every def site with that name, across
+/// ALL files and BOTH def-bearing families (CallF defs + TypeF entities).
+/// Lang-agnostic by construction: it is built from phase-1 OUTPUT (the
+/// ExtractOutputs, interned strings included — the NameId -> &str lookup lives
+/// on `ExtractOutput.strings`), so it never re-parses and never special-cases
+/// a language. Keys are owned Strings so the index outlives any one file's
+/// interner.
+#[derive(Clone, Debug, Default)]
+pub struct DefIndex {
+    pub map: std::collections::HashMap<String, Vec<DefSite>>,
+}
+
+/// Build THE `DefIndex` ONCE per refresh, from every file's phase-1
+/// `ExtractOutput` paired with its blob hash. Never per-lang, NEVER from
+/// `ProjectCx.reader` bytes (re-parsing in phase 2 is the triplication the
+/// phase split exists to prevent). Reaches `Resolve::resolve` through
+/// `ProjectCx.indexes.def_index` — NOT an explicit param: whole-project state
+/// built once per refresh is exactly what the cx exists to carry, and a param
+/// would invite per-call rebuilds beside the cx.
+pub fn build_def_index(outputs: &[(BlobHash, &ExtractOutput)]) -> DefIndex {
+    let _ = outputs;
+    todo!("4b: walk CallF defs + TypeF entities of every output; names via each output's strings")
+}
+
+/// Caller binding: the CallF def node whose span most tightly CONTAINS `site`
+/// (the innermost covering def), by binary search over def spans sorted by
+/// (start, end). Written ONCE here, used by all three lang resolve arms —
+/// every lang emits body-covering def spans by design, so one sorted-span
+/// search serves ts, rust, and go uniformly. Pure fn over the bundle; zero AST.
+pub fn covering_def(defs: &FamilyBundle<CallF>, site: Span) -> Option<NodeRef> {
+    let _ = (defs, site);
+    todo!("4b: sort def spans once, binary-search the innermost cover")
+}
+
+/// Same-file name lookup: the CallF def node in `defs` whose interned name is
+/// `name` (the same-file fast path before the corpus `DefIndex` join). Written
+/// ONCE here, used by all three lang resolve arms. Pure fn over the bundle +
+/// its interner; zero AST.
+pub fn def_named(defs: &FamilyBundle<CallF>, strings: &Strings, name: &str) -> Option<NodeRef> {
+    let _ = (defs, strings, name);
+    todo!("4b: scan def nodes, NameId -> &str compare")
+}
+
+/// Cross-file name lookup: every def site in the corpus named `name` (the
+/// `DefIndex` join behind Resolve<CallF>'s NameResolve). Written ONCE here,
+/// used by all three lang resolve arms. Pure fn over the index; zero AST.
+pub fn corpus_defs<'a>(index: &'a DefIndex, name: &str) -> &'a [DefSite] {
+    let _ = (index, name);
+    todo!("4b: index.map.get(name), empty slice on miss")
+}
 
 /// Phase 2: "here is a codebase, get data" — the cross-file resolution half of
 /// a `Source` (spec: seed `_2_traits.rs`:80-97 `ProjectExtract`, adapted to the
@@ -675,6 +802,9 @@ pub struct IndexBag;
 ///   `F` is a type parameter here, so the family is already selected per impl.
 /// - `ProjectEdge<F>` is generic because the seed's `EdgeKind` sum is deleted
 ///   (D-families); the plan's `Vec<ProjectEdge>` reads `Vec<ProjectEdge<F>>`.
+/// - ADDENDUM 4a: the corpus `DefIndex` arrives through `cx.indexes.def_index`,
+///   not an explicit param — whole-project state built once per refresh is
+///   exactly what the cx exists to carry (see `IndexBag` / `build_def_index`).
 pub trait Resolve<F: Family>: Source {
     /// Turn this file's phase-1 specifiers/names into resolved, cross-file
     /// `ProjectEdge`s. The return is ONLY the cross-file resolutions for this

@@ -84,8 +84,8 @@
 //!                (span-to-span, resolved) still land at Resolve<TypeF> (commit 4).
 //!
 //! BUILD STATUS (2026-07-24, commits 1-3c + Tier-2 PARITY GOLD (TS, incl. const facet) + the
-//! RUST + GO languages + a self-describing CLI + the commit-4a Resolve DESIGN FREEZE) LANDED in
-//! v6/sprefa-extract/. The TS + Rust + Go phase-1 families - Cst / Type(+sigs) / Call / Df
+//! RUST + GO languages + a self-describing CLI + the commit-4a Resolve DESIGN FREEZE incl. its
+//! design-audit ADDENDUM) LANDED in v6/sprefa-extract/. The TS + Rust + Go phase-1 families - Cst / Type(+sigs) / Call / Df
 //! (+const) - all project + stream + snapshot through ONE uniform surface, AND each ported set
 //! matches a captured v5 oracle (see the (parity) / (rust) / (go) entries). NEXT: HUMAN REVIEW
 //! of the 4a Resolve<F> surface, then 4b Resolve<TypeF> for TsSource; broaden parity fixtures
@@ -265,6 +265,44 @@
 //!             ts/sample.v5.jsonl:98-107). If human review instead wants resolve rows on the
 //!             CLI stream, that is a dispatch-seam change = its own increment, and only then
 //!             does sample.typef.snap grow (a declared UPDATE_SNAP at that point).
+//!             ADDENDUM (design-audit must-encodes, 2026-07-24) - still design-freeze:
+//!             (1) DEFINDEX: `DefIndex` (name -> Vec<DefSite{blob,span,family}>) declared
+//!             with a hollow `build_def_index(&[(BlobHash,&ExtractOutput)])`; built ONCE per
+//!             refresh from ALL files' phase-1 ExtractOutputs (CallF defs + TypeF entities;
+//!             the audit's "phase-1 bundles" reads as bundles + strings, reconciling with the
+//!             &ExtractOutput resolve input - the NameId -> &str interner lives on
+//!             ExtractOutput.strings), never per-lang, never by re-parsing ProjectCx.reader
+//!             bytes. HANDED IN VIA THE CX: `IndexBag` gains the concrete
+//!             `def_index: OnceLock<DefIndex>` slot - THE corpus name index (the seed's
+//!             per-lang OnceLock shape now covers ONLY the erased per-lang slots, so three
+//!             lang-specific name indexes cannot grow) - NOT an explicit param, because
+//!             whole-project state built once per refresh is exactly what the cx exists to
+//!             carry (a param invites per-call rebuilds beside the cx).
+//!             (2) SHARED HELPERS: `covering_def` (site span -> innermost covering def span,
+//!             sorted-span binary search), `def_named` (name -> def within one bundle),
+//!             `corpus_defs` (name -> def sites corpus-wide via DefIndex) - hollow pure fns
+//!             over FamilyBundle<CallF>/DefIndex, todo!(), ZERO AST; written once, used by
+//!             all three lang resolve arms (all three langs emit body-covering def spans by
+//!             design precisely so the containment join is uniform).
+//!             (3) SPECIFIER HOME = `CallFAux.specifiers` (FLAGGED for human review): a
+//!             `Specifier{span, name: NameId (as written), kind: SpecifierKind}` row on the
+//!             existing CallF aux - NOT a revived ModuleF (D-module: the binding half is aux
+//!             side metadata, not a standalone resolution family) and NOT an ExtractOutput
+//!             field (a new field would break the four lang files' exhaustive
+//!             `ExtractOutput{..}` literals). Kind vocabulary = the seed's BindingKind
+//!             (Named/Default/Namespace/SideEffect/Reexport, `_0_shape.rs`:127-129). Hollow
+//!             row shape only; NO lang emission code (no lang collects specifiers today -
+//!             verified by grep). Open sub-question for review: TS `import {X} from './m'`
+//!             needs the from-module; the seed's fuller Binding side table (local/source/
+//!             imported, `_1_mask.rs`:67-76) is the 4b evolution path. Resolve arms of BOTH
+//!             families read the aux (resolve takes the whole ExtractOutput; resolution runs
+//!             mask call+types anyway since the DefIndex is built from both).
+//!             (4) SITE-KEY DISCIPLINE: `callee_path` is collected UNIFORMLY at phase 1 -
+//!             every lang fills it for multi-segment paths as written (rust already does;
+//!             ts/go emit None today, catch up with their resolve arms). Method resolution is
+//!             NAME-ONLY: callee name -> DefIndex (CallEdgeKind::NameResolve), SCIP may
+//!             override (ScipOverride); receiver typing (receiver type -> method set) is OUT
+//!             OF SCOPE for commit 4 - no lang arm invents it.
 //!   PENDING:   the name-resolved type EDGES (field/impl/variant/uses + the
 //!              resolved param/returns binding) still land at Resolve<TypeF>
 //!              (commit 4) by design. ts_const_facts_from is PORTED (see (const)).

@@ -4,6 +4,6 @@
 //! `rows.rs` is a frozen seam this increment (commit 4a).
 pub use crate::types::{
     CallEdgeKind, CallF, CallFAux, CallKind, CallSite, ConstKind, ConstValue, CstEdgeKind, CstF,
-    DfEdgeKind, DfF, DfNodeKind, Family, ProjectEdge, SigSlot, TypeEdgeKind, TypeEntityKind,
-    TypeFAux, TypeF, TypeSig,
+    DfEdgeKind, DfF, DfNodeKind, Family, ProjectEdge, SigSlot, Specifier, SpecifierKind,
+    TypeEdgeKind, TypeEntityKind, TypeFAux, TypeF, TypeSig,
 };

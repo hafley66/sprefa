@@ -32,7 +32,7 @@
 | [plans/2026-07-21-spine-orm.md](plans/2026-07-21-spine-orm.md) | 200 | V6 spine — the 6 tables, one ORM, hard boundaries |
 | [plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md](plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md) | 184 | v6 core: the lab arc — oracles, why, efficiency, measured Big-O + empirical ratios |
 | [plans/2026-07-23-sprefa-extract-golden-plan.md](plans/2026-07-23-sprefa-extract-golden-plan.md) | 537 | sprefa-extract - the golden plan (distill v5, normalize for v6) |
-| [plans/2026-07-24-extract-go-closeout-and-resolve4.md](plans/2026-07-24-extract-go-closeout-and-resolve4.md) | 309 | sprefa-extract: Go closeout → Resolve<\*> (commit 4) → fixture broadening |
+| [plans/2026-07-24-extract-go-closeout-and-resolve4.md](plans/2026-07-24-extract-go-closeout-and-resolve4.md) | 321 | sprefa-extract: Go closeout → Resolve<\*> (commit 4) → fixture broadening |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
@@ -383,21 +383,21 @@
 1:# sprefa-extract: Go closeout → Resolve<\*> (commit 4) → fixture broadening
 8:## Context
 46:## Decisions
-66:## Conventions (binding on every increment)
-95:## Phase 0 — Go closeout (one agent, ~30 min)
-139:## Phase 0.5 — consistency sweep (one agent, read-only, report-only)
-154:## Phase 1 — Resolve<\*> (commit 4), four increments
-156:### 4a — hollow Resolve surface (design freeze; HUMAN REVIEW GATE)
-170:### 4b — Resolve<TypeF> for TsSource
-179:### 4c — ScipSource seam + Resolve<CallF> (TS)
-188:### 4d — rust + go resolve arms
-195:## Phase 2 — broaden parity fixtures (one agent per fixture)
-206:## Design audit findings (2026-07-24, read-only structural audit)
-245:### 4a must-encodes (from the audit's Resolve-arm triplication preview)
-266:## Verification
-274:## Staffing
-283:### Subagent brief template (orchestrator fills `[...]`)
-301:### Orchestrator audit checklist (per increment)
+78:## Conventions (binding on every increment)
+107:## Phase 0 — Go closeout (one agent, ~30 min)
+151:## Phase 0.5 — consistency sweep (one agent, read-only, report-only)
+166:## Phase 1 — Resolve<\*> (commit 4), four increments
+168:### 4a — hollow Resolve surface (design freeze; HUMAN REVIEW GATE)
+182:### 4b — Resolve<TypeF> for TsSource
+191:### 4c — ScipSource seam + Resolve<CallF> (TS)
+200:### 4d — rust + go resolve arms
+207:## Phase 2 — broaden parity fixtures (one agent per fixture)
+218:## Design audit findings (2026-07-24, read-only structural audit)
+257:### 4a must-encodes (from the audit's Resolve-arm triplication preview)
+278:## Verification
+286:## Staffing
+295:### Subagent brief template (orchestrator fills `[...]`)
+313:### Orchestrator audit checklist (per increment)
 ```
 
 ### skills/mermaid-living-map.md
