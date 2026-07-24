@@ -83,12 +83,12 @@
 //!                must survive for the node-level type join. The Param/Returns EDGES
 //!                (span-to-span, resolved) still land at Resolve<TypeF> (commit 4).
 //!
-//! BUILD STATUS (2026-07-24, commits 1-3c + Tier-2 PARITY GOLD (TS, incl. const facet) LANDED in
-//! v6/sprefa-extract/. The TS phase-1 families - Cst / Type(+sigs) / Call / Df -
-//! all project + stream + snapshot through ONE uniform surface, AND the ported
-//! facets now match a captured v5 oracle (see the (parity) entry). NEXT: broaden
-//! the parity fixtures (const/lambda/docs), the Resolve<*> pass (commit 4), then
-//! rust (syn) + go:
+//! BUILD STATUS (2026-07-24, commits 1-3c + Tier-2 PARITY GOLD (TS, incl. const facet) + the
+//! RUST second language + a self-describing CLI) LANDED in v6/sprefa-extract/. The TS + Rust
+//! phase-1 families - Cst / Type(+sigs) / Call / Df (+const) - all project + stream + snapshot
+//! through ONE uniform surface, AND each ported set matches a captured v5 oracle (see the
+//! (parity) + (rust) entries). NEXT: the Resolve<*> pass (commit 4), broaden parity fixtures
+//! (lambda/docs), then go (tree-sitter + scip-go):
 //!   6a29d920  commit 1   CstF via ast-grep (one dep = rust/ts/tsx/js/go grammars);
 //!              clap bin streaming flat JSONL with --bench; snapshot. Piping proof.
 //!   f3ceb4fa  commit 2a  Parser/Project seam -> arena-passing GAT: oxc's
@@ -181,6 +181,34 @@
 //!              its text; the df let_bind node is separate + unaffected). v6 drops
 //!              v5's scope/sym machinery (spans disambiguate). PARITY GREEN on
 //!              consts.ts (5 Const entities + 11 const_value rows, byte-match).
+//!   (rust)   SECOND LANGUAGE LANDED: `RustSource` (lang/rust.rs, ~1170 lines),
+//!             PREPENDED in the roster so .rs routes to it (not the cst-only
+//!             AstgrepSource). Mirror of TsSource: cst via ast-grep (ast-grep's
+//!             rust grammar) + type/call/df/const via ONE `syn::parse_file`.
+//!             Ports v5 `src/graph/typegraph/rust/mod.rs`: TypeF entities
+//!             (struct/enum/trait/fn/impl/const) + arrow sigs + const facet,
+//!             CallF (defs incl. nested-fn/closure visitor + sites), DfF (nodes
+//!             + Direct edges). syn yields line/col, not byte offsets: a
+//!             rust-local `line_col_to_byte` over precomputed `line_starts`
+//!             bridges to v6's byte `Span` (NO shape.rs change; the freeze held).
+//!             TIER-2 PARITY GREEN vs the v5 oracle (rust arm in v5_normalize.rs):
+//!             type/call/const LINE-exact, df BYTE-exact (25 nodes, 19 edges).
+//!             ONE documented + SELF-VERIFYING waiver - the closure df-node NAME
+//!             (v5 stored the `lam_sym` join key; v6 drops it, span-containment
+//!             joins instead - same call the TS DfF port makes). The waiver's test
+//!             asserts every line it touches is a `df_node closure` row, so a real
+//!             regression cannot hide behind it. DEFERRED (same set as TS):
+//!             type_edge (Resolve<TypeF> commit 4), docs, df aux. Commits
+//!             de94cceb (skeleton) / 9529b358 (TypeF+const) / 380ea1d5 (CallF) /
+//!             7a37922d (DfF) / d28f43f8 (parity gold). Proves the seams generalize
+//!             to a second front-end with zero structural change.
+//!   (cli)     The `extract` bin is now SELF-DESCIBING: `--help` long_about
+//!             covers the output shape + the first-match language matrix + exit
+//!             codes; `--schema` prints the full JSONL contract (5 record shapes,
+//!             every field, per-family kind vocabularies, phase-1 limits);
+//!             `--version` works; PATH is conditionally required so `extract
+//!             --schema` runs standalone. Commit a08ce4b5. `cargo install --path
+//!             v6/sprefa-extract --features cli --locked` puts `extract` on PATH.
 //!   PENDING:   the name-resolved type EDGES (field/impl/variant/uses + the
 //!              resolved param/returns binding) still land at Resolve<TypeF>
 //!              (commit 4) by design. ts_const_facts_from is PORTED (see (const)).
