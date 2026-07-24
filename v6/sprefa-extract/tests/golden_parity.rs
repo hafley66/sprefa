@@ -26,6 +26,8 @@ struct Case {
     path: &'static str,
     fixture: &'static [u8],
     baseline: &'static str,
+    /// The fixtures sub-directory (for the regen hint in the panic message).
+    fixture_dir: &'static str,
 }
 
 const CASES: &[Case] = &[
@@ -34,12 +36,21 @@ const CASES: &[Case] = &[
         path: "sample.ts",
         fixture: include_bytes!("fixtures/ts/sample.ts"),
         baseline: include_str!("fixtures/ts/sample.v5.jsonl"),
+        fixture_dir: "ts",
     },
     Case {
         name: "consts",
         path: "consts.ts",
         fixture: include_bytes!("fixtures/ts/consts.ts"),
         baseline: include_str!("fixtures/ts/consts.v5.jsonl"),
+        fixture_dir: "ts",
+    },
+    Case {
+        name: "rust_sample",
+        path: "sample.rs",
+        fixture: include_bytes!("fixtures/rust/sample.rs"),
+        baseline: include_str!("fixtures/rust/sample.v5.jsonl"),
+        fixture_dir: "rust",
     },
 ];
 
@@ -58,7 +69,7 @@ fn facet_of(line: &str) -> &str {
 
 /// v6's canonical PORTED-facet lines (cst dropped — v6-only, incomparable).
 fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
-    let out = dispatch(path, bytes, FamilyMask::ALL).expect("a Source matches a .ts fixture");
+    let out = dispatch(path, bytes, FamilyMask::ALL).expect("a Source matches the fixture");
     let mut set = BTreeSet::new();
     for fact in flatten(&out) {
         match fact {
@@ -114,16 +125,44 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
 /// THE GOLD: for every fixture, the PORTED facets v6 emits must equal the v5
 /// oracle. A non-empty diff is a v6 regression (port bug) or an intentional
 /// rename to codify (added to the waiver list).
+///
+/// One documented waiver: the Rust closure df-node NAME. v5 stored `lam_sym`
+/// (the closure-to-body join key, encoding the file path + enclosing fn) as the
+/// `closure` node's `var`; v6 drops it (the join is span-containment, not a sym
+/// — same call the TS DfF port makes, which is why TS has no closure df-nodes at
+/// all). The closure node's KIND + byte offset still match exactly, so the waiver
+/// normalizes only the name field. The waiver is SELF-VERIFYING: the test
+/// asserts that every line it removes is a `df_node closure` row, so a future
+/// real regression cannot hide behind it.
 #[test]
 fn ported_facets_match_v5() {
     for case in CASES {
-        let v5_ported: BTreeSet<String> = case
+        let v5_raw: BTreeSet<String> = case
             .baseline
             .lines()
             .filter(|l| PORTED.contains(&facet_of(l)))
             .map(str::to_owned)
             .collect();
+        // Apply the documented closure-name waiver (no-op for TS: zero closure
+        // df-nodes; see strip_closure_name).
+        let v5_ported: BTreeSet<String> =
+            v5_raw.iter().map(|line| strip_closure_name(line)).collect();
         let v6 = v6_ported(case.path, case.fixture);
+
+        // Self-verify the waiver: every v5 line it changed must be a closure
+        // df-node. If a non-closure line ever differs, that is a real regression
+        // and the waiver must not mask it.
+        let unwaivered_only_v5: Vec<&String> = v5_raw.difference(&v6).collect();
+        let hidden: Vec<&&String> = unwaivered_only_v5
+            .iter()
+            .filter(|line| !is_closure_df_node(line))
+            .collect();
+        assert!(
+            hidden.is_empty(),
+            "[{}] a divergence outside the closure-name waiver would be hidden by it:\n{}",
+            case.name,
+            hidden.iter().map(|s| format!("    {s}")).collect::<Vec<_>>().join("\n"),
+        );
 
         let only_v5: Vec<&String> = v5_ported.difference(&v6).collect();
         let only_v6: Vec<&String> = v6.difference(&v5_ported).collect();
@@ -136,16 +175,38 @@ fn ported_facets_match_v5() {
         panic!(
             "[{}] PORTED parity diff vs v5 oracle:\n  only in v5 ({}):\n{}\n  only in v6 ({}):\n{}\n\
              Regenerate the oracle: cargo run --example v5_normalize -- \
-             v6/sprefa-extract/tests/fixtures/ts/{}.ts > v6/sprefa-extract/tests/fixtures/ts/{}.v5.jsonl",
+             v6/sprefa-extract/tests/fixtures/{}/{} > v6/sprefa-extract/tests/fixtures/{}/{}.v5.jsonl",
             case.name,
             only_v5.len(),
             dump(&only_v5, 50),
             only_v6.len(),
             dump(&only_v6, 50),
-            case.name,
+            case.fixture_dir,
+            case.path,
+            case.fixture_dir,
             case.name,
         );
     }
+}
+
+/// Whether a canonical line is a `df_node closure` row (the closure-name waiver
+/// target). Fields: `df_node\tclosure\t<name>\t<byte>`.
+fn is_closure_df_node(line: &str) -> bool {
+    let mut parts = line.split('\t');
+    parts.next() == Some("df_node") && parts.next() == Some("closure")
+}
+
+/// Normalize the closure df-node NAME to "" (v6 drops v5's lam_sym; see the
+/// waiver note on `ported_facets_match_v5`). No-op for non-closure lines.
+fn strip_closure_name(line: &str) -> String {
+    if !is_closure_df_node(line) {
+        return line.to_string();
+    }
+    let mut parts: Vec<&str> = line.split('\t').collect();
+    if parts.len() > 2 {
+        parts[2] = "";
+    }
+    parts.join("\t")
 }
 
 /// The migration ledger: the measured v5-only deferred set + the v6-only CST
@@ -160,7 +221,7 @@ fn deferred_and_v6_only_ledger() {
                 *deferred.entry(facet).or_default() += 1;
             }
         }
-        let cst_only = flatten(&dispatch(case.path, case.fixture, FamilyMask::ALL).expect("ts"))
+        let cst_only = flatten(&dispatch(case.path, case.fixture, FamilyMask::ALL).expect("source"))
             .into_iter()
             .filter(|f| {
                 matches!(f, FlatFact::Node { family: FamilyTag::Cst, .. }
