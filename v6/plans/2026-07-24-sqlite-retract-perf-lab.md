@@ -184,9 +184,25 @@ total, cost per round tracking wavefront size, no outlier round.
 **Experiment**: `DL_CASCADE_TRACE=1` run of `sqlite-count-scc` and
 `sqlite-dred-loop` at DAG 960k; aggregate stderr per phase.
 
-**Measured**: (pending)
+**Measured** (post-H2 code, DAG 960k; traces in /tmp/lab-sqlperf/h3-*.trace):
 
-**Verdict**: (pending)
+- `sqlite-dred-loop`, 1990 ms traced: over-delete phase ~1030 ms (7 expansion
+  joins 19-85 ms each, kill UPDATEs 40-45 ms, cone inserts 20-44 ms, frontier
+  copies ~18-20 ms each), rederive phase ~960 ms (base reverse join 248 ms, then
+  rounds of 52-95 ms expansions + 33-41 ms UPDATEs). Largest single statement is
+  the rederive base at 248 ms = 12% of total; everything else is a per-round cost
+  tracking wavefront width.
+- `sqlite-count-scc`, 1978 ms traced: same shape (phase 1 ~1021 ms, phase 2
+  base 273 ms fused, phase 2 rounds ~684 ms).
+- Side observation that seeded H5: the per-round `frontier <- next` copies sum
+  to ~210 ms (~10%) in dred-loop.
+
+**Verdict**: CONFIRMED. The cost is spread evenly across all rounds of both
+phases in proportion to wavefront size; there is no expensive-round outlier. The
+4.4x-vs-counting gap is cone amplification (the over-delete cone is ~960k nodes
+where only ~160k die, then ~800k are rederived), which is algorithmic (g6's
+missing pure-DAG early-out), and constant-factor SQL levers can only shave the
+per-probe cost, not the probe count.
 
 ## H4: ANALYZE / sqlite_stat1 does not move retract time, because CROSS JOIN already pins every join order
 
@@ -203,12 +219,34 @@ effect (either sign) on dred-cte only.
 2-table recursive step).
 
 **Experiment**: run `ANALYZE` after load (untimed setup, before the measured
-retract) via a temporary harness hook; 3x DAG 960k on all four engines; then
-revert the hook.
+retract) via a harness env hook (`DL_LAB_ANALYZE=1`); 3x all cells on all four
+engines, compared against the same code without the hook.
 
-**Measured**: (pending)
+**Measured** (vs the post-H5 reference, medians):
 
-**Verdict**: (pending)
+| cell | engine | no stats | ANALYZE | delta |
+|---|---|---:|---:|---:|
+| DAG 960k | sqlite-count | 427.5 | 433.1 | +1.3% (noise) |
+| DAG 960k | sqlite-count-scc | 1788.0 | 1798.5 | +0.6% (noise) |
+| DAG 960k | sqlite-dred-loop | 1788.3 | 1805.6 | +1.0% (noise) |
+| DAG 960k | sqlite-dred-cte | 2548.1 | 2747.6 [2741.6-2759.7] | **+7.8%** |
+| CYC 960k | all four | | | -2.1% to +1.8% (noise) |
+| DAG 60k | all four | | | +2.0% to +4.0% |
+
+EQP diff (explain_plans with/without ANALYZE): the only plan that moves is the
+CTE phase-2 base case, where stats reorder the probe sequence after the
+`SCAN d USING COVERING INDEX ix_cx_dep_child` from (p, c) to (c, p). Every
+CROSS JOIN statement is plan-identical with and without stats, as predicted.
+
+**Verdict**: CONFIRMED for the loop engines (CROSS JOIN pins the plan; stats
+change nothing beyond noise) and the "either sign" hedge for dred-cte landed on
+the bad side: stats make the CTE measurably SLOWER at DAG 960k. Actionable
+consequence: do NOT add ANALYZE to the store; the current no-stats behavior is
+the right default. Bonus finding: the no-stats CTE phase-2 base plans as a FULL
+SCAN of `ix_cx_dep_child` driving into p/c probes, instead of scanning the cone
+and probing the child index the way the loop's base does. That is a join-order
+defect in the CTE SQL itself (plain JOIN leaves the planner free) and it becomes
+H7.
 
 ## H5: frontier ping-pong (role swap in Rust instead of `DELETE frontier; INSERT frontier SELECT FROM next`) removes a full extra copy of every wavefront row and speeds dred-loop/scc ~5-15%
 
@@ -230,9 +268,32 @@ all three cells, `cargo test`; then, if confirmed, extend to `retract_scc`
 (careful: its fused multi-statement strings bake both names into one exec) and
 `retract`.
 
-**Measured**: (pending)
+(Executed as one wave across `retract`/`assert`/`retract_dred`/`retract_scc`;
+the H3 trace had already shown the copies are a clean ~10% of dred-loop.)
 
-**Verdict**: (pending)
+**Measured** (3 runs, median [min-max], vs post-H2):
+
+| cell | engine | H2 med | H5 med [min-max] | delta | stmts |
+|---|---|---:|---:|---:|---|
+| DAG 60k | sqlite-count | 31.3 | 29.7 [29.6-29.9] | -5.3% | 29 -> 23 |
+| DAG 60k | sqlite-count-scc | 120.6 | 110.8 [109.1-111.2] | -8.1% | 39 (fused) |
+| DAG 60k | sqlite-dred-loop | 122.2 | 109.9 [108.9-110.0] | -10.1% | 75 -> 53 |
+| DAG 960k | sqlite-count | 440.6 | 427.5 [426.3-429.7] | -3.0% | 29 -> 23 |
+| DAG 960k | sqlite-count-scc | 1968.2 | 1788.0 [1782.0-1788.3] | -9.2% | 39 |
+| DAG 960k | sqlite-dred-loop | 1970.3 | 1788.3 [1782.7-1795.8] | -9.2% | 75 -> 53 |
+| CYC 960k | sqlite-count-scc | 2132.7 | 1951.0 [1950.1-1955.7] | -8.5% | 39 |
+| CYC 960k | sqlite-dred-loop | 2142.8 | 1966.0 [1951.0-1987.7] | -8.3% | 75 -> 53 |
+| DAG/CYC | sqlite-dred-cte (untouched) | | +0.3% to +1.5% | noise | 6 |
+
+All hashes = oracle; full `cargo test --release` green (including the two-pass
+cycle tests and stmt_count).
+
+**Verdict**: CONFIRMED, at the top of the predicted 5-15% band for the two-pass
+engines. The receipt is the pairing of the removed statements (75 -> 53, and the
+scc fused string losing its DELETE+INSERT tail) with a drop that matches the
+~210 ms the H3 trace attributed to exactly those statements (dred-loop DAG 960k
+-182 ms vs ~207 ms traced copy cost; the remainder is the copies' cache
+pressure being partly overlapped).
 
 ## H6: page_size does not materially move an all-in-RAM retract
 
@@ -244,9 +305,52 @@ cancel for integer-key tables. Must be set before table creation to take effect.
 **Prediction**: 8192 vs default 4096 at DAG 960k: within spread or < 5% either
 way on all engines. Recorded mostly to close seed 6 with a receipt.
 
-**Experiment**: add `PRAGMA page_size=8192` at the top of `create_schema`
-(before DDL, after connection open), rebuild, 3x DAG 960k on `sqlite-count` and
-`sqlite-dred-loop`, revert.
+**Experiment**: harness env hook `DL_LAB_PAGE_SIZE` sets the pragma before the
+first table create; 3x all cells at 8192, plus a focused 16384 probe at DAG
+960k.
+
+**Measured** (vs post-H5 reference, medians):
+
+| cell | engine | 4096 (default) | 8192 | 16384 |
+|---|---|---:|---:|---:|
+| DAG 60k | sqlite-count | 29.7 | 25.2 [25.1-25.8] (-14.9%) | |
+| DAG 60k | sqlite-count-scc | 110.8 | 100.9 (-9.0%) | |
+| DAG 60k | sqlite-dred-loop | 109.9 | 101.4 (-7.7%) | |
+| DAG 960k | sqlite-count | 427.5 | 422.8 (-1.1%) | 423.8 (-0.9%) |
+| DAG 960k | sqlite-dred-loop | 1788.3 | 1765.8 (-1.3%) | 1769.9 (-1.0%) |
+| DAG 960k | sqlite-count-scc | 1788.0 | 1766.2 (-1.2%) | |
+| CYC 960k | all four | | -0.6% to -1.6% | |
+
+Hashes = oracle throughout.
+
+**Verdict**: CONFIRMED at the scale that matters (960k: everything within ~1.5%,
+8k and 16k indistinguishable), but the prediction under-called the small-db
+case: DAG 60k speeds up 8-15% at 8192, consistent with the 3.76 MB db losing a
+b-tree level (fewer page descents per probe) while the 61 MB db keeps the same
+depth either way. Not adopted: the win exists only where absolute times are
+already ~30-110 ms, and page_size is frozen at db creation, so tuning it for
+small corpora would pessimize nothing but also buy nothing at target scale.
+
+## H7: pinning the CTE phase-2 base join order (CROSS JOIN, cone-driven) removes its full index scan and speeds dred-cte 5-15%
+
+**Mechanism**: EQP (see H4) shows the no-stats plan for the CTE rederive base is
+`SCAN d USING COVERING INDEX ix_cx_dep_child` -> probe p -> probe c: it walks
+ALL ~1.9M dep index entries and probes cx_row for each, because plain `JOIN`
+leaves the planner free and the temp cone table has no stats. The loop version
+of the same logic (`rd base` plan) drives `SCAN c` -> `SEARCH d (child_key=?)`
+-> `SEARCH p`, touching only the cone's incoming edges. Rewriting the CTE base
+case with `CROSS JOIN` in loop order should replace the 1.9M-entry scan with a
+cone-driven probe walk. The recursive step already plans cone-driven and keeps
+its shape.
+
+**Prediction** (before running): dred-cte DAG 960k drops 5-15% (the base's
+excess is bounded by one full index scan + ~1.9M row probes, worth a few
+hundred ms against a 2548 ms total; the loop's equivalent base costs 248 ms).
+No effect on the other engines. Hashes unchanged (UNION semantics untouched).
+
+**Experiment**: change `retract_dred_cte` phase-2 base (and phase-1 walk for
+consistency where safe) to CROSS JOIN pinned order; EQP re-check; 3x all
+cells on `sqlite-dred-cte`; `cargo test`.
 
 **Measured**: (pending)
 
@@ -256,4 +360,4 @@ way on all engines. Recorded mostly to close seed 6 with a receipt.
 
 ## B0: baseline reproduction (no code change)
 
-(tables below are filled as runs complete)
+(tables above in "Baseline"; raw logs /tmp/lab-sqlperf/*.log)

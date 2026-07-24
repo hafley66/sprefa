@@ -117,6 +117,36 @@ async fn main() {
          CROSS JOIN cx_dep d ON d.parent_key = f.key CROSS JOIN cx_row r ON r.key = d.child_key \
          CROSS JOIN cx_cone c ON c.key = d.child_key WHERE r.weight = 0").await;
 
+    // ===================== retract_dred_cte() =====================
+    // Lab hook (H4): DL_LAB_ANALYZE=1 runs ANALYZE first, so the CTE plans can be
+    // diffed with and without sqlite_stat1 (the loop engines pin joins with CROSS
+    // JOIN; these two statements use plain JOIN and are the only planner-free SQL).
+    if std::env::var("DL_LAB_ANALYZE").map(|v| v == "1").unwrap_or(false) {
+        db.execute_unprepared("ANALYZE;").await.unwrap();
+        println!("\n========== ANALYZE RAN: plans below use sqlite_stat1 ==========");
+    }
+    println!("\n========== retract_dred_cte() — the two recursive CTEs ==========");
+    explain(&db, "cte phase 1: over-delete cone walk", false,
+        "INSERT INTO cx_cone(key) WITH RECURSIVE cone(key) AS ( \
+            SELECT key FROM cx_row WHERE key IN (1,2,3) AND weight>0 \
+            UNION \
+            SELECT d.child_key FROM cone \
+              JOIN cx_dep d ON d.parent_key = cone.key \
+              JOIN cx_row r ON r.key = d.child_key \
+             WHERE r.weight>0 ) \
+         SELECT key FROM cone").await;
+    explain(&db, "cte phase 2: rederive walk", false,
+        "INSERT INTO cx_frontier(key) WITH RECURSIVE alive(key) AS ( \
+            SELECT c.key FROM cx_cone c \
+              JOIN cx_dep d ON d.child_key = c.key \
+              JOIN cx_row p ON p.key = d.parent_key \
+             WHERE p.weight>0 \
+            UNION \
+            SELECT d.child_key FROM alive \
+              JOIN cx_dep d ON d.parent_key = alive.key \
+              JOIN cx_cone c ON c.key = d.child_key ) \
+         SELECT key FROM alive").await;
+
     println!("\n(working-table DELETEs like `DELETE FROM cx_next` are unconditional whole-table clears — trivial, omitted.)");
 
     drop(db);

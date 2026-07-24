@@ -231,9 +231,18 @@ pub async fn retract(
     // order (the transient working tables have no stats, so the planner would
     // otherwise scan the corpus). Verified with EXPLAIN QUERY PLAN: every step is
     // SCAN <small> -> SEARCH <big> USING PRIMARY KEY.
+    //
+    // Frontier ping-pong (2026-07-24 lab, H5): the two physical TEMP tables swap
+    // ROLES each round instead of copying `next` into `frontier`. The SQL is
+    // format!-ed per round anyway, so the swap is free and the old per-round
+    // `DELETE frontier; INSERT frontier SELECT FROM next` full-wavefront copy is
+    // gone. Both tables are cleared at entry by every cascade function, so the
+    // roles ending on either physical table is harmless.
+    let mut frontier_table = ns.frontier.as_str();
+    let mut next_table = ns.next.as_str();
     let mut rounds = 0u64;
     loop {
-        if scalar(&txn, &format!("SELECT count(*) FROM {}", ns.frontier)).await? == 0 {
+        if scalar(&txn, &format!("SELECT count(*) FROM {frontier_table}")).await? == 0 {
             break;
         }
         rounds += 1;
@@ -243,10 +252,10 @@ pub async fn retract(
         exec(&txn,
             &format!("INSERT INTO {hits}(key,dec) \
              SELECT d.child_key, count(*) \
-             FROM {frontier} f CROSS JOIN {dep} d \
+             FROM {frontier_table} f CROSS JOIN {dep} d \
                ON d.parent_key = f.key \
              GROUP BY d.child_key",
-             hits = ns.hits, frontier = ns.frontier, dep = ns.dep),
+             hits = ns.hits, dep = ns.dep),
         )
         .await?;
 
@@ -267,20 +276,19 @@ pub async fn retract(
         //    filtered out here. Killing the two big DELETEs (dead rows + dead
         //    edges out of the WITHOUT ROWID b-trees) is the retract's dominant
         //    cost, so this is the main speedup.
-        exec(&txn, &format!("DELETE FROM {}", ns.next)).await?;
+        exec(&txn, &format!("DELETE FROM {next_table}")).await?;
         exec(&txn,
-            &format!("INSERT INTO {next}(key) \
+            &format!("INSERT INTO {next_table}(key) \
              SELECT h.key FROM {hits} h CROSS JOIN {row} r \
                ON r.key = h.key \
              WHERE r.weight <= 0 AND r.weight + h.dec > 0",
-             next = ns.next, hits = ns.hits, row = ns.row),
+             hits = ns.hits, row = ns.row),
         )
         .await?;
 
-        // 4. frontier <- next. Dead rows STAY in cx_row (weight <= 0); the
-        //    survivor query filters on weight > 0.
-        exec(&txn, &format!("DELETE FROM {}", ns.frontier)).await?;
-        exec(&txn, &format!("INSERT INTO {} SELECT key FROM {}", ns.frontier, ns.next)).await?;
+        // 4. role swap: what was `next` IS the new frontier. Dead rows STAY in
+        //    cx_row (weight <= 0); the survivor query filters on weight > 0.
+        std::mem::swap(&mut frontier_table, &mut next_table);
     }
     txn.commit().await?;
     Ok(rounds)
@@ -319,26 +327,28 @@ async fn retract_scc_two_pass(
                  frontier = ns.frontier, next = ns.next, cone = ns.cone, row = ns.row),
     ).await?;
 
+    // Frontier ping-pong: role swap instead of the per-round frontier <- next copy.
+    let mut frontier_table = ns.frontier.as_str();
+    let mut next_table = ns.next.as_str();
     let mut rounds = 0u64;
     loop {
         exec(&txn,
-            &format!("DELETE FROM {next};
-             INSERT OR IGNORE INTO {next}(key)
+            &format!("DELETE FROM {next_table};
+             INSERT OR IGNORE INTO {next_table}(key)
              SELECT d.child_key
-             FROM {frontier} f CROSS JOIN {dep} d ON d.parent_key = f.key
+             FROM {frontier_table} f CROSS JOIN {dep} d ON d.parent_key = f.key
              CROSS JOIN {row} r ON r.key = d.child_key
              WHERE r.weight > 0",
-             next = ns.next, frontier = ns.frontier, dep = ns.dep, row = ns.row),
+             dep = ns.dep, row = ns.row),
         ).await?;
-        if scalar(&txn, &format!("SELECT count(*) FROM {}", ns.next)).await? == 0 { break; }
+        if scalar(&txn, &format!("SELECT count(*) FROM {next_table}")).await? == 0 { break; }
         rounds += 1;
         exec(&txn,
-            &format!("UPDATE {row} SET weight=0 WHERE key IN (SELECT key FROM {next});
-             INSERT OR IGNORE INTO {cone} SELECT key FROM {next};
-             DELETE FROM {frontier};
-             INSERT INTO {frontier} SELECT key FROM {next}",
-             row = ns.row, next = ns.next, cone = ns.cone, frontier = ns.frontier),
+            &format!("UPDATE {row} SET weight=0 WHERE key IN (SELECT key FROM {next_table});
+             INSERT OR IGNORE INTO {cone} SELECT key FROM {next_table}",
+             row = ns.row, cone = ns.cone),
         ).await?;
+        std::mem::swap(&mut frontier_table, &mut next_table);
     }
 
     exec(&txn,
@@ -352,25 +362,28 @@ async fn retract_scc_two_pass(
          UPDATE {row} SET weight=1 WHERE key IN (SELECT key FROM {frontier})",
          frontier = ns.frontier, next = ns.next, cone = ns.cone, dep = ns.dep, row = ns.row),
     ).await?;
+    // Roles reset: the fused base statement above cleared both tables and
+    // refilled ns.frontier, so the rederive ping-pong starts fresh.
+    let mut frontier_table = ns.frontier.as_str();
+    let mut next_table = ns.next.as_str();
     loop {
         exec(&txn,
-            &format!("DELETE FROM {next};
-             INSERT OR IGNORE INTO {next}(key)
+            &format!("DELETE FROM {next_table};
+             INSERT OR IGNORE INTO {next_table}(key)
              SELECT d.child_key
-             FROM {frontier} f CROSS JOIN {dep} d ON d.parent_key = f.key
+             FROM {frontier_table} f CROSS JOIN {dep} d ON d.parent_key = f.key
              CROSS JOIN {row} r ON r.key = d.child_key
              CROSS JOIN {cone} c ON c.key = d.child_key
              WHERE r.weight = 0",
-             next = ns.next, frontier = ns.frontier, dep = ns.dep, row = ns.row, cone = ns.cone),
+             dep = ns.dep, row = ns.row, cone = ns.cone),
         ).await?;
-        if scalar(&txn, &format!("SELECT count(*) FROM {}", ns.next)).await? == 0 { break; }
+        if scalar(&txn, &format!("SELECT count(*) FROM {next_table}")).await? == 0 { break; }
         rounds += 1;
         exec(&txn,
-            &format!("UPDATE {row} SET weight=1 WHERE key IN (SELECT key FROM {next});
-             DELETE FROM {frontier};
-             INSERT INTO {frontier} SELECT key FROM {next}",
-             row = ns.row, next = ns.next, frontier = ns.frontier),
+            &format!("UPDATE {row} SET weight=1 WHERE key IN (SELECT key FROM {next_table})",
+             row = ns.row),
         ).await?;
+        std::mem::swap(&mut frontier_table, &mut next_table);
     }
     txn.commit().await?;
     Ok(rounds)
@@ -407,26 +420,28 @@ pub async fn assert(
     // pushes reachability into any newly-added dead children.
     exec(&txn, &format!("INSERT INTO {} SELECT key FROM {} WHERE key IN {seed_in}", ns.frontier, ns.row)).await?;
     exec(&txn, &format!("UPDATE {} SET weight=1 WHERE key IN {seed_in}", ns.row)).await?;
+    // Frontier ping-pong: role swap instead of the per-round frontier <- next copy.
+    let mut frontier_table = ns.frontier.as_str();
+    let mut next_table = ns.next.as_str();
     let mut rounds = 0u64;
     loop {
         exec(
             &txn,
-            &format!("DELETE FROM {next}; \
-             INSERT OR IGNORE INTO {next}(key) \
+            &format!("DELETE FROM {next_table}; \
+             INSERT OR IGNORE INTO {next_table}(key) \
              SELECT d.child_key \
-             FROM {frontier} f CROSS JOIN {dep} d ON d.parent_key = f.key \
+             FROM {frontier_table} f CROSS JOIN {dep} d ON d.parent_key = f.key \
                CROSS JOIN {row} r ON r.key = d.child_key \
              WHERE r.weight = 0",
-             next = ns.next, frontier = ns.frontier, dep = ns.dep, row = ns.row),
+             dep = ns.dep, row = ns.row),
         )
         .await?;
-        if scalar(&txn, &format!("SELECT count(*) FROM {}", ns.next)).await? == 0 {
+        if scalar(&txn, &format!("SELECT count(*) FROM {next_table}")).await? == 0 {
             break;
         }
         rounds += 1;
-        exec(&txn, &format!("UPDATE {} SET weight=1 WHERE key IN (SELECT key FROM {})", ns.row, ns.next)).await?;
-        exec(&txn, &format!("DELETE FROM {}", ns.frontier)).await?;
-        exec(&txn, &format!("INSERT INTO {} SELECT key FROM {}", ns.frontier, ns.next)).await?;
+        exec(&txn, &format!("UPDATE {} SET weight=1 WHERE key IN (SELECT key FROM {next_table})", ns.row)).await?;
+        std::mem::swap(&mut frontier_table, &mut next_table);
     }
     txn.commit().await?;
     Ok(rounds)
@@ -456,27 +471,29 @@ pub async fn retract_dred(
     exec(&txn, &format!("INSERT INTO {} SELECT key FROM {} WHERE key IN {seed_in} AND weight>0", ns.frontier, ns.row)).await?;
     exec(&txn, &format!("UPDATE {} SET weight=0 WHERE key IN (SELECT key FROM {})", ns.row, ns.frontier)).await?;
     exec(&txn, &format!("INSERT INTO {} SELECT key FROM {}", ns.cone, ns.frontier)).await?;
+    // Frontier ping-pong: role swap instead of the per-round frontier <- next copy.
+    let mut frontier_table = ns.frontier.as_str();
+    let mut next_table = ns.next.as_str();
     let mut rounds = 0u64;
     loop {
         exec(
             &txn,
-            &format!("DELETE FROM {next}; \
-             INSERT OR IGNORE INTO {next}(key) \
+            &format!("DELETE FROM {next_table}; \
+             INSERT OR IGNORE INTO {next_table}(key) \
              SELECT d.child_key \
-             FROM {frontier} f CROSS JOIN {dep} d ON d.parent_key = f.key \
+             FROM {frontier_table} f CROSS JOIN {dep} d ON d.parent_key = f.key \
                CROSS JOIN {row} r ON r.key = d.child_key \
              WHERE r.weight > 0",
-             next = ns.next, frontier = ns.frontier, dep = ns.dep, row = ns.row),
+             dep = ns.dep, row = ns.row),
         )
         .await?;
-        if scalar(&txn, &format!("SELECT count(*) FROM {}", ns.next)).await? == 0 {
+        if scalar(&txn, &format!("SELECT count(*) FROM {next_table}")).await? == 0 {
             break;
         }
         rounds += 1;
-        exec(&txn, &format!("UPDATE {} SET weight=0 WHERE key IN (SELECT key FROM {})", ns.row, ns.next)).await?;
-        exec(&txn, &format!("INSERT OR IGNORE INTO {} SELECT key FROM {}", ns.cone, ns.next)).await?;
-        exec(&txn, &format!("DELETE FROM {}", ns.frontier)).await?;
-        exec(&txn, &format!("INSERT INTO {} SELECT key FROM {}", ns.frontier, ns.next)).await?;
+        exec(&txn, &format!("UPDATE {} SET weight=0 WHERE key IN (SELECT key FROM {next_table})", ns.row)).await?;
+        exec(&txn, &format!("INSERT OR IGNORE INTO {} SELECT key FROM {next_table}", ns.cone)).await?;
+        std::mem::swap(&mut frontier_table, &mut next_table);
     }
 
     // rederive: cone rows with a SURVIVING parent (weight>0, i.e. outside the cone)
@@ -494,26 +511,29 @@ pub async fn retract_dred(
     )
     .await?;
     exec(&txn, &format!("UPDATE {} SET weight=1 WHERE key IN (SELECT key FROM {})", ns.row, ns.frontier)).await?;
+    // Roles reset here: the base fill above cleared both tables and refilled
+    // ns.frontier, so the ping-pong starts fresh for the rederive loop.
+    let mut frontier_table = ns.frontier.as_str();
+    let mut next_table = ns.next.as_str();
     loop {
         exec(
             &txn,
-            &format!("DELETE FROM {next}; \
-             INSERT OR IGNORE INTO {next}(key) \
+            &format!("DELETE FROM {next_table}; \
+             INSERT OR IGNORE INTO {next_table}(key) \
              SELECT d.child_key \
-             FROM {frontier} f CROSS JOIN {dep} d ON d.parent_key = f.key \
+             FROM {frontier_table} f CROSS JOIN {dep} d ON d.parent_key = f.key \
                CROSS JOIN {row} r ON r.key = d.child_key \
                CROSS JOIN {cone} c ON c.key = d.child_key \
              WHERE r.weight = 0",
-             next = ns.next, frontier = ns.frontier, dep = ns.dep, row = ns.row, cone = ns.cone),
+             dep = ns.dep, row = ns.row, cone = ns.cone),
         )
         .await?;
-        if scalar(&txn, &format!("SELECT count(*) FROM {}", ns.next)).await? == 0 {
+        if scalar(&txn, &format!("SELECT count(*) FROM {next_table}")).await? == 0 {
             break;
         }
         rounds += 1;
-        exec(&txn, &format!("UPDATE {} SET weight=1 WHERE key IN (SELECT key FROM {})", ns.row, ns.next)).await?;
-        exec(&txn, &format!("DELETE FROM {}", ns.frontier)).await?;
-        exec(&txn, &format!("INSERT INTO {} SELECT key FROM {}", ns.frontier, ns.next)).await?;
+        exec(&txn, &format!("UPDATE {} SET weight=1 WHERE key IN (SELECT key FROM {next_table})", ns.row)).await?;
+        std::mem::swap(&mut frontier_table, &mut next_table);
     }
     txn.commit().await?;
     Ok(rounds)

@@ -90,7 +90,12 @@ async fn open_store() -> (RelStore, std::path::PathBuf) {
     let _ = std::fs::remove_file(&path);
     let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
     opt.max_connections(1).min_connections(1);
-    (RelStore::attach(Database::connect(opt).await.unwrap()).await.unwrap(), path)
+    let conn = Database::connect(opt).await.unwrap();
+    // Lab hook (H6): page_size must be stamped before the first table is created.
+    if let Ok(page_size) = std::env::var("DL_LAB_PAGE_SIZE") {
+        conn.execute_unprepared(&format!("PRAGMA page_size={page_size};")).await.unwrap();
+    }
+    (RelStore::attach(conn).await.unwrap(), path)
 }
 fn rand_tag() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -119,6 +124,12 @@ where
     drop(rows);
     drop(deps);
     drop(g); // corpus lives on disk now; nothing below counts its residence
+
+    // Lab hook (H4): optional ANALYZE in the UNTIMED setup window, so the measured
+    // retract runs with sqlite_stat1 populated.
+    if std::env::var("DL_LAB_ANALYZE").map(|v| v == "1").unwrap_or(false) {
+        store.conn().execute_unprepared("ANALYZE;").await.unwrap();
+    }
 
     stmt_counter::reset();
     sqlite_hw_mb(true); // clear highwater so the retract's C-heap is isolated
