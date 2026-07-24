@@ -18,7 +18,14 @@ import { bridge } from "../src/0_ast_bridge.ts";
 import { builtinExtract, builtinSg, shHost } from "../src/1_hosts.ts";
 import type { BridgeOk, HostDecl } from "../tasks.d.ts";
 import { builtinRelsForTests } from "./0_helpers.ts";
-import { bridgeHostsFixture, bootHostRunnerFixture, disposeHostFixture, effectCacheDump, waitUntil } from "./2_helpers_hosts.ts";
+import {
+  bootHostRunnerFixture,
+  bridgeHostsFixture,
+  disposeHostFixture,
+  effectCacheDump,
+  makeCountingHost,
+  waitUntil,
+} from "./2_helpers_hosts.ts";
 import { edbBatch, rowsOf } from "./1_helpers_db.ts";
 
 const GOLDEN_PATH = path.join(import.meta.dirname, "..", "fixtures", "golden", "hosts.sg-timeline.json");
@@ -33,7 +40,11 @@ test("sg? fires exactly once per distinct request row (the cache proves it)", as
   const bridgeOk = bridgeHostsFixture("sg-rail.dl");
   const fixture = await bootHostRunnerFixture(bridgeOk, [builtinSg]);
   try {
-    await fixture.rt.commit(edbBatch({ file: [{ path: "fixtures/corpus/bad.ts" }] }));
+    // M8-alpha's file(path, content_hash) spine (2 cols): the committed row needs a
+    // real witness value so sg?'s salted probe (content_hash is salt_0) has something
+    // to key its digest on -- "hash_v1" stands in for a real sha-256 hex here since
+    // this test never touches the file's actual bytes.
+    await fixture.rt.commit(edbBatch({ file: [{ path: "fixtures/corpus/bad.ts", content_hash: "hash_v1" }] }));
 
     // bounded poll: the effect runs on a real child process, asynchronously, after
     // commit()'s promise (correlated to the EDB+derived tick only) has already
@@ -57,12 +68,158 @@ test("sg? fires exactly once per distinct request row (the cache proves it)", as
     const expected: unknown = JSON.parse(fs.readFileSync(GOLDEN_PATH, "utf8"));
     assert.deepEqual(snapshot, expected);
 
-    // second identical commit (same file, same path): the demand row is unchanged
-    // (the pre-check sees it already exists), so HostRunner never even sees a new
-    // __req_sg insert -- the cache proves the effect fired exactly once regardless.
-    await fixture.rt.commit(edbBatch({ file: [{ path: "fixtures/corpus/bad.ts" }] }));
+    // second identical commit (same file, same path, SAME witness): the demand row is
+    // unchanged (the pre-check sees it already exists), so HostRunner never even sees
+    // a new __req_sg insert -- the cache proves the effect fired exactly once
+    // regardless.
+    await fixture.rt.commit(edbBatch({ file: [{ path: "fixtures/corpus/bad.ts", content_hash: "hash_v1" }] }));
     assert.equal((await effectCacheDump(fixture.dbPath)).length, 1);
     assert.deepEqual(await rowsOf(fixture.rt, "__resp_sg"), snapshot[2]);
+  } finally {
+    await disposeHostFixture(fixture);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M8-beta: supersession + ABA, over a counting fake host (deterministic, no
+// subprocess -- see tests/2_helpers_hosts.ts's makeCountingHost). `counter(path,
+// value)` declares `{path}` as its only template ref (inputCols = ["path"]), so
+// `counter?(path, content_hash, value)` passes ONE extra arg beyond the host's 2
+// declared columns -- exactly the salt-arg law's shape (salt_0 = content_hash),
+// same as sg-rail.dl's real `sg?` probe. The `sh` template text is never actually
+// run: bootHostRunnerFixture is handed the counting fake HostDef under the SAME
+// name, which HostRunner dispatches to instead.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const COUNTER_PROGRAM_DL = `
+rel probe_hit(path: text, value: int).
+
+sh counter(path: text, value: int) = \`echo {path}\`.
+
+probe_hit(path, value) <- file(path, content_hash), counter?(path, content_hash, value).
+`;
+
+function bridgeCounterProgram(): BridgeOk {
+  const bridgeResult = bridge(COUNTER_PROGRAM_DL, builtinRelsForTests());
+  assert.equal(
+    bridgeResult.kind,
+    "ok",
+    bridgeResult.kind === "err" ? bridgeResult.diags.map((diag) => diag.message).join("; ") : undefined,
+  );
+  return bridgeResult as BridgeOk;
+}
+
+test("fire-once per FULL digest: same (path, content_hash) committed twice -> one cache row, one run", async () => {
+  const bridgeOk = bridgeCounterProgram();
+  const counting = makeCountingHost("counter");
+  const fixture = await bootHostRunnerFixture(bridgeOk, [counting.host]);
+  try {
+    await fixture.rt.commit(edbBatch({ file: [{ path: "a.ts", content_hash: "hash_v1" }] }));
+    await waitUntil(async () => {
+      const respRows = await fixture.rt.rows("__resp_counter");
+      return respRows.length > 0 ? respRows : undefined;
+    });
+    assert.equal(counting.runCount, 1);
+    assert.equal((await effectCacheDump(fixture.dbPath)).length, 1);
+
+    // re-commit the IDENTICAL (path, content_hash): applyEdbTxn's pre-check sees the
+    // file row already exists, so __req_counter never even sees a new insert -- same
+    // fire-once law as the sg? golden test above, now over the fake host.
+    await fixture.rt.commit(edbBatch({ file: [{ path: "a.ts", content_hash: "hash_v1" }] }));
+    assert.equal(counting.runCount, 1);
+    assert.equal((await effectCacheDump(fixture.dbPath)).length, 1);
+  } finally {
+    await disposeHostFixture(fixture);
+  }
+});
+
+test("witness change supersedes: v1 -> v2 in one commit retracts the old resp rows, keeps only the new cache row", async () => {
+  const bridgeOk = bridgeCounterProgram();
+  const counting = makeCountingHost("counter");
+  const fixture = await bootHostRunnerFixture(bridgeOk, [counting.host]);
+  try {
+    await fixture.rt.commit(edbBatch({ file: [{ path: "a.ts", content_hash: "hash_v1" }] }));
+    await waitUntil(async () => {
+      const respRows = await fixture.rt.rows("__resp_counter");
+      return respRows.length > 0 ? respRows : undefined;
+    });
+    assert.deepEqual(await rowsOf(fixture.rt, "__resp_counter"), [{ path: "a.ts", salt_0: "hash_v1", value: 1 }]);
+    assert.equal((await effectCacheDump(fixture.dbPath)).length, 1);
+
+    // ONE commit retracting v1's file row and inserting v2's -- exactly the shape
+    // ingestFile produces for a same-path content edit (4_ingest.ts's diff, never two
+    // separate commits). This is the honest re-fix of curl-session.sh's console_hit
+    // finding: the new witness's __req_counter row lands, HostRunner fires again, and
+    // the PRIOR witness's __resp_counter rows retract in the SAME commit as the new
+    // insert.
+    await fixture.rt.commit(
+      edbBatch(
+        { file: [{ path: "a.ts", content_hash: "hash_v2" }] },
+        { file: [{ path: "a.ts", content_hash: "hash_v1" }] },
+      ),
+    );
+    await waitUntil(async () => {
+      const respRows = await fixture.rt.rows("__resp_counter");
+      return respRows.some((row) => row.salt_0 === "hash_v2") ? respRows : undefined;
+    });
+
+    assert.equal(counting.runCount, 2);
+    assert.deepEqual(await rowsOf(fixture.rt, "__resp_counter"), [{ path: "a.ts", salt_0: "hash_v2", value: 2 }]);
+
+    // the orchestrator's latest-wins interpretation (IdentityWitnessLaw, tasks.d.ts;
+    // flagged in 1_hosts.ts's runEffectOnce, not owner-ruled): effect_cache tracks only
+    // the LIVE witness per identity, so the v1 cache row is gone too, not just its rows.
+    const cache = await effectCacheDump(fixture.dbPath);
+    assert.equal(cache.length, 1);
+    assert.equal(cache[0]?.state, "done");
+  } finally {
+    await disposeHostFixture(fixture);
+  }
+});
+
+test("A->B->A: flipping back to a prior witness re-fires (its old cache row was deleted, not reused)", async () => {
+  const bridgeOk = bridgeCounterProgram();
+  const counting = makeCountingHost("counter");
+  const fixture = await bootHostRunnerFixture(bridgeOk, [counting.host]);
+  try {
+    await fixture.rt.commit(edbBatch({ file: [{ path: "a.ts", content_hash: "hash_v1" }] })); // A
+    await waitUntil(async () => {
+      const respRows = await fixture.rt.rows("__resp_counter");
+      return respRows.length > 0 ? respRows : undefined;
+    });
+
+    await fixture.rt.commit(
+      // A -> B
+      edbBatch(
+        { file: [{ path: "a.ts", content_hash: "hash_v2" }] },
+        { file: [{ path: "a.ts", content_hash: "hash_v1" }] },
+      ),
+    );
+    await waitUntil(async () => {
+      const respRows = await fixture.rt.rows("__resp_counter");
+      return respRows.some((row) => row.salt_0 === "hash_v2") ? respRows : undefined;
+    });
+    assert.equal(counting.runCount, 2);
+
+    await fixture.rt.commit(
+      // B -> A: hash_v1's PRIOR cache row was DELETEd by the latest-wins interpretation
+      // when B superseded it, so this is a cache MISS again, not a hit served against
+      // rows that were retracted a moment ago -- fire-once holds only while a witness
+      // is the CURRENT one for its identity group.
+      edbBatch(
+        { file: [{ path: "a.ts", content_hash: "hash_v1" }] },
+        { file: [{ path: "a.ts", content_hash: "hash_v2" }] },
+      ),
+    );
+    await waitUntil(async () => {
+      const respRows = await fixture.rt.rows("__resp_counter");
+      return respRows.some((row) => row.value === 3) ? respRows : undefined;
+    });
+
+    assert.equal(counting.runCount, 3); // A, B, A again -- 3 real runs, not 2.
+    assert.deepEqual(await rowsOf(fixture.rt, "__resp_counter"), [{ path: "a.ts", salt_0: "hash_v1", value: 3 }]);
+    const cache = await effectCacheDump(fixture.dbPath);
+    assert.equal(cache.length, 1); // only the live (3rd) witness's cache row survives
   } finally {
     await disposeHostFixture(fixture);
   }
@@ -164,7 +321,7 @@ bad_result(path, out) <- file(path), failing?(path, out).
     const cacheAfterSecond = await effectCacheDump(fixture.dbPath);
     assert.equal(cacheAfterSecond.length, 2);
     assert.ok(cacheAfterSecond.every((entry) => entry.state === "error"));
-    assert.notEqual(cacheAfterSecond[0]?.digest, cacheAfterSecond[1]?.digest);
+    assert.notEqual(cacheAfterSecond[0]?.full_digest, cacheAfterSecond[1]?.full_digest);
   } finally {
     await disposeHostFixture(fixture);
   }
