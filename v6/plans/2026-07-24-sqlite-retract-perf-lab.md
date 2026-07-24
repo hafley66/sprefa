@@ -352,9 +352,33 @@ No effect on the other engines. Hashes unchanged (UNION semantics untouched).
 consistency where safe) to CROSS JOIN pinned order; EQP re-check; 3x all
 cells on `sqlite-dred-cte`; `cargo test`.
 
-**Measured**: (pending)
+**Measured**: EQP after the pin shows the wanted plan (`SCAN c` ->
+`SEARCH d USING COVERING INDEX ix_cx_dep_child (child_key=?)` -> `SEARCH p`).
+Timing (3 runs, median, vs the unpinned post-H5 reference):
 
-**Verdict**: (pending)
+| cell | unpinned | pinned | delta |
+|---|---:|---:|---:|
+| DAG 60k | 154.0 | 164.4 [164.3-165.3] | +6.8% |
+| DAG 960k | 2548.1 | 2748.7 [2736.5-2773.2] | +7.9% |
+| CYC 960k | 2739.7 | 2898.9 [2889.9-2899.6] | +5.8% |
+
+Hashes = oracle on every run (the pin is semantics-neutral, as expected).
+
+**Verdict**: REJECTED, and the code is reverted; the receipt is the tight-spread
++6-8% regression on every cell. The mechanism reading: after the phase-1 kill,
+the cone holds ~960k of 960k reachable nodes, so "cone-driven" probing costs
+~1M separate index descents (one per cone member) plus the same ~1.9M entry
+reads, while the planner's full covering-index scan is ONE sequential leaf walk
+whose `p.weight>0` filter (parents outside the cone, essentially root 1) is far
+more selective than cone membership. At this cone/graph ratio the full scan is
+the better plan, and the no-stats planner already picks it. This also completes
+the H4 story: ANALYZE's +7.8% came from re-ordering the same base's probes to
+check the unselective cone membership before the selective parent-weight test.
+The loop-shaped base (248 ms in the H3 trace) is not a plan the CTE should
+imitate; the CTE's base was never its problem. What remains against the loop is
+the recursive step's row-at-a-time queue processing, which is structural to
+SQLite recursive CTEs (1aa36502's settled result, now with a sharper boundary:
+only the recursion, not the base, is the deficit).
 
 ---
 
