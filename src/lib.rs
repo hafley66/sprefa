@@ -760,8 +760,14 @@ pub fn run_settle(programs: &[String], db_path: Option<&str>, root: PathBuf,
 
 /// Run as an LSP server over stdio. The program's `diag` relation becomes live
 /// editor diagnostics; lint fires on file open / save. See docs/lsp.md.
-pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, root: PathBuf) -> Result<()> {
-    lsp::run_lsp(programs, db_path, db_defaulted, root)
+/// `diag_db` (M5.3, additive): when set, skip engine boot entirely and
+/// instead poll that sqlite file's `diag_v5` view for diagnostics — see
+/// `lsp::run_lsp`'s doc for the mode's semantics.
+pub fn run_lsp(
+    programs: &[String], db_path: Option<&str>, db_defaulted: bool, root: PathBuf,
+    diag_db: Option<PathBuf>,
+) -> Result<()> {
+    lsp::run_lsp(programs, db_path, db_defaulted, root, diag_db)
 }
 
 pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Result<()> {
