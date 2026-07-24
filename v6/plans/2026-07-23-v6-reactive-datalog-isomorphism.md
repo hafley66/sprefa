@@ -8,7 +8,9 @@
 > Observable / Subject / BehaviorSubject + a BufferPolicy knob. (3) json-rx is
 > now EXTRACTED from an actual-rxjs graph (round-trip proof), not a lowering
 > target. The rel=delta-stream / mixing=merge / @next=scan / yield=Put-Take-Call
-> ideas below still hold.
+> ideas below still hold. Additionally retired 2026-07-23 (owner): the
+> Put/Take/Call coroutine + durable-saga model. FRP unidirectional only;
+> Subject/BehaviorSubject are the imperative (CSP-style) hatches.
 
 Status: **THEORY DRAFT, NOT locked.** Runtime is now chosen (TS on actual rxjs);
 this doc is the theory, not the spec. v5 is a lab and is

@@ -67,7 +67,7 @@ flowchart TB
     subgraph SHIP["ships in SQLite (on disk, RSS-bounded)"]
         s1["recursive CTE<br/>covers 6/7 reach+walk"]:::win
         s2["counting Z-set retract<br/>weight = #supports, delete-at-0"]:::win
-        s3["SCC nested fixpoint<br/>retract_scc — beats DRed"]:::win
+        s3["SCC two-pass (over-delete + rederive)<br/>retract_scc"]:::win
     end
 
     subgraph CHK["oracle + test (how we KNOW it's right)"]
@@ -156,7 +156,7 @@ flowchart TB
     subgraph SQLM["lane 1 · SQLite mechanics explored"]
         sm1["recursive CTE reachability<br/><b>WIN</b> — 6/7 functions, 0 deps"]:::win
         sm2["counting Z-set (weight=support)<br/><b>WIN</b> — retract w/o DRed"]:::win
-        sm3["SCC nested fixpoint in SQL<br/><b>WIN</b> — retract_scc beats DRed 6%"]:::win
+        sm3["SCC two-pass (over-delete + rederive) in SQL<br/><b>WIN</b> — retract_scc, 6%"]:::win
         sm4["INSERT OR IGNORE into PK frontier<br/><b>WIN</b> — kills SELECT DISTINCT temp b-tree"]:::win
         sm5["WITHOUT ROWID + dense i64 key<br/><b>WIN</b> — zero-PK-storage clustering"]:::win
         sm6["update_hook + revision<br/><b>WIN</b> — trigger seam"]:::win

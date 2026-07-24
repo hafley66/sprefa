@@ -133,3 +133,124 @@ does the whole group live in SQL and rxjs only fans out the bounded results?
 - `v6/plans/2026-07-19-reactive-style-port.md` — the rxjs-concept → target mapping table (Appendix J/K).
 - `v6/sprefa-store/src/tasks.rs` / `js/src/tasks.ts` / `js/tasks.d.ts` — the mind, three languages.
 - `v6/AGENTS.md` — the one pattern (the semi-naive cascade) this lowering drives.
+
+## Epic golden plan (parse vs lower, bound by the AST contract)
+
+> Recursive task tree. Sequencing: **Epic 5 (parsing) runs PARALLEL to Epics 1→4
+> (lowering + engine)** against the Epic 1.1 AST contract. Within the lowering,
+> 1 → 2 → 3 → 4 (each depends on the prior). Epic 0 is DONE (reference).
+
+### Recon facts (observed, not guessed)
+- Port LANDED: `js/src/{engine,lib,algo,spine,measure,oracle,tasks,index}.ts` (2976 lines), golden 11/11, peak RSS 141 MiB; RelStore knobs + SQLite callable from TS (commit `1abbe7b1`).
+- v5 stratification model: `src/typecheck.rs:1155 stratify_diags(prog, dl_path)`; `src/engine/derive.rs:329 rebuild_derived` evaluates stratum-by-stratum (acyclic = one pass; recursive component = semi-naive fixpoint to convergence); `src/graph/scc.rs` = Tarjan. The lowering mirrors this.
+- dl constructs in scope (`examples/gh-cache.dl`): rel decl, EDB facts, `head <- body`, body = rel predicates sharing vars, selection/comparison, head aggregate `max(b)`.
+- Trinity + RelKind declared in `js/tasks.d.ts` (`ResolveRel` maps kind → primitive).
+- IN FLIGHT (background agent): `src/ast.ts`, `src/rulegraph.ts`, `src/lower.ts`, `tests/lower.test.ts`. DEFERRED in that arc: recursive/fixpoint (`expand`), `@next`, `@async`.
+
+### Plan + lowering boundary
+- **Authoring surface:** dl text (`examples/*.dl`). Owned by Epic 5 (parser), deferred.
+- **Canonical rep:** the typed AST (Epic 1.1, `src/ast.ts`) — THE shared contract.
+- **Static analysis:** the stratified rule graph (Epic 1.2, `src/rulegraph.ts`).
+- **Runtime IR:** rxjs operator chains (Epic 1.3 / 2 / 3, `src/lower.ts`).
+- **Target runtime:** Node + rxjs Observables; facts from SQLite (Epic 4). Diagnostics owned by the lowering (type errors via `RelKind`; stratification errors via `rulegraph`).
+
+### Epic 0 · the cascade foundation — DONE (reference)
+- **Goal:** the SQLite cascade in TS (Layer 1).
+- **Contract:** `Reach`/`Cascade`/`Reconcile`/`GraphStore` (`js/src/tasks.ts`) over `RelStore` (`js/src/lib.ts`).
+- **Done:** golden 11/11, peak RSS 141 MiB (`1abbe7b1`). No further work.
+
+### Epic 1 · the lowering core (IN FLIGHT) — parse ∥ this, bound by 1.1
+- **Goal:** lower a hand-built AST (acyclic dl: joins, selection, aggregation) to rxjs, golden-gated.
+- **Contract:**
+  - `ast.ts`: `RelDecl{name,columns,kind,origin}`; `Rule{head, headTerms, body}`; body predicate = `RelRef{name, args:(Var|Lit)[]}` | `Compare{...}`; headTerm = `Var` | `Max(Var)` | …
+  - `rulegraph.ts`: `buildRuleGraph(prog)→Graph`; `scc(Graph)→SCC[]`; `stratify(Graph,SCC)→Stratum[]` where `Stratum = {rels:string[], recursive:boolean, order:number}`.
+  - `lower.ts`: `lowerProgram(prog, sources:Map<string,Observable<Row[]>>)→Map<string,Observable<Row[]>>`; throws `RecursiveStratumDeferred` for a recursive stratum.
+- **Pseudocode** (lower, acyclic stratum):
+  ```ts
+  const body$ = combineLatest(rule.body.map(p => sources.get(p.rel)!));   // join sources
+  return body$.pipe(
+    map(rows => equiJoin(rows, sharedVars(rule))),                         // join + project head
+    filter(row => rule.selections.every(s => evalSel(row, s))),            // selection
+    aggregateHead(rule.headTerms),                                         // reduce/scan: max etc.
+  );
+  ```
+- **Instance timeline:** `lowerProgram` builds the Observable graph once (cold); each rel's Observable is lazy (subscribes on demand); disposed when the engine drops it.
+- **Storage / identity:** rel name = identity; rows = readonly tuples; no SQLite in this epic (sources injected). Source-map: each output row carries the body rows it joined (future).
+- **Recursive tasks:**
+  - `1.1` `src/ast.ts` — the typed program input (the shared contract). [IN FLIGHT]
+  - `1.2` `src/rulegraph.ts` — `buildRuleGraph` + `scc` (Tarjan) + `stratify`. [IN FLIGHT]
+    - `1.2.1` SCC over the rule dep graph.
+    - `1.2.2` stratify: condense + topo-sort; mark recursive strata.
+  - `1.3` `src/lower.ts` — lower stratum-by-stratum. [IN FLIGHT]
+    - `1.3.1` EDB rel → injected source.
+    - `1.3.2` derived acyclic → combineLatest+map+filter+aggregate.
+    - `1.3.3` recursive stratum → throw `RecursiveStratumDeferred`.
+  - `1.4` `tests/lower.test.ts` — golden (rulegraph cases + lowering cases vs from-scratch). [IN FLIGHT]
+- **Lowering path:** AST → stratify → per-stratum rxjs. Diagnostics: `RecursiveStratumDeferred` names the cycle (fixpoint lowering is Epic 2).
+- **Done condition:** `pnpm typecheck` clean + `pnpm test` green (`golden.test.ts` 11/11 + `lower.test.ts`).
+- **Epic golden test:** a 2-fact join + a 3-rel join + a join+selection + a latest-by-gen `max(b)` aggregation, each derived emission === from-scratch reference; rulegraph SCC/stratification for chain/diamond/cycle/self-loop === from-scratch; `RecursiveStratumDeferred` marker on a cyclic program.
+
+### Epic 2 · recursive/fixpoint lowering (`expand`) — co-design, depends on 1.2
+- **Goal:** lower a recursive stratum to a rxjs fixpoint (the dd `iterate` in rxjs).
+- **Contract:** `lower.ts` gains `lowerRecursiveStratum(stratum, sources)→Observable<Row[]>` via `expand` (Δ → nextFrontier | EMPTY) converged to quiescence; OR delegate to the Rust cascade (`assert`/`retract`, read `alive_keys`). PICK (frontier).
+- **Pseudocode** (expand form): `seeds.pipe(expand(Δ => nextDelta(Δ).pipe(takeWhile(notEmpty))))`.
+- **Instance timeline:** the fixpoint Observable completes when Δ empties; resubscribes re-run.
+- **Storage / identity:** same rel/row identity; the fixpoint writes the stratum's materialized set.
+- **Recursive tasks:**
+  - `2.1` decide `expand`-in-rxjs vs delegate-to-cascade (frontier; see Frontier).
+  - `2.2` implement `lowerRecursiveStratum` for the chosen path.
+  - `2.3` golden: transitive-closure program === from-scratch closure; SCC-internal fixpoint.
+- **Done condition:** a recursive dl program (e.g. `ancestor <- parent; parent`) lowers + emits the correct fixpoint, golden vs from-scratch.
+- **Epic golden test:** transitive closure over a small parent graph === from-scratch, incl. a cycle converges (weight/counting, not infinite).
+
+### Epic 3 · `@next`/reconcile + impure arms — depends on 1, 2
+- **Goal:** lower `@next` (state, latest-by-gen) and `@async`/`jsonp` (impure) as rxjs arms.
+- **Contract:**
+  - `@next` → `BehaviorSubject<Digest>`; tap → `RelStore.verify(rel,row,digest)` for cutoff (Layer 1).
+  - `@async` → `switchMap(() => from(effect))`; long effect = `concatMap`. `clock(N,bucket)` = `interval` salt.
+  - `jsonp(body,…)` → `switchMap` extraction over the bound body string (the Rust CLI boundary).
+- **Instance timeline:** `BehaviorSubject` lives for the engine lifetime; `@async` Observables cold per demand; clock interval shared.
+- **Storage / identity:** `@next` state keyed by head rel+row; digest via the reconcile plane.
+- **Recursive tasks:**
+  - `3.1` `@next` carry + `verify` cutoff (wire to Layer 1 reconcile).
+  - `3.2` `@async` arm (`switchMap` into `from(effect)`) + `clock(N,_)` = interval salt.
+  - `3.3` `jsonp`/`json` extraction arm (the Rust CLI rpc; BOOKMARK: result bounded, groupBy in SQL).
+- **Done condition:** a `gh-cache.dl` subset (`poll`/`resp`/`etag_next`/`stars`) lowers + runs against injected/mock effects, golden vs expected etag carry + entity rows.
+- **Epic golden test:** the etag-carry + 304-collapse + `stars`-extract slice from `gh-cache.dl`, marble-timed, vs expected rows (a 304 appends nothing to `change_log`).
+
+### Epic 4 · IO/reactor wiring + the Rust boundary — depends on 1-3
+- **Goal:** the live engine — SQLite-backed `facts()` sources, the `engine$` reactor, the Rust extraction CLI boundary, the dirty signal, groupBy→SQL.
+- **Contract:**
+  - `facts(rel)` → cold `Observable<Row[]>` that `SELECT`s the rel table + re-emits on dirty.
+  - `engine$ = merge(fileEvents$,demand$) → observeOn(loop) → buffer(tick$) → markChanged → propagate(relStore.dirty(),rev) → share()`.
+  - demand RPC: `mergeMap(() => from(rpcReextract(sources)), BUDGET)` (BUDGET = thread cap).
+  - BOOKMARK: groupBy/LIMIT pushed INTO SQL at the dirty boundary (RAM thesis).
+- **Instance timeline:** `engine$` lives for the daemon lifetime; `facts()` cold per subscriber; the Rust CLI subprocess per demand, budget-capped.
+- **Storage / identity:** SQLite tables (Layer 1 `GraphNs`); dirty = the reconcile frontier; the shared db file is the 2-hand seam (Rust writes, TS reads).
+- **Recursive tasks:**
+  - `4.1` `facts(rel)` — SQLite SELECT re-emit on dirty.
+  - `4.2` `engine$` reactor — merge / buffer(tick$) / markChanged / propagate / share.
+  - `4.3` demand RPC (`mergeMap`→`from(rpcReextract)`, BUDGET).
+  - `4.4` groupBy/LIMIT into SQL (BOOKMARK) — partition reads stay on disk.
+  - `4.5` golden: an end-to-end tick (seed via Rust-CLI-stand-in → `facts()` → derived) + peak RSS.
+- **Done condition:** an end-to-end reactive run over a real(ish) db, peak RSS bounded.
+- **Epic golden test:** changed paths → dirty → a derived rel re-emits the joined set; peak RSS printed + under budget; a groupBy partition read does not pull the full set into TS heap.
+
+### Epic 5 · parsing (turnkey JS) — PARALLEL to 1-4, against the 1.1 AST contract
+- **Goal:** dl text → the typed AST (`src/ast.ts`). Turnkey JS parser; no reinvention.
+- **Contract:** `parseDl(text)→Program` (`RelDecl[]` + `Rule[]` + facts); parse errors → diagnostics owned here, surfaced to the lowering's type/stratification checks.
+- **Instance timeline:** parse once per program load / per `.dl` file change (re-parse on watch).
+- **Storage / identity:** source-map row → AST node (for diagnostics); the AST is immutable per parse.
+- **Recursive tasks:**
+  - `5.1` pick the turnkey parser (frontier — defer; "make it work later"; no lib imported yet).
+  - `5.2` parse rel decl + EDB facts + `head <- body` + body predicates + head aggregates.
+  - `5.3` source-map (AST node ↔ source span) for diagnostics.
+  - `5.4` golden: `examples/gh-cache.dl` parses to the AST the lowering accepts (round-trip with 1.1).
+- **Done condition:** `gh-cache.dl` parses to an AST that lowers (Epic 1) without hand-editing.
+- **Epic golden test:** `parse(gh-cache.dl)` === the hand-built AST used in Epic 1's golden (the contract round-trips); diagnostics snapshot for a malformed program.
+
+### Frontier (deferred decisions + evidence needed)
+- **Epic 2 fork:** recursive fixpoint via rxjs `expand` (pure TS dataflow) vs delegate to the Rust cascade (rxjs triggers `assert`/`retract`, reads `alive_keys`). Evidence: the port's RSS confirms SQLite owns the data → lean delegate for heavy/recursive; `expand` for small/acyclic demand. Decide when Epic 1 lands.
+- **Epic 5 parser choice:** turnkey JS lib (peggy / tree-sitter / lezer / …) vs hand-written. Owner defers ("make it work later"); no lib imported until chosen. Evidence: dl grammar size + the editor/LSP story.
+- **groupBy ownership (Epic 4.4):** does rxjs `groupBy` stay as the dispatch key while SQL does the heavy grouping, or does the whole group live in SQL + rxjs fans out bounded results? Evidence: the first real partitioned workload.
+- **Parse-vs-lower parallelism is SAFE** because the AST (Epic 1.1) is the contract; both sides code to it. No serialization between them until Epic 4 wires the live run.

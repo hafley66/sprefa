@@ -50,8 +50,9 @@ export type RelShape = "pipe" | "event" | "state";
 /** Origin. EDB = facts (source). IDB = derived. */
 export type Origin = "EDB" | "IDB";
 
-/** Materialization. materialized = a table. lazy = on demand. port = a WASM/CLI boundary. */
-export type Materialization = "materialized" | "lazy" | "port";
+/** Materialization. materialized = a table. lazy = on demand. host = a WASM/CLI boundary
+ *  (a rel the host computes; asynchrony is its implementation detail). */
+export type Materialization = "materialized" | "lazy" | "host";
 
 /** The full rel kind. Immutable once declared; fixes the rel's rx primitive. */
 export interface RelKind {

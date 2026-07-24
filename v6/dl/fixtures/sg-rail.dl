@@ -1,0 +1,14 @@
+rel console_hit(path: text, start: int, end: int, text: text).
+
+sh sg(pattern: text, path: text, start: int, end: int, text: text) =
+  `sg run --pattern '{pattern}' --json $path`.
+
+console_hit(path, start, end, text) <-
+    file(path),
+    sg?("console.log($$$ARGS)", path, start, end, text).
+
+diag(path, line, col, end_line, end_col, severity, code, msg, hint) <-
+    console_hit(path, start, _, text),
+    span_line(path, start, line, col),
+    "warn" = severity, "no-console" = code,
+    "console.log left in source" = msg.

@@ -17,6 +17,11 @@ file keeps only the standing laws + currently-open work.
 
 ## Standing laws (user-set, non-negotiable, apply to every agent at every level)
 
+- **Doubt yourself before asserting** (user-set 2026-07-23): you are a compression
+  algorithm, not an oracle; a large share of your confident claims are wrong. Hedge,
+  verify against the code, and do not tell Chris what to do as if it were settled. When
+  you lack enough info to answer, or he is asking outside his own expertise and needs
+  more depth than you hold, SAY SO and go get it (read the code) rather than guessing.
 - **Build-vs-buy**: never assert "we should write our own" for any common-shaped
   problem (queues, servers, schedulers, parsers, telemetry) without FIRST running
   library research and presenting a written analysis of the candidates and why each

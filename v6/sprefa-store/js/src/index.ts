@@ -4,10 +4,10 @@
  * the measurement harness (benchgraph/memcap), the oracle math, and the parity Traits.
  */
 
-export * from "./engine.ts";
-export * from "./lib.ts";
-export * from "./spine.ts";
-export * from "./algo.ts";
-export * from "./measure.ts";
-export * from "./oracle.ts";
-export * from "./tasks.ts";
+export * from "./engine/engine.ts";
+export * from "./engine/lib.ts";
+export * from "./engine/spine.ts";
+export * from "./engine/algo.ts";
+export * from "./engine/measure.ts";
+export * from "./engine/oracle.ts";
+export * from "./engine/tasks.ts";

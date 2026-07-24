@@ -1,5 +1,12 @@
 # V6
 
+> **2026-07-20 snapshot, partially stale.** The 7-Rust-crate map and the daemon
+> framing predate the 2026-07-23 pivot (TS engine on actual rxjs; no daemon
+> concept: process lifetime = sum of held subscriptions; CLI speaks http unless
+> `--inline`). Current sequencing: `v6/plans/2026-07-23-v6-rest-epic-golden-plan.md`.
+> Current pins: `v6/DECISIONS.md`. The rules and buy-dont-build stance below
+> still stand.
+
 V5 works. It also kept re-solving the same five problems — the storage seam,
 the daemon wire, build-vs-buy, repo/rev identity, observability — because
 everything lives in one crate and every seam was negotiable.

@@ -1,5 +1,10 @@
 # V6 language interfaces — pluggable protocols in dl, MVP ghcacher
 
+> **2026-07-23 banner:** the registry idea + ghcacher MVP are still canonical.
+> The `@in`/`@out` syntax is dead (a served interface is a host-fed `RelKind` row;
+> the word "port" is owner-banned 2026-07-23; grammar TBD,
+> human-reviewed).
+
 ## Context
 
 The product is the language: a cross-repo codegen / type-math Swiss Army

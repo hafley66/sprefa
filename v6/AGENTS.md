@@ -86,6 +86,7 @@ check: <the command/receipt that decided it, or N/A>
 | GraphStore storage verdict | scaled to 5.66 GB (82M nodes): collapsed/split = 1.040 (+234 MB); ~1.046 stable 300K→2M → collapse REJECTED on storage; shape = the split two-plane pair. The small-corpus "collapsed wins" was fixed table-overhead |
 | GraphStore namespace pivot | forward = a namespace-generic engine: `GraphNs` (a table-name prefix; SQLite TEMP working tables can't be schema-qualified, so prefix is FORCED, not a fork). Epic 2 = thread `GraphNs` through cascade/reconcile/reach; `Layout` retires then. Per-tuple reconcile is the real remaining lever (frontier), on the split shape |
 | TS cascade port (2026-07-23) | Rust cascade → TS verbatim at `v6/sprefa-store/js/` (better-sqlite3, tsgo, bigint digests + `.safeIntegers(true)`); golden 11/11 self-contained on ported from-scratch oracles — dd/salsa NOT ported; peak RSS 141 MiB. The rxjs lowering composes the ported RelStore knobs; groupBy/LIMIT pushes INTO SQL at the `dirty` boundary (RAM thesis). Plan + bookmarks: `v6/plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md` |
+| 2026-07-23 retraction ruling | "SCC nested fixpoint" was doc drift (0 hits in engine.rs; retract_scc = two-pass over-delete/rederive). Production retract = counting + two-pass + dred_cte, golden-gated; retraction CLOSED (owner) |
 
 ## Known gaps (drive these down)
 
