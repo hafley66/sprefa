@@ -141,7 +141,11 @@ per-epic task lists below stay the detail record.
    3. ~~honest goldens~~ ✓ curl transcript: console_hit AND hit_count -> [] for real after the fix; delta dump extended to __resp_sg/console_hit negatives; hosts timeline re-pinned with digests
    4. ~~churn stress~~ ✓ 6 identities x 5 witnesses: fires == 30 == N*M distinct pairs; delta rows == 216 == N*(4+8*(M-1)) exact; p50 2.08ms/commit, p95 2.34ms; rss +10.22MB
    5. perf after vs baseline: dl suite 1343ms (669ms + 11 new tests incl. the ~700ms churn drive); curl-session 1s (unchanged); stress gun rx 286.08MB slope 29.45 (285.97/26.07), sql 304.55/10.32 (304.38/10.05), digestsAgree, retract 0.70/7.39/0.66ms — all within accepted noise, no regression
-10. **M7 · types header consolidation — DONE** (dl/m7-types 5a39592a, merged; zero behavior change: 52/52, tsgo clean, curl-session PASS, fixtures byte-identical, store 75/75)
+10. **M9 · engine-core storage (owner escalation, SEVERITY MAX) — IN FLIGHT**: the dl rel plane rebuilt v5's amplification disease (strings-as-keys, rowid full-tuple PKs, 48%-index file, absolute paths per row) beside its cure; audit found the runtime uses ONE store engine function (with_txn) and M3 built a parallel string-keyed ingest against the plan's ingestJsonl line. Law pinned in tasks.d.ts EngineStorageLaw + amendment.
+    1. M9-before (worktree dl-m9-before, sonnet, IN FLIGHT): dbstat harness + scaled-corpus baseline on the string-keyed schema (rxjs src corpus, hundreds of files)
+    2. M9-core (worktree dl-m9-core, OPUS per delegation law, IN FLIGHT): wire the actual store — Store/GraphNs attach, interned spine = fact plane, per-file-diff as additive store extension, derived/host rels re-keyed to dictionary ids WITHOUT ROWID with affinity, read views keep the surface byte-identical, DL_ROOT-relative paths with absolute-resolve at the http boundary
+    3. queued at integration: after-dbstat vs baseline (rel-plane index <= 15% gate), churn + stress gun re-run, commit p50/p95, M2/M3 divergence audit in the final report
+11. **M7 · types header consolidation — DONE** (dl/m7-types 5a39592a, merged; zero behavior change: 52/52, tsgo clean, curl-session PASS, fixtures byte-identical, store 75/75)
    1. ~~0_types.ts~~ ✓ 9 sections in pipeline order (values/rows -> decls -> bridge -> schema/tick -> ingest -> hosts -> diag -> http -> runtime interface)
    2. ~~0_digest.ts~~ ✓ shared 53-bit fold; 1_hosts/2_schema dedup closed (the M4 note)
    3. ~~tasks.d.ts recomposed~~ ✓ plan-ledger-only + re-exports (imports kept valid, no test edits)
