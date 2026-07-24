@@ -14,7 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { createClient } from "@libsql/client";
+import { open_db } from "sprefa-store-engine/src/engine/lib.ts";
 import { derivedRel, edbRel, headVar, relRef, v, type Program, type Rule } from "sprefa-store-engine/src/lower/ast.ts";
 
 import { DlRuntime } from "../src/3_runtime.ts";
@@ -157,7 +157,7 @@ export interface DeltaLogEntry {
 /** Reads the whole `delta` log directly (bypassing DlRuntime, which has no generic
  *  table reader): a fresh short-lived connection, closed before returning. */
 export async function deltaDump(dbPath: string): Promise<DeltaLogEntry[]> {
-  const db = createClient({ url: `file:${dbPath}` });
+  const db = open_db(`file:${dbPath}`);
   try {
     const res = await db.execute(
       "SELECT s.content AS rel, d.row_digest, d.tick, d.weight FROM delta d JOIN strings s ON s.string_id = d.rel_id " +

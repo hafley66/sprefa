@@ -35,7 +35,6 @@
  * crosses it.
  */
 
-import { createClient, type Client } from "@libsql/client";
 import {
   BehaviorSubject,
   Subject,
@@ -59,7 +58,7 @@ import { differenceWith, isEqual } from "lodash-es";
 import { cascade, type Db } from "sprefa-store-engine/src/engine/engine.ts";
 const { with_txn } = cascade;
 import { rels as rel_tables } from "sprefa-store-engine/src/engine/spine.ts";
-import { Store } from "sprefa-store-engine/src/engine/lib.ts";
+import { Store, open_db } from "sprefa-store-engine/src/engine/lib.ts";
 import { lowerProgram, type LoweredProgram, type Row as LowerRow, type Sources } from "sprefa-store-engine/src/lower/lower.ts";
 import type { RelDecl } from "sprefa-store-engine/src/lower/ast.ts";
 
@@ -704,7 +703,7 @@ export class DlRuntime implements DlRuntimeContract {
   }
 
   static async boot(cfg: { dbPath: string; bridge: BridgeOk; extraDdl?: readonly string[] }): Promise<DlRuntime> {
-    const db = createClient({ url: `file:${cfg.dbPath}` }) as unknown as Db;
+    const db = open_db(`file:${cfg.dbPath}`);
     const store = await Store.open(db);
 
     const relDecls = new Map<string, RelDecl>();

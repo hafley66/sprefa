@@ -195,7 +195,7 @@ export interface BuiltinHosts {
  *  resolution, per the escalation ruling): HostRunner receives the runtime
  *  only for deltas$/commit, and a libsql-shaped client for the effect_cache
  *  reads/writes it needs on its own — the same db the runtime booted with
- *  (tests pass that same client, or a fresh createClient() on the same file
+ *  (tests pass that same client, or a fresh open_db() on the same file
  *  path; both are documented as acceptable). */
 export interface CacheDb {
   execute(stmt: string | { sql: string; args: unknown[] }): Promise<{ rows: unknown[] }>;

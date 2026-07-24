@@ -349,7 +349,7 @@ export const builtinExtract: HostDef = {
 // the escalation ruling): HostRunner receives the runtime only for deltas$/commit, and
 // a libsql-shaped client for the effect_cache reads/writes it needs on its own -- the
 // same db the runtime booted with (tests pass that same client, or a fresh
-// createClient() on the same file path; both are documented as acceptable). CacheDb
+// open_db() on the same file path; both are documented as acceptable). CacheDb
 // itself is declared in 0_types.ts (M7: it is a cross-file contract -- 6_http.ts and
 // tests/2_helpers_hosts.ts both import it) and re-exported above.
 // ─────────────────────────────────────────────────────────────────────────────

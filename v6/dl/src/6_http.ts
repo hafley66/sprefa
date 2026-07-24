@@ -24,7 +24,7 @@
  *
  * Second SQLite connection (sideDb): per the owner's own pinned resolution for
  * HostRunner's cacheDb (1_hosts.ts header: "the same db the runtime booted with...
- * or a fresh createClient() on the same file path; both are documented as
+ * or a fresh open_db() on the same file path; both are documented as
  * acceptable"), this file opens ONE extra libsql connection per program load and
  * reuses it for both HostRunner's effect_cache reads/writes AND this file's own
  * raw SELECT for POST /query (runtime.rows() has no WHERE-clause reader — the
@@ -36,8 +36,9 @@
 import * as http from "node:http";
 import path from "node:path";
 
-import { createClient, type Client } from "@libsql/client";
 import { filter } from "rxjs";
+
+import { open_db, type SqliteDb } from "sprefa-store-engine/src/engine/lib.ts";
 
 import { bridge } from "./0_ast_bridge.ts";
 import { builtinExtract, builtinSg, HostRunner, shHost, type CacheDb, type HostDef } from "./1_hosts.ts";
@@ -73,7 +74,7 @@ interface ServerState {
   bridgeOk: BridgeOk | null;
   runtime: DlRuntime | null;
   hostRunner: HostRunner | null;
-  sideDb: Client | null;
+  sideDb: SqliteDb | null;
 }
 
 function newServerState(): ServerState {
@@ -178,7 +179,7 @@ async function handleProgramLoad(
   await disposeCurrentProgram(state);
 
   const runtime = await DlRuntime.boot({ dbPath: cfg.dbPath, bridge: result, extraDdl: [DIAG_V5_VIEW_SQL] });
-  const sideDb = createClient({ url: `file:${cfg.dbPath}` });
+  const sideDb = open_db(`file:${cfg.dbPath}`);
   // Order matters: HostRunner keys hosts by name (last write wins on a collision).
   // Builtins are listed LAST on purpose so they win over a same-named `sh` decl in
   // the loaded program. EMPIRICALLY FOUND (2026-07-24, running this exact golden):

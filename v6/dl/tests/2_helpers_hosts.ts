@@ -14,7 +14,7 @@
  * tests/7_churn_stress.test.ts, so neither has to spawn a real process to prove the
  * identity/witness mechanics).
  */
-import { createClient, type Client } from "@libsql/client";
+import { open_db, type SqliteDb } from "sprefa-store-engine/src/engine/lib.ts";
 
 import { bridge } from "../src/0_ast_bridge.ts";
 import { HostRunner, type CacheDb, type HostDef } from "../src/1_hosts.ts";
@@ -38,7 +38,7 @@ export interface HostFixture {
   readonly rt: DlRuntime;
   readonly runner: HostRunner;
   readonly dbPath: string;
-  readonly cacheClient: Client;
+  readonly cacheClient: SqliteDb;
 }
 
 /** Boots a DlRuntime against a fresh scratch db, then a HostRunner over the SAME file
@@ -49,7 +49,7 @@ export interface HostFixture {
 export async function bootHostRunnerFixture(bridgeOk: BridgeOk, hosts: readonly HostDef[]): Promise<HostFixture> {
   const dbPath = freshDbPath();
   const rt = await DlRuntime.boot({ dbPath, bridge: bridgeOk });
-  const cacheClient = createClient({ url: `file:${dbPath}` });
+  const cacheClient = open_db(`file:${dbPath}`);
   const runner = new HostRunner(rt, hosts, cacheClient as unknown as CacheDb);
   runner.start();
   return { rt, runner, dbPath, cacheClient };
@@ -75,7 +75,7 @@ export interface EffectCacheEntry {
 /** Reads the whole effect_cache table directly (mirrors 1_helpers_db.ts's deltaDump):
  *  a fresh short-lived connection, closed before returning, sorted for determinism. */
 export async function effectCacheDump(dbPath: string): Promise<EffectCacheEntry[]> {
-  const db = createClient({ url: `file:${dbPath}` });
+  const db = open_db(`file:${dbPath}`);
   try {
     const res = await db.execute(
       "SELECT full_digest, identity_digest, host, state, requested_tick FROM effect_cache ORDER BY full_digest",

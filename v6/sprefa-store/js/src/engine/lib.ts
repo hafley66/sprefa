@@ -10,12 +10,19 @@
  * pure data structures, ported verbatim.
  */
 
-import { type Client } from "@libsql/client";
+import { createClient, type Client } from "@libsql/client";
 import { cascade, reconcile, stmt_counter } from "./engine.ts";
 import { OPEN_PRAGMAS, create_all_tables } from "./spine.ts";
 
 /** The SQLite connection type (an @libsql/client `Client`, `intMode:"bigint"`). */
 export type SqliteDb = Client;
+
+/** The one constructor for that connection: every caller (dl included) opens SQLite
+ *  through this alias, so `@libsql/client` is imported by this file alone. `url` is
+ *  passed through verbatim (`file:/abs/path.sqlite` or `:memory:`). */
+export function open_db(url: string): SqliteDb {
+  return createClient({ url });
+}
 
 /** Widest table is `node` at 7 columns; 100 rows/statement keeps bound params under 999. */
 const CHUNK_ROWS = 100;
