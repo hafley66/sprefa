@@ -49,7 +49,11 @@ test("arity: more args than declared arity is a load error", () => {
   if (result.kind === "err") assert.ok(result.diags.some((diag) => diag.code === "arity-mismatch"));
 });
 
-test("arity: fewer args than declared arity elides (the ref keeps fewer args, not an error)", () => {
+// UPDATED for named-arg resolution (NamedArgLaw, tasks.d.ts, owner scope change
+// 2026-07-24): "this subsumes trailing elision" — a body atom's unfilled slots
+// are now explicit `wild()` entries padded to the rel's FULL declared arity,
+// not a short args array (the pre-kwargs shape this test used to assert).
+test("arity: fewer args than declared arity elides (unfilled slots pad out to wild())", () => {
   const dlText = [
     "rel console_hit(path: text, start: int, end: int, text: text).",
     "rel out(path: text).",
@@ -63,7 +67,14 @@ test("arity: fewer args than declared arity elides (the ref keeps fewer args, no
   const consoleHitRef = outRule.body.find((pred) => pred.kind === "rel" && pred.rel === "console_hit");
   assert.ok(consoleHitRef);
   assert.equal(consoleHitRef.kind, "rel");
-  if (consoleHitRef.kind === "rel") assert.equal(consoleHitRef.args.length, 1);
+  if (consoleHitRef.kind === "rel") {
+    assert.deepEqual(consoleHitRef.args, [
+      { kind: "var", name: "path" },
+      { kind: "wild" },
+      { kind: "wild" },
+      { kind: "wild" },
+    ]);
+  }
 });
 
 test("Min/Max frontier: Min(int)/Max(int) parse but are rejected at load", () => {
@@ -213,4 +224,198 @@ test("diag defaults: end_line/end_col reuse line/col; hint binds via a null-seed
   assert.ok(hintBindingAtom, "expected a body atom binding `hint`");
   assert.equal(hintBindingAtom!.kind, "rel");
   if (hintBindingAtom!.kind === "rel") assert.equal(result.literalSeeds.get(hintBindingAtom!.rel), null);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Named args (NamedArgLaw, tasks.d.ts, owner scope change 2026-07-24): kwargs
+// resolve to POSITIONAL slots at load. Grammar-ambiguity checks first (Member
+// vs ArgTerm both start with ID), then the resolution/mixing-law unit tests.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("grammar: both positional and named atom args parse (Member vs ArgTerm ambiguity)", () => {
+  const dlText = [
+    "rel foo(path: text).",
+    "rel out1(path: text).",
+    "rel out2(path: text).",
+    "out1(path) <- foo(path).",
+    "out2(path) <- foo(path: path).",
+    "",
+  ].join("\n");
+  const result = bridge(dlText, builtinRelsForTests());
+  assertOk(result);
+});
+
+test("grammar: decl column syntax (`rel r(col: text)`) still parses unambiguously alongside Member", () => {
+  const result = bridge("rel r(col: text).\n", builtinRelsForTests());
+  assertOk(result);
+});
+
+test("named args resolve to positional slots (reversed order, partial)", () => {
+  const dlText = [
+    "rel console_hit(path: text, start: int, end: int, text: text).",
+    "rel out(p: text).",
+    "out(p) <- console_hit(text: t, path: p).",
+    "",
+  ].join("\n");
+  const result = bridge(dlText, builtinRelsForTests());
+  assertOk(result);
+  const outRule = result.program.rules.find((rule) => rule.head === "out");
+  assert.ok(outRule);
+  const consoleHitRef = outRule.body.find((pred) => pred.kind === "rel" && pred.rel === "console_hit");
+  assert.ok(consoleHitRef);
+  assert.equal(consoleHitRef!.kind, "rel");
+  if (consoleHitRef!.kind === "rel") {
+    assert.deepEqual(consoleHitRef!.args, [
+      { kind: "var", name: "p" },
+      { kind: "wild" },
+      { kind: "wild" },
+      { kind: "var", name: "t" },
+    ]);
+  }
+});
+
+test("mixing: positional then named is legal", () => {
+  const dlText = ["rel out(p: text, f: text, k: text).", "out(p, f, k) <- node(p, f, kind: k).", ""].join("\n");
+  const result = bridge(dlText, builtinRelsForTests());
+  assertOk(result);
+  const outRule = result.program.rules.find((rule) => rule.head === "out");
+  assert.ok(outRule);
+  const nodeRef = outRule.body.find((pred) => pred.kind === "rel" && pred.rel === "node");
+  assert.ok(nodeRef);
+  assert.equal(nodeRef!.kind, "rel");
+  if (nodeRef!.kind === "rel") {
+    assert.deepEqual(nodeRef!.args, [
+      { kind: "var", name: "p" },
+      { kind: "var", name: "f" },
+      { kind: "wild" },
+      { kind: "wild" },
+      { kind: "var", name: "k" },
+      { kind: "wild" },
+    ]);
+  }
+});
+
+test("mixing: positional after named errors", () => {
+  const result = bridge("rel out(k: text).\nout(k) <- node(kind: k, p).\n", builtinRelsForTests());
+  assert.equal(result.kind, "err");
+  if (result.kind === "err") assert.ok(result.diags.some((diag) => diag.code === "named-arg"));
+});
+
+test("duplicate name and name+position collision both error", () => {
+  const duplicateResult = bridge("rel out(a: text).\nout(a) <- file(path: a, path: b).\n", builtinRelsForTests());
+  assert.equal(duplicateResult.kind, "err");
+  if (duplicateResult.kind === "err") assert.ok(duplicateResult.diags.some((diag) => diag.code === "named-arg"));
+
+  const collisionResult = bridge("rel out(a: text).\nout(a) <- file(a, path: b).\n", builtinRelsForTests());
+  assert.equal(collisionResult.kind, "err");
+  if (collisionResult.kind === "err") assert.ok(collisionResult.diags.some((diag) => diag.code === "named-arg"));
+});
+
+test("unknown column name errors", () => {
+  const result = bridge("rel out(x: text).\nout(x) <- file(nope: x).\n", builtinRelsForTests());
+  assert.equal(result.kind, "err");
+  if (result.kind === "err") assert.ok(result.diags.some((diag) => diag.code === "named-arg"));
+});
+
+test("named args in a probe resolve against the host decl", () => {
+  // Head references only `p` (bound by a textual Var in the probe's own args) —
+  // `pattern` is a minted var (the literal-input rewrite reuses the host's
+  // declared column name) that the head can't reach; that reuse is a separate,
+  // pre-existing property of the probe rewrite, not something named args change.
+  const dlText = [
+    "sh sg(pattern: text, path: text, start: int, end: int, text: text) =",
+    "  `sg run --pattern '{pattern}' --json $path`.",
+    "rel out(p: text).",
+    'out(p) <- sg?(pattern: "x", path: p).',
+    "",
+  ].join("\n");
+  const result = bridge(dlText, builtinRelsForTests());
+  assertOk(result);
+
+  const outRule = result.program.rules.find((rule) => rule.head === "out");
+  assert.ok(outRule);
+  const respRef = outRule.body.find((pred) => pred.kind === "rel" && pred.rel === "__resp_sg");
+  assert.ok(respRef);
+  assert.equal(respRef!.kind, "rel");
+  if (respRef!.kind === "rel") {
+    assert.deepEqual(respRef!.args, [
+      { kind: "var", name: "pattern" },
+      { kind: "var", name: "p" },
+      { kind: "wild" },
+      { kind: "wild" },
+      { kind: "wild" },
+    ]);
+  }
+
+  const reqRule = result.program.rules.find((rule) => rule.head === "__req_sg");
+  assert.ok(reqRule);
+  assert.deepEqual(reqRule!.headTerms, [
+    { kind: "hvar", name: "pattern" },
+    { kind: "hvar", name: "p" },
+  ]);
+  assert.ok(result.minted.includes("__req_sg"));
+  assert.ok(result.minted.includes("__resp_sg"));
+});
+
+test("named head args on a non-diag head: an unfilled slot is a binding LoadDiag", () => {
+  const dlText = [
+    "rel console_hit(path: text, start: int, end: int, text: text).",
+    "rel out(path: text, start: int, end: int, text: text).",
+    "out(path: path) <- console_hit(path, start, end, text).",
+    "",
+  ].join("\n");
+  const result = bridge(dlText, builtinRelsForTests());
+  assert.equal(result.kind, "err");
+  if (result.kind === "err") assert.ok(result.diags.some((diag) => diag.code === "arity-mismatch"));
+});
+
+test("named args in a query atom", () => {
+  const dlText = ["rel console_hit(path: text, start: int, end: int, text: text).", "? console_hit(path: p).", ""].join("\n");
+  const result = bridge(dlText, builtinRelsForTests());
+  assertOk(result);
+  assert.equal(result.queries.length, 1);
+  const query = result.queries[0]!;
+  assert.equal(query.rel, "console_hit");
+  assert.deepEqual(query.args, [
+    { kind: "var", name: "p" },
+    { kind: "wild" },
+    { kind: "wild" },
+    { kind: "wild" },
+  ]);
+});
+
+test("named HEAD arg whose value is an AggCall: hit_count(hits: count(path)) <- console_hit(path)", () => {
+  const result = bridgeFixture("sg-rail.dl");
+  assertOk(result);
+  const hitCountRule = result.program.rules.find((rule) => rule.head === "hit_count");
+  assert.ok(hitCountRule);
+  assert.deepEqual(hitCountRule.headTerms, [{ kind: "hagg", fn: "count", arg: { kind: "var", name: "path" } }]);
+  const consoleHitRef = hitCountRule.body.find((pred) => pred.kind === "rel" && pred.rel === "console_hit");
+  assert.ok(consoleHitRef);
+  assert.equal(consoleHitRef!.kind, "rel");
+  if (consoleHitRef!.kind === "rel") {
+    assert.deepEqual(consoleHitRef!.args, [
+      { kind: "var", name: "path" },
+      { kind: "wild" },
+      { kind: "wild" },
+      { kind: "wild" },
+    ]);
+  }
+  assert.equal(result.retention.get("hit_count"), 1);
+});
+
+test("comments: `#` line comments (own-line and trailing) parse identically to the uncommented text", () => {
+  const withComments = [
+    "# a comment on its own line",
+    "rel out(x: text). # trailing comment",
+    "rel thing(x: text).",
+    "out(x) <- thing(x). # another trailing comment",
+    "",
+  ].join("\n");
+  const withoutComments = ["rel out(x: text).", "rel thing(x: text).", "out(x) <- thing(x).", ""].join("\n");
+  const resultWithComments = bridge(withComments, builtinRelsForTests());
+  const resultWithoutComments = bridge(withoutComments, builtinRelsForTests());
+  assertOk(resultWithComments);
+  assertOk(resultWithoutComments);
+  assert.deepEqual(stableSerialize(resultWithComments), stableSerialize(resultWithoutComments));
 });

@@ -96,7 +96,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
                 "terminal": {
                   "$type": "RuleCall",
                   "rule": {
-                    "$ref": "#/rules@28"
+                    "$ref": "#/rules@31"
                   },
                   "arguments": []
                 }
@@ -115,7 +115,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@27"
+                "$ref": "#/rules@30"
               },
               "arguments": []
             }
@@ -191,7 +191,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@27"
+                "$ref": "#/rules@30"
               },
               "arguments": []
             }
@@ -254,7 +254,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
         "terminal": {
           "$type": "RuleCall",
           "rule": {
-            "$ref": "#/rules@27"
+            "$ref": "#/rules@30"
           },
           "arguments": []
         }
@@ -302,7 +302,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@27"
+                "$ref": "#/rules@30"
               },
               "arguments": []
             }
@@ -334,7 +334,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@27"
+                "$ref": "#/rules@30"
               },
               "arguments": []
             }
@@ -398,7 +398,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@30"
+                "$ref": "#/rules@33"
               },
               "arguments": []
             }
@@ -498,7 +498,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@27"
+                "$ref": "#/rules@30"
               },
               "arguments": []
             }
@@ -566,7 +566,14 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
           {
             "$type": "RuleCall",
             "rule": {
-              "$ref": "#/rules@19"
+              "$ref": "#/rules@20"
+            },
+            "arguments": []
+          },
+          {
+            "$type": "RuleCall",
+            "rule": {
+              "$ref": "#/rules@22"
             },
             "arguments": []
           },
@@ -596,7 +603,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@27"
+                "$ref": "#/rules@30"
               },
               "arguments": []
             }
@@ -612,7 +619,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@20"
+                "$ref": "#/rules@23"
               },
               "arguments": []
             }
@@ -687,7 +694,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@27"
+                "$ref": "#/rules@30"
               },
               "arguments": []
             }
@@ -759,7 +766,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@27"
+                "$ref": "#/rules@30"
               },
               "arguments": []
             }
@@ -835,7 +842,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@27"
+                "$ref": "#/rules@30"
               },
               "arguments": []
             }
@@ -915,7 +922,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@27"
+                "$ref": "#/rules@30"
               },
               "arguments": []
             }
@@ -990,7 +997,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
                 "terminal": {
                   "$type": "RuleCall",
                   "rule": {
-                    "$ref": "#/rules@20"
+                    "$ref": "#/rules@23"
                   },
                   "arguments": []
                 }
@@ -1036,7 +1043,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
                 "terminal": {
                   "$type": "RuleCall",
                   "rule": {
-                    "$ref": "#/rules@22"
+                    "$ref": "#/rules@25"
                   },
                   "arguments": []
                 }
@@ -1053,7 +1060,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
                 "terminal": {
                   "$type": "RuleCall",
                   "rule": {
-                    "$ref": "#/rules@22"
+                    "$ref": "#/rules@25"
                   },
                   "arguments": []
                 }
@@ -1099,7 +1106,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
                 "terminal": {
                   "$type": "RuleCall",
                   "rule": {
-                    "$ref": "#/rules@20"
+                    "$ref": "#/rules@23"
                   },
                   "arguments": []
                 }
@@ -1129,7 +1136,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@27"
+                "$ref": "#/rules@30"
               },
               "arguments": []
             }
@@ -1194,7 +1201,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
     },
     {
       "$type": "ParserRule",
-      "name": "ArgTerm",
+      "name": "AtomArg",
       "definition": {
         "$type": "Alternatives",
         "elements": [
@@ -1211,11 +1218,103 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
               "$ref": "#/rules@22"
             },
             "arguments": []
+          }
+        ]
+      },
+      "entry": false,
+      "fragment": false,
+      "parameters": []
+    },
+    {
+      "$type": "ParserRule",
+      "name": "Member",
+      "definition": {
+        "$type": "Group",
+        "elements": [
+          {
+            "$type": "Assignment",
+            "feature": "key",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@30"
+              },
+              "arguments": []
+            }
+          },
+          {
+            "$type": "Keyword",
+            "value": ":"
+          },
+          {
+            "$type": "Assignment",
+            "feature": "value",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@21"
+              },
+              "arguments": []
+            }
+          }
+        ]
+      },
+      "entry": false,
+      "fragment": false,
+      "parameters": []
+    },
+    {
+      "$type": "ParserRule",
+      "name": "MemberValue",
+      "definition": {
+        "$type": "Alternatives",
+        "elements": [
+          {
+            "$type": "RuleCall",
+            "rule": {
+              "$ref": "#/rules@22"
+            },
+            "arguments": []
           },
           {
             "$type": "RuleCall",
             "rule": {
-              "$ref": "#/rules@21"
+              "$ref": "#/rules@11"
+            },
+            "arguments": []
+          }
+        ]
+      },
+      "entry": false,
+      "fragment": false,
+      "parameters": []
+    },
+    {
+      "$type": "ParserRule",
+      "name": "ArgTerm",
+      "definition": {
+        "$type": "Alternatives",
+        "elements": [
+          {
+            "$type": "RuleCall",
+            "rule": {
+              "$ref": "#/rules@23"
+            },
+            "arguments": []
+          },
+          {
+            "$type": "RuleCall",
+            "rule": {
+              "$ref": "#/rules@25"
+            },
+            "arguments": []
+          },
+          {
+            "$type": "RuleCall",
+            "rule": {
+              "$ref": "#/rules@24"
             },
             "arguments": []
           }
@@ -1235,7 +1334,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
         "terminal": {
           "$type": "RuleCall",
           "rule": {
-            "$ref": "#/rules@27"
+            "$ref": "#/rules@30"
           },
           "arguments": []
         }
@@ -1276,28 +1375,28 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
           {
             "$type": "RuleCall",
             "rule": {
-              "$ref": "#/rules@23"
-            },
-            "arguments": []
-          },
-          {
-            "$type": "RuleCall",
-            "rule": {
-              "$ref": "#/rules@24"
-            },
-            "arguments": []
-          },
-          {
-            "$type": "RuleCall",
-            "rule": {
-              "$ref": "#/rules@25"
-            },
-            "arguments": []
-          },
-          {
-            "$type": "RuleCall",
-            "rule": {
               "$ref": "#/rules@26"
+            },
+            "arguments": []
+          },
+          {
+            "$type": "RuleCall",
+            "rule": {
+              "$ref": "#/rules@27"
+            },
+            "arguments": []
+          },
+          {
+            "$type": "RuleCall",
+            "rule": {
+              "$ref": "#/rules@28"
+            },
+            "arguments": []
+          },
+          {
+            "$type": "RuleCall",
+            "rule": {
+              "$ref": "#/rules@29"
             },
             "arguments": []
           }
@@ -1317,7 +1416,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
         "terminal": {
           "$type": "RuleCall",
           "rule": {
-            "$ref": "#/rules@29"
+            "$ref": "#/rules@32"
           },
           "arguments": []
         }
@@ -1336,7 +1435,7 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
         "terminal": {
           "$type": "RuleCall",
           "rule": {
-            "$ref": "#/rules@28"
+            "$ref": "#/rules@31"
           },
           "arguments": []
         }
@@ -1448,6 +1547,17 @@ export const DlGrammar = (): Grammar => loadedDlGrammar ?? (loadedDlGrammar = lo
       "definition": {
         "$type": "RegexToken",
         "regex": "/\\\\s+/",
+        "parenthesized": false
+      },
+      "fragment": false
+    },
+    {
+      "$type": "TerminalRule",
+      "hidden": true,
+      "name": "SL_COMMENT",
+      "definition": {
+        "$type": "RegexToken",
+        "regex": "/#[^\\\\n\\\\r]*/",
         "parenthesized": false
       },
       "fragment": false

@@ -86,6 +86,23 @@
       },
       {
         "columns": [
+          "hits"
+        ],
+        "kind": {
+          "buffer": {
+            "onFull": "block",
+            "replay": 0
+          },
+          "materialization": "lazy",
+          "origin": "IDB",
+          "shape": "pipe",
+          "temperature": "cold"
+        },
+        "name": "hit_count",
+        "origin": "IDB"
+      },
+      {
+        "columns": [
           "path"
         ],
         "kind": {
@@ -460,6 +477,40 @@
                 "name": "path"
               },
               {
+                "kind": "wild"
+              },
+              {
+                "kind": "wild"
+              },
+              {
+                "kind": "wild"
+              }
+            ],
+            "kind": "rel",
+            "rel": "console_hit"
+          }
+        ],
+        "head": "hit_count",
+        "headTerms": [
+          {
+            "arg": {
+              "kind": "var",
+              "name": "path"
+            },
+            "fn": "count",
+            "kind": "hagg"
+          }
+        ]
+      },
+      {
+        "body": [
+          {
+            "args": [
+              {
+                "kind": "var",
+                "name": "path"
+              },
+              {
                 "kind": "var",
                 "name": "start"
               },
@@ -663,6 +714,10 @@
     [
       "file",
       "all"
+    ],
+    [
+      "hit_count",
+      1
     ],
     [
       "node",

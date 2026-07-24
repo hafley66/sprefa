@@ -15,7 +15,7 @@
  * services (the grammar has no [Type] references; every name is a plain string the
  * bridge resolves itself against the decl tables built below).
  *
- * The three rewrites (heart of this file, in processRuleBody / buildHeadTerms):
+ * The four rewrites (heart of this file, in processRuleBody / buildHeadTerms):
  *   1. literal-binding: a bare literal in a head/probe-input position, or an `eq`
  *      comparison (either textual order) whose var operand is not otherwise bound,
  *      mints a single-row constant rel `__lit_<n>(value)` and a body atom referencing
@@ -28,6 +28,16 @@
  *   3. diag head-default law: an unbound diag head var at end_line/end_col/severity/
  *      code/hint gets a default (reuse line/col, or a minted literal for the rest);
  *      an unbound path/line/col/msg stays a load error.
+ *   4. named-arg resolution (NamedArgLaw, tasks.d.ts, owner scope change 2026-07-24):
+ *      `rel(col: term, ...)` resolves to POSITIONAL slots against the rel's declared
+ *      column order before any of the three rewrites above run — `resolveNamedArgs`
+ *      is the one shared function every named-arg call site (positive body atoms,
+ *      negation, probes against the HOST decl's columns, query atoms, heads) funnels
+ *      through. An unfilled body-atom slot becomes `wild()` (this subsumes trailing
+ *      elision: a short arg list is now "the positional prefix filled, everything
+ *      else unfilled", the SAME representation named args produce). An unfilled head
+ *      slot re-enters rewrite 3 (diag defaults) or rewrite 1 (nothing to bind ->
+ *      load error) exactly as an unbound head var already did.
  *
  * Numbering for every minted name is deterministic first-appearance order (one
  * `__req_<host>`/`__resp_<host>` per distinct host name; one `__lit_<n>` per distinct
@@ -185,6 +195,75 @@ function toNegArg(node: Gen.ArgTerm): NegArg {
   return literal(literalValue(node));
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Named-arg resolution (NamedArgLaw, tasks.d.ts). One shared function: every
+// named-arg call site (positive body atoms, negation, probes against the HOST
+// decl's columns, query atoms, heads) resolves its raw arg list through this
+// before doing anything kind-specific with the result.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Resolves a mixed positional/named argument list against a rel's declared
+ *  column order into one slot per column (unfilled slots are `undefined`).
+ *  Mixing law (python law, owner-set): positional args fill left-to-right;
+ *  once a named arg appears, no further positional arg is legal. Collects
+ *  EVERY violation as a "named-arg" LoadDiag instead of stopping at the first:
+ *  positional-after-named, duplicate name, name+position slot collision,
+ *  unknown column name. `args` is typed at the widest call-site shape
+ *  (HeadArg = Member|ArgTerm|AggCall); body/negation/probe/query call sites
+ *  pass the narrower AtomArg (Member|ArgTerm) list, which is structurally a
+ *  subtype and never actually contains an AggCall at runtime. */
+function resolveNamedArgs(
+  ctx: BridgeContext,
+  columns: readonly string[],
+  args: readonly Gen.HeadArg[],
+): (Gen.ArgTerm | Gen.AggCall | undefined)[] {
+  const slots: (Gen.ArgTerm | Gen.AggCall | undefined)[] = new Array(columns.length).fill(undefined);
+  const columnIndex = new Map(columns.map((name, index) => [name, index]));
+  let sawNamed = false;
+  let positionalIndex = 0;
+
+  for (const arg of args) {
+    if (arg.$type === "Member") {
+      sawNamed = true;
+      const slotIndex = columnIndex.get(arg.key);
+      if (slotIndex === undefined) {
+        ctx.diags.push({ code: "named-arg", message: `\`${arg.key}\` is not a declared column`, ...nodePosition(arg) });
+        continue;
+      }
+      if (slots[slotIndex] !== undefined) {
+        ctx.diags.push({
+          code: "named-arg",
+          message: `\`${arg.key}\`: slot already filled (duplicate name, or the name collides with a positional arg)`,
+          ...nodePosition(arg),
+        });
+        continue;
+      }
+      slots[slotIndex] = arg.value;
+      continue;
+    }
+    if (sawNamed) {
+      ctx.diags.push({ code: "named-arg", message: "positional argument follows a named argument", ...nodePosition(arg) });
+      continue;
+    }
+    if (positionalIndex < slots.length) slots[positionalIndex] = arg;
+    positionalIndex++;
+  }
+  return slots;
+}
+
+/** A resolved slot (undefined = unfilled) in a positive body/probe/query position:
+ *  unfilled -> `wild()` (subsumes trailing elision, see file header note 4). The
+ *  AggCall case can't occur here (grammar-guaranteed: only HeadArg allows it) —
+ *  the cast is structural, not a runtime check. */
+function slotToPositiveArg(slot: Gen.ArgTerm | Gen.AggCall | undefined): Arg {
+  return slot === undefined ? wild() : toPositiveArg(slot as Gen.ArgTerm);
+}
+
+/** Same as `slotToPositiveArg`, for a negated ref's args. */
+function slotToNegArg(slot: Gen.ArgTerm | Gen.AggCall | undefined): NegArg {
+  return slot === undefined ? wild() : toNegArg(slot as Gen.ArgTerm);
+}
+
 const CMP_OP_BY_SYMBOL: Record<string, CmpOp> = {
   "=": "eq",
   "!=": "ne",
@@ -193,11 +272,6 @@ const CMP_OP_BY_SYMBOL: Record<string, CmpOp> = {
   ">": "gt",
   ">=": "ge",
 };
-
-/** The diag rel's fixed column order (v5 schema verbatim, src/engine/decls.rs:263,
- *  mirrored in tasks.d.ts DiagRow) — positional index is what the head-default law
- *  keys off of. */
-const DIAG_COLUMNS = ["path", "line", "col", "end_line", "end_col", "severity", "code", "msg", "hint"] as const;
 
 /** `fn` parses as a plain ID (same identifier-collision reasoning as PlainType.prim);
  *  validate it here against the four supported aggregates. An unrecognized name
@@ -337,7 +411,13 @@ function collectBoundVars(body: readonly Gen.BodyItem[]): Set<string> {
   const bound = new Set<string>();
   for (const item of body) {
     if (item.$type === "RelRefItem" || item.$type === "ProbeItem") {
-      for (const arg of item.args) if (arg.$type === "Var") bound.add(arg.name);
+      for (const arg of item.args) {
+        // A named arg's Var lives one level down, at `arg.value` — the arg node
+        // itself is a Member, not a Var (`console_hit(path: p)` binds `p`, not
+        // `path`, the column name).
+        if (arg.$type === "Var") bound.add(arg.name);
+        else if (arg.$type === "Member" && arg.value.$type === "Var") bound.add(arg.value.name);
+      }
     }
   }
   return bound;
@@ -364,13 +444,17 @@ function processRuleBody(ctx: BridgeContext, body: readonly Gen.BodyItem[]): Rul
       case "RelRefItem": {
         checkKnownRel(ctx, item.rel, nodePosition(item));
         checkArity(ctx, item.rel, item.args.length, nodePosition(item));
-        outBody.push(relRef(item.rel, ...item.args.map(toPositiveArg)));
+        const columns = ctx.knownRelColumns.get(item.rel)?.columns ?? [];
+        const slots = resolveNamedArgs(ctx, columns, item.args);
+        outBody.push(relRef(item.rel, ...slots.map(slotToPositiveArg)));
         break;
       }
       case "NegItem": {
         checkKnownRel(ctx, item.rel, nodePosition(item));
         checkArity(ctx, item.rel, item.args.length, nodePosition(item));
-        outBody.push(notRel(item.rel, ...item.args.map(toNegArg)));
+        const columns = ctx.knownRelColumns.get(item.rel)?.columns ?? [];
+        const slots = resolveNamedArgs(ctx, columns, item.args);
+        outBody.push(notRel(item.rel, ...slots.map(slotToNegArg)));
         break;
       }
       case "CompareItem": {
@@ -392,49 +476,61 @@ function processRuleBody(ctx: BridgeContext, body: readonly Gen.BodyItem[]): Rul
           ctx.diags.push({ code: "unknown-rel", message: `\`${item.rel}\` is not a declared host (\`sh\` decl)`, ...nodePosition(item) });
           break;
         }
-        const totalCols = host.columns.length;
-        if (item.args.length > totalCols) {
+        const hostColumnNames = host.columns.map((column) => column.name);
+        if (item.args.length > hostColumnNames.length) {
           ctx.diags.push({
             code: "arity-mismatch",
-            message: `\`${item.rel}?\` is declared with ${totalCols} column(s), but this probe passes ${item.args.length}`,
+            message: `\`${item.rel}?\` is declared with ${hostColumnNames.length} column(s), but this probe passes ${item.args.length}`,
             ...nodePosition(item),
           });
         }
-        const inputCount = host.inputCols.length;
-        if (item.args.length < inputCount) {
-          ctx.diags.push({
-            code: "arity-mismatch",
-            message: `\`${item.rel}?\` needs all ${inputCount} input column(s) bound; only ${item.args.length} arg(s) given`,
-            ...nodePosition(item),
-          });
-        }
-        const inputNodes = item.args.slice(0, inputCount);
-        const outputNodes = item.args.slice(inputCount);
+
+        // Resolve the FULL mixed positional/named arg list against the host's
+        // whole column order (named args resolve against the HOST decl's columns,
+        // NamedArgLaw); which of those resolved slots are "input" vs "output" is
+        // then decided by host.inputCols membership, not by textual position.
+        const inputColSet = new Set(host.inputCols);
+        const slots = resolveNamedArgs(ctx, hostColumnNames, item.args);
 
         // Literal-binding rewrite for literal probe INPUT args: __req_h's demand key
         // must be all-vars (it groups by the request tuple). The freshly-bound var
-        // reuses the HOST'S declared input column name at that position (there is no
-        // user-written var name for a bare literal probe arg to reuse; the column
-        // name is the next-best meaningful name, and it's what the plan's worked
-        // example pins: `sg?("console.log($$$ARGS)", path, ...)` binds through a
-        // var named `pattern`, matching the host's first inputCol).
+        // reuses the HOST'S declared column name at that position (there is no
+        // user-written var name for a bare literal probe arg to reuse).
         const mintedInputAtoms: BodyPred[] = [];
-        const inputArgs: Arg[] = inputNodes.map((node, index) => {
-          if (node.$type === "Var") return variable(node.name);
-          if (node.$type === "Wildcard") {
+        const inputArgs: Arg[] = [];
+        const outputArgs: Arg[] = [];
+        hostColumnNames.forEach((columnName, index) => {
+          const slot = slots[index];
+          if (!inputColSet.has(columnName)) {
+            outputArgs.push(slot === undefined ? wild() : toPositiveArg(slot as Gen.ArgTerm));
+            return;
+          }
+          if (slot === undefined) {
+            ctx.diags.push({
+              code: "arity-mismatch",
+              message: `\`${item.rel}?\` needs input column \`${columnName}\` bound; it was not provided`,
+              ...nodePosition(item),
+            });
+            inputArgs.push(wild());
+            return;
+          }
+          if (slot.$type === "Wildcard") {
             ctx.diags.push({
               code: "arity-mismatch",
               message: `\`${item.rel}?\` input position cannot be a wildcard (the demand key needs a concrete or bound value)`,
-              ...nodePosition(node),
+              ...nodePosition(slot),
             });
-            return wild();
+            inputArgs.push(wild());
+            return;
           }
-          const mintedName = mintLiteral(ctx, literalValue(node));
-          const boundVarName = host.inputCols[index]!;
-          mintedInputAtoms.push(relRef(mintedName, variable(boundVarName)));
-          return variable(boundVarName);
+          if (slot.$type === "Var") {
+            inputArgs.push(variable(slot.name));
+            return;
+          }
+          const mintedName = mintLiteral(ctx, literalValue(slot as Gen.Literal));
+          mintedInputAtoms.push(relRef(mintedName, variable(columnName)));
+          inputArgs.push(variable(columnName));
         });
-        const outputArgs: Arg[] = outputNodes.map(toPositiveArg);
 
         const reqRelName = `__req_${host.name}`;
         const respRelName = `__resp_${host.name}`;
@@ -472,50 +568,70 @@ function processRuleBody(ctx: BridgeContext, body: readonly Gen.BodyItem[]): Rul
 // Head terms + the diag head-default law.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** `slots` has one entry per DECLARED column of `headRel` (resolveNamedArgs already
+ *  folded positional + named head args into this shape) — `undefined` means the
+ *  slot was never filled at all (named-arg omission subsumes the old "unbound
+ *  head var" case; a Wildcard or an unbound Var reaches the same fallback below).
+ *  `headNode` is only a position fallback for an omitted slot (there is no textual
+ *  arg node to read a line/col off of). */
 function buildHeadTerms(
   ctx: BridgeContext,
   headRel: string,
-  headArgs: readonly Gen.HeadArg[],
+  headNode: Gen.HeadAtom,
+  columns: readonly string[],
+  slots: readonly (Gen.ArgTerm | Gen.AggCall | undefined)[],
   boundVars: Set<string>,
   outBody: BodyPred[],
 ): readonly HeadTerm[] {
-  const diagColumns = headRel === "diag" ? DIAG_COLUMNS : undefined;
+  const isDiag = headRel === "diag";
 
-  return headArgs.map((argNode, position) => {
-    if (argNode.$type === "AggCall") return headAgg(aggFnOf(argNode.fn), argNode.arg.name);
+  return slots.map((slot, position) => {
+    if (slot !== undefined && slot.$type === "AggCall") return headAgg(aggFnOf(slot.fn), slot.arg.name);
 
-    if (argNode.$type === "Var" && boundVars.has(argNode.name)) return headVar(argNode.name);
+    if (slot !== undefined && slot.$type === "Var" && boundVars.has(slot.name)) return headVar(slot.name);
 
-    // A bare literal in head position (the "fact" shape, or a literal mixed into an
-    // otherwise-var head): always literal-bind, regardless of which rel this is —
-    // this is the general form of the orchestrator-pinned rewrite, not diag-specific.
-    if (isLiteralNode(argNode)) {
-      const mintedName = mintLiteral(ctx, literalValue(argNode));
-      outBody.push(relRef(mintedName, variable(mintedName)));
-      return headVar(mintedName);
-    }
+    const columnName = columns[position];
 
-    // From here: a Var that's never bound in the body, or a Wildcard in head
-    // position. diag gets the position-based default law; everything else is a
-    // binding-arity load error.
-    const diagColumnName = diagColumns?.[position];
-    if (diagColumnName === "end_line") return headVar("line");
-    if (diagColumnName === "end_col") return headVar("col");
-    if (diagColumnName === "severity" || diagColumnName === "code" || diagColumnName === "hint") {
-      const defaultValue: Value = diagColumnName === "severity" ? "warn" : null;
-      const mintedName = mintLiteral(ctx, defaultValue);
-      const boundName = argNode.$type === "Var" ? argNode.name : mintedName;
+    // A bare literal in head position (the "fact" shape, a literal mixed into an
+    // otherwise-var head, or a named literal head arg like `severity: "warn"`):
+    // always literal-bind, regardless of which rel this is — the general form of
+    // the orchestrator-pinned rewrite, not diag-specific. The freshly-bound var
+    // reuses the DECLARED COLUMN name at this position (same reuse-the-declared-
+    // name law the probe literal-input rewrite uses below) — a literal has no
+    // user-written var name of its own to reuse, and reusing the column name is
+    // what keeps a re-pinned golden reading `severity`/`code`/`msg`, not a raw
+    // minted rel name.
+    if (slot !== undefined && isLiteralNode(slot)) {
+      const mintedName = mintLiteral(ctx, literalValue(slot));
+      const boundName = columnName ?? mintedName;
       outBody.push(relRef(mintedName, variable(boundName)));
       return headVar(boundName);
     }
-    // path/line/col/msg (or any non-diag head): unbound is a load error.
-    const label = argNode.$type === "Var" ? `\`${argNode.name}\`` : "this position";
+
+    // From here: `slot` is undefined (the arg was omitted entirely — a named-arg
+    // partial head), a Wildcard, or a Var never bound in the body. diag gets the
+    // position-based default law; everything else is a binding-arity load error.
+    if (isDiag) {
+      if (columnName === "end_line") return headVar("line");
+      if (columnName === "end_col") return headVar("col");
+      if (columnName === "severity" || columnName === "code" || columnName === "hint") {
+        const defaultValue: Value = columnName === "severity" ? "warn" : null;
+        const mintedName = mintLiteral(ctx, defaultValue);
+        // A textually-present-but-unbound Var keeps ITS OWN name; an omitted slot
+        // (no Var at all) reuses the declared column name (== columnName here).
+        const boundName = slot?.$type === "Var" ? slot.name : columnName;
+        outBody.push(relRef(mintedName, variable(boundName)));
+        return headVar(boundName);
+      }
+    }
+    // path/line/col/msg (or any non-diag head): unbound/omitted is a load error.
+    const label = slot?.$type === "Var" ? `\`${slot.name}\`` : "this position";
     ctx.diags.push({
       code: "arity-mismatch",
       message: `head of \`${headRel}\`: ${label} is not bound by the rule's body`,
-      ...nodePosition(argNode),
+      ...(slot !== undefined ? nodePosition(slot) : nodePosition(headNode)),
     });
-    return headVar(argNode.$type === "Var" ? argNode.name : `__unbound_${position}`);
+    return headVar(slot?.$type === "Var" ? slot.name : `__unbound_${position}`);
   });
 }
 
@@ -530,7 +646,9 @@ function processDlRule(ctx: BridgeContext, dlRule: Gen.DlRule): AstRule {
   checkArity(ctx, headRel, dlRule.head.args.length, nodePosition(dlRule.head));
 
   const { body: outBody, boundVars } = processRuleBody(ctx, dlRule.body);
-  const headTerms = buildHeadTerms(ctx, headRel, dlRule.head.args, boundVars, outBody);
+  const headColumns = ctx.knownRelColumns.get(headRel)?.columns ?? [];
+  const headSlots = resolveNamedArgs(ctx, headColumns, dlRule.head.args);
+  const headTerms = buildHeadTerms(ctx, headRel, dlRule.head, headColumns, headSlots, boundVars, outBody);
 
   return { head: headRel, headTerms, body: outBody };
 }
@@ -538,7 +656,9 @@ function processDlRule(ctx: BridgeContext, dlRule: Gen.DlRule): AstRule {
 function processQueryStmt(ctx: BridgeContext, queryStmt: Gen.QueryStmt): AstRelRef {
   checkKnownRel(ctx, queryStmt.rel, nodePosition(queryStmt));
   checkArity(ctx, queryStmt.rel, queryStmt.args.length, nodePosition(queryStmt));
-  return relRef(queryStmt.rel, ...queryStmt.args.map(toPositiveArg));
+  const columns = ctx.knownRelColumns.get(queryStmt.rel)?.columns ?? [];
+  const slots = resolveNamedArgs(ctx, columns, queryStmt.args);
+  return relRef(queryStmt.rel, ...slots.map(slotToPositiveArg));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

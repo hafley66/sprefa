@@ -1,14 +1,23 @@
+# no-console rail over a fixture repo: ast-grep hits become diag rows.
+
 rel console_hit(path: text, start: int, end: int, text: text).
 
+# newest row only (rel(1) state): the live count of remaining hits.
+rel(1) hit_count(hits: int).
+
+# {pattern} splices into the command line; $path is passed as an env var.
 sh sg(pattern: text, path: text, start: int, end: int, text: text) =
   `sg run --pattern '{pattern}' --json $path`.
 
+# demand: one sg run per (pattern, path); responses join back positionally.
 console_hit(path, start, end, text) <-
     file(path),
     sg?("console.log($$$ARGS)", path, start, end, text).
 
-diag(path, line, col, end_line, end_col, severity, code, msg, hint) <-
+hit_count(hits: count(path)) <- console_hit(path).
+
+# end_line/end_col/hint unfilled: diag head defaults fill them.
+diag(path: path, line: line, col: col, severity: "warn", code: "no-console",
+     msg: "console.log left in source") <-
     console_hit(path, start, _, text),
-    span_line(path, start, line, col),
-    "warn" = severity, "no-console" = code,
-    "console.log left in source" = msg.
+    span_line(path, start, line, col).
