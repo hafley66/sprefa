@@ -1,0 +1,33 @@
+[
+  [
+    {
+      "pattern": "console.log($$$ARGS)",
+      "path": "fixtures/corpus/bad.ts"
+    }
+  ],
+  [
+    {
+      "digest": "sg:3138813999622562",
+      "host": "sg",
+      "state": "done",
+      "requested_tick": 1
+    }
+  ],
+  [
+    {
+      "pattern": "console.log($$$ARGS)",
+      "path": "fixtures/corpus/bad.ts",
+      "start": 147,
+      "end": 167,
+      "text": "console.log(message)"
+    }
+  ],
+  [
+    {
+      "path": "fixtures/corpus/bad.ts",
+      "start": 147,
+      "end": 167,
+      "text": "console.log(message)"
+    }
+  ]
+]
