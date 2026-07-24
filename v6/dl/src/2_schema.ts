@@ -8,15 +8,15 @@
  *   effect_cache(digest PK, host, state, requested_tick)
  *   store_meta(key PK, value)                      -- the monotone 'tick' counter row
  * Row identity = full column tuple; row_digest = oracle.mix XOR law (ingest.ts note 6),
- * reused verbatim via content_digest (do not re-implement the fold).
+ * folded via 0_digest.ts's foldRowDigest (the one shared fold; do not re-implement it).
  *
  * `retention` is accepted per the contract but does not change table SHAPE (every rel_*
  * table is the same untyped set-semantics table regardless of 0/1/all): retention is a
  * RUNTIME purge/replace policy enforced by 3_runtime.ts, not a schema difference.
  */
-import { content_digest } from "sprefa-store-engine/src/engine/ingest.ts";
 import type { RelDecl } from "sprefa-store-engine/src/lower/ast.ts";
-import type { Retention, Row, Value } from "../tasks.d.ts";
+import { foldRowDigest } from "./0_digest.ts";
+import type { Retention, Row } from "./0_types.ts";
 
 /** decl -> [CREATE TABLE rel_*..., delta, effect_cache, store_meta, tick seed]. */
 export function ddl(decls: readonly RelDecl[], retention: ReadonlyMap<string, Retention>): string[] {
@@ -41,14 +41,9 @@ export function ddl(decls: readonly RelDecl[], retention: ReadonlyMap<string, Re
 
 /** A named Value, folded via the one hash law every plane agrees on (content_digest),
  *  then narrowed to a 53-bit-safe JS number: asUintN(64) makes the signed fold unsigned,
- *  asUintN(53) narrows to what a JS number holds exactly, per the pinned contract. */
+ *  asUintN(53) narrows to what a JS number holds exactly, per the pinned contract.
+ *  The fold itself is shared with 1_hosts.ts's effectDigest — see 0_digest.ts (M7
+ *  consolidation; this function used to duplicate the fold in miniature). */
 export function rowDigest(row: Row, columns: readonly string[]): number {
-  const parts = columns.map((column) => valueToDigestPart(row[column] ?? null));
-  const folded = content_digest(parts);
-  return Number(BigInt.asUintN(53, BigInt.asUintN(64, folded)));
-}
-
-function valueToDigestPart(value: Value): number | string | null {
-  if (typeof value === "boolean") return value ? 1 : 0;
-  return value;
+  return foldRowDigest(row, columns);
 }

@@ -34,7 +34,8 @@ import { edbRel, type RelDecl } from "sprefa-store-engine/src/lower/ast.ts";
 import type { FactLine } from "sprefa-store-engine/src/engine/ingest.ts";
 
 import type { DlRuntime } from "./3_runtime.ts";
-import type { ExtractBinDefault, ExtractRecord, Row, SpineRelName, TickReport, Value } from "../tasks.d.ts";
+import type { ExtractRecord, Row, TickReport, Value } from "./0_types.ts";
+import type { ExtractBinDefault, SpineRelName } from "../tasks.d.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The spine rel schema: one source of truth for both spineDeclsLocal (RelDecl[], for

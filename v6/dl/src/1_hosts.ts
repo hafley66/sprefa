@@ -14,14 +14,17 @@
  * dies.
  *
  * NUMBERING LAW (why this file looks the way it does): 1_hosts.ts imports ONLY
- * tasks.d.ts types + sprefa-store-engine (store ast/engine helpers) + rxjs + node
- * stdlib -- never src/2_schema.ts or src/3_runtime.ts (both are numbered ABOVE this
- * file; importing them would be an upward import). HostRunner's constructor therefore
- * takes the runtime as a STRUCTURAL parameter typed by tasks.d.ts's `DlRuntime`
- * interface (deltas$/commit/rows), never the concrete `DlRuntime` class from
- * 3_runtime.ts. The digest fold (effectDigest below) duplicates 2_schema.ts's
- * rowDigest law in miniature for the same reason: same content_digest import, same
- * asUintN(53) narrowing, documented once here rather than imported.
+ * 0_types.ts types + 0_digest.ts (shared fold) + sprefa-store-engine (store
+ * ast/engine helpers) + rxjs + node stdlib + the two owner-pinned law types
+ * (ExtractBinDefault) straight from ../tasks.d.ts (M7 recomposition: that type
+ * stays declared in the plan ledger, not 0_types.ts, by owner ruling) -- never
+ * src/2_schema.ts or src/3_runtime.ts (both are numbered ABOVE this file; importing
+ * them would be an upward import). HostRunner's constructor therefore takes the
+ * runtime as a STRUCTURAL parameter typed by 0_types.ts's `DlRuntime` interface
+ * (deltas$/commit/rows), never the concrete `DlRuntime` class from 3_runtime.ts.
+ * The digest fold (effectDigest below) shares 2_schema.ts's rowDigest law via
+ * 0_digest.ts's foldRowDigest (M7 consolidation; this file used to duplicate the
+ * fold in miniature, documented rather than imported -- now imported instead).
  */
 
 import { spawn } from "node:child_process";
@@ -29,11 +32,11 @@ import { fileURLToPath } from "node:url";
 
 import { EMPTY, Subscription, concatMap, filter, from, mergeMap, type Observable } from "rxjs";
 
-import { content_digest } from "sprefa-store-engine/src/engine/ingest.ts";
+import { foldRowDigest } from "./0_digest.ts";
+import type { CacheDb, DlRuntime, EdbBatch, HostDecl, HostDef, Row, Value } from "./0_types.ts";
+import type { ExtractBinDefault } from "../tasks.d.ts";
 
-import type { DlRuntime, EdbBatch, ExtractBinDefault, HostDecl, HostDef, Row, Value } from "../tasks.d.ts";
-
-export type { HostDef };
+export type { CacheDb, HostDef };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Value plumbing shared by every host below.
@@ -51,15 +54,11 @@ function valueToShellText(value: Value): string {
   return String(value);
 }
 
-/** Same law as 2_schema.ts's rowDigest (duplicated, not imported: see file header).
- *  effect_cache digest = mix(host, ...requestTuple) -- the v5 pending_effect law. */
+/** Same law as 2_schema.ts's rowDigest, shared via 0_digest.ts's foldRowDigest (see
+ *  file header). effect_cache digest = mix(host, ...requestTuple) -- the v5
+ *  pending_effect law. */
 function effectDigest(hostName: string, requestRow: Row, requestCols: readonly string[]): string {
-  const parts = requestCols.map((column) => {
-    const value = requestRow[column] ?? null;
-    return typeof value === "boolean" ? (value ? 1 : 0) : value;
-  });
-  const folded = content_digest(parts);
-  const narrowed = Number(BigInt.asUintN(53, BigInt.asUintN(64, folded)));
+  const narrowed = foldRowDigest(requestRow, requestCols);
   return `${hostName}:${narrowed}`;
 }
 
@@ -331,12 +330,10 @@ export const builtinExtract: HostDef = {
 // the escalation ruling): HostRunner receives the runtime only for deltas$/commit, and
 // a libsql-shaped client for the effect_cache reads/writes it needs on its own -- the
 // same db the runtime booted with (tests pass that same client, or a fresh
-// createClient() on the same file path; both are documented as acceptable).
+// createClient() on the same file path; both are documented as acceptable). CacheDb
+// itself is declared in 0_types.ts (M7: it is a cross-file contract -- 6_http.ts and
+// tests/2_helpers_hosts.ts both import it) and re-exported above.
 // ─────────────────────────────────────────────────────────────────────────────
-
-export interface CacheDb {
-  execute(stmt: string | { sql: string; args: unknown[] }): Promise<{ rows: unknown[] }>;
-}
 
 interface PendingEffect {
   readonly host: HostDef;
