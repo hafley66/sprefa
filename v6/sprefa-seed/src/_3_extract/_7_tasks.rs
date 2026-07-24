@@ -84,11 +84,12 @@
 //!                (span-to-span, resolved) still land at Resolve<TypeF> (commit 4).
 //!
 //! BUILD STATUS (2026-07-24, commits 1-3c + Tier-2 PARITY GOLD (TS, incl. const facet) + the
-//! RUST + GO languages + a self-describing CLI) LANDED in v6/sprefa-extract/. The TS + Rust +
-//! Go phase-1 families - Cst / Type(+sigs) / Call / Df (+const) - all project + stream +
-//! snapshot through ONE uniform surface, AND each ported set matches a captured v5 oracle (see
-//! the (parity) / (rust) / (go) entries). NEXT: the Resolve<*> pass (commit 4), broaden parity
-//! fixtures (lambda/docs):
+//! RUST + GO languages + a self-describing CLI + the commit-4a Resolve DESIGN FREEZE) LANDED in
+//! v6/sprefa-extract/. The TS + Rust + Go phase-1 families - Cst / Type(+sigs) / Call / Df
+//! (+const) - all project + stream + snapshot through ONE uniform surface, AND each ported set
+//! matches a captured v5 oracle (see the (parity) / (rust) / (go) entries). NEXT: HUMAN REVIEW
+//! of the 4a Resolve<F> surface, then 4b Resolve<TypeF> for TsSource; broaden parity fixtures
+//! (lambda/docs):
 //!   6a29d920  commit 1   CstF via ast-grep (one dep = rust/ts/tsx/js/go grammars);
 //!              clap bin streaming flat JSONL with --bench; snapshot. Piping proof.
 //!   f3ceb4fa  commit 2a  Parser/Project seam -> arena-passing GAT: oxc's
@@ -223,6 +224,47 @@
 //!             (Resolve<TypeF> commit 4), docs, df aux. Commits 8abdc38e (skeleton) /
 //!             aa3c782e (TypeF) / aab204d1 (CallF) / d6427eab (DfF) / 16bc0855 (parity gold).
 //!             tree-sitter + tree-sitter-go unify with ast-grep's transitives (one copy each).
+//!   (4a)     COMMIT 4a: hollow Resolve<F> surface LANDED - a DESIGN FREEZE (human review
+//!             gates 4b). types.rs gains, per the _2_traits.rs spec: `ProjectCx` (files /
+//!             manifests / reader / digest / indexes - every field a hollow declaration with
+//!             a per-field spec citation, `_2_traits.rs`:35-51, plus the `_1_mask.rs`:78-82
+//!             ProjectDigest atom), `ProjectEdge<F>` (the seed `_0_shape.rs`:227-232 row made
+//!             generic - the EdgeKind sum is deleted per D-families, so kind is F::EdgeKind),
+//!             and `Resolve<F>: Source` with
+//!             `resolve(&ExtractOutput, &ProjectCx) -> Vec<ProjectEdge<F>>` (default body
+//!             todo!(); NO impls, NO call sites, ZERO behavioral change - gate green, the 4
+//!             snaps byte-identical, no UPDATE_SNAP). The whole ExtractOutput is the input
+//!             (not a bare FamilyBundle) because resolution joins on names and the interner
+//!             lives on ExtractOutput.strings; no FamilyMask param (F is a type param here,
+//!             so the family is already selected per impl). CACHE KEY doc: phase 2 =
+//!             (BlobHash, ProjectDigest, FamilyMask) vs phase 1 = (BlobHash, lang,
+//!             FamilyMask). WHICH FAMILIES: TypeF + CallF only; ModuleF is still commented
+//!             out (types.rs S2, "PENDING - collapsed"), so NO ModuleF resolve surface is
+//!             declared - the Resolve trait doc carries the module placeholder; DfF/CstF
+//!             NEVER resolve (_2_traits.rs:80-84). DESIGN ANSWERS (these gate 4b):
+//!             (a) WIRE SHAPE = extend FlatFact, ONE new project-edge arm - NOT per-family
+//!             TypeEdge/CallEdge arms, NOT a side channel. The existing Edge arm
+//!             (types.rs:755-760) cannot carry a cross-file dst: both endpoints are bare
+//!             SpanOuts and the flatteners resolve NodeRef through the PRODUCING file's own
+//!             bundle (wire.rs:68-79, 160-169), while a ProjectEdge dst is (dst_blob,
+//!             dst_span) in ANOTHER blob. A side channel contradicts the one-flatten-three-
+//!             consumers ruling (stdout JSONL / store seam / parity golden; wire.rs:1-4) -
+//!             all three would have to re-join it. `kind` stays a String (as in every arm),
+//!             so TypeEdgeKind + CallEdgeKind ride ONE arm: {record, family, kind, from,
+//!             to_blob, to} (arm + field names TBD in 4b; wire.rs IS in 4b's allowlist
+//!             "only if 4a's wire answer requires it" - it does).
+//!             (b) SNAPSHOT GROWTH = DECLARED NONE for 4b; UPDATE_SNAP stays FORBIDDEN. The
+//!             4 committed snaps come from flatten_jsonl(dispatch(path, bytes, mask))
+//!             (snapshot.rs:44-67) and flatten reads only the phase-1 bundles
+//!             (wire.rs:27-42); dispatch.rs is NOT in 4b's allowlist, so dispatch stays
+//!             phase-1-only and no project_edge rows reach flatten_jsonl. The type_edge
+//!             facet flips ASSERTED-IN-TEST instead: golden_parity calls
+//!             Resolve<TypeF>::resolve directly (ProjectCx built over the fixture) and moves
+//!             "type_edge" from DEFERRED to PORTED (golden_parity.rs:15-17, 64-66); the
+//!             captured .v5.jsonl oracles do NOT change (v5 already emits type_edge lines -
+//!             ts/sample.v5.jsonl:98-107). If human review instead wants resolve rows on the
+//!             CLI stream, that is a dispatch-seam change = its own increment, and only then
+//!             does sample.typef.snap grow (a declared UPDATE_SNAP at that point).
 //!   PENDING:   the name-resolved type EDGES (field/impl/variant/uses + the
 //!              resolved param/returns binding) still land at Resolve<TypeF>
 //!              (commit 4) by design. ts_const_facts_from is PORTED (see (const)).

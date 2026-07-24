@@ -5,7 +5,9 @@
 //! shims so historical import paths (`crate::shape::Span`, `crate::family::TypeF`,
 //! ...) keep resolving. This is the "tasks.rs technique" from the seed, promoted:
 //! one compiled file is the source of truth, and pending work is COMMENTED OUT
-//! (Resolve<F>, ModuleF, Flow edges, GoSource).
+//! (ModuleF, Flow edges). Resolve<F> landed in commit 4a as a HOLLOW design-freeze
+//! surface (S5 below): the trait + ProjectCx + ProjectEdge<F> exist, bodies are
+//! todo!(), and NOTHING calls resolve yet.
 //!
 //! Leaf scope: a corpus at a version -> normalized graph facts. Pure CPU, no SQL,
 //! no datalog, no async (the engine, another worktree).
@@ -47,6 +49,14 @@ impl Span {
 /// Declared here; the hash is NOT computed yet (the cache lands with BlobSource).
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct BlobHash(pub [u8; 16]);
+
+/// A digest of the file set that affects resolution (which files exist + their
+/// manifest membership), folded from the corpus so two identical blobs in
+/// identical file-set contexts share phase-2 work. The middle component of the
+/// phase-2 cache key (see `Resolve`). Spec: seed `_1_mask.rs`:78-82. Declared
+/// here; NOT computed yet (lands with the phase-2 cache, same as BlobHash).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct ProjectDigest(pub [u8; 16]);
 
 /// Dense u32 into the per-file `Strings` interner.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -438,7 +448,9 @@ impl Family for DfF {
 // ── RESOLUTION plane: ModuleF  (PENDING - collapsed; not yet a family) ──────
 // The resolution half folds into SCIP namespace edges (a file IS a namespace);
 // the binding half into aux metadata. Whether it becomes a standalone Family is
-// undecided. Sketch:
+// undecided. Per spec `_2_traits.rs`:80-84 module RESOLVES once it lands; the
+// 4a Resolve surface (S5 below) deliberately declares NO ModuleF arm - see the
+// `Resolve` trait doc. Sketch:
 //
 // #[derive(Default, Copy, Clone, Debug)]
 // pub struct ModuleF;
@@ -510,6 +522,29 @@ impl<F: Family> FamilyBundle<F> {
     }
 }
 
+/// A project-phase edge: `dst` lives in ANOTHER blob (resolved across the file
+/// set). The seed's `ProjectEdge` (`_0_shape.rs`:222-232) made generic over the
+/// family — the seed's `EdgeKind` sum is deleted per D-families, so `kind` is
+/// `F::EdgeKind`. Emitted ONLY by `Resolve<F>` (phase 2); the store seam
+/// resolves the dst to a `node_id` by joining `(dst_blob, dst_span, kind)`.
+#[derive(Clone, Copy, Debug)]
+pub struct ProjectEdge<F: Family> {
+    /// Local node in this file (into the producing file's node vec).
+    pub src: NodeRef,
+    /// The resolved target's content key.
+    pub dst_blob: BlobHash,
+    /// The target node's coordinate inside `dst_blob`.
+    pub dst_span: Span,
+    pub kind: F::EdgeKind,
+    _f: PhantomData<fn() -> F>,
+}
+
+impl<F: Family> ProjectEdge<F> {
+    pub fn new(src: NodeRef, dst_blob: BlobHash, dst_span: Span, kind: F::EdgeKind) -> Self {
+        Self { src, dst_blob, dst_span, kind, _f: PhantomData }
+    }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // S5 SEAMS
 // ════════════════════════════════════════════════════════════════════════════
@@ -572,13 +607,83 @@ pub trait BlobSource: Sync + Send {
     fn blob(&self, path: &str) -> Option<Vec<u8>>;
 }
 
-// pub trait Resolve<F: Family>: Sync + Send {                                  // PENDING commit 4
-//     /// Phase 2: name-resolved edges over one file's bundle + the project context
-//     /// (all files' declared names). df/cst have no phase 2.
-//     ///   Resolve<TypeF>: field/impl/variant/uses/generic + resolved param/returns.
-//     ///   Resolve<CallF>: resolved caller -> callee (the call_site join).
-//     fn resolve(&self, bundle: &FamilyBundle<F>, cx: &ProjectCx) -> Vec<ProjectEdge>;
-// }
+// ── phase 2: the Resolve seam (commit 4a DESIGN FREEZE) ─────────────────────
+// The trait surface + types only. Every method body is todo!(); NOTHING calls
+// resolve; no impl exists yet (per-family impls land in 4b/4c). Human review
+// gates 4b.
+
+/// Borrowed view over one (repo, rev) project, shared across a language's
+/// phase-2 calls. Extract is content-local; this is the ONLY handle it gets to
+/// the world beyond the blob it was handed. Spec: seed `_2_traits.rs`:29-51
+/// (per-field citations below). Every field is a HOLLOW declaration in 4a: the
+/// concrete FileSet / ManifestMap / IndexBag subsystems land with the phase-2
+/// implementations that need them, not before.
+pub struct ProjectCx<'a> {
+    /// Project-relative tracked file set (the resolution universe; a specifier
+    /// resolving outside it is External/Unresolved). Spec: `_2_traits.rs`:36-37
+    /// (field) + :53-56 (FileSet).
+    pub files: &'a FileSet,
+    /// Manifest path -> contents (Cargo.toml / package.json / go.mod); feeds the
+    /// per-language package indexes (RustCrates / ts_packages / GoIndex). Spec:
+    /// `_2_traits.rs`:38-40 (field) + :57-58 (ManifestMap).
+    pub manifests: &'a ManifestMap,
+    /// Rev-correct content reader: project-relative path -> bytes, or None.
+    /// Injected by the engine; None in unit tests. Spec: `_2_traits.rs`:41-43.
+    pub reader: Option<&'a dyn Fn(&str) -> Option<Vec<u8>>>,
+    /// The fold of `files` + `manifests` that invalidates phase-2 on change; the
+    /// middle component of the phase-2 cache key (see `Resolve`). Spec:
+    /// `_2_traits.rs`:44-45.
+    pub digest: ProjectDigest,
+    /// Lazy, per-language whole-project indexes (v5: RustCrates, ts_packages,
+    /// GoIndex). Opaque here; each language module owns its concrete index type
+    /// behind a OnceLock. Spec: `_2_traits.rs`:46-51 (field) + :59-61 (IndexBag).
+    pub indexes: IndexBag,
+}
+
+/// The file set: project-relative paths that exist at this rev. Hollow in 4a
+/// (spec `_2_traits.rs`:56); the concrete set lands with the first Resolve impl.
+pub struct FileSet;
+/// Manifest path -> raw manifest contents. Hollow in 4a (spec `_2_traits.rs`:58).
+pub struct ManifestMap;
+/// Type-erased bag of `OnceLock<LangIndex>` slots, one per language. Hollow in
+/// 4a (spec `_2_traits.rs`:61).
+pub struct IndexBag;
+
+/// Phase 2: "here is a codebase, get data" — the cross-file resolution half of
+/// a `Source` (spec: seed `_2_traits.rs`:80-97 `ProjectExtract`, adapted to the
+/// crate's type-level families + Epic U's uniform surface).
+///
+/// CACHE KEY (vs phase 1): phase 2 keys on `(BlobHash, ProjectDigest,
+/// FamilyMask)` where phase 1 keys on `(BlobHash, lang, FamilyMask)`. Identical
+/// BYTES anywhere extract once, but a file appearing/disappearing can change a
+/// resolution, so the project digest rides the phase-2 key (spec:
+/// `_2_traits.rs`:9-15,80-84; `_7_tasks.rs`:37-38).
+///
+/// WHICH FAMILIES RESOLVE (spec `_2_traits.rs`:80-84): `TypeF` (field / impl /
+/// variant / generic / uses + the resolved param/returns binding) and `CallF`
+/// (resolved caller -> callee). MODULE resolves only WHEN it lands: ModuleF is
+/// still commented out (S2 above, "PENDING - collapsed"), so 4a declares NO
+/// ModuleF resolve surface — this note is the module placeholder. `DfF` and
+/// `CstF` NEVER resolve (no cross-file resolution; `_2_traits.rs`:82-84).
+///
+/// SHAPE NOTES (4a judgment calls, flagged for human review):
+/// - `output` is the whole phase-1 `ExtractOutput`, not a bare
+///   `FamilyBundle<F>`: resolution joins on NAMES, and the interner that turns
+///   a `NameId` back into a &str lives on `ExtractOutput.strings`. (Arc plan
+///   2026-07-23:503-504: "resolve(&ExtractOutput, &ProjectCx)".)
+/// - No `FamilyMask` param: unlike the seed's non-generic `ProjectExtract`,
+///   `F` is a type parameter here, so the family is already selected per impl.
+/// - `ProjectEdge<F>` is generic because the seed's `EdgeKind` sum is deleted
+///   (D-families); the plan's `Vec<ProjectEdge>` reads `Vec<ProjectEdge<F>>`.
+pub trait Resolve<F: Family>: Source {
+    /// Turn this file's phase-1 specifiers/names into resolved, cross-file
+    /// `ProjectEdge`s. The return is ONLY the cross-file resolutions for this
+    /// one blob (spec: `_2_traits.rs`:88-96).
+    fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<F>> {
+        let _ = (output, cx);
+        todo!("commit 4b: Resolve<TypeF> for TsSource; 4c: ScipSource + Resolve<CallF>")
+    }
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // UNIFORM SURFACE
