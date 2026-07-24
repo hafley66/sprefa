@@ -94,10 +94,11 @@
 | [plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md](plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md) | 256 | v6 rxjs lowering + the TS cascade port (engineering plan) |
 | [plans/2026-07-23-v6-transports-as-rels.md](plans/2026-07-23-v6-transports-as-rels.md) | 123 | Transports as rels — http/ws/LSP/shell with zero effect syntax (F4/F10 working note, 2026-07-23) |
 | [plans/2026-07-24-fork-pipeline-syntax-findings.md](plans/2026-07-24-fork-pipeline-syntax-findings.md) | 80 | Fork findings: pipeline syntax + surface rulings (2026-07-24, session forked-for-sql-pipeline-syntax) |
-| [plans/2026-07-24-v6-dl-mvp-slice.md](plans/2026-07-24-v6-dl-mvp-slice.md) | 618 | v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24) |
+| [plans/2026-07-24-v6-dl-mvp-slice.md](plans/2026-07-24-v6-dl-mvp-slice.md) | 636 | v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
+| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 51 | Z-set / IVM head-to-head — feasibility lab |
 | [sprefa-store/js/node_modules/.pnpm/@libsql+client@0.17.4/node_modules/@libsql/client/README.md](sprefa-store/js/node_modules/.pnpm/@libsql+client@0.17.4/node_modules/@libsql/client/README.md) | 128 |  |
 | [sprefa-store/js/node_modules/.pnpm/@libsql+darwin-arm64@0.5.29/node_modules/@libsql/darwin-arm64/README.md](sprefa-store/js/node_modules/.pnpm/@libsql+darwin-arm64@0.5.29/node_modules/@libsql/darwin-arm64/README.md) | 3 | `@libsql/darwin-arm64` |
 | [sprefa-store/js/node_modules/.pnpm/@libsql+hrana-client@0.10.0/node_modules/@libsql/hrana-client/README.md](sprefa-store/js/node_modules/.pnpm/@libsql+hrana-client@0.10.0/node_modules/@libsql/hrana-client/README.md) | 59 | Hrana client for TypeScript |
@@ -1547,37 +1548,42 @@
 ```
 1:# v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24)
 9:## The golden demo, CLI-eye view (what "done" literally looks like)
-33:# 1. boot
-36:# 2. load the program
-38:# -> {"loaded":true,"rels":["console_hit","diag",...],"minted":["__req_sg","__resp_sg"]}
-40:# 3. tell it a file exists / changed
-42:# -> {"tick":1,"changed":[["node",41],["edge",40],["file",1],...]}
-43:#    (extract ran, spine landed; sg? fired once, __resp_sg rows committed tick 2)
-45:# 4. read the diagnostics
-47:# -> {"rows":[{"path":"fixtures/corpus/bad.ts","line":3,"col":2,"severity":"warn",
-48:#              "code":"no-console","msg":"console.log left in source",...}]}
-50:# 5. watch live (second terminal)
-52:# data: {"tick":2,"rel":"diag","inserts":[{...no-console row...}],"retracts":[]}
-54:# 6. fix the file, tell it again
-57:# -> {"tick":3,"changed":[["node",-2],["diag",-1],...]}      # WEIGHTS, not magic
-58:# the -N terminal prints: data: {"tick":3,"rel":"diag","inserts":[],"retracts":[{...}]}
-61:# -> {"rows":[]}
-63:# 7. one-shot query
-65:# -> {"rows":[]}
-67:# 8. the editor, meanwhile: dl --lsp --diag-db ~/.local/state/dl/mvp.sqlite
-68:#    published the squiggle at step 4 and cleared it at step 6.
-74:## Status ledger
-117:## Recon facts (observed, not guessed)
-163:## Boundary
-182:## Epics
-184:### M0 · package scaffold `v6/dl/`
-234:### M1 · grammar (Langium) -> ast.ts bridge
-323:### M2 · schema + tick runtime
-407:### M3 · ingest: extract -> spine -> EDB
-455:### M4 · host rels: sh executor + builtin sg + extract
-508:### M5 · diag + v5 LSP front
-574:### M6 · http front
-605:## Frontier (deferred, with the evidence that will resolve each)
+18:# no-console rail over a fixture repo: ast-grep hits become diag rows.
+22:# newest row only (rel(1) state): the live count of remaining hits.
+25:# {pattern} splices into the command line; $path is passed as an env var.
+29:# demand: one sg run per (pattern, path); responses join back positionally.
+36:# end_line/end_col/hint unfilled: diag head defaults fill them.
+46:# 1. boot
+49:# 2. load the program
+51:# -> {"loaded":true,"rels":["console_hit","diag",...],"minted":["__req_sg","__resp_sg"]}
+53:# 3. tell it a file exists / changed
+55:# -> {"tick":1,"changed":[["node",41],["edge",40],["file",1],...]}
+56:#    (extract ran, spine landed; sg? fired once, __resp_sg rows committed tick 2)
+58:# 4. read the diagnostics
+60:# -> {"rows":[{"path":"fixtures/corpus/bad.ts","line":3,"col":2,"severity":"warn",
+61:#              "code":"no-console","msg":"console.log left in source",...}]}
+63:# 5. watch live (second terminal)
+65:# data: {"tick":2,"rel":"diag","inserts":[{...no-console row...}],"retracts":[]}
+67:# 6. fix the file, tell it again
+70:# -> {"tick":3,"changed":[["node",-2],["diag",-1],...]}      # WEIGHTS, not magic
+71:# the -N terminal prints: data: {"tick":3,"rel":"diag","inserts":[],"retracts":[{...}]}
+74:# -> {"rows":[]}
+76:# 7. one-shot query
+78:# -> {"rows":[]}
+80:# 8. the editor, meanwhile: dl --lsp --diag-db ~/.local/state/dl/mvp.sqlite
+81:#    published the squiggle at step 4 and cleared it at step 6.
+87:## Status ledger
+135:## Recon facts (observed, not guessed)
+181:## Boundary
+200:## Epics
+202:### M0 · package scaffold `v6/dl/`
+252:### M1 · grammar (Langium) -> ast.ts bridge
+341:### M2 · schema + tick runtime
+425:### M3 · ingest: extract -> spine -> EDB
+473:### M4 · host rels: sh executor + builtin sg + extract
+526:### M5 · diag + v5 LSP front
+592:### M6 · http front
+623:## Frontier (deferred, with the evidence that will resolve each)
 ```
 
 ### skills/mermaid-living-map.md
@@ -1614,6 +1620,14 @@
 126:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
 139:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
 152:## Breakpoint ramp — tight gun 700 MB
+```
+
+### sprefa-store/bench/out/REPORT.md
+```
+1:# Z-set / IVM head-to-head — feasibility lab
+15:## Charts
+22:## Data
+47:## Takeaways (derived)
 ```
 
 ### sprefa-store/js/node_modules/.pnpm/@libsql+client@0.17.4/node_modules/@libsql/client/README.md

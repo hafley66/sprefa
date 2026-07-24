@@ -8,23 +8,36 @@ grammar-first. New package `v6/dl/`. Don't touch json-rx. Plan-as-types twin:
 
 ## The golden demo, CLI-eye view (what "done" literally looks like)
 
-The fixture program, `fixtures/sg-rail.dl` — a no-console rail over a fixture repo:
+The fixture program, `fixtures/sg-rail.dl` — a no-console rail over a fixture repo,
+and (owner directive 2026-07-24) THE showcase artifact: one file exercising typed
+decls, retention forms, kwargs, host decls, probes, wildcards, aggregates, and the
+diag default law. As landed (kwargs respell; the original all-positional spelling
+with `"warn" = severity` compares is superseded):
 
 ```
+# no-console rail over a fixture repo: ast-grep hits become diag rows.
+
 rel console_hit(path: text, start: int, end: int, text: text).
 
+# newest row only (rel(1) state): the live count of remaining hits.
+rel(1) hit_count(hits: int).
+
+# {pattern} splices into the command line; $path is passed as an env var.
 sh sg(pattern: text, path: text, start: int, end: int, text: text) =
   `sg run --pattern '{pattern}' --json $path`.
 
+# demand: one sg run per (pattern, path); responses join back positionally.
 console_hit(path, start, end, text) <-
     file(path),
     sg?("console.log($$$ARGS)", path, start, end, text).
 
-diag(path, line, col, end_line, end_col, severity, code, msg, hint) <-
+hit_count(hits: count(path)) <- console_hit(path).
+
+# end_line/end_col/hint unfilled: diag head defaults fill them.
+diag(path: path, line: line, col: col, severity: "warn", code: "no-console",
+     msg: "console.log left in source") <-
     console_hit(path, start, _, text),
-    span_line(path, start, line, col),
-    "warn" = severity, "no-console" = code,
-    "console.log left in source" = msg.
+    span_line(path, start, line, col).
 ```
 
 The session, verbatim (curl is the CLI):
@@ -111,7 +124,12 @@ per-epic task lists below stay the detail record.
    4. 5.4 retraction wiring golden — NOT STARTED (rides final integration: needs M3+M4+M6)
    5. ~~5.5 --check reader~~ ✓ check_diag.mjs exit 2/0/1, spawnSync deadlock trap doc'd
 7. **M6 · http — IN FLIGHT** (worktree dl-m6-http): node:http router, SSE with teardown count, /query NULL-safe SELECT, curl-session.sh epic-of-epics golden (regenerable; re-pins after kwargs merge)
-8. **M1-kwargs · named args (owner scope change 2026-07-24) — IN FLIGHT** (worktree dl-m1-kwargs): `rel(col: term)` in bodies+heads, python mixing law, shared `Member` production (future JSON5 object-member twin), `#` comments, showcase fixture rewrite (sg-rail.dl = the one end-to-end artifact: retention rel(1) + kwargs + host + probe + wildcard + diag defaults), goldens re-pinned, store untouched
+8. **M1-kwargs · named args (owner scope change 2026-07-24) — DONE** (48/48 after merge; dl/m1-kwargs 94f1bf8b)
+   1. ~~kwargs in bodies/heads/probes/queries~~ ✓ single shared resolveNamedArgs; python mixing law -> LoadDiag "named-arg"
+   2. ~~shared Member production~~ ✓ one grammar rule, comment pins JSON5 object-member reuse; Member-vs-ArgTerm ID-prefix ambiguity tested both ways
+   3. ~~`#` comments~~ ✓ hidden SL_COMMENT terminal, v5 heritage, comment-parity test
+   4. ~~showcase fixture~~ ✓ sg-rail.dl = the one end-to-end artifact (typed decls, rel(1)+count agg, host, probe, wildcard, kwargs, diag defaults); golden re-pinned additively, __lit numbering byte-identical; store untouched (75/75, zero diff)
+   5. law change recorded: elision now pads refs to full arity with wild() (unfilled slot = wild, unifying elision with named-arg partial atoms)
 9. **M7 · types header consolidation (owner directive, CLEANUP PHASE — runs only after everything above is green)** — NOT STARTED: one C-header-style `src/0_types.ts` (name chosen over `0.types.ts` to match the existing underscore numbering) holding ALL interfacing/impl-contract types (rel/retention/row/delta/tick, bridge shapes, host trait, diag, http surface); every src file imports types from it; tasks.d.ts recomposes to plan-ledger-only (EpicLedger + pins) referencing 0_types; its own reviewed package, all gates re-run after
 
 ## Recon facts (observed, not guessed)
