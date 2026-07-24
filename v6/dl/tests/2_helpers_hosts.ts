@@ -65,8 +65,8 @@ export async function disposeHostFixture(fixture: HostFixture): Promise<void> {
 /** M8-beta reshape (IdentityWitnessLaw, tasks.d.ts): full_digest is the fire-once PK,
  *  identity_digest is the supersession group key. */
 export interface EffectCacheEntry {
-  readonly full_digest: string;
-  readonly identity_digest: string;
+  readonly full_digest: number;
+  readonly identity_digest: number;
   readonly host: string;
   readonly state: string;
   readonly requested_tick: number;
@@ -82,13 +82,13 @@ export async function effectCacheDump(dbPath: string): Promise<EffectCacheEntry[
     );
     return res.rows
       .map((row) => ({
-        full_digest: String(row.full_digest),
-        identity_digest: String(row.identity_digest),
+        full_digest: Number(row.full_digest),
+        identity_digest: Number(row.identity_digest),
         host: String(row.host),
         state: String(row.state),
         requested_tick: Number(row.requested_tick),
       }))
-      .sort((a, b) => (a.full_digest < b.full_digest ? -1 : a.full_digest > b.full_digest ? 1 : 0));
+      .sort((a, b) => a.full_digest - b.full_digest);
   } finally {
     db.close();
   }

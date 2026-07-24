@@ -175,8 +175,8 @@ export interface HostDef<Req extends Row = Row, Resp extends Row = Row> {
  *  full_digest within a live identity_digest group triggers supersession (1_hosts.ts's
  *  HostRunner) instead of a second independent fire. */
 export interface EffectCacheRow {
-  readonly full_digest: string;
-  readonly identity_digest: string;
+  readonly full_digest: number;
+  readonly identity_digest: number;
   readonly host: string;
   readonly state: "pending" | "done" | "error";
   readonly requested_tick: number;

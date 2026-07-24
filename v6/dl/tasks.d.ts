@@ -101,6 +101,7 @@ export interface EpicLedger {
 
 export type Value = import("./src/0_types.ts").Value;
 export type Row = import("./src/0_types.ts").Row;
+export type ColumnType = import("./src/0_types.ts").ColumnType;
 
 /** Retention forms (owner ruling 2026-07-23): the decl's one capacity knob. */
 export type Retention = import("./src/0_types.ts").Retention;

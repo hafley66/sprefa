@@ -18,7 +18,7 @@ import { createClient } from "@libsql/client";
 import { derivedRel, edbRel, headVar, relRef, v, type Program, type Rule } from "sprefa-store-engine/src/lower/ast.ts";
 
 import { DlRuntime } from "../src/3_runtime.ts";
-import type { BridgeOk, EdbBatch, Retention, Row, Value } from "../tasks.d.ts";
+import type { BridgeOk, ColumnType, EdbBatch, Retention, Row, Value } from "../tasks.d.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scratch db files.
@@ -75,7 +75,7 @@ export function fakeBridgeOk(
   program: Program,
   literalSeeds: ReadonlyMap<string, Value> = new Map(),
   retentionOverrides: Readonly<Record<string, Retention>> = {},
-  columnTypeOverrides: Readonly<Record<string, readonly ("text" | "int")[]>> = {},
+  columnTypeOverrides: Readonly<Record<string, readonly ColumnType[]>> = {},
 ): BridgeOk {
   const retention = new Map<string, Retention>();
   const columnTypes = new Map<string, readonly ("text" | "int")[]>();
@@ -106,9 +106,10 @@ export async function bootFixture(
   program: Program,
   literalSeeds?: ReadonlyMap<string, Value>,
   retentionOverrides?: Readonly<Record<string, Retention>>,
+  columnTypeOverrides?: Readonly<Record<string, readonly ColumnType[]>>,
 ): Promise<{ readonly rt: DlRuntime; readonly dbPath: string }> {
   const dbPath = freshDbPath();
-  const bridge = fakeBridgeOk(program, literalSeeds, retentionOverrides);
+  const bridge = fakeBridgeOk(program, literalSeeds, retentionOverrides, columnTypeOverrides);
   const rt = await DlRuntime.boot({ dbPath, bridge });
   return { rt, dbPath };
 }
@@ -158,7 +159,10 @@ export interface DeltaLogEntry {
 export async function deltaDump(dbPath: string): Promise<DeltaLogEntry[]> {
   const db = createClient({ url: `file:${dbPath}` });
   try {
-    const res = await db.execute("SELECT rel, row_digest, tick, weight FROM delta ORDER BY tick, rel, row_digest, weight");
+    const res = await db.execute(
+      "SELECT s.content AS rel, d.row_digest, d.tick, d.weight FROM delta d JOIN strings s ON s.string_id = d.rel_id " +
+        "ORDER BY d.tick, s.content, d.row_digest, d.weight",
+    );
     return res.rows
       .map((row) => ({
         rel: String(row.rel),

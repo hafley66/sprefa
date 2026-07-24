@@ -63,9 +63,9 @@ function valueToShellText(value: Value): string {
  *  [...identityCols, ...saltCols]); identityDigest = effectDigest(host, row,
  *  identityCols). Same mix(host, ...tuple) law as before, just over the column set
  *  the caller asks for. */
-function effectDigest(hostName: string, requestRow: Row, columns: readonly string[]): string {
-  const narrowed = foldRowDigest(requestRow, columns);
-  return `${hostName}:${narrowed}`;
+function effectDigest(hostName: string, requestRow: Row, columns: readonly string[]): number {
+  const digestRow: Row = { ...requestRow, __host: hostName };
+  return foldRowDigest(digestRow, ["__host", ...columns]);
 }
 
 /** The bridge's deterministic salt-column minting (0_ast_bridge.ts's probe section,
