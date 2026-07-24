@@ -135,7 +135,10 @@ per-epic task lists below stay the detail record.
    3. ~~`#` comments~~ ✓ hidden SL_COMMENT terminal, v5 heritage, comment-parity test
    4. ~~showcase fixture~~ ✓ sg-rail.dl = the one end-to-end artifact (typed decls, rel(1)+count agg, host, probe, wildcard, kwargs, diag defaults); golden re-pinned additively, __lit numbering byte-identical; store untouched (75/75, zero diff)
    5. law change recorded: elision now pads refs to full arity with wild() (unfilled slot = wild, unifying elision with named-arg partial atoms)
-9. **M7 · types header consolidation — DONE** (dl/m7-types 5a39592a, merged; zero behavior change: 52/52, tsgo clean, curl-session PASS, fixtures byte-identical, store 75/75)
+9. **M8 · identity-vs-witness (owner escalation 2026-07-24 PM) — IN FLIGHT**: the effect cache memoized address without value witness (stale console_hit after file fix; the aspirational transcript line papered over it). Law pinned in tasks.d.ts IdentityWitnessLaw. Perf baseline recorded there (dl 669ms; stress rx 285.97MB/sql 304.38MB; retract 0.60/6.93/0.67ms).
+   1. M8-alpha (worktree dl-m8-witness, IN FLIGHT): file(path, content_hash) spine rel, bridge salt-arg law (__req/__resp gain salt cols), fixture witness spelling, bridge+ingest goldens re-pinned
+   2. M8-beta (queued, after alpha): effect_cache identity/full digest split, HostRunner supersession (prior witness rows retract in the same commit, weights plane), honest curl/hosts golden re-pins (console_hit -> [] for real), churn stress + perf after-numbers
+10. **M7 · types header consolidation — DONE** (dl/m7-types 5a39592a, merged; zero behavior change: 52/52, tsgo clean, curl-session PASS, fixtures byte-identical, store 75/75)
    1. ~~0_types.ts~~ ✓ 9 sections in pipeline order (values/rows -> decls -> bridge -> schema/tick -> ingest -> hosts -> diag -> http -> runtime interface)
    2. ~~0_digest.ts~~ ✓ shared 53-bit fold; 1_hosts/2_schema dedup closed (the M4 note)
    3. ~~tasks.d.ts recomposed~~ ✓ plan-ledger-only + re-exports (imports kept valid, no test edits)
