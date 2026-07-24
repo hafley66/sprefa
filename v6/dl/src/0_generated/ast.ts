@@ -12,6 +12,7 @@ export const DlTerminals = {
     STRING: /"(\\.|[^"\\])*"/,
     TEMPLATE: /`[^`]*`/,
     WS: /\s+/,
+    SL_COMMENT: /#[^\n\r]*/,
 };
 
 export type DlTerminalNames = keyof typeof DlTerminals;
@@ -44,7 +45,7 @@ export type DlKeywordNames =
 export type DlTokenNames = DlTerminalNames | DlKeywordNames;
 
 export interface AggCall extends langium.AstNode {
-    readonly $container: HeadAtom;
+    readonly $container: HeadAtom | Member;
     readonly $type: 'AggCall';
     arg: Var;
     fn: string;
@@ -70,6 +71,16 @@ export function isArgTerm(item: unknown): item is ArgTerm {
     return reflection.isInstance(item, ArgTerm.$type);
 }
 
+export type AtomArg = ArgTerm | Member;
+
+export const AtomArg = {
+    $type: 'AtomArg'
+} as const;
+
+export function isAtomArg(item: unknown): item is AtomArg {
+    return reflection.isInstance(item, AtomArg.$type);
+}
+
 export type BodyItem = CompareItem | MutationItem | NegItem | ProbeItem | RelRefItem;
 
 export const BodyItem = {
@@ -81,7 +92,7 @@ export function isBodyItem(item: unknown): item is BodyItem {
 }
 
 export interface BoolLit extends langium.AstNode {
-    readonly $container: CompareItem | HeadAtom | MutationItem | NegItem | ProbeItem | QueryStmt | RelRefItem;
+    readonly $container: CompareItem | HeadAtom | Member | MutationItem | NegItem | ProbeItem | QueryStmt | RelRefItem;
     readonly $type: 'BoolLit';
     raw: 'false' | 'true';
 }
@@ -158,7 +169,7 @@ export function isDlRule(item: unknown): item is DlRule {
     return reflection.isInstance(item, DlRule.$type);
 }
 
-export type HeadArg = AggCall | ArgTerm;
+export type HeadArg = AggCall | ArgTerm | Member;
 
 export const HeadArg = {
     $type: 'HeadArg'
@@ -186,7 +197,7 @@ export function isHeadAtom(item: unknown): item is HeadAtom {
 }
 
 export interface IntLit extends langium.AstNode {
-    readonly $container: CompareItem | HeadAtom | MutationItem | NegItem | ProbeItem | QueryStmt | RelRefItem;
+    readonly $container: CompareItem | HeadAtom | Member | MutationItem | NegItem | ProbeItem | QueryStmt | RelRefItem;
     readonly $type: 'IntLit';
     value: number;
 }
@@ -210,10 +221,37 @@ export function isLiteral(item: unknown): item is Literal {
     return reflection.isInstance(item, Literal.$type);
 }
 
+export interface Member extends langium.AstNode {
+    readonly $container: HeadAtom | MutationItem | NegItem | ProbeItem | QueryStmt | RelRefItem;
+    readonly $type: 'Member';
+    key: string;
+    value: MemberValue;
+}
+
+export const Member = {
+    $type: 'Member',
+    key: 'key',
+    value: 'value'
+} as const;
+
+export function isMember(item: unknown): item is Member {
+    return reflection.isInstance(item, Member.$type);
+}
+
+export type MemberValue = AggCall | ArgTerm;
+
+export const MemberValue = {
+    $type: 'MemberValue'
+} as const;
+
+export function isMemberValue(item: unknown): item is MemberValue {
+    return reflection.isInstance(item, MemberValue.$type);
+}
+
 export interface MutationItem extends langium.AstNode {
     readonly $container: DlRule;
     readonly $type: 'MutationItem';
-    args: Array<ArgTerm>;
+    args: Array<AtomArg>;
     rel: string;
 }
 
@@ -230,7 +268,7 @@ export function isMutationItem(item: unknown): item is MutationItem {
 export interface NegItem extends langium.AstNode {
     readonly $container: DlRule;
     readonly $type: 'NegItem';
-    args: Array<ArgTerm>;
+    args: Array<AtomArg>;
     rel: string;
 }
 
@@ -245,7 +283,7 @@ export function isNegItem(item: unknown): item is NegItem {
 }
 
 export interface NullLit extends langium.AstNode {
-    readonly $container: CompareItem | HeadAtom | MutationItem | NegItem | ProbeItem | QueryStmt | RelRefItem;
+    readonly $container: CompareItem | HeadAtom | Member | MutationItem | NegItem | ProbeItem | QueryStmt | RelRefItem;
     readonly $type: 'NullLit';
 }
 
@@ -275,7 +313,7 @@ export function isPlainType(item: unknown): item is PlainType {
 export interface ProbeItem extends langium.AstNode {
     readonly $container: DlRule;
     readonly $type: 'ProbeItem';
-    args: Array<ArgTerm>;
+    args: Array<AtomArg>;
     rel: string;
 }
 
@@ -306,7 +344,7 @@ export function isProgram(item: unknown): item is Program {
 export interface QueryStmt extends langium.AstNode {
     readonly $container: Program;
     readonly $type: 'QueryStmt';
-    args: Array<ArgTerm>;
+    args: Array<AtomArg>;
     rel: string;
 }
 
@@ -342,7 +380,7 @@ export function isRelDecl(item: unknown): item is RelDecl {
 export interface RelRefItem extends langium.AstNode {
     readonly $container: DlRule;
     readonly $type: 'RelRefItem';
-    args: Array<ArgTerm>;
+    args: Array<AtomArg>;
     rel: string;
 }
 
@@ -386,7 +424,7 @@ export function isStatement(item: unknown): item is Statement {
 }
 
 export interface StrLit extends langium.AstNode {
-    readonly $container: CompareItem | HeadAtom | MutationItem | NegItem | ProbeItem | QueryStmt | RelRefItem;
+    readonly $container: CompareItem | HeadAtom | Member | MutationItem | NegItem | ProbeItem | QueryStmt | RelRefItem;
     readonly $type: 'StrLit';
     value: string;
 }
@@ -401,7 +439,7 @@ export function isStrLit(item: unknown): item is StrLit {
 }
 
 export interface Var extends langium.AstNode {
-    readonly $container: AggCall | CompareItem | HeadAtom | MutationItem | NegItem | ProbeItem | QueryStmt | RelRefItem;
+    readonly $container: AggCall | CompareItem | HeadAtom | Member | MutationItem | NegItem | ProbeItem | QueryStmt | RelRefItem;
     readonly $type: 'Var';
     name: string;
 }
@@ -416,7 +454,7 @@ export function isVar(item: unknown): item is Var {
 }
 
 export interface Wildcard extends langium.AstNode {
-    readonly $container: HeadAtom | MutationItem | NegItem | ProbeItem | QueryStmt | RelRefItem;
+    readonly $container: HeadAtom | Member | MutationItem | NegItem | ProbeItem | QueryStmt | RelRefItem;
     readonly $type: 'Wildcard';
 }
 
@@ -448,6 +486,7 @@ export function isWrapperType(item: unknown): item is WrapperType {
 export type DlAstType = {
     AggCall: AggCall
     ArgTerm: ArgTerm
+    AtomArg: AtomArg
     BodyItem: BodyItem
     BoolLit: BoolLit
     ColumnDecl: ColumnDecl
@@ -458,6 +497,8 @@ export type DlAstType = {
     HeadAtom: HeadAtom
     IntLit: IntLit
     Literal: Literal
+    Member: Member
+    MemberValue: MemberValue
     MutationItem: MutationItem
     NegItem: NegItem
     NullLit: NullLit
@@ -487,13 +528,19 @@ export class DlAstReflection extends langium.AbstractAstReflection {
                     name: AggCall.fn
                 }
             },
-            superTypes: [HeadArg.$type]
+            superTypes: [HeadArg.$type, MemberValue.$type]
         },
         ArgTerm: {
             name: ArgTerm.$type,
             properties: {
             },
-            superTypes: [HeadArg.$type]
+            superTypes: [AtomArg.$type, HeadArg.$type, MemberValue.$type]
+        },
+        AtomArg: {
+            name: AtomArg.$type,
+            properties: {
+            },
+            superTypes: []
         },
         BodyItem: {
             name: BodyItem.$type,
@@ -591,6 +638,24 @@ export class DlAstReflection extends langium.AbstractAstReflection {
             properties: {
             },
             superTypes: [ArgTerm.$type]
+        },
+        Member: {
+            name: Member.$type,
+            properties: {
+                key: {
+                    name: Member.key
+                },
+                value: {
+                    name: Member.value
+                }
+            },
+            superTypes: [AtomArg.$type, HeadArg.$type]
+        },
+        MemberValue: {
+            name: MemberValue.$type,
+            properties: {
+            },
+            superTypes: []
         },
         MutationItem: {
             name: MutationItem.$type,

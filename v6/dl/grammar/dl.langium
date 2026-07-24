@@ -2,9 +2,10 @@
 // (plain ID properties everywhere): the bridge resolves rel names itself against the
 // decl tables, so no scope/linking services are needed. Scope is pinned in
 // v6/plans/2026-07-24-v6-dl-mvp-slice.md and v6/dl/tasks.d.ts; anything not listed
-// there (JSON5 terms, `=~`, arithmetic, string interpolation, latest()/interval!,
-// named args) is deliberately absent from this grammar (frontier, rejected at parse
-// time by simply not existing as a production).
+// there (JSON5 terms, `=~`, arithmetic, string interpolation, latest()/interval!) is
+// deliberately absent from this grammar (frontier, rejected at parse time by simply
+// not existing as a production). Named args (`rel(col: term, ...)`) and `#` line
+// comments landed 2026-07-24 (owner scope change, out of the frontier list above).
 
 grammar Dl
 
@@ -68,8 +69,13 @@ DlRule:
 HeadAtom:
     rel=ID '(' (args+=HeadArg (',' args+=HeadArg)*)? ')';
 
+// Member first: Member and ArgTerm both start with ID, so the parser needs the
+// 2-token lookahead (ID ':') to pick Member over a bare Var — putting it first in
+// the alternative order resolves the ambiguity (verified: both `foo(path)` and
+// `foo(path: x)` parse, see tests/0_ast_bridge.test.ts). AggCall is unambiguous
+// against both (its second token is always '(').
 HeadArg:
-    ArgTerm | AggCall;
+    Member | ArgTerm | AggCall;
 
 // Head aggregates: `count(x)` / `sum(x)` / `min(x)` / `max(x)` in head position.
 // `fn` is a plain ID (validated against the four names in the bridge), same
@@ -88,21 +94,23 @@ BodyItem:
     NegItem | ProbeItem | MutationItem | CompareItem | RelRefItem;
 
 RelRefItem:
-    rel=ID '(' (args+=ArgTerm (',' args+=ArgTerm)*)? ')';
+    rel=ID '(' (args+=AtomArg (',' args+=AtomArg)*)? ')';
 
 // Postfix probe: `name?(args)` — args split input/output cols by the host decl's
-// inputCols in the bridge, not here (grammar doesn't know arity split).
+// inputCols in the bridge, not here (grammar doesn't know arity split). Named args
+// resolve against the HOST decl's columns (same law as any other atom).
 ProbeItem:
-    rel=ID '?' '(' (args+=ArgTerm (',' args+=ArgTerm)*)? ')';
+    rel=ID '?' '(' (args+=AtomArg (',' args+=AtomArg)*)? ')';
 
 // Postfix mutation probe: `name!(args)` — parses; rejected at load
-// ("mutations land with a later slice").
+// ("mutations land with a later slice"). Named args parse here too (the bridge
+// never inspects a mutation's args before rejecting it).
 MutationItem:
-    rel=ID '!' '(' (args+=ArgTerm (',' args+=ArgTerm)*)? ')';
+    rel=ID '!' '(' (args+=AtomArg (',' args+=AtomArg)*)? ')';
 
 // Prefix negation: `!rel(args)` (v5 surface spelling, no `not` keyword).
 NegItem:
-    '!' rel=ID '(' (args+=ArgTerm (',' args+=ArgTerm)*)? ')';
+    '!' rel=ID '(' (args+=AtomArg (',' args+=AtomArg)*)? ')';
 
 // Comparison: var-vs-literal in either order. Whether this becomes an ast.ts
 // Compare or a minted literal-binding rel is a bridge-time decision (depends on
@@ -115,9 +123,29 @@ CompareItem:
 // ── query lines ──────────────────────────────────────────────────────────────
 
 QueryStmt:
-    '?' rel=ID '(' (args+=ArgTerm (',' args+=ArgTerm)*)? ')' '.';
+    '?' rel=ID '(' (args+=AtomArg (',' args+=AtomArg)*)? ')' '.';
 
 // ── shared argument/term shapes ──────────────────────────────────────────────
+
+// Named-arg call sites (positive body atoms, negation, probes, mutations, query
+// lines): `Member` first for the same ID-prefix lookahead reason as HeadArg above.
+AtomArg:
+    Member | ArgTerm;
+
+// One shared `ident: term` production, used by every named-arg call site above
+// AND by HeadArg. FORWARD-COMPAT: this exact rule is reused verbatim as the future
+// JSON5 object-literal member rule (DECISIONS.md "Types are tuples now; JSON5
+// shapes later") — extend `MemberValue`, never add a second `ident: value` rule.
+Member:
+    key=ID ':' value=MemberValue;
+
+// AggCall is only ever meaningful as a Member value in HEAD position (`hits:
+// count(path)`); a body/probe/query atom naming an AggCall via Member parses (one
+// shared production, no atom-specific carve-out) but is semantically inert there —
+// no legitimate program writes it, and the bridge never produces one from that
+// position.
+MemberValue:
+    ArgTerm | AggCall;
 
 ArgTerm:
     Var | Literal | Wildcard;
@@ -150,8 +178,8 @@ NullLit:
     {infer NullLit} 'null';
 
 // ── terminals ────────────────────────────────────────────────────────────────
-// Idents: `[a-z_][a-z0-9_/]*` (slash-liberal, per the MVP scope). No comment
-// syntax this slice.
+// Idents: `[a-z_][a-z0-9_/]*` (slash-liberal, per the MVP scope). `#` line
+// comments are v5 .dl heritage (every v5 .dl file in this repo uses `#`).
 
 terminal ID: /[a-z_][a-z0-9_/]*/;
 terminal INT returns number: /[0-9]+/;
@@ -159,3 +187,4 @@ terminal STRING: /"(\\.|[^"\\])*"/;
 terminal TEMPLATE: /`[^`]*`/;
 
 hidden terminal WS: /\s+/;
+hidden terminal SL_COMMENT: /#[^\n\r]*/;
