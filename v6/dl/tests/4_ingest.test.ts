@@ -276,3 +276,39 @@ test("extractFile: real extract binary emits exactly 79 records for bad.ts, spaw
     "expected the console.log call_expression node at the known span",
   );
 });
+
+// M9-before regression (2026-07-24): the OLD src/3_runtime.ts sqlAnyRowMatch WHERE clause
+// built one `(col IS lit AND ...)` group per candidate row, OR-joined -- the SQL
+// expression-tree size scaled with candidate_rows x columns for a single rel's insert
+// batch in a single commit. This build's bundled libsql/sqlite3 compiles in
+// SQLITE_LIMIT_EXPR_DEPTH=1000 (`PRAGMA compile_options` reports MAX_EXPR_DEPTH=1000), so
+// any ordinary file whose single-rel row count cleared roughly 150-250 rows crashed
+// ingestFile with SQLITE_ERROR "Expression tree is too large". node_modules/rxjs/src/
+// index.ts -- an ordinary ~11KB barrel/re-export file the pinned rxjs dependency ships,
+// no fixture copy needed -- was the file that surfaced it: 1079 node rows, 1078 edge
+// rows, 1783 span_line rows in one ingestFile commit. Fixed by replacing sqlAnyRowMatch
+// with a shared temp-table JOIN (tree depth O(columns), independent of row count); this
+// is the standing regression that pins the file/row-count combination which used to
+// crash and must keep succeeding.
+test("regression (M9-before): ingesting a real ~1800-span_line-row file no longer trips the SQL expression-tree depth ceiling", async () => {
+  const { rt, dbPath } = await bootFixture(spineProgram());
+  const rxjsIndexPath = path.join(import.meta.dirname, "..", "node_modules", "rxjs", "src", "index.ts");
+  try {
+    const report = await ingestFile(rt, rxjsIndexPath);
+    const spanLineDelta = report.changed.find(([rel]) => rel === "span_line");
+    assert.ok(spanLineDelta !== undefined, "expected a span_line delta from ingesting this file");
+    assert.ok(spanLineDelta[1] > 1000, `expected > 1000 new span_line rows, got ${spanLineDelta?.[1]}`);
+
+    const nodeDelta = report.changed.find(([rel]) => rel === "node");
+    assert.ok(nodeDelta !== undefined && nodeDelta[1] > 0, "expected a positive node delta");
+
+    // Same-file re-ingest must still be the ordinary zero-delta noop (proves the fix
+    // didn't just make the FIRST commit succeed while leaving the pre-check broken for
+    // a second pass over the same, now-stored, large row set).
+    const reportAgain = await ingestFile(rt, rxjsIndexPath);
+    assert.deepEqual(reportAgain.changed, [], "identical re-ingest of the same large file must be a zero-delta noop");
+  } finally {
+    await rt.dispose();
+    cleanupDbFile(dbPath);
+  }
+});
