@@ -246,9 +246,14 @@ re-POST of a program = full re-bridge + runtime swap (M3).
 (`__req_<host>`, `__resp_<host>`) so re-bridge is stable.
 
 **Tasks**
-- 1.1 `grammar/dl.langium` + langium-cli generation wired into `pnpm grammar`;
-  generated code committed (power-tool codegen blessed).
-- 1.2 AST mapping: decls/facts/rules/neg/cmp/aggs -> ast.ts constructors.
+- [x] 1.1 `grammar/dl.langium` + langium-cli generation wired into `pnpm grammar`;
+  generated code committed (power-tool codegen blessed). DONE 2026-07-24. Grammar
+  law learned twice: a Langium keyword's exact-match token beats the ID/INT
+  terminal REGARDLESS of grammar position — so type names (text/int), agg names,
+  and retention digits are all parsed as plain ID/INT and validated in the
+  bridge, never spelled as keywords.
+- [x] 1.2 AST mapping: decls/facts/rules/neg/cmp/aggs -> ast.ts constructors.
+  DONE 2026-07-24 (src/0_ast_bridge.ts, 608 lines, single export bridge()).
 - [x] 1.3 positive `_`: additive change in `v6/sprefa-store/js/src/lower/ast.ts`
   (`Arg = Var | Lit | Wild`) + equi-join/projection plumbing in lower.ts
   ("don't project, don't consistency-check") + tests. The ONE store-side edit.
@@ -256,11 +261,18 @@ re-POST of a program = full re-bridge + runtime swap (M3).
   comment-only changes (tryBind was already structural over {args}); elision
   falls out of the `col < args.length` loop bound; store 75/75, tsgo clean
   after a 3-line wild guard in labs/stress.ts (integration commit 9bc51bf2).
-- 1.4 host decls + input inference (`{name}`/`$name` scan) + probe minting.
-- 1.5 load diagnostics: unknown rel, arity mismatch, Min/Max-used, mutation-probe
-  -> LoadDiag rows (these are BRIDGE diags, not the diag rel).
+- [x] 1.4 host decls + input inference (`{name}`/`$name` scan) + probe minting.
+  DONE 2026-07-24. Literal head/probe args ride minted `__lit_<n>` single-row
+  rels (orchestrator pin; ast.ts HeadTerm has no literal form); diag head
+  defaults applied as a bridge rewrite (end_line/end_col reuse line/col, hint
+  via null-seeded __lit).
+- [x] 1.5 load diagnostics: unknown rel, arity mismatch, Min/Max-used, mutation-probe
+  -> LoadDiag rows (these are BRIDGE diags, not the diag rel). DONE 2026-07-24
+  (+ parse errors with line/col, + stratification pre-check -> non-stratifiable).
 
 **Done**: every fixture .dl in `fixtures/` bridges; store suite still green after 1.3.
+**DONE 2026-07-24**: golden/bridge.sg-rail.json green (16/16 dl tests, 75/75 store,
+tsgo clean on v11 after merge).
 **Golden (M1)**: `fixtures/sg-rail.dl` text -> snapshot of `{program, hosts,
 minted, retention}` JSON (golden/bridge.sg-rail.json). Includes one probe rule so
 the minting is pinned byte-for-byte.

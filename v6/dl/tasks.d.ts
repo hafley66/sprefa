@@ -28,7 +28,12 @@ export interface EpicLedger {
    *  (bought, not global), link: dep so node type-stripping reaches store sources.
    *  Commits 84744e7a + 7e2992ab on v11. */
   M0_scaffold: { done: true; evidence: "pnpm -C v6/dl test runs; store imports typecheck" };
-  M1_grammar_bridge: { done: false; evidence: "golden/bridge.sg-rail.json snapshot green" };
+  /** DONE 2026-07-24 (dl/m1-store 49cd2101 + dl/m1-bridge 744fca3e..5d75b464, merged
+   *  v11): 16/16 dl tests + 75/75 store tests, tsgo clean both packages. Golden pins
+   *  minted __lit_0(pattern)/__req_sg/__resp_sg/__lit_1..4 exactly per the plan's
+   *  worked expectation. Two Langium keyword-shadowing bugs found+fixed (text/int/agg
+   *  names as ID + bridge validation; retention as INT + regression test `b = 0`). */
+  M1_grammar_bridge: { done: true; evidence: "golden/bridge.sg-rail.json snapshot green" };
   M2_tick_runtime: { done: false; evidence: "add/noop/remove golden: zero-delta noop + weight retract" };
   M3_ingest_diff: { done: false; evidence: "re-POST same file = zero deltas; edit = per-file retract+insert" };
   M4_hosts: { done: false; evidence: "sg? fires once per digest; builtin-vs-sh parity rows byte-equal" };
