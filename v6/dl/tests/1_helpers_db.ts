@@ -75,9 +75,17 @@ export function fakeBridgeOk(
   program: Program,
   literalSeeds: ReadonlyMap<string, Value> = new Map(),
   retentionOverrides: Readonly<Record<string, Retention>> = {},
+  columnTypeOverrides: Readonly<Record<string, readonly ("text" | "int")[]>> = {},
 ): BridgeOk {
   const retention = new Map<string, Retention>();
-  for (const decl of program.rels) retention.set(decl.name, retentionOverrides[decl.name] ?? "all");
+  const columnTypes = new Map<string, readonly ("text" | "int")[]>();
+  for (const decl of program.rels) {
+    retention.set(decl.name, retentionOverrides[decl.name] ?? "all");
+    // M9 columnType flow: real bridge() infers these; a hand-built program has no
+    // declared types, so a caller passes overrides for any rel with numeric columns.
+    // Default all-text is safe until the storage plane reads columnTypes (M9 wiring).
+    columnTypes.set(decl.name, columnTypeOverrides[decl.name] ?? decl.columns.map(() => "text"));
+  }
   return {
     kind: "ok",
     program,
@@ -86,6 +94,7 @@ export function fakeBridgeOk(
     queries: [],
     minted: [],
     literalSeeds,
+    columnTypes,
   };
 }
 

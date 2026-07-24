@@ -86,6 +86,15 @@ export interface BridgeOk {
    *  rel name -> its one row's value; the runtime seeds rel___lit_<n> at boot. Numbering
    *  is first-appearance order, so re-bridge is stable. */
   readonly literalSeeds: ReadonlyMap<string, Value>;
+  /** OWNER ESCALATION 2026-07-24 PM (M9, columnType flow): per-rel resolved column
+   *  affinity, positional and parallel to the rel's `program.rels` column list.
+   *  `"int"` = a numeric column stored raw INTEGER; `"text"` = a text column the
+   *  storage plane stores as a `strings` dictionary id (interned) and resolves back
+   *  to text at the read view. The storage DDL (2_schema.ts) reads this to declare
+   *  affinity per column and to decide which columns intern; without it every rel_*
+   *  column is untyped (the v5 amplification disease). Resolution law + tie-breaks
+   *  live at the inference site in 0_ast_bridge.ts (buildColumnTypes). */
+  readonly columnTypes: ReadonlyMap<string, readonly ("text" | "int")[]>;
 }
 export interface BridgeErr { readonly kind: "err"; readonly diags: readonly LoadDiag[] }
 export type BridgeResult = BridgeOk | BridgeErr;
