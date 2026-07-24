@@ -53,6 +53,13 @@ const CASES: &[Case] = &[
         fixture_dir: "ts",
     },
     Case {
+        name: "lambdas",
+        path: "lambdas.ts",
+        fixture: include_bytes!("fixtures/ts/lambdas.ts"),
+        baseline: include_str!("fixtures/ts/lambdas.v5.jsonl"),
+        fixture_dir: "ts",
+    },
+    Case {
         name: "rust_sample",
         path: "sample.rs",
         fixture: include_bytes!("fixtures/rust/sample.rs"),
@@ -154,14 +161,15 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
 /// oracle. A non-empty diff is a v6 regression (port bug) or an intentional
 /// rename to codify (added to the waiver list).
 ///
-/// One documented waiver: the Rust closure df-node NAME. v5 stored `lam_sym`
-/// (the closure-to-body join key, encoding the file path + enclosing fn) as the
-/// `closure` node's `var`; v6 drops it (the join is span-containment, not a sym
-/// — same call the TS DfF port makes, which is why TS has no closure df-nodes at
-/// all). The closure node's KIND + byte offset still match exactly, so the waiver
-/// normalizes only the name field. The waiver is SELF-VERIFYING: the test
-/// asserts that every line it removes is a `df_node closure` row, so a future
-/// real regression cannot hide behind it.
+/// One documented waiver: the closure df-node NAME. v5 stored `lam_sym` (the
+/// closure-to-body join key, encoding the file path + enclosing fn) as the
+/// `closure` node's `var`; v6 drops it (the join is span-containment, not a
+/// sym). The closure node's KIND + byte offset still match exactly, so the
+/// waiver normalizes only the name field. The waiver is SELF-VERIFYING: the
+/// test asserts that every line it removes is a `df_node closure` row, so a
+/// future real regression cannot hide behind it. It applies per-LINE, so it
+/// covers every case with closure df-nodes (the rust sample, the ts lambdas
+/// case) — the first two TS fixtures simply had none.
 #[test]
 fn ported_facets_match_v5() {
     for case in CASES {
@@ -171,8 +179,8 @@ fn ported_facets_match_v5() {
             .filter(|l| PORTED.contains(&facet_of(l)))
             .map(str::to_owned)
             .collect();
-        // Apply the documented closure-name waiver (no-op for TS: zero closure
-        // df-nodes; see strip_closure_name).
+        // Apply the documented closure-name waiver (line-based, case-agnostic;
+        // see strip_closure_name).
         let v5_ported: BTreeSet<String> =
             v5_raw.iter().map(|line| strip_closure_name(line)).collect();
         let v6 = v6_ported(case.path, case.fixture);

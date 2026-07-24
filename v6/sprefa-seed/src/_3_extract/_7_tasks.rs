@@ -85,11 +85,11 @@
 //!
 //! BUILD STATUS (2026-07-24, commits 1-3c + Tier-2 PARITY GOLD (TS, incl. const facet) + the
 //! RUST + GO languages + a self-describing CLI + the commit-4a Resolve DESIGN FREEZE incl. its
-//! design-audit ADDENDUM) LANDED in v6/sprefa-extract/. The TS + Rust + Go phase-1 families - Cst / Type(+sigs) / Call / Df
-//! (+const) - all project + stream + snapshot through ONE uniform surface, AND each ported set
-//! matches a captured v5 oracle (see the (parity) / (rust) / (go) entries). NEXT: HUMAN REVIEW
-//! of the 4a Resolve<F> surface, then 4b Resolve<TypeF> for TsSource; broaden parity fixtures
-//! (lambda/docs):
+//! design-audit ADDENDUM (4a APPROVED 2026-07-24: scip-override allowed, blake3 in) + the
+//! lambda/docs parity fixtures) LANDED in v6/sprefa-extract/. The TS + Rust + Go phase-1
+//! families - Cst / Type(+sigs) / Call / Df (+const) - all project + stream + snapshot through
+//! ONE uniform surface, AND each ported set matches a captured v5 oracle (see the (parity) /
+//! (rust) / (go) entries). NEXT: 4b Resolve<TypeF> for TsSource:
 //!   6a29d920  commit 1   CstF via ast-grep (one dep = rust/ts/tsx/js/go grammars);
 //!              clap bin streaming flat JSONL with --bench; snapshot. Piping proof.
 //!   f3ceb4fa  commit 2a  Parser/Project seam -> arena-passing GAT: oxc's
@@ -324,6 +324,23 @@
 //!             contiguous `//` block (or one `/* */`) directly above a type spec /
 //!             func / method decl, via prev-sibling row adjacency. MEASUREMENT ONLY:
 //!             doc stays in the deferred set (reported, not asserted); nothing ported.
+//!   (lambdafix) LAMBDA PARITY CASE + TS LAMBDA CALL_DEFS. New fixture
+//!              tests/fixtures/ts/lambdas.ts (mined from v5 callables/ts.ts):
+//!              unbound arrow args (expr + block bodies), an unbound fn-expr
+//!              arg, nested closures (an inline arrow inside an inline arrow),
+//!              captured locals; const-bound-arrow + named-callback controls.
+//!              Oracle captured via v5_normalize (never linked). SUPERSEDES the
+//!              3a deferral "Lambda defs (df lift) -> DfF" FOR TS: CallProjector
+//!              now emits CallKind::Lambda defs (span = the arrow/fn-expr, name
+//!              = None) over exactly the df-covered scopes v5 derives the set
+//!              from (ts_push_lambda_defs; const-bound declarator inits are Free
+//!              defs, not lambdas) - mirroring rust.rs:502 / go.rs:410 (user
+//!              ruling 2026-07-24: cross-lang consistency + parity). PARITY
+//!              GREEN (5 cases): the only divergence is the closure df-node
+//!              NAME (v5's lam_sym; v6 span-containment) - the line-based,
+//!              self-verifying waiver now covers ts with NO mechanism change.
+//!              Snapshots untouched: sample.ts's arrows are exported-var inits
+//!              (not df-covered), so the port adds zero rows to existing output.
 //!   PENDING:   the name-resolved type EDGES (field/impl/variant/uses + the
 //!              resolved param/returns binding) still land at Resolve<TypeF>
 //!              (commit 4) by design. ts_const_facts_from is PORTED (see (const)).

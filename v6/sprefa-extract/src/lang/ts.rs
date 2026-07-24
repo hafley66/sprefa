@@ -358,16 +358,21 @@ fn ts_type_name(name: &ts::TSTypeName) -> Option<String> {
 // CallF: callable definitions (nodes) + call sites (aux). Commit 3a.
 //
 // Ports v5 `ts_call_defs_from` (defs) + `TsCallSites` (sites) + `TsNestedFnDefs`
-// (nested named-fn defs). v5's `mint_sym`/`line_at`/`starts` are deleted: a def
-// is span + kind + name (the name is the bare identifier for callee resolution,
-// NOT a qualified sym). The def span MATCHES the TypeF entity span (func.span /
-// method.span / declarator.span) so the two facets join on the same coordinate.
-// Lambda defs (anonymous callables from the df lift) land with DfF.
+// (nested named-fn defs) + `ts_push_lambda_defs` (lambda defs). v5's
+// `mint_sym`/`line_at`/`starts` are deleted: a def is span + kind + name (the
+// name is the bare identifier for callee resolution, NOT a qualified sym). The
+// def span MATCHES the TypeF entity span (func.span / method.span /
+// declarator.span) so the two facets join on the same coordinate. Lambda defs
+// (anonymous callables) are kind=Lambda name=None over the df-covered scopes —
+// the exact set v5 derives from the df closure nodes; the DfF `closure` node
+// stays (it marks the closure VALUE). (3a deferred these to DfF; the TS port
+// now emits them like the rust/go ports do — cross-lang consistency + oracle
+// parity, user ruling 2026-07-24.)
 // ════════════════════════════════════════════════════════════════════════════
 
-/// The CallF projector: emits one def node per callable (Free / Method) and one
-/// site per call expression. Sites are unresolved in phase 1 (the callee as
-/// written); `Resolve<CallF>` binds them at commit 4.
+/// The CallF projector: emits one def node per callable (Free / Method /
+/// Lambda) and one site per call expression. Sites are unresolved in phase 1
+/// (the callee as written); `Resolve<CallF>` binds them at commit 4.
 pub struct CallProjector;
 
 impl Project<CallF> for CallProjector {
@@ -390,6 +395,18 @@ impl Project<CallF> for CallProjector {
                 callee: strings.intern(&site.callee),
                 callee_path: None,
             });
+        }
+        // Lambda defs: one per inline arrow / fn-expr the DfF lift reaches
+        // (v5 derives this exact set from the df closure nodes —
+        // `ts_push_lambda_defs`). name=None (v5's empty name); span = the
+        // arrow/fn-expr's own span (body-covering, like rust's `def_span`) so
+        // a site inside the body binds to this lambda by containment.
+        let mut lambdas = LambdaDefs { out: Vec::new() };
+        for stmt in &program.body {
+            lambda_entry_stmt(&mut lambdas, stmt);
+        }
+        for span in lambdas.out {
+            sink.nodes.push(Node::new(to_span(span), CallKind::Lambda));
         }
     }
 }
@@ -472,6 +489,111 @@ fn var_call_defs(var: &ts::VariableDeclaration, strings: &mut Strings, sink: &mu
             continue;
         }
         push_def(sink, strings, declarator.span, name.name.to_string(), CallKind::Free);
+    }
+}
+
+/// Lambda defs (anonymous callables): one per inline arrow / function
+/// expression the DfF lift reaches. v5 derives this set from the df `closure`
+/// nodes (`ts_push_lambda_defs`), so the driver restricts the walk to the same
+/// top-level scopes `ts_flow_stmt` covers: fn decl bodies (exported or not),
+/// class method bodies, and top-level non-exported var/expr/return statements.
+/// Exported var inits, class field inits, and export-default declarations are
+/// NOT df-covered (v5 mints no closure nodes there) and mint no lambda defs.
+/// Port of v5's emission SET, not its sym machinery (v6 needs no lam_sym).
+fn lambda_entry_stmt(walker: &mut LambdaDefs, stmt: &ts::Statement) {
+    use ts::Statement as S;
+    match stmt {
+        S::FunctionDeclaration(func) => {
+            if let Some(body) = func.body.as_deref() {
+                walker.visit_function_body(body);
+            }
+        }
+        S::ExportNamedDeclaration(export) => {
+            if let Some(decl) = &export.declaration {
+                lambda_entry_decl(walker, decl);
+            }
+        }
+        S::ClassDeclaration(class) => lambda_entry_class(walker, class),
+        S::VariableDeclaration(_) | S::ExpressionStatement(_) | S::ReturnStatement(_) => {
+            walker.visit_statement(stmt);
+        }
+        _ => {}
+    }
+}
+
+fn lambda_entry_decl(walker: &mut LambdaDefs, decl: &ts::Declaration) {
+    match decl {
+        ts::Declaration::FunctionDeclaration(func) => {
+            if let Some(body) = func.body.as_deref() {
+                walker.visit_function_body(body);
+            }
+        }
+        ts::Declaration::ClassDeclaration(class) => lambda_entry_class(walker, class),
+        _ => {}
+    }
+}
+
+/// Mirrors `df_flow_class`: each method body (ctor/instance/static/get/set) is
+/// a covered scope; field initializers are not.
+fn lambda_entry_class(walker: &mut LambdaDefs, class: &ts::Class) {
+    for element in &class.body.body {
+        let ts::ClassElement::MethodDefinition(method) = element else { continue };
+        let Some(body) = method.value.body.as_deref() else { continue };
+        walker.visit_function_body(body);
+    }
+}
+
+/// Collects a Lambda def span per inline arrow / fn-expr. Every arrow / fn-expr
+/// in a covered scope mints a def EXCEPT the direct init of an identifier-bound
+/// declarator — a named callable (a Free def via `var_call_defs`; the df lift
+/// keys it by the binding name and mints no closure node) — whose BODY is still
+/// walked for nested inline lambdas. Param/destructuring defaults are not
+/// df-covered in v5 (the lift seeds patterns only) and are skipped. (Accepted
+/// gap, same class as the rust port's visitor discipline: statement kinds the
+/// DfF walker does not recurse into — try/switch/throw — ARE walked here, so
+/// an inline lambda nested only under those mints a def v5 lacks.)
+struct LambdaDefs {
+    out: Vec<oxc_span::Span>,
+}
+
+impl<'a> OxcVisit<'a> for LambdaDefs {
+    fn visit_arrow_function_expression(&mut self, arrow: &ts::ArrowFunctionExpression<'a>) {
+        self.out.push(arrow.span);
+        oxc_ast_visit::walk::walk_arrow_function_expression(self, arrow);
+    }
+    fn visit_function(&mut self, func: &ts::Function<'a>, flags: oxc_syntax::scope::ScopeFlags) {
+        // A function EXPRESSION is an anonymous callable -> a Lambda def
+        // (bodiless ones lift no body and mint no closure node in v5). Fn
+        // declarations (CallWalker's nested Free defs) and method values
+        // (Method defs) are not lambdas.
+        if func.r#type == ts::FunctionType::FunctionExpression && func.body.is_some() {
+            self.out.push(func.span);
+        }
+        oxc_ast_visit::walk::walk_function(self, func, flags);
+    }
+    fn visit_variable_declarator(&mut self, declarator: &ts::VariableDeclarator<'a>) {
+        // `const f = (...) => ...` / `const f = function () {}`: the bound
+        // value is a named callable, not a lambda — skip its def, walk its
+        // body for nested inline lambdas.
+        if matches!(&declarator.id, ts::BindingPattern::BindingIdentifier(_)) {
+            match &declarator.init {
+                Some(ts::Expression::ArrowFunctionExpression(arrow)) => {
+                    self.visit_function_body(&arrow.body);
+                    return;
+                }
+                Some(ts::Expression::FunctionExpression(func)) => {
+                    if let Some(body) = func.body.as_deref() {
+                        self.visit_function_body(body);
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+        oxc_ast_visit::walk::walk_variable_declarator(self, declarator);
+    }
+    fn visit_assignment_pattern(&mut self, _pattern: &ts::AssignmentPattern<'a>) {
+        // Param/destructuring defaults hold no df-covered values in v5.
     }
 }
 
