@@ -5,10 +5,12 @@
 //! ast-grep grammar falls to `AstgrepSource` (cst-only).
 
 pub mod astgrep;
+pub mod go;
 pub mod rust;
 pub mod ts;
 
 pub use astgrep::{AstGrepParser, AstgrepSource, CstProjector, SgRoot};
+pub use go::GoSource;
 pub use rust::RustSource;
 pub use ts::{CallProjector, DfProjector, OxcParser, TsSource, TypeProjector};
 
@@ -16,9 +18,10 @@ use crate::source::Source;
 
 /// The first-match roster. Order matters: the lang-specific `Source`s precede the
 /// ast-grep CST fallback (v5 `type_langs()` convention). RustSource is first so a
-/// `.rs` routes to it, not the cst-only AstgrepSource.
+/// `.rs` routes to it, not the cst-only AstgrepSource; GoSource precedes
+/// AstgrepSource so a `.go` routes to it, not the cst-only fallback.
 pub fn sources() -> &'static [&'static dyn Source] {
-    &[&RustSource, &TsSource, &AstgrepSource]
+    &[&RustSource, &GoSource, &TsSource, &AstgrepSource]
 }
 
 /// The first `Source` whose `matches(path)` is true, else None.

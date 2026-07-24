@@ -36,6 +36,14 @@ oxc_syntax = "0.135"
 # in lang/rust.rs.
 syn = { version = "2", features = ["full", "visit", "parsing", "extra-traits"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
+# tree-sitter is the Go AST front-end v5 carried (src/graph/typegraph/go.rs).
+# These versions match what ast-grep-language already transitively pulls
+# (tree-sitter 0.25.10 + tree-sitter-go 0.23.4), so cargo UNIFIES them: one copy
+# each, no dupes. tree-sitter-go 0.23 exports `LANGUAGE: LanguageFn`, which
+# tree-sitter 0.25's `Language::new` wraps (v5's exact `go_parse` shape). Byte
+# spans come straight off the nodes (`start_byte`/`end_byte`); no line/col bridge.
+tree-sitter = "0.25"
+tree-sitter-go = "0.23"
 # serde on the FLAT wire envelope only (never on the generic Node<F>). The store
 # seam + the parity-golden normalize + the stdout JSONL all read this one shape.
 serde = { version = "1", features = ["derive"] }
