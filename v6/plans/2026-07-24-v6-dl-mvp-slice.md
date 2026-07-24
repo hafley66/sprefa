@@ -97,7 +97,13 @@ per-epic task lists below stay the detail record.
    2. ~~3.2 F2 pin~~ ✓ record->spine rel rows + computed span_line per distinct node/site offset + file row
    3. ~~3.3 per-file diff + delete-file~~ ✓ ONE rt.commit; ENOENT = full retract, zero extract calls; INTEGRATION FIND: runtime `(cols) IN (VALUES...)` never matches NULL columns (SQL 3VL) -> sqlAnyRowMatch `col IS val` fix in 3_runtime.ts, regression pair kept
    4. 3.4 wire POST /edb/file_changed — rides M6 (handler exists, routing pending)
-5. **M4 · hosts — IN FLIGHT** (worktree dl-m4-hosts): shHost, builtinSg (byteOffset mapping verified), builtinExtract, HostRunner digest cache, fire-once golden, builtin-vs-sh parity
+5. **M4 · hosts — DONE** (36/36 after merge; golden hosts.sg-timeline.json; merged from dl/m4-hosts 5ebb60c0)
+   1. ~~4.1 shHost template fill~~ ✓ {col} splices raw, $col -> env; parser handles OUTPUT-only cols, request cols merged verbatim
+   2. ~~4.2 HostRunner demand subscription + digest cache~~ ✓ fire-once proven (second identical commit: one cache row, __resp unchanged); error -> cache 'error', stream lives
+   3. ~~4.3 builtinSg~~ ✓ range.byteOffset {147,167} mapping verified on the corpus fixture
+   4. ~~4.4 builtinExtract exposure~~ ✓ 79 records for bad.ts as (path, record_json) rows
+   5. ~~4.5 parity golden~~ ✓ byte-equal: builtinSg vs sh decl with jq reshaping in the template (sg-specific shape lives in the shell line, not the executor)
+   6. M7 note: digest fold duplicated in 1_hosts.ts (numbering law vs 2_schema import) — consolidate at M7
 6. **M5 · diag + LSP — HALF DONE** (4 of 5 tasks; 25/25 dl tests on v11)
    1. ~~5.1 diagDecl + head defaults~~ ✓ defaults in bridge (M1.4); canonical builtinDecls in 5_diag.ts (86b9101c)
    2. ~~5.2 diag_v5 view~~ ✓ DIAG_V5_VIEW_SQL -> boot extraDdl; NULL-severity COALESCE proven

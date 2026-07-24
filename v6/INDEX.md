@@ -94,10 +94,11 @@
 | [plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md](plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md) | 256 | v6 rxjs lowering + the TS cascade port (engineering plan) |
 | [plans/2026-07-23-v6-transports-as-rels.md](plans/2026-07-23-v6-transports-as-rels.md) | 123 | Transports as rels — http/ws/LSP/shell with zero effect syntax (F4/F10 working note, 2026-07-23) |
 | [plans/2026-07-24-fork-pipeline-syntax-findings.md](plans/2026-07-24-fork-pipeline-syntax-findings.md) | 80 | Fork findings: pipeline syntax + surface rulings (2026-07-24, session forked-for-sql-pipeline-syntax) |
-| [plans/2026-07-24-v6-dl-mvp-slice.md](plans/2026-07-24-v6-dl-mvp-slice.md) | 612 | v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24) |
+| [plans/2026-07-24-v6-dl-mvp-slice.md](plans/2026-07-24-v6-dl-mvp-slice.md) | 618 | v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
+| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 51 | Z-set / IVM head-to-head — feasibility lab |
 | [sprefa-store/js/node_modules/.pnpm/@libsql+client@0.17.4/node_modules/@libsql/client/README.md](sprefa-store/js/node_modules/.pnpm/@libsql+client@0.17.4/node_modules/@libsql/client/README.md) | 128 |  |
 | [sprefa-store/js/node_modules/.pnpm/@libsql+darwin-arm64@0.5.29/node_modules/@libsql/darwin-arm64/README.md](sprefa-store/js/node_modules/.pnpm/@libsql+darwin-arm64@0.5.29/node_modules/@libsql/darwin-arm64/README.md) | 3 | `@libsql/darwin-arm64` |
 | [sprefa-store/js/node_modules/.pnpm/@libsql+hrana-client@0.10.0/node_modules/@libsql/hrana-client/README.md](sprefa-store/js/node_modules/.pnpm/@libsql+hrana-client@0.10.0/node_modules/@libsql/hrana-client/README.md) | 59 | Hrana client for TypeScript |
@@ -1567,17 +1568,17 @@
 67:# 8. the editor, meanwhile: dl --lsp --diag-db ~/.local/state/dl/mvp.sqlite
 68:#    published the squiggle at step 4 and cleared it at step 6.
 74:## Status ledger
-111:## Recon facts (observed, not guessed)
-157:## Boundary
-176:## Epics
-178:### M0 · package scaffold `v6/dl/`
-228:### M1 · grammar (Langium) -> ast.ts bridge
-317:### M2 · schema + tick runtime
-401:### M3 · ingest: extract -> spine -> EDB
-449:### M4 · host rels: sh executor + builtin sg + extract
-502:### M5 · diag + v5 LSP front
-568:### M6 · http front
-599:## Frontier (deferred, with the evidence that will resolve each)
+117:## Recon facts (observed, not guessed)
+163:## Boundary
+182:## Epics
+184:### M0 · package scaffold `v6/dl/`
+234:### M1 · grammar (Langium) -> ast.ts bridge
+323:### M2 · schema + tick runtime
+407:### M3 · ingest: extract -> spine -> EDB
+455:### M4 · host rels: sh executor + builtin sg + extract
+508:### M5 · diag + v5 LSP front
+574:### M6 · http front
+605:## Frontier (deferred, with the evidence that will resolve each)
 ```
 
 ### skills/mermaid-living-map.md
@@ -1614,6 +1615,14 @@
 126:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
 139:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
 152:## Breakpoint ramp — tight gun 700 MB
+```
+
+### sprefa-store/bench/out/REPORT.md
+```
+1:# Z-set / IVM head-to-head — feasibility lab
+15:## Charts
+22:## Data
+47:## Takeaways (derived)
 ```
 
 ### sprefa-store/js/node_modules/.pnpm/@libsql+client@0.17.4/node_modules/@libsql/client/README.md

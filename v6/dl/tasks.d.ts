@@ -47,7 +47,12 @@ export interface EpicLedger {
    *  pre-check + DELETE used `(cols) IN (VALUES...)` which never matches NULL columns;
    *  replaced with sqlAnyRowMatch (`col IS val` OR-groups) in 3_runtime.ts. */
   M3_ingest_diff: { done: true; evidence: "re-POST same file = zero deltas; edit = per-file retract+insert" };
-  M4_hosts: { done: false; evidence: "sg? fires once per digest; builtin-vs-sh parity rows byte-equal" };
+  /** DONE 2026-07-24 (dl/m4-hosts 5ebb60c0, merged v11; 36/36 total, tsgo clean).
+   *  Fire-once proven via effect_cache dump; parity byte-equal with the sh decl
+   *  reshaping ast-grep's nested JSON via jq in the template (executor stays generic).
+   *  M7 note: 1_hosts.ts duplicates the 53-bit digest fold (numbering law blocks
+   *  importing 2_schema); consolidate into the 0-level types/util module at M7. */
+  M4_hosts: { done: true; evidence: "sg? fires once per digest; builtin-vs-sh parity rows byte-equal" };
   /** 5.3 DONE 2026-07-24 (dl/m5-lsp f4fdddbe, merged): --diag-db mode in src/lsp.rs,
    *  persistent-connection data_version poll (per-connection pragma law), retraction =
    *  empty publish; scripts/lsp_capture.mjs harness. 5.1/5.2/5.4/5.5 open. */
