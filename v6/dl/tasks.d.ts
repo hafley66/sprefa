@@ -24,7 +24,10 @@ import type { FactLine } from "sprefa-store-engine/src/engine/ingest.ts";
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface EpicLedger {
-  M0_scaffold: { done: false; evidence: "pnpm -C v6/dl test runs; store imports typecheck" };
+  /** DONE 2026-07-24: pnpm test 2/2, tsgo clean, sg 0.39.9 via @ast-grep/cli devDep
+   *  (bought, not global), link: dep so node type-stripping reaches store sources.
+   *  Commits 84744e7a + 7e2992ab on v11. */
+  M0_scaffold: { done: true; evidence: "pnpm -C v6/dl test runs; store imports typecheck" };
   M1_grammar_bridge: { done: false; evidence: "golden/bridge.sg-rail.json snapshot green" };
   M2_tick_runtime: { done: false; evidence: "add/noop/remove golden: zero-delta noop + weight retract" };
   M3_ingest_diff: { done: false; evidence: "re-POST same file = zero deltas; edit = per-file retract+insert" };

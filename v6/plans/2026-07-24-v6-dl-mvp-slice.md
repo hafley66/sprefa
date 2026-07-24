@@ -171,12 +171,21 @@ v6/dl/
 ```
 
 **Tasks**
-- 0.1 package.json + tsconfig (mirror store's), pnpm install resolves.
-- 0.2 empty src files with header contracts; `pnpm test` green on zero tests.
-- 0.3 extract binary path: env `DL_EXTRACT_BIN`, default the worktree debug path
-  (recorded in tasks.d.ts).
+- [x] 0.1 package.json + tsconfig (mirror store's), pnpm install resolves. DONE
+  2026-07-24: dep is `link:` (not `file:`) — pnpm copies file: deps into
+  node_modules where node refuses type-stripping; `@types/node` added for the
+  same reason. sg bin bought as `@ast-grep/cli` devDep (0.39.9), allowBuilds in
+  pnpm-workspace.yaml.
+- [x] 0.2 empty src files with header contracts; `pnpm test` green (2/2 scaffold
+  tests). DONE 2026-07-24.
+- [x] 0.3 extract binary path: env `DL_EXTRACT_BIN`, default the worktree debug path
+  (recorded in tasks.d.ts). DONE 2026-07-24.
 
 **Done**: `pnpm -C v6/dl test` runs; imports from sprefa-store-engine typecheck.
+**DONE 2026-07-24** (commits 84744e7a, 7e2992ab). Receipts banked for later epics:
+sg over corpus/bad.ts reports byteOffset 147-167 line 3 col 2; extract emits a cst
+call_expression node with span exactly {147,167}, 79 records total — the span_line
+join lines up byte-for-byte.
 **Golden**: none (scaffold); M1's golden is the first real gate.
 
 ### M1 · grammar (Langium) -> ast.ts bridge
