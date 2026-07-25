@@ -26,7 +26,9 @@
  * owns `open_db` (the one sqlite constructor).
  */
 
-import type { Client } from "@libsql/client";
+import type { Observable } from "rxjs";
+
+import type { Client, InStatement, ResultSet } from "@libsql/client";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Connection.
@@ -34,6 +36,34 @@ import type { Client } from "@libsql/client";
 
 /** The SQLite connection type (an @libsql/client `Client`, `intMode:"bigint"`). */
 export type SqliteDb = Client;
+
+/** A statement as `db.execute` accepts it: bare SQL, or SQL plus bound args. */
+export type SqlStatement = InStatement;
+
+/** What `db.execute` resolves to. */
+export type QueryResult = ResultSet;
+
+/** Called with each statement's SQL just before it runs. */
+export type TraceStatement = (sql: string) => void;
+
+/**
+ * The one seam where a Promise enters the system. `db.execute` is the only real
+ * asynchrony in the engine; everything above it is observables. Each method counts
+ * the statement against `stmt_counter` and offers the same optional trace hook, so a
+ * caller cannot run a statement that escapes the count or the trace.
+ */
+export interface ISqlRunner {
+  execute(db: SqliteDb, statement: SqlStatement, trace?: TraceStatement): Observable<QueryResult>;
+  run(db: SqliteDb, statement: SqlStatement, trace?: TraceStatement): Observable<void>;
+  /** First column of the first row, 0 when there is no row. */
+  scalar(db: SqliteDb, statement: SqlStatement, trace?: TraceStatement): Observable<number>;
+  /**
+   * BEGIN IMMEDIATE / COMMIT / ROLLBACK as an observable bracket. Single statements on
+   * the one pinned connection: `executeMultiple` carries its own rollback guard and
+   * would kill the open transaction.
+   */
+  inTransaction<Value>(db: SqliteDb, body: () => Observable<Value>): Observable<Value>;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Row shapes (spine entities). Plain data, passed to the batched Store writers.

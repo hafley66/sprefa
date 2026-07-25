@@ -10,6 +10,9 @@
  */
 
 export type * from "./engine/types.ts";
+export * from "./engine/counter.ts";
+export * from "./engine/sqlRunner.ts";
+export * from "./engine/sequence.ts";
 export * from "./engine/engine.ts";
 export * from "./engine/lib.ts";
 export * from "./engine/spine.ts";

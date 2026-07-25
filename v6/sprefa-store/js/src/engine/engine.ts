@@ -81,22 +81,8 @@ import process from "node:process";
 /** The connection type every helper takes. */
 export type Db = SqliteDb;
 
-/**
- * Global, resettable count of SQL statements issued. The N+1 tripwire (a golden test
- * resets it, runs a batch, asserts the count is O(N/CHUNK), never O(N)). Process-global.
- */
-export namespace stmt_counter {
-  let count = 0;
-  export function incr(): void {
-    count++;
-  }
-  export function get(): number {
-    return count;
-  }
-  export function reset(): void {
-    count = 0;
-  }
-}
+import { stmt_counter } from "./counter.ts";
+export { stmt_counter };
 
 // =============================================================================
 // cascade — mutating Z-set over cx_row (prune = weight ≠ 0)

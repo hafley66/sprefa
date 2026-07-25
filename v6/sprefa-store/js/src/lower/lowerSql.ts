@@ -4,26 +4,16 @@
  *  interned-INTEGER tables and plain text tables alike. Nothing here is async: the only
  *  promise is `db.execute`, wrapped once at the bottom in `makeExec`. */
 
-import { EMPTY, Observable, concat, count, defer, from, last, map, of, reduce, throwError, concatMap, expand } from "rxjs";
+import { EMPTY, Observable, defer, from, last, map, of, reduce, throwError, concatMap, expand } from "rxjs";
 
 import type { AggFn, Compare, Program, RelDecl, Rule } from "./ast.ts";
 import { buildRuleGraph, scc, stratify } from "./rulegraph.ts";
 import type { EvalProgram, RelTable, RelTables, SupportEdges, SupportReport } from "./types.ts";
-import type { AssertTrue, SqliteDb } from "../engine/types.ts";
-import { stmt_counter } from "../engine/engine.ts";
+import type { AssertTrue, QueryResult, SqliteDb, TraceStatement } from "../engine/types.ts";
+import { SqlRunner } from "../engine/sqlRunner.ts";
+import { forEachInSequence, inSequence } from "../engine/sequence.ts";
 
-type Exec = (sql: string) => Observable<void>;
-type CountRows = (table: string) => Observable<number>;
-
-/** Run every step in order, emit once when the last one completes. */
-function inOrder(steps: readonly Observable<unknown>[]): Observable<void> {
-  return steps.length === 0 ? of(undefined) : concat(...steps).pipe(count(), map(() => undefined));
-}
-
-/** Map each item to a step, run them in order, emit once at the end. */
-function forEachInOrder<Item>(items: readonly Item[], step: (item: Item) => Observable<unknown>): Observable<void> {
-  return from(items).pipe(concatMap(step), count(), map(() => undefined));
-}
+type Exec = (sql: string) => Observable<QueryResult>;
 
 /** A rel with an aggregate head inside a recursive SCC: non-monotone, not stratifiable. */
 export class AggregateInRecursionError extends Error {
@@ -44,7 +34,6 @@ export function evalProgramSql(
 ): Observable<SupportReport> {
   return defer(() => {
     const sqlExecutor = makeExec(db, traceStatement);
-    const countRows = makeCountRows(db);
     const graph = buildRuleGraph(prog);
     const strata = stratify(graph, scc(graph));
 
@@ -60,12 +49,12 @@ export function evalProgramSql(
       .filter((decl) => decl.origin !== "EDB" && rulesByHead.has(decl.name))
       .map((decl) => `DELETE FROM ${tableOf(tables, decl.name).table}`);
 
-    return forEachInOrder(clearStatements, sqlExecutor).pipe(
+    return forEachInSequence(clearStatements, sqlExecutor).pipe(
       concatMap(() =>
-        forEachInOrder(strata, (stratum) =>
+        forEachInSequence(strata, (stratum) =>
           stratum.recursive
-            ? evalRecursiveStratum(sqlExecutor, countRows, stratum.rels, new Set(stratum.rels), rulesByHead, tables)
-            : forEachInOrder(stratum.rels, (relName) =>
+            ? evalRecursiveStratum(sqlExecutor, stratum.rels, new Set(stratum.rels), rulesByHead, tables)
+            : forEachInSequence(stratum.rels, (relName) =>
                 evalAcyclicRel(sqlExecutor, relName, rulesByHead.get(relName) ?? [], tables),
               ),
         ),
@@ -77,25 +66,24 @@ export function evalProgramSql(
   });
 }
 
-function evalAcyclicRel(sqlExecutor: Exec, relName: string, rules: readonly Rule[], tables: RelTables): Observable<void> {
+function evalAcyclicRel(sqlExecutor: Exec, relName: string, rules: readonly Rule[], tables: RelTables): Observable<unknown> {
   const head = tableOf(tables, relName);
   const statements = rules
     .map((rule) => compileRuleSelect(rule, tables, new Map()))
     .filter((select): select is string => select !== null)
     .map((select) => `INSERT OR IGNORE INTO ${head.table}(${head.columns.join(", ")}) ${select}`);
-  return forEachInOrder(statements, sqlExecutor);
+  return forEachInSequence(statements, sqlExecutor);
 }
 
 /** Semi-naive fixpoint. `expand` IS the loop: each round emits whether anything grew,
  *  and feeds another round back in until nothing does. */
 function evalRecursiveStratum(
   sqlExecutor: Exec,
-  countRows: CountRows,
   memberRels: readonly string[],
   members: ReadonlySet<string>,
   rulesByHead: ReadonlyMap<string, Rule[]>,
   tables: RelTables,
-): Observable<void> {
+): Observable<unknown> {
   return defer(() => {
     const stratumRules = memberRels.flatMap((relName) => rulesByHead.get(relName) ?? []);
     if (stratumRules.some((rule) => rule.headTerms.some((term) => term.kind === "hagg"))) {
@@ -110,26 +98,26 @@ function evalRecursiveStratum(
 
     // Seed: every rule over the full tables. Recursive members are still empty, so only
     // the exit rules produce rows, and those become the first delta.
-    const seed = forEachInOrder(memberRels, (relName) =>
+    const seed = forEachInSequence(memberRels, (relName) =>
       createLike(sqlExecutor, deltaTableOf.get(relName)!, tableOf(tables, relName)),
     ).pipe(
       concatMap(() =>
-        forEachInOrder(stratumRules, (rule) =>
+        forEachInSequence(stratumRules, (rule) =>
           insertNewRows(sqlExecutor, rule, tables, new Map(), deltaTableOf.get(rule.head)!),
         ),
       ),
       concatMap(() =>
-        forEachInOrder(memberRels, (relName) =>
-          mergeDeltaIntoFull(sqlExecutor, countRows, relName, tables, deltaTableOf.get(relName)!),
+        forEachInSequence(memberRels, (relName) =>
+          mergeDeltaIntoFull(sqlExecutor, relName, tables, deltaTableOf.get(relName)!),
         ),
       ),
     );
 
     const round = (): Observable<boolean> =>
-      forEachInOrder(memberRels, (relName) => createLike(sqlExecutor, nextTableOf.get(relName)!, tableOf(tables, relName))).pipe(
+      forEachInSequence(memberRels, (relName) => createLike(sqlExecutor, nextTableOf.get(relName)!, tableOf(tables, relName))).pipe(
         concatMap(() =>
-          forEachInOrder(stratumRules, (rule) =>
-            forEachInOrder(recursivePositions(rule), (bodyIndex) => {
+          forEachInSequence(stratumRules, (rule) =>
+            forEachInSequence(recursivePositions(rule), (bodyIndex) => {
               const pred = rule.body[bodyIndex];
               if (pred?.kind !== "rel") return EMPTY;
               const override = new Map<number, string>([[bodyIndex, deltaTableOf.get(pred.rel)!]]);
@@ -140,9 +128,9 @@ function evalRecursiveStratum(
         concatMap(() =>
           from(memberRels).pipe(
             concatMap((relName) =>
-              mergeDeltaIntoFull(sqlExecutor, countRows, relName, tables, nextTableOf.get(relName)!).pipe(
+              mergeDeltaIntoFull(sqlExecutor, relName, tables, nextTableOf.get(relName)!).pipe(
                 concatMap((rowsAdded) =>
-                  inOrder([
+                  inSequence([
                     sqlExecutor(`DROP TABLE IF EXISTS ${deltaTableOf.get(relName)!}`),
                     sqlExecutor(`ALTER TABLE ${nextTableOf.get(relName)!} RENAME TO ${deltaTableOf.get(relName)!}`),
                   ]).pipe(map(() => rowsAdded > 0)),
@@ -158,7 +146,7 @@ function evalRecursiveStratum(
       concatMap(() => round()),
       expand((grew) => (grew ? round() : EMPTY)),
       last(),
-      concatMap(() => forEachInOrder(memberRels, (relName) => sqlExecutor(`DROP TABLE IF EXISTS ${deltaTableOf.get(relName)!}`))),
+      concatMap(() => forEachInSequence(memberRels, (relName) => sqlExecutor(`DROP TABLE IF EXISTS ${deltaTableOf.get(relName)!}`))),
     );
   });
 }
@@ -170,7 +158,7 @@ function insertNewRows(
   tables: RelTables,
   bodyPositionOverrides: ReadonlyMap<number, string>,
   intoDelta: string,
-): Observable<void> {
+): Observable<unknown> {
   const head = tableOf(tables, rule.head);
   const select = compileRuleSelect(rule, tables, bodyPositionOverrides);
   if (select === null) return of(undefined);
@@ -182,26 +170,20 @@ function insertNewRows(
 
 function mergeDeltaIntoFull(
   sqlExecutor: Exec,
-  countRows: CountRows,
   relName: string,
   tables: RelTables,
   delta: string,
 ): Observable<number> {
   const full = tableOf(tables, relName);
   const columns = full.columns.join(", ");
-  return countRows(full.table).pipe(
-    concatMap((before) =>
-      sqlExecutor(`INSERT OR IGNORE INTO ${full.table}(${columns}) SELECT ${columns} FROM ${delta}`).pipe(
-        concatMap(() => countRows(full.table)),
-        map((after) => after - before),
-      ),
-    ),
+  return sqlExecutor(`INSERT OR IGNORE INTO ${full.table}(${columns}) SELECT ${columns} FROM ${delta}`).pipe(
+    map((queryResult) => Number(queryResult.rowsAffected)),
   );
 }
 
-function createLike(sqlExecutor: Exec, name: string, like: RelTable): Observable<void> {
+function createLike(sqlExecutor: Exec, name: string, like: RelTable): Observable<unknown> {
   const columns = like.columns.join(", ");
-  return inOrder([
+  return inSequence([
     sqlExecutor(`DROP TABLE IF EXISTS ${name}`),
     sqlExecutor(`CREATE TEMP TABLE ${name}(${columns}, PRIMARY KEY (${columns})) WITHOUT ROWID`),
   ]);
@@ -273,7 +255,7 @@ function emitSupportEdges(
       }
     }
 
-    return forEachInOrder(statements, sqlExecutor).pipe(map(() => ({ rulesWithoutSupport })));
+    return forEachInSequence(statements, sqlExecutor).pipe(map(() => ({ rulesWithoutSupport })));
   });
 }
 
@@ -439,21 +421,9 @@ function tableOf(tables: RelTables, relName: string): RelTable {
 /** The one async seam in this file. `defer` keeps it cold; `traceStatement` sees exactly
  *  what runs. Single statements only: `executeMultiple` trips the adapter's rollback
  *  guard, which would kill the caller's open transaction. */
-function makeExec(db: SqliteDb, traceStatement?: (sql: string) => void): Exec {
-  return (sql) =>
-    defer(() => {
-      stmt_counter.incr();
-      traceStatement?.(sql);
-      return from(db.execute(sql));
-    }).pipe(map(() => undefined));
+function makeExec(db: SqliteDb, traceStatement?: TraceStatement): Exec {
+  return (sql) => SqlRunner.execute(db, sql, traceStatement);
 }
 
-function makeCountRows(db: SqliteDb): CountRows {
-  return (table) =>
-    defer(() => {
-      stmt_counter.incr();
-      return from(db.execute(`SELECT count(*) FROM ${table}`));
-    }).pipe(map((queryResult) => Number(queryResult.rows[0]?.[0] ?? 0)));
-}
 
 export type EvalProgramHolds = AssertTrue<typeof evalProgramSql extends EvalProgram ? true : false>;
