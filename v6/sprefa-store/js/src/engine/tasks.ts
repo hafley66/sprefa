@@ -13,50 +13,53 @@
  * Same machine, different carried value. The WHEN = salsa/control; the WHAT-after = dd/fact.
  */
 
+import { type Observable, map, of } from "rxjs";
+
 import { SqliteReach } from "./algo.ts";
 import { cascade, reach, reconcile } from "./engine.ts";
+import { SqlRunner } from "./sqlRunner.ts";
 import type { IGraphNs, IRelStore } from "./types.ts";
 
 // =============================================================================
 // Trait A · Reach — read-only graph queries over cx_dep (prune = reached)
 // =============================================================================
 export interface Reach {
-  reaches_from(start: number): Promise<number[]>;
-  reached_by(target: number): Promise<number[]>;
+  reaches_from(start: number): Observable<number[]>;
+  reached_by(target: number): Observable<number[]>;
   multi_source_walk(
     starts: ReadonlyArray<readonly [number, number, number]>,
     halt: ReadonlyArray<number> | null,
     depth_cap: number | null,
-  ): Promise<[number, number, number][]>;
+  ): Observable<[number, number, number][]>;
   multi_source_halt_bfs(
     starts: ReadonlyArray<readonly [number, number]>,
     halt: ReadonlyArray<number>,
-  ): Promise<[number, number][]>;
-  scc_labels(): Promise<[number, number][]>;
-  build_condensed(): Promise<reach.Condensed>;
-  count_pairs(): Promise<bigint>;
+  ): Observable<[number, number][]>;
+  scc_labels(): Observable<[number, number][]>;
+  build_condensed(): Observable<reach.Condensed>;
+  count_pairs(): Observable<bigint>;
 }
 
 // =============================================================================
 // Trait B · Cascade — mutating Z-set over cx_row (prune = weight ≠ 0)
 // =============================================================================
 export interface Cascade {
-  assert(seeds: ReadonlyArray<readonly [number, number]>): Promise<number>;
-  retract(seeds: ReadonlyArray<readonly [number, number]>): Promise<number>; // acyclic only
-  retract_scc(seeds: ReadonlyArray<readonly [number, number]>): Promise<number>; // cycle-safe
-  retract_dred(seeds: ReadonlyArray<readonly [number, number]>): Promise<number>;
-  retract_dred_cte(seeds: ReadonlyArray<readonly [number, number]>): Promise<number>;
-  alive_keys(): Promise<number[]>; // the answer bytes diff'd against the oracle
+  assert(seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;
+  retract(seeds: ReadonlyArray<readonly [number, number]>): Observable<number>; // acyclic only
+  retract_scc(seeds: ReadonlyArray<readonly [number, number]>): Observable<number>; // cycle-safe
+  retract_dred(seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;
+  retract_dred_cte(seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;
+  alive_keys(): Observable<number[]>; // the answer bytes diff'd against the oracle
 }
 
 // =============================================================================
 // Trait C · Reconcile — salsa-in-SQL digest plane (prune = digest moved)
 // =============================================================================
 export interface Reconcile {
-  seed(id: number, digest: bigint, deps: ReadonlyArray<readonly [number, number]>, rev: number): Promise<void>;
-  mark_changed(ids: ReadonlyArray<number>, rev: number): Promise<void>;
-  dirty(): Promise<number[]>; // the stale FRONTIER (one-hop, early cutoff)
-  verify(id: number, new_digest: bigint, rev: number): Promise<boolean>; // moved? ⇒ cutoff
+  seed(id: number, digest: bigint, deps: ReadonlyArray<readonly [number, number]>, rev: number): Observable<void>;
+  mark_changed(ids: ReadonlyArray<number>, rev: number): Observable<void>;
+  dirty(): Observable<number[]>; // the stale FRONTIER (one-hop, early cutoff)
+  verify(id: number, new_digest: bigint, rev: number): Observable<boolean>; // moved? ⇒ cutoff
 }
 
 // =============================================================================
@@ -64,10 +67,10 @@ export interface Reconcile {
 // =============================================================================
 export interface GraphStore {
   create(node_value_cols: ReadonlyArray<string>, per_tuple: boolean): void;
-  upsert_node(key: number, values: ReadonlyArray<number>): Promise<void>;
-  upsert_edges(edges: ReadonlyArray<readonly [number, number]>): Promise<void>;
-  children(key: number): Promise<number[]>; // forward traversal (cascade hits)
-  parents(key: number): Promise<number[]>; // reverse traversal (rederive / dirty)
+  upsert_node(key: number, values: ReadonlyArray<number>): Observable<void>;
+  upsert_edges(edges: ReadonlyArray<readonly [number, number]>): Observable<void>;
+  children(key: number): Observable<number[]>; // forward traversal (cascade hits)
+  parents(key: number): Observable<number[]>; // reverse traversal (rederive / dirty)
 }
 
 // ---- proof tokens RELEASED by an unlanded task (typed, not exercised) ------
@@ -171,68 +174,68 @@ export class Tasks implements Reach, Cascade, Reconcile, GraphStore {
   }
 
   // ---- Reach ----
-  async reaches_from(start: number): Promise<number[]> {
+  reaches_from(start: number): Observable<number[]> {
     return this.reacher.reaches_from(start);
   }
-  async reached_by(target: number): Promise<number[]> {
+  reached_by(target: number): Observable<number[]> {
     return this.reacher.reached_by(target);
   }
-  async multi_source_walk(
+  multi_source_walk(
     starts: ReadonlyArray<readonly [number, number, number]>,
     halt: ReadonlyArray<number> | null,
     depth_cap: number | null,
-  ): Promise<[number, number, number][]> {
+  ): Observable<[number, number, number][]> {
     return reach.multi_source_walk(this.store.conn(), this.store.ns(), starts, halt, depth_cap);
   }
-  async multi_source_halt_bfs(
+  multi_source_halt_bfs(
     starts: ReadonlyArray<readonly [number, number]>,
     halt: ReadonlyArray<number>,
-  ): Promise<[number, number][]> {
+  ): Observable<[number, number][]> {
     return reach.multi_source_halt_bfs(this.store.conn(), this.store.ns(), starts, halt);
   }
-  async scc_labels(): Promise<[number, number][]> {
+  scc_labels(): Observable<[number, number][]> {
     return this.reacher.scc_labels();
   }
-  async build_condensed(): Promise<reach.Condensed> {
+  build_condensed(): Observable<reach.Condensed> {
     return reach.build_condensed(this.store.conn(), this.store.ns());
   }
-  async count_pairs(): Promise<bigint> {
+  count_pairs(): Observable<bigint> {
     return this.reacher.count_pairs();
   }
 
   // ---- Cascade ----
-  async assert(seeds: ReadonlyArray<readonly [number, number]>): Promise<number> {
+  assert(seeds: ReadonlyArray<readonly [number, number]>): Observable<number> {
     return this.store.assert(seeds);
   }
-  async retract(seeds: ReadonlyArray<readonly [number, number]>): Promise<number> {
+  retract(seeds: ReadonlyArray<readonly [number, number]>): Observable<number> {
     return this.store.retract(seeds);
   }
-  async retract_scc(seeds: ReadonlyArray<readonly [number, number]>): Promise<number> {
+  retract_scc(seeds: ReadonlyArray<readonly [number, number]>): Observable<number> {
     return this.store.retract_scc(seeds);
   }
-  async retract_dred(seeds: ReadonlyArray<readonly [number, number]>): Promise<number> {
+  retract_dred(seeds: ReadonlyArray<readonly [number, number]>): Observable<number> {
     return this.store.retract_dred(seeds);
   }
-  async retract_dred_cte(seeds: ReadonlyArray<readonly [number, number]>): Promise<number> {
+  retract_dred_cte(seeds: ReadonlyArray<readonly [number, number]>): Observable<number> {
     return this.store.retract_dred_cte(seeds);
   }
-  async alive_keys(): Promise<number[]> {
+  alive_keys(): Observable<number[]> {
     return this.store.alive_keys();
   }
 
   // ---- Reconcile ----
   /** Seed a rel's memo (id is a dense key; deps are (rel,row) pairs, keyed here). */
-  async seed(id: number, digest: bigint, deps: ReadonlyArray<readonly [number, number]>, rev: number): Promise<void> {
+  seed(id: number, digest: bigint, deps: ReadonlyArray<readonly [number, number]>, rev: number): Observable<void> {
     const dep_keys = deps.map(([relId, rowIndex]) => cascade.key(relId, rowIndex));
-    await reconcile.seed(this.store.conn(), this.store.ns(), id, digest, dep_keys, rev);
+    return reconcile.seed(this.store.conn(), this.store.ns(), id, digest, dep_keys, rev);
   }
-  async mark_changed(ids: ReadonlyArray<number>, rev: number): Promise<void> {
-    await reconcile.mark_changed(this.store.conn(), this.store.ns(), ids, rev);
+  mark_changed(ids: ReadonlyArray<number>, rev: number): Observable<void> {
+    return reconcile.mark_changed(this.store.conn(), this.store.ns(), ids, rev);
   }
-  async dirty(): Promise<number[]> {
+  dirty(): Observable<number[]> {
     return reconcile.dirty(this.store.conn(), this.store.ns());
   }
-  async verify(id: number, new_digest: bigint, rev: number): Promise<boolean> {
+  verify(id: number, new_digest: bigint, rev: number): Observable<boolean> {
     return reconcile.verify(this.store.conn(), this.store.ns(), id, new_digest, rev);
   }
 
@@ -241,31 +244,31 @@ export class Tasks implements Reach, Cascade, Reconcile, GraphStore {
     // The split two-plane schema is stamped by `stamp` (IRelStore.attach). A generic node
     // store is the frontier in GraphStorePlan; no-op here pending that measurement.
   }
-  async upsert_node(key: number, values: ReadonlyArray<number>): Promise<void> {
+  upsert_node(key: number, values: ReadonlyArray<number>): Observable<void> {
     const weight = values.length > 0 ? values[0]! : 1;
-    await this.store
-      .conn()
-      .executeMultiple(
-        `INSERT INTO ${this.store.ns().row}(key,weight) VALUES (${key},${weight}) ON CONFLICT(key) DO UPDATE SET weight=excluded.weight`,
-      );
+    return SqlRunner.run(
+      this.store.conn(),
+      `INSERT INTO ${this.store.ns().row}(key,weight) VALUES (${key},${weight}) ON CONFLICT(key) DO UPDATE SET weight=excluded.weight`,
+    );
   }
-  async upsert_edges(edges: ReadonlyArray<readonly [number, number]>): Promise<void> {
-    if (edges.length === 0) return;
+  upsert_edges(edges: ReadonlyArray<readonly [number, number]>): Observable<void> {
+    if (edges.length === 0) return of(undefined);
     const vals = edges.map(([parentKey, childKey]) => `(${parentKey},${childKey})`).join(",");
-    await this.store
-      .conn()
-      .executeMultiple(`INSERT OR IGNORE INTO ${this.store.ns().dep}(parent_key,child_key) VALUES ${vals}`);
+    return SqlRunner.run(
+      this.store.conn(),
+      `INSERT OR IGNORE INTO ${this.store.ns().dep}(parent_key,child_key) VALUES ${vals}`,
+    );
   }
-  async children(key: number): Promise<number[]> {
-    const queryResult = await this.store
-      .conn()
-      .execute(`SELECT child_key FROM ${this.store.ns().dep} WHERE parent_key = ${key} ORDER BY child_key`);
-    return queryResult.rows.map((row) => Number(row[0]));
+  children(key: number): Observable<number[]> {
+    return SqlRunner.execute(
+      this.store.conn(),
+      `SELECT child_key FROM ${this.store.ns().dep} WHERE parent_key = ${key} ORDER BY child_key`,
+    ).pipe(map((queryResult) => queryResult.rows.map((row) => Number(row[0]))));
   }
-  async parents(key: number): Promise<number[]> {
-    const queryResult = await this.store
-      .conn()
-      .execute(`SELECT parent_key FROM ${this.store.ns().dep} WHERE child_key = ${key} ORDER BY parent_key`);
-    return queryResult.rows.map((row) => Number(row[0]));
+  parents(key: number): Observable<number[]> {
+    return SqlRunner.execute(
+      this.store.conn(),
+      `SELECT parent_key FROM ${this.store.ns().dep} WHERE child_key = ${key} ORDER BY parent_key`,
+    ).pipe(map((queryResult) => queryResult.rows.map((row) => Number(row[0]))));
   }
 }

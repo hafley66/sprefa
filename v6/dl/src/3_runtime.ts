@@ -38,7 +38,7 @@ import {
 import { differenceWith, isEqual } from "lodash-es";
 
 import { cascade, type Db } from "sprefa-store-engine/src/engine/engine.ts";
-const { with_txn, KEY_STRIDE } = cascade;
+const { KEY_STRIDE } = cascade;
 import { rels as rel_tables } from "sprefa-store-engine/src/engine/spine.ts";
 import { RelStore, Store, open_db } from "sprefa-store-engine/src/engine/lib.ts";
 import { evalProgramSql } from "sprefa-store-engine/src/lower/lowerSql.ts";
@@ -788,7 +788,7 @@ export class DlRuntime implements IDlRuntime {
 
   static async boot(config: { dbPath: string; bridge: BridgeOk; extraDdl?: readonly string[] }): Promise<DlRuntime> {
     const db = open_db(`file:${config.dbPath}`);
-    const store = await Store.open(db);
+    const store = await firstValueFrom(Store.open(db));
 
     const relDecls = new Map<string, RelDecl>();
     for (const decl of config.bridge.program.rels) relDecls.set(decl.name, decl);
@@ -802,15 +802,17 @@ export class DlRuntime implements IDlRuntime {
     const relTags = new Map<string, number>();
     config.bridge.program.rels.forEach((decl, tag) => relTags.set(decl.name, tag));
     const tagRows = config.bridge.program.rels.map((decl, tag) => `(${tag},${store.intern(decl.name)})`);
-    await store.flush_strings();
+    await firstValueFrom(store.flush_strings());
 
     for (const decl of config.bridge.program.rels) {
-      await rel_tables.create_rel_table(
-        db,
-        `relbase_${decl.name}`,
-        relBaseColumns(decl, config.bridge.columnTypes),
-        decl.columns,
-        ROW_SURROGATE,
+      await firstValueFrom(
+        rel_tables.create_rel_table(
+          db,
+          `relbase_${decl.name}`,
+          relBaseColumns(decl, config.bridge.columnTypes),
+          decl.columns,
+          ROW_SURROGATE,
+        ),
       );
     }
 
@@ -826,7 +828,7 @@ export class DlRuntime implements IDlRuntime {
     }
 
     const seedRows = literalSeedRows(store, config.bridge.columnTypes, config.bridge.literalSeeds, relDecls);
-    await store.flush_strings();
+    await firstValueFrom(store.flush_strings());
     for (const [relName, rows] of seedRows) {
       const decl = relDecls.get(relName)!;
       await firstValueFrom(insertRows(db, relName, decl.columns, rows));
@@ -836,7 +838,7 @@ export class DlRuntime implements IDlRuntime {
     // to its interned id. Interning here may mint new dictionary strings, so flush
     // before the first evaluation reads them back.
     const storageProgram = internProgramForStorage(config.bridge.program, config.bridge.columnTypes, store);
-    await store.flush_strings();
+    await firstValueFrom(store.flush_strings());
 
     const relTables = new Map<string, RelTable>();
     for (const decl of config.bridge.program.rels) {
@@ -845,7 +847,7 @@ export class DlRuntime implements IDlRuntime {
 
     // The store's Z-set fact plane. `attach` stamps cascade's cx_* and reconcile's rx_*
     // schema under the default namespace onto the same connection dl already owns.
-    const relStore = await RelStore.attach(db);
+    const relStore = await firstValueFrom(RelStore.attach(db));
     const supportEdges: SupportEdges = {
       table: relStore.ns().dep,
       tagOf: relTags,
@@ -927,13 +929,15 @@ export class DlRuntime implements IDlRuntime {
     const encoded = rows.map((row) =>
       encodeSurfaceRowByColumns(state.store, state.columnTypes, rel, decl.columns, row),
     );
-    await state.store.flush_strings();
+    await firstValueFrom(state.store.flush_strings());
     const rowIds = await firstValueFrom(selectSurrogates(state.db, state.relDecls, rel, decl.columns, encoded));
     if (rowIds.length === 0) return { rounds: 0, dead: [] };
 
-    const before = new Set(await state.relStore.alive_keys());
-    const rounds = await state.relStore.retract_dred(rowIds.map((rowId) => [tag, rowId] as const));
-    const after = new Set(await state.relStore.alive_keys());
+    const before = new Set(await firstValueFrom(state.relStore.alive_keys()));
+    const rounds = await firstValueFrom(
+      state.relStore.retract_dred(rowIds.map((rowId) => [tag, rowId] as const)),
+    );
+    const after = new Set(await firstValueFrom(state.relStore.alive_keys()));
 
     const deadKeys = [...before].filter((key) => !after.has(key));
     return { rounds, dead: await firstValueFrom(resolveFactKeys(state, deadKeys)) };

@@ -6,6 +6,8 @@
  * connection and the store's GraphNs; state is on disk, not in self.
  */
 
+import type { Observable } from "rxjs";
+
 import { reach } from "./engine.ts";
 import type { AssertTrue, IGraphNs, ISqliteReach, ISqliteReachStatics, SqliteDb } from "./types.ts";
 
@@ -17,16 +19,16 @@ import type { AssertTrue, IGraphNs, ISqliteReach, ISqliteReachStatics, SqliteDb 
 export class SqliteReach implements ISqliteReach {
   constructor(private readonly db: SqliteDb, private readonly ns: IGraphNs) {}
 
-  async reaches_from(start: number): Promise<number[]> {
+  reaches_from(start: number): Observable<number[]> {
     return reach.reaches_from(this.db, this.ns, start);
   }
-  async reached_by(target: number): Promise<number[]> {
+  reached_by(target: number): Observable<number[]> {
     return reach.reached_by(this.db, this.ns, target);
   }
-  async scc_labels(): Promise<[number, number][]> {
+  scc_labels(): Observable<[number, number][]> {
     return reach.scc_labels(this.db, this.ns);
   }
-  async count_pairs(): Promise<bigint> {
+  count_pairs(): Observable<bigint> {
     return reach.count_pairs(this.db, this.ns);
   }
 }

@@ -65,6 +65,10 @@ export interface ISqlRunner {
    * the one pinned connection: `executeMultiple` carries its own rollback guard and
    * would kill the open transaction.
    */
+  /** Multi-statement DDL. Counts one per `;`-separated statement. */
+  executeMultiple(db: SqliteDb, sql: string, trace?: TraceStatement): Observable<void>;
+  /** One atomic batch write. Counts one per statement. */
+  batch(db: SqliteDb, statements: readonly SqlStatement[], trace?: TraceStatement): Observable<void>;
   inTransaction<Value>(db: SqliteDb, body: () => Observable<Value>): Observable<Value>;
 }
 
@@ -167,23 +171,23 @@ export interface IRelStore {
   // ---- FACT plane (generic Z-set over (rel,row)) ----------------------------
 
   /** Insert `(rel, row, weight)` tuples. */
-  add_rows(rows: ReadonlyArray<readonly [number, number, number]>): Promise<void>;
+  add_rows(rows: ReadonlyArray<readonly [number, number, number]>): Observable<void>;
   /** Insert dependency edges `(parent_rel, parent_row, child_rel, child_row)`. */
-  add_deps(edges: ReadonlyArray<readonly [number, number, number, number]>): Promise<void>;
+  add_deps(edges: ReadonlyArray<readonly [number, number, number, number]>): Observable<void>;
   /** Forward add: propagate aliveness from `seeds`. Returns rounds. */
-  assert(seeds: ReadonlyArray<readonly [number, number]>): Promise<number>;
+  assert(seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;
   /** Counting retraction (fast, correct on ACYCLIC support graphs). Returns rounds. */
-  retract(seeds: ReadonlyArray<readonly [number, number]>): Promise<number>;
+  retract(seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;
   /** Counting retraction with an on-disk SCC-scoped nested fixpoint. Returns rounds. */
-  retract_scc(seeds: ReadonlyArray<readonly [number, number]>): Promise<number>;
+  retract_scc(seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;
   /** Cycle-safe retraction (Delete-and-Rederive), round loop. Returns rounds. */
-  retract_dred(seeds: ReadonlyArray<readonly [number, number]>): Promise<number>;
+  retract_dred(seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;
   /** Cycle-safe retraction as two recursive CTEs. Same result as retract_dred. */
-  retract_dred_cte(seeds: ReadonlyArray<readonly [number, number]>): Promise<number>;
+  retract_dred_cte(seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;
   /** Count live rows (weight > 0) across all relations. */
-  alive(): Promise<number>;
+  alive(): Observable<number>;
   /** The live-row survivor SET as sorted encoded keys (`key = rel*KEY_STRIDE + row`). */
-  alive_keys(): Promise<number[]>;
+  alive_keys(): Observable<number[]>;
 
   // ---- CONTROL plane (salsa-in-sql over (rel,row) memos) --------------------
 
@@ -194,22 +198,22 @@ export interface IRelStore {
     digest: bigint,
     deps: ReadonlyArray<readonly [number, number]>,
     rev: number,
-  ): Promise<void>;
+  ): Observable<void>;
   /** Bump changed_at for `cells` at `rev` (an input's digest moved). */
-  mark_changed(cells: ReadonlyArray<readonly [number, number]>, rev: number): Promise<void>;
+  mark_changed(cells: ReadonlyArray<readonly [number, number]>, rev: number): Observable<void>;
   /** The stale frontier as `(rel, row)` pairs. */
-  dirty(): Promise<[number, number][]>;
+  dirty(): Observable<[number, number][]>;
   /** Record a recomputed rel's digest; returns whether it moved (early cutoff). */
-  verify(rel: number, row: number, digest: bigint, rev: number): Promise<boolean>;
+  verify(rel: number, row: number, digest: bigint, rev: number): Observable<boolean>;
 }
 
 /** The static side of the RelStore class: its constructor and two open paths. */
 export interface IRelStoreStatics {
   new (db: SqliteDb, ns: IGraphNs): IRelStore;
   /** Open (or create) a store at `db` stamped for namespace `ns`. */
-  attach_with(db: SqliteDb, ns: IGraphNs): Promise<IRelStore>;
+  attach_with(db: SqliteDb, ns: IGraphNs): Observable<IRelStore>;
   /** Open (or create) a store at `db` with the default namespace (cx_ + rx_). */
-  attach(db: SqliteDb): Promise<IRelStore>;
+  attach(db: SqliteDb): Observable<IRelStore>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -259,41 +263,41 @@ export interface IStore {
   intern(text: string): number;
   resolve(id: number): string | undefined;
   /** Persist every string interned since the last flush in ONE batched insert. */
-  flush_strings(): Promise<number>;
+  flush_strings(): Observable<number>;
 
   // ---- dimensions ---------------------------------------------------------
 
-  repo_upsert(slug: string, root: string, url: string): Promise<number>;
-  root_insert(repo_id: number, path_string_id: number): Promise<number>;
+  repo_upsert(slug: string, root: string, url: string): Observable<number>;
+  root_insert(repo_id: number, path_string_id: number): Observable<number>;
   /** A committed rev (shared across roots that have this sha). Find-or-insert by (repo_id, git_sha). */
-  rev_committed(repo_id: number, git_sha: Uint8Array): Promise<number>;
+  rev_committed(repo_id: number, git_sha: Uint8Array): Observable<number>;
   /** The WORK rev of a root (its uncommitted working tree). One per root. */
-  rev_work(repo_id: number, root_id: number, base_rev_id: number): Promise<number>;
+  rev_work(repo_id: number, root_id: number, base_rev_id: number): Observable<number>;
 
   // ---- files (content, dedup by hash) ------------------------------------
 
-  files_insert_batch(rows: ReadonlyArray<readonly [Uint8Array, number, number]>): Promise<void>;
-  file_id_of(content_hash: Uint8Array): Promise<number | null>;
+  files_insert_batch(rows: ReadonlyArray<readonly [Uint8Array, number, number]>): Observable<void>;
+  file_id_of(content_hash: Uint8Array): Observable<number | null>;
   /** Batch `content_hash -> file_id` resolution: ONE query per CHUNK_ROWS hashes. */
-  file_ids_by_hashes(hashes: ReadonlyArray<Uint8Array>): Promise<Map<string, number>>;
+  file_ids_by_hashes(hashes: ReadonlyArray<Uint8Array>): Observable<Map<string, number>>;
   /** Paths in a WORK rev whose content differs from its base HEAD. */
-  unstaged_path_ids(work_rev: number): Promise<number[]>;
+  unstaged_path_ids(work_rev: number): Observable<number[]>;
 
   // ---- junction: place content at (rev, path) ----------------------------
 
-  place_files_batch(rows: ReadonlyArray<readonly [number, number, number]>): Promise<void>;
+  place_files_batch(rows: ReadonlyArray<readonly [number, number, number]>): Observable<void>;
 
   // ---- unified graph -----------------------------------------------------
 
-  nodes_insert_batch(rows: ReadonlyArray<NodeRow>): Promise<void>;
-  edges_insert_batch(rows: ReadonlyArray<EdgeRow>): Promise<void>;
-  spans_insert_batch(rows: ReadonlyArray<SpanRow>): Promise<void>;
+  nodes_insert_batch(rows: ReadonlyArray<NodeRow>): Observable<void>;
+  edges_insert_batch(rows: ReadonlyArray<EdgeRow>): Observable<void>;
+  spans_insert_batch(rows: ReadonlyArray<SpanRow>): Observable<void>;
 }
 
 /** The static side of the Store class. Its constructor is private: `open` is the only way in. */
 export interface IStoreStatics {
   /** Open a store, apply pragmas, create the spine, hydrate the interner mirror. */
-  open(db: SqliteDb): Promise<IStore>;
+  open(db: SqliteDb): Observable<IStore>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -307,10 +311,10 @@ export interface IStoreStatics {
  * subset SqliteReach implements directly.
  */
 export interface ISqliteReach {
-  reaches_from(start: number): Promise<number[]>;
-  reached_by(target: number): Promise<number[]>;
-  scc_labels(): Promise<[number, number][]>;
-  count_pairs(): Promise<bigint>;
+  reaches_from(start: number): Observable<number[]>;
+  reached_by(target: number): Observable<number[]>;
+  scc_labels(): Observable<[number, number][]>;
+  count_pairs(): Observable<bigint>;
 }
 
 /** The static side of the SqliteReach class. */
@@ -328,16 +332,16 @@ export interface ISqliteReachStatics {
  * write. Role: the versioned base layer UNDER the graph, with no parity trait.
  */
 export interface ITemporalStore {
-  commit(deltas: ReadonlyArray<readonly [number, number]>): Promise<void>;
-  live(): Promise<number>;
-  total_rows(): Promise<number>;
-  digest(): Promise<number>;
+  commit(deltas: ReadonlyArray<readonly [number, number]>): Observable<void>;
+  live(): Observable<number>;
+  total_rows(): Observable<number>;
+  digest(): Observable<number>;
   conn(): SqliteDb;
 }
 
 /** The static side of the TemporalStore class. Its constructor is private. */
 export interface ITemporalStoreStatics {
-  attach(db: SqliteDb): Promise<ITemporalStore>;
+  attach(db: SqliteDb): Observable<ITemporalStore>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -394,10 +398,10 @@ export type OpenDb = (url: string) => SqliteDb;
 
 /** Stamp the split two-plane schema (cascade `cx_*` + reconcile `rx_*` + TEMP working set +
  *  indexes) under namespace `ns` onto `db`, pragmas first. */
-export type Stamp = (db: SqliteDb, ns: IGraphNs) => Promise<void>;
+export type Stamp = (db: SqliteDb, ns: IGraphNs) => Observable<void>;
 
 /** Create the 9 spine tables (strings/files/nodes/edges/spans/repos/revs/junction/meta). */
-export type CreateAllTables = (db: SqliteDb) => Promise<void>;
+export type CreateAllTables = (db: SqliteDb) => Observable<void>;
 
 // ---- cascade (src/engine/engine.ts) ----------------------------------------
 
@@ -410,28 +414,27 @@ export interface ICascadeApi {
   key(tag: number, id: number): number;
   readonly KEY_STRIDE: number;
   /** Run `body` inside one transaction, rolling back on throw. */
-  with_txn<Result>(db: SqliteDb, body: () => Promise<Result>): Promise<Result>;
-  create_schema(db: SqliteDb, ns: IGraphNs): Promise<void>;
+  create_schema(db: SqliteDb, ns: IGraphNs): Observable<void>;
   insert_rows(
     db: SqliteDb,
     ns: IGraphNs,
     rows: ReadonlyArray<readonly [number, number, number]>,
-  ): Promise<void>;
+  ): Observable<void>;
   insert_deps(
     db: SqliteDb,
     ns: IGraphNs,
     edges: ReadonlyArray<readonly [number, number, number, number]>,
-  ): Promise<void>;
+  ): Observable<void>;
   /** Forward add: propagate aliveness from `seeds`. Returns rounds. */
-  assert(db: SqliteDb, ns: IGraphNs, seeds: ReadonlyArray<readonly [number, number]>): Promise<number>;
+  assert(db: SqliteDb, ns: IGraphNs, seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;
   /** Counting retraction. Fast, correct on ACYCLIC support graphs only. */
-  retract(db: SqliteDb, ns: IGraphNs, seeds: ReadonlyArray<readonly [number, number]>): Promise<number>;
+  retract(db: SqliteDb, ns: IGraphNs, seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;
   /** Counting retraction with an on-disk SCC-scoped nested fixpoint. Cycle-safe. */
-  retract_scc(db: SqliteDb, ns: IGraphNs, seeds: ReadonlyArray<readonly [number, number]>): Promise<number>;
+  retract_scc(db: SqliteDb, ns: IGraphNs, seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;
   /** Delete-and-Rederive, driver round loop. Cycle-safe. */
-  retract_dred(db: SqliteDb, ns: IGraphNs, seeds: ReadonlyArray<readonly [number, number]>): Promise<number>;
+  retract_dred(db: SqliteDb, ns: IGraphNs, seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;
   /** Delete-and-Rederive as two recursive CTEs. Same answer as retract_dred. */
-  retract_dred_cte(db: SqliteDb, ns: IGraphNs, seeds: ReadonlyArray<readonly [number, number]>): Promise<number>;
+  retract_dred_cte(db: SqliteDb, ns: IGraphNs, seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;
 }
 
 // ---- reach (src/engine/engine.ts) ------------------------------------------
@@ -442,25 +445,25 @@ export interface ICascadeApi {
  */
 export interface IReachApi {
   /** Forward transitive closure from `start` (strict; includes start iff its SCC is cyclic). */
-  reaches_from(db: SqliteDb, ns: IGraphNs, start: number): Promise<number[]>;
+  reaches_from(db: SqliteDb, ns: IGraphNs, start: number): Observable<number[]>;
   /** Reverse closure: everything that reaches `target`. */
-  reached_by(db: SqliteDb, ns: IGraphNs, target: number): Promise<number[]>;
+  reached_by(db: SqliteDb, ns: IGraphNs, target: number): Observable<number[]>;
   multi_source_walk(
     db: SqliteDb,
     ns: IGraphNs,
     starts: ReadonlyArray<readonly [number, number, number]>,
     halt: ReadonlyArray<number> | null,
     depth_cap: number | null,
-  ): Promise<[number, number, number][]>;
+  ): Observable<[number, number, number][]>;
   multi_source_halt_bfs(
     db: SqliteDb,
     ns: IGraphNs,
     starts: ReadonlyArray<readonly [number, number]>,
     halt: ReadonlyArray<number>,
-  ): Promise<[number, number][]>;
-  scc_labels(db: SqliteDb, ns: IGraphNs): Promise<[number, number][]>;
-  build_condensed(db: SqliteDb, ns: IGraphNs): Promise<Condensed>;
-  count_pairs(db: SqliteDb, ns: IGraphNs): Promise<bigint>;
+  ): Observable<[number, number][]>;
+  scc_labels(db: SqliteDb, ns: IGraphNs): Observable<[number, number][]>;
+  build_condensed(db: SqliteDb, ns: IGraphNs): Observable<Condensed>;
+  count_pairs(db: SqliteDb, ns: IGraphNs): Observable<bigint>;
 }
 
 // ---- reconcile (src/engine/engine.ts) --------------------------------------
@@ -470,7 +473,7 @@ export interface IReachApi {
  * staleness; `verify` returning false is the early cutoff.
  */
 export interface IReconcileApi {
-  create_schema(db: SqliteDb, ns: IGraphNs): Promise<void>;
+  create_schema(db: SqliteDb, ns: IGraphNs): Observable<void>;
   seed(
     db: SqliteDb,
     ns: IGraphNs,
@@ -478,12 +481,12 @@ export interface IReconcileApi {
     digest: bigint,
     deps: ReadonlyArray<number>,
     rev: number,
-  ): Promise<void>;
-  mark_changed(db: SqliteDb, ns: IGraphNs, ids: ReadonlyArray<number>, rev: number): Promise<void>;
+  ): Observable<void>;
+  mark_changed(db: SqliteDb, ns: IGraphNs, ids: ReadonlyArray<number>, rev: number): Observable<void>;
   /** The stale FRONTIER (one hop), not the whole cone. */
-  dirty(db: SqliteDb, ns: IGraphNs): Promise<number[]>;
+  dirty(db: SqliteDb, ns: IGraphNs): Observable<number[]>;
   /** Record a recomputed digest; returns whether it MOVED. */
-  verify(db: SqliteDb, ns: IGraphNs, id: number, new_digest: bigint, rev: number): Promise<boolean>;
+  verify(db: SqliteDb, ns: IGraphNs, id: number, new_digest: bigint, rev: number): Observable<boolean>;
   /** Ascending-id sweep over the dirty cone, calling `recompute` per cell. */
   propagate(
     db: SqliteDb,
@@ -491,8 +494,8 @@ export interface IReconcileApi {
     seeds: ReadonlyArray<number>,
     rev: number,
     recompute: (id: number, dep_digests: bigint[]) => bigint,
-  ): Promise<number>;
-  answer(db: SqliteDb, ns: IGraphNs): Promise<bigint>;
+  ): Observable<number>;
+  answer(db: SqliteDb, ns: IGraphNs): Observable<bigint>;
 }
 
 // ---- rel tables (src/engine/spine.ts, namespace rels) ----------------------
@@ -512,8 +515,8 @@ export interface IRelTableApi {
     cols: ReadonlyArray<RelCol>,
     pk: ReadonlyArray<string>,
     surrogate?: string,
-  ): Promise<void>;
-  drop_rel_table(db: SqliteDb, name: string): Promise<void>;
+  ): Observable<void>;
+  drop_rel_table(db: SqliteDb, name: string): Observable<void>;
 }
 
 // ---- ingest (src/engine/ingest.ts) -----------------------------------------
@@ -525,7 +528,7 @@ export type IngestJsonl = (
   rels: IRelStore,
   lines: AsyncIterable<string>,
   rev: number,
-) => Promise<IngestReport>;
+) => Observable<IngestReport>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Static-side proof helper.

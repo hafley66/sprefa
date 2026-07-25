@@ -20,21 +20,23 @@
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
 import { createClient } from "@libsql/client";
+import { firstValueFrom } from "rxjs";
 
 import { cascade, reach, reconcile } from "../../src/engine/engine.ts";
 import { benchgraph, memcap } from "../../src/engine/measure.ts";
 import { GraphNs, RelStore } from "../../src/engine/lib.ts";
+import { SqlRunner } from "../../src/engine/sqlRunner.ts";
 import { salsa } from "../../src/engine/oracle.ts";
 
 /** A fresh in-memory store stamped with the default namespace. */
 async function freshStore(): Promise<RelStore> {
-  return RelStore.attach(createClient({ url: ":memory:", intMode: "bigint" }));
+  return firstValueFrom(RelStore.attach(createClient({ url: ":memory:", intMode: "bigint" })));
 }
 
 /** Load a benchgraph (rows + edges) into a store. */
 async function load(store: RelStore, g: benchgraph.MultiGraph): Promise<void> {
-  await store.add_rows(g.rows);
-  await store.add_deps(g.edges);
+  await firstValueFrom(store.add_rows(g.rows));
+  await firstValueFrom(store.add_deps(g.edges));
 }
 
 // =============================================================================
@@ -267,10 +269,10 @@ async function load_dense(adj: number[][]): Promise<RelStore> {
   const store = await freshStore();
   const rows: [number, number, number][] = [];
   for (let k = 0; k < adj.length; k++) rows.push([0, k, 1]);
-  await store.add_rows(rows);
+  await firstValueFrom(store.add_rows(rows));
   const deps: [number, number, number, number][] = [];
   for (let u = 0; u < adj.length; u++) for (const w of adj[u]!) deps.push([0, u, 0, w]);
-  await store.add_deps(deps);
+  await firstValueFrom(store.add_deps(deps));
   return store;
 }
 
@@ -284,10 +286,10 @@ function sorted(v: number[]): number[] {
 type Variant = [string, (s: RelStore, seed: readonly [number, number]) => Promise<number>];
 
 const RETRACT_VARIANTS: Variant[] = [
-  ["retract", (s, seed) => s.retract([seed])],
-  ["retract_scc", (s, seed) => s.retract_scc([seed])],
-  ["retract_dred", (s, seed) => s.retract_dred([seed])],
-  ["retract_dred_cte", (s, seed) => s.retract_dred_cte([seed])],
+  ["retract", (s, seed) => firstValueFrom(s.retract([seed]))],
+  ["retract_scc", (s, seed) => firstValueFrom(s.retract_scc([seed]))],
+  ["retract_dred", (s, seed) => firstValueFrom(s.retract_dred([seed]))],
+  ["retract_dred_cte", (s, seed) => firstValueFrom(s.retract_dred_cte([seed]))],
 ];
 
 test("cascade: DAG — every variant matches oracle_survivors", async () => {
@@ -302,10 +304,10 @@ test("cascade: DAG — every variant matches oracle_survivors", async () => {
       await load(s, g);
       // assert the seed first (exercises the assert knob; a fresh benchgraph seed is
       // already alive, so this is a near-no-op that still runs the forward-add path).
-      await s.assert([g.seed]);
+      await firstValueFrom(s.assert([g.seed]));
       await fn(s, g.seed);
       assert.deepStrictEqual(
-        await s.alive_keys(),
+        await firstValueFrom(s.alive_keys()),
         oracle,
         `DAG l=${layers} w=${width} ${name} disagreed with oracle`,
       );
@@ -326,7 +328,7 @@ test("cascade: cyclic — SCC/DRed/CTE match the oracle across densities", async
       await load(s, g);
       await fn(s, g.seed);
       assert.deepStrictEqual(
-        await s.alive_keys(),
+        await firstValueFrom(s.alive_keys()),
         oracle,
         `CYCLIC l=${layers} w=${width} s=${stride} ${name} disagreed with oracle`,
       );
@@ -341,13 +343,13 @@ test("cascade: phantom cycle — counting over-keeps, DRed kills (the correctnes
 
   const dredStore = await freshStore();
   await load(dredStore, g);
-  await dredStore.retract_dred([g.seed]);
-  assert.deepStrictEqual(await dredStore.alive_keys(), oracle, "DRed must stay correct on the phantom cycle");
+  await firstValueFrom(dredStore.retract_dred([g.seed]));
+  assert.deepStrictEqual(await firstValueFrom(dredStore.alive_keys()), oracle, "DRed must stay correct on the phantom cycle");
 
   const countStore = await freshStore();
   await load(countStore, g);
-  await countStore.retract([g.seed]);
-  const count = await countStore.alive_keys();
+  await firstValueFrom(countStore.retract([g.seed]));
+  const count = await firstValueFrom(countStore.alive_keys());
   assert.ok(count.length > oracle.length, "counting must over-keep phantom rows");
   // every oracle survivor is in the counting set (counting only ADDS phantoms)
   const count_set = new Set(count);
@@ -357,19 +359,27 @@ test("cascade: phantom cycle — counting over-keeps, DRed kills (the correctnes
 test("cascade: assert propagates aliveness forward", async () => {
   // R alive, A/B dead; R->A->B. assert R's reach -> R,A,B all alive.
   const s = await freshStore();
-  await s.add_rows([
-    [0, 0, 1],
-    [0, 1, 0],
-    [0, 2, 0],
+  await firstValueFrom(
+    s.add_rows([
+      [0, 0, 1],
+      [0, 1, 0],
+      [0, 2, 0],
+    ]),
+  );
+  await firstValueFrom(
+    s.add_deps([
+      [0, 0, 0, 1],
+      [0, 1, 0, 2],
+    ]),
+  );
+  assert.strictEqual(await firstValueFrom(s.alive()), 1);
+  await firstValueFrom(s.assert([[0, 0]]));
+  assert.strictEqual(await firstValueFrom(s.alive()), 3, "R->A->B all alive after assert");
+  assert.deepStrictEqual(await firstValueFrom(s.alive_keys()), [
+    cascade.key(0, 0),
+    cascade.key(0, 1),
+    cascade.key(0, 2),
   ]);
-  await s.add_deps([
-    [0, 0, 0, 1],
-    [0, 1, 0, 2],
-  ]);
-  assert.strictEqual(await s.alive(), 1);
-  await s.assert([[0, 0]]);
-  assert.strictEqual(await s.alive(), 3, "R->A->B all alive after assert");
-  assert.deepStrictEqual(await s.alive_keys(), [cascade.key(0, 0), cascade.key(0, 1), cascade.key(0, 2)]);
 });
 
 // =============================================================================
@@ -390,7 +400,7 @@ test("reconcile: propagate answer === oracle_answer, byte-identical", async () =
     const memo: bigint[] = new Array(n);
     for (let i = 0; i < n; i++) {
       memo[i] = salsa.node_digest(value[i]!, deps[i]!.map((j) => memo[j]!));
-      await reconcile.seed(store.conn(), store.ns(), i, memo[i]!, deps[i]!, 0);
+      await firstValueFrom(reconcile.seed(store.conn(), store.ns(), i, memo[i]!, deps[i]!, 0));
     }
 
     // apply every edit tick through the ascending topo sweep.
@@ -399,16 +409,12 @@ test("reconcile: propagate answer === oracle_answer, byte-identical", async () =
       const rev = ti + 1;
       for (const [i, v] of tick) value[i] = v;
       const seeds = tick.map(([i]) => i);
-      await reconcile.propagate(
-        store.conn(),
-        store.ns(),
-        seeds,
-        rev,
-        (id, dd) => salsa.node_digest(value[id]!, dd),
+      await firstValueFrom(
+        reconcile.propagate(store.conn(), store.ns(), seeds, rev, (id, dd) => salsa.node_digest(value[id]!, dd)),
       );
     }
 
-    const eng_answer = await reconcile.answer(store.conn(), store.ns());
+    const eng_answer = await firstValueFrom(reconcile.answer(store.conn(), store.ns()));
     assert.strictEqual(
       eng_answer,
       stream.oracle_answer,
@@ -420,24 +426,28 @@ test("reconcile: propagate answer === oracle_answer, byte-identical", async () =
 test("reconcile: mark_changed/dirty frontier + early cutoff", async () => {
   // chain 1 <- 2 <- 3 (3 reads 2 reads 1). Mark 1 changed -> stale frontier is just {2}.
   const s = await freshStore();
-  await reconcile.seed(s.conn(), s.ns(), 1, 100n, [], 0);
-  await reconcile.seed(s.conn(), s.ns(), 2, 200n, [1], 0);
-  await reconcile.seed(s.conn(), s.ns(), 3, 300n, [2], 0);
-  assert.deepStrictEqual(await reconcile.dirty(s.conn(), s.ns()), [], "nothing stale at rev 0");
-  await reconcile.mark_changed(s.conn(), s.ns(), [1], 1);
-  assert.deepStrictEqual(await reconcile.dirty(s.conn(), s.ns()), [2], "one-hop frontier after mark_changed");
+  await firstValueFrom(reconcile.seed(s.conn(), s.ns(), 1, 100n, [], 0));
+  await firstValueFrom(reconcile.seed(s.conn(), s.ns(), 2, 200n, [1], 0));
+  await firstValueFrom(reconcile.seed(s.conn(), s.ns(), 3, 300n, [2], 0));
+  assert.deepStrictEqual(await firstValueFrom(reconcile.dirty(s.conn(), s.ns())), [], "nothing stale at rev 0");
+  await firstValueFrom(reconcile.mark_changed(s.conn(), s.ns(), [1], 1));
+  assert.deepStrictEqual(
+    await firstValueFrom(reconcile.dirty(s.conn(), s.ns())),
+    [2],
+    "one-hop frontier after mark_changed",
+  );
 
   // recompute 2 with the SAME digest -> verify returns false (early cutoff), wave stops.
-  const moved = await reconcile.verify(s.conn(), s.ns(), 2, 200n, 1);
+  const moved = await firstValueFrom(reconcile.verify(s.conn(), s.ns(), 2, 200n, 1));
   assert.strictEqual(moved, false, "same-value recompute must not move");
-  assert.deepStrictEqual(await reconcile.dirty(s.conn(), s.ns()), [], "early cutoff stops the wave");
+  assert.deepStrictEqual(await firstValueFrom(reconcile.dirty(s.conn(), s.ns())), [], "early cutoff stops the wave");
 
   // a REAL move on 2 re-dirties its reader 3.
-  await reconcile.mark_changed(s.conn(), s.ns(), [1], 2);
-  assert.ok((await reconcile.dirty(s.conn(), s.ns())).includes(2));
-  const moved2 = await reconcile.verify(s.conn(), s.ns(), 2, 7777n, 2);
+  await firstValueFrom(reconcile.mark_changed(s.conn(), s.ns(), [1], 2));
+  assert.ok((await firstValueFrom(reconcile.dirty(s.conn(), s.ns()))).includes(2));
+  const moved2 = await firstValueFrom(reconcile.verify(s.conn(), s.ns(), 2, 7777n, 2));
   assert.strictEqual(moved2, true, "different digest must move");
-  assert.deepStrictEqual(await reconcile.dirty(s.conn(), s.ns()), [3], "3 stale once 2 moves");
+  assert.deepStrictEqual(await firstValueFrom(reconcile.dirty(s.conn(), s.ns())), [3], "3 stale once 2 moves");
 });
 
 // =============================================================================
@@ -460,12 +470,12 @@ test("reach: scc_labels and count_pairs agree with the from-scratch reference", 
     const store = await load_dense(adj);
 
     assert.deepStrictEqual(
-      await reach.scc_labels(store.conn(), store.ns()),
+      await firstValueFrom(reach.scc_labels(store.conn(), store.ns())),
       ref_oracle.labels(cond),
       `${name}: SCC partition disagreed`,
     );
     assert.strictEqual(
-      await reach.count_pairs(store.conn(), store.ns()),
+      await firstValueFrom(reach.count_pairs(store.conn(), store.ns())),
       ref_oracle.count_pairs(cond),
       `${name}: count_pairs disagreed`,
     );
@@ -479,11 +489,11 @@ test("reach: reaches_from / reached_by agree with the reference, every start nod
     const store = await load_dense(adj);
     for (let start = 0; start < adj.length; start++) {
       const wantFwd = sorted(ref_oracle.reaches_from(cond, start));
-      const gotFwd = sorted(await reach.reaches_from(store.conn(), store.ns(), start));
+      const gotFwd = sorted(await firstValueFrom(reach.reaches_from(store.conn(), store.ns(), start)));
       assert.deepStrictEqual(gotFwd, wantFwd, `${name}: reaches_from(${start}) disagreed`);
 
       const wantRev = sorted(ref_oracle.reached_by(cond, start));
-      const gotRev = sorted(await reach.reached_by(store.conn(), store.ns(), start));
+      const gotRev = sorted(await firstValueFrom(reach.reached_by(store.conn(), store.ns(), start)));
       assert.deepStrictEqual(gotRev, wantRev, `${name}: reached_by(${start}) disagreed`);
     }
   }
@@ -498,11 +508,11 @@ test("knobs: cascade correct under two cache_size settings", async () => {
   // a small cache (1 MiB) and a large one (256 MiB) — both must agree with the oracle.
   for (const cacheKib of [-1024, -262144]) {
     const s = await freshStore();
-    await s.conn().executeMultiple(`PRAGMA cache_size=${cacheKib};`);
+    await firstValueFrom(SqlRunner.executeMultiple(s.conn(), `PRAGMA cache_size=${cacheKib};`));
     await load(s, g);
-    await s.retract_dred([g.seed]);
+    await firstValueFrom(s.retract_dred([g.seed]));
     assert.deepStrictEqual(
-      await s.alive_keys(),
+      await firstValueFrom(s.alive_keys()),
       oracle,
       `cache_size=${cacheKib} disagreed with oracle`,
     );
@@ -519,10 +529,10 @@ test("rss: peak RSS sampled and bounded", async () => {
   memcap.sample();
   await load(store, g);
   memcap.sample();
-  await store.retract_dred([g.seed]);
+  await firstValueFrom(store.retract_dred([g.seed]));
   memcap.sample();
   const oracle = benchgraph.oracle_survivors(g, g.seed);
-  assert.deepStrictEqual(await store.alive_keys(), oracle, "RSS-run graph must still be correct");
+  assert.deepStrictEqual(await firstValueFrom(store.alive_keys()), oracle, "RSS-run graph must still be correct");
 
   const peakKib = memcap.peak_rss_kb();
   // Budget: 512 MiB. SOFT guard only — the hard OS cap stays Rust-side (Node cannot
@@ -542,35 +552,42 @@ test("namespacing: two GraphNs in one db are independent", async () => {
   const ns = GraphNs.default();
   const nb = GraphNs.new("b_");
   // Stamp BOTH namespaces into the one db.
-  await db.executeMultiple("PRAGMA journal_mode=WAL;PRAGMA synchronous=NORMAL;PRAGMA foreign_keys=ON;PRAGMA temp_store=MEMORY;");
-  await cascade.create_schema(db, ns);
-  await reconcile.create_schema(db, ns);
+  await firstValueFrom(
+    SqlRunner.executeMultiple(
+      db,
+      "PRAGMA journal_mode=WAL;PRAGMA synchronous=NORMAL;PRAGMA foreign_keys=ON;PRAGMA temp_store=MEMORY;",
+    ),
+  );
+  await firstValueFrom(cascade.create_schema(db, ns));
+  await firstValueFrom(reconcile.create_schema(db, ns));
   // b_ namespace: the cascade create_schema re-issues PRAGMA cache_size/mmap (harmless).
   // TEMP table names are namespaced by prefix, so the two stores' working sets don't clash.
-  await cascade.create_schema(db, nb);
-  await reconcile.create_schema(db, nb);
+  await firstValueFrom(cascade.create_schema(db, nb));
+  await firstValueFrom(reconcile.create_schema(db, nb));
 
   // Same support graph in each: (0,0) anchors (0,1) via one dep edge.
-  await cascade.insert_rows(db, ns, [
-    [0, 0, 1],
-    [0, 1, 1],
-  ]);
-  await cascade.insert_deps(db, ns, [[0, 0, 0, 1]]);
-  await cascade.insert_rows(db, nb, [
-    [0, 0, 1],
-    [0, 1, 1],
-  ]);
-  await cascade.insert_deps(db, nb, [[0, 0, 0, 1]]);
+  await firstValueFrom(
+    cascade.insert_rows(db, ns, [
+      [0, 0, 1],
+      [0, 1, 1],
+    ]),
+  );
+  await firstValueFrom(cascade.insert_deps(db, ns, [[0, 0, 0, 1]]));
+  await firstValueFrom(
+    cascade.insert_rows(db, nb, [
+      [0, 0, 1],
+      [0, 1, 1],
+    ]),
+  );
+  await firstValueFrom(cascade.insert_deps(db, nb, [[0, 0, 0, 1]]));
 
-  const countAlive = async (table: string): Promise<number> => {
-    const res = await db.execute(`SELECT count(*) FROM ${table} WHERE weight>0`);
-    return Number(res.rows[0]?.[0] ?? 0);
-  };
+  const countAlive = (table: string): Promise<number> =>
+    firstValueFrom(SqlRunner.scalar(db, `SELECT count(*) FROM ${table} WHERE weight>0`));
   assert.strictEqual(await countAlive(ns.row), 2);
   assert.strictEqual(await countAlive(nb.row), 2);
 
   // Retract the anchor in the DEFAULT namespace only.
-  await cascade.retract(db, ns, [[0, 0]]);
+  await firstValueFrom(cascade.retract(db, ns, [[0, 0]]));
   assert.strictEqual(await countAlive(ns.row), 0, "default ns retracted to zero");
   assert.strictEqual(await countAlive(nb.row), 2, "b_ ns untouched (no cross-talk)");
 });

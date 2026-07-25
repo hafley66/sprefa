@@ -31,7 +31,18 @@
  * graph, printed by the CLI, wrapped so a failure there cannot fail the module or the gate.
  */
 
-import { ReplaySubject, type Observable, type Subscription } from "rxjs";
+import {
+  ReplaySubject,
+  type Observable,
+  type Subscription,
+  catchError,
+  concat,
+  concatMap,
+  defer,
+  map,
+  of,
+  reduce,
+} from "rxjs";
 import { createClient } from "@libsql/client";
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
@@ -54,6 +65,7 @@ import { buildRuleGraph, scc, stratify } from "../lower/rulegraph.ts";
 import type { Stratum } from "../lower/types.ts";
 
 import { RelStore, GraphNs } from "../engine/lib.ts";
+import { SqlRunner } from "../engine/sqlRunner.ts";
 import type { SqliteDb as Db } from "../engine/types.ts";
 import { reconcile, stmt_counter } from "../engine/engine.ts";
 import { OPEN_PRAGMAS } from "../engine/spine.ts";
@@ -91,12 +103,21 @@ export interface GunRunDetail {
   sinkDigest: string;
 }
 
-export async function runGun(cfg: GunConfig, backend: "rx" | "sql"): Promise<GunReport> {
-  return (await runGunDetailed(cfg, backend)).report;
+export function runGun(cfg: GunConfig, backend: "rx" | "sql"): Observable<GunReport> {
+  return runGunDetailed(cfg, backend).pipe(map((detail) => detail.report));
 }
 
-export async function runGunDetailed(cfg: GunConfig, backend: "rx" | "sql"): Promise<GunRunDetail> {
-  return backend === "rx" ? runRxBackend(cfg) : runSqlBackend(cfg);
+export function runGunDetailed(cfg: GunConfig, backend: "rx" | "sql"): Observable<GunRunDetail> {
+  return backend === "rx" ? defer(() => of(runRxBackend(cfg))) : runSqlBackend(cfg);
+}
+
+/** Run `steps` in order, then emit `value()`. The `sequence` idiom from engine.ts, with a
+ *  result: the steps are SQL and carry nothing back, the caller's accumulator does. */
+function run_then<Value>(steps: readonly Observable<unknown>[], value: () => Value): Observable<Value> {
+  return concat(...steps).pipe(
+    reduce<unknown, void>(() => undefined, undefined),
+    map(value),
+  );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -291,7 +312,7 @@ function currentRowsOf(obs: Observable<Row[]>): Row[] {
   return latest;
 }
 
-async function runRxBackend(cfg: GunConfig): Promise<GunRunDetail> {
+function runRxBackend(cfg: GunConfig): GunRunDetail {
   const { prog, sources } = synthProgram(cfg);
   const lowered = lowerProgram(prog, sources);
   if (lowered.deferred.length > 0) {
@@ -589,94 +610,111 @@ function loadRows(db: DataDb, stmtCache: Map<string, PreparedStmt>, tableName: s
   insertAll(rows);
 }
 
-async function runSqlBackend(cfg: GunConfig): Promise<GunRunDetail> {
-  const { prog, sources } = synthProgram(cfg);
-  const { strata, relToId, rulesByHead, relDecls, depsOf } = buildStratumIndex(prog);
-  const downstreamOf = buildDownstream(strata, depsOf);
+function runSqlBackend(cfg: GunConfig): Observable<GunRunDetail> {
+  return defer(() => {
+    const { prog, sources } = synthProgram(cfg);
+    const { strata, relToId, rulesByHead, relDecls, depsOf } = buildStratumIndex(prog);
+    const downstreamOf = buildDownstream(strata, depsOf);
 
-  // Control plane: reconcile-only (NOT `RelStore.attach` — it also stamps the cascade
-  // `cx_*` half, unused by this backend).
-  const db: Db = createClient({ url: ":memory:", intMode: "bigint" });
-  const ns = GraphNs.default();
-  await db.executeMultiple(OPEN_PRAGMAS);
-  await reconcile.create_schema(db, ns);
+    // Control plane: reconcile-only (NOT `RelStore.attach` — it also stamps the cascade
+    // `cx_*` half, unused by this backend).
+    const db: Db = createClient({ url: ":memory:", intMode: "bigint" });
+    const ns = GraphNs.default();
 
-  // Data plane: better-sqlite3, prepared+cached statements (see the file-header note above).
-  const dataDb: DataDb = new Database(":memory:");
-  const stmtCache = new Map<string, PreparedStmt>();
-  for (const decl of prog.rels) createRelTable(dataDb, decl.name);
+    // Data plane: better-sqlite3, prepared+cached statements (see the file-header note above).
+    const dataDb: DataDb = new Database(":memory:");
+    const stmtCache = new Map<string, PreparedStmt>();
 
-  const leafNames = [...sources.keys()];
-  for (const leafName of leafNames) {
-    loadRows(dataDb, stmtCache, leafName, currentRowsOf(sources.get(leafName)!));
-  }
+    const churnEvents = synthChurnEvents(cfg, [...sources.keys()].length);
+    const tickMsList: number[] = [];
+    const wakeList: number[] = [];
+    const rssMibList: number[] = [];
+    const stmtDeltas: number[] = [];
+    let lastStmtCount = 0;
 
-  // Initial full build (topo order), then seed reconcile memo for every stratum at rev 0.
-  for (const stratum of strata) rebuildStratum(dataDb, stmtCache, stratum, rulesByHead, relDecls);
-  for (let id = 0; id < strata.length; id++) {
-    const digest = digestStratum(dataDb, stmtCache, strata[id]!);
-    await reconcile.seed(db, ns, id, digest, depsOf[id]!, 0);
-  }
+    const seedAll = defer(() => {
+      for (const decl of prog.rels) createRelTable(dataDb, decl.name);
+      const leafNames = [...sources.keys()];
+      for (const leafName of leafNames) {
+        loadRows(dataDb, stmtCache, leafName, currentRowsOf(sources.get(leafName)!));
+      }
+      // Initial full build (topo order), then seed reconcile memo for every stratum at rev 0.
+      for (const stratum of strata) rebuildStratum(dataDb, stmtCache, stratum, rulesByHead, relDecls);
+      const seeds = strata.map((stratum, id) =>
+        reconcile.seed(db, ns, id, digestStratum(dataDb, stmtCache, stratum), depsOf[id]!, 0),
+      );
+      return run_then(seeds, () => undefined);
+    });
 
-  const churnEvents = synthChurnEvents(cfg, leafNames.length);
-  const tickMsList: number[] = [];
-  const wakeList: number[] = [];
-  const rssMibList: number[] = [];
-  const stmtDeltas: number[] = [];
-  memcap.reset_peak();
-  let lastStmtCount = stmt_counter.get();
+    const ticks = Array.from({ length: cfg.churnTicks }, (_, tickIndex) => tickIndex + 1).map((tick) =>
+      defer(() => {
+        const leafNames = [...sources.keys()];
+        const t0 = process.hrtime.bigint();
+        const touchedLeafIds = new Set<number>();
+        for (let i = 0; i < cfg.churnRowsPerTick; i++) {
+          const ev = churnEvents[(tick - 1) * cfg.churnRowsPerTick + i]!;
+          const leafName = leafNames[ev.leafIndex]!;
+          stmt_counter.incr();
+          prep(dataDb, stmtCache, `UPDATE ${leafName} SET val=? WHERE id=?`).run(ev.newVal, ev.rowId);
+          touchedLeafIds.add(relToId.get(leafName)!);
+        }
 
-  for (let tick = 1; tick <= cfg.churnTicks; tick++) {
-    const t0 = process.hrtime.bigint();
-    const touchedLeafIds = new Set<number>();
-    for (let i = 0; i < cfg.churnRowsPerTick; i++) {
-      const ev = churnEvents[(tick - 1) * cfg.churnRowsPerTick + i]!;
-      const leafName = leafNames[ev.leafIndex]!;
-      stmt_counter.incr();
-      prep(dataDb, stmtCache, `UPDATE ${leafName} SET val=? WHERE id=?`).run(ev.newVal, ev.rowId);
-      touchedLeafIds.add(relToId.get(leafName)!);
-    }
+        const affected = new Set<number>(touchedLeafIds);
+        for (const leafId of touchedLeafIds) for (const d of downstreamOf[leafId]!) affected.add(d);
+        const orderedAffected = [...affected].sort((a, b) => a - b); // ascending id = topo order
 
-    const affected = new Set<number>(touchedLeafIds);
-    for (const leafId of touchedLeafIds) for (const d of downstreamOf[leafId]!) affected.add(d);
-    const orderedAffected = [...affected].sort((a, b) => a - b); // ascending id = topo order
+        const latestDigest = new Map<number, bigint>();
+        for (const id of orderedAffected) {
+          const stratum = strata[id]!;
+          rebuildStratum(dataDb, stmtCache, stratum, rulesByHead, relDecls);
+          latestDigest.set(id, digestStratum(dataDb, stmtCache, stratum));
+        }
 
-    const latestDigest = new Map<number, bigint>();
-    for (const id of orderedAffected) {
-      const stratum = strata[id]!;
-      rebuildStratum(dataDb, stmtCache, stratum, rulesByHead, relDecls);
-      latestDigest.set(id, digestStratum(dataDb, stmtCache, stratum));
-    }
+        const seeds = [...touchedLeafIds];
+        return reconcile.mark_changed(db, ns, seeds, tick).pipe(
+          concatMap(() => reconcile.propagate(db, ns, seeds, tick, (id) => latestDigest.get(id)!)),
+          map((recomputeCount) => {
+            tickMsList.push(Number(process.hrtime.bigint() - t0) / 1e6);
+            wakeList.push(recomputeCount);
+            rssMibList.push(memcap.sample() / 1_048_576);
+            const stmtsNow = stmt_counter.get();
+            stmtDeltas.push(stmtsNow - lastStmtCount);
+            lastStmtCount = stmtsNow;
+          }),
+        );
+      }),
+    );
 
-    const seeds = [...touchedLeafIds];
-    await reconcile.mark_changed(db, ns, seeds, tick);
-    const recomputeCount = await reconcile.propagate(db, ns, seeds, tick, (id) => latestDigest.get(id)!);
+    return SqlRunner.executeMultiple(db, OPEN_PRAGMAS).pipe(
+      concatMap(() => reconcile.create_schema(db, ns)),
+      concatMap(() => seedAll),
+      concatMap(() => {
+        memcap.reset_peak();
+        lastStmtCount = stmt_counter.get();
+        return run_then(ticks, () => undefined);
+      }),
+      map(() => {
+        const finalRows = new Map<string, Row[]>();
+        for (const decl of prog.rels) {
+          stmt_counter.incr();
+          const rows = prep(dataDb, stmtCache, `SELECT id,val FROM ${decl.name} ORDER BY id,val`).all() as {
+            id: number;
+            val: number;
+          }[];
+          finalRows.set(decl.name, rows.map((r) => [r.id, r.val] as Row));
+        }
+        db.close();
+        dataDb.close();
 
-    tickMsList.push(Number(process.hrtime.bigint() - t0) / 1e6);
-    wakeList.push(recomputeCount);
-    rssMibList.push(memcap.sample() / 1_048_576);
-    const stmtsNow = stmt_counter.get();
-    stmtDeltas.push(stmtsNow - lastStmtCount);
-    lastStmtCount = stmtsNow;
-  }
-
-  const finalRows = new Map<string, Row[]>();
-  for (const decl of prog.rels) {
-    stmt_counter.incr();
-    const rows = prep(dataDb, stmtCache, `SELECT id,val FROM ${decl.name} ORDER BY id,val`).all() as {
-      id: number;
-      val: number;
-    }[];
-    finalRows.set(decl.name, rows.map((r) => [r.id, r.val] as Row));
-  }
-  db.close();
-  dataDb.close();
-
-  const stmtsPerTick = stmtDeltas.length > 0 ? stmtDeltas.reduce((a, b) => a + b, 0) / stmtDeltas.length : 0;
-  return {
-    report: aggregateReport(tickMsList, wakeList, rssMibList, stmtsPerTick),
-    sinkDigest: sinkDigestOf(finalRows),
-  };
+        const stmtsPerTick =
+          stmtDeltas.length > 0 ? stmtDeltas.reduce((a, b) => a + b, 0) / stmtDeltas.length : 0;
+        return {
+          report: aggregateReport(tickMsList, wakeList, rssMibList, stmtsPerTick),
+          sinkDigest: sinkDigestOf(finalRows),
+        };
+      }),
+    );
+  });
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -692,31 +730,47 @@ interface RetractTiming {
   readonly correct: boolean;
 }
 
-export async function runRetractShootout(): Promise<RetractTiming[]> {
-  const graph = benchgraph.gen_multi_cyclic(40, 6, 5); // layered DAG + back-edges = real cycles
-  const expected = benchgraph.oracle_survivors(graph, graph.seed);
-  const results: RetractTiming[] = [];
+export function runRetractShootout(): Observable<RetractTiming[]> {
+  return defer(() => {
+    const graph = benchgraph.gen_multi_cyclic(40, 6, 5); // layered DAG + back-edges = real cycles
+    const expected = benchgraph.oracle_survivors(graph, graph.seed);
+    const results: RetractTiming[] = [];
 
-  const variants: readonly ["retract" | "retract_scc" | "retract_dred_cte"][] = [
-    ["retract"],
-    ["retract_scc"],
-    ["retract_dred_cte"],
-  ];
-  for (const [variant] of variants) {
-    const store = await RelStore.attach(createClient({ url: ":memory:", intMode: "bigint" }));
-    await store.add_rows(graph.rows);
-    await store.add_deps(graph.edges);
-    const before = stmt_counter.get();
-    const t0 = process.hrtime.bigint();
-    await store[variant]([graph.seed]);
-    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    const stmts = stmt_counter.get() - before;
-    const survivors = await store.alive_keys();
-    const correct = survivors.length === expected.length && survivors.every((k, i) => k === expected[i]);
-    results.push({ variant, ms, stmts, correct });
-    store.conn().close();
-  }
-  return results;
+    const variants: readonly ("retract" | "retract_scc" | "retract_dred_cte")[] = [
+      "retract",
+      "retract_scc",
+      "retract_dred_cte",
+    ];
+    const runs = variants.map((variant) =>
+      RelStore.attach(createClient({ url: ":memory:", intMode: "bigint" })).pipe(
+        concatMap((store) =>
+          store.add_rows(graph.rows).pipe(
+            concatMap(() => store.add_deps(graph.edges)),
+            concatMap(() => {
+              const before = stmt_counter.get();
+              const t0 = process.hrtime.bigint();
+              return store[variant]([graph.seed]).pipe(
+                concatMap(() => {
+                  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+                  const stmts = stmt_counter.get() - before;
+                  return store.alive_keys().pipe(
+                    map((survivors) => {
+                      const correct =
+                        survivors.length === expected.length &&
+                        survivors.every((key, index) => key === expected[index]);
+                      results.push({ variant, ms, stmts, correct });
+                      store.conn().close();
+                    }),
+                  );
+                }),
+              );
+            }),
+          ),
+        ),
+      ),
+    );
+    return run_then(runs, () => results);
+  });
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -761,56 +815,71 @@ function fmtRow(label: string, r: GunReport): string {
   return cols.join(" ");
 }
 
-async function printReportTable(label: string, cfg: GunConfig): Promise<void> {
-  console.log(
-    `\n=== ${label} (rels=${cfg.rels} depth=${cfg.strataDepth} diamond=${cfg.diamondWidth} rowsPerRel=${cfg.rowsPerRel} churnTicks=${cfg.churnTicks} churnRowsPerTick=${cfg.churnRowsPerTick}) ===`,
-  );
-  const header = [
-    "backend".padEnd(8),
-    "peakRssMB".padStart(10),
-    "rssSlope".padStart(10),
-    "wakeMed".padStart(10),
-    "wakeP95".padStart(8),
-    "stmts/tick".padStart(12),
-    "msP50".padStart(9),
-    "msP95".padStart(9),
-  ].join(" ");
-  console.log(`  ${header}`);
-
-  const rx = await runGunDetailed(cfg, "rx");
-  console.log(`  ${fmtRow("rx", rx.report)}`);
-  const sqlRes = await runGunDetailed(cfg, "sql");
-  console.log(`  ${fmtRow("sql", sqlRes.report)}`);
-
-  const agree = rx.sinkDigest === sqlRes.sinkDigest;
-  console.log(
-    `  digestsAgree=${agree}  rx=${rx.sinkDigest.slice(0, 12)}  sql=${sqlRes.sinkDigest.slice(0, 12)}`,
-  );
-}
-
-async function printRetractShootout(): Promise<void> {
-  try {
-    console.log("\n=== retract shootout (optional timing note — task 1.4 amended, not a ruling) ===");
-    const results = await runRetractShootout();
-    for (const r of results) {
-      console.log(
-        `  ${r.variant.padEnd(18)} ms=${r.ms.toFixed(2).padStart(8)}  stmts=${String(r.stmts).padStart(6)}  correct=${r.correct}`,
+function printReportTable(label: string, cfg: GunConfig): Observable<void> {
+  return defer(() => {
+    console.log(
+      `\n=== ${label} (rels=${cfg.rels} depth=${cfg.strataDepth} diamond=${cfg.diamondWidth} rowsPerRel=${cfg.rowsPerRel} churnTicks=${cfg.churnTicks} churnRowsPerTick=${cfg.churnRowsPerTick}) ===`,
+    );
+    const header = [
+      "backend".padEnd(8),
+      "peakRssMB".padStart(10),
+      "rssSlope".padStart(10),
+      "wakeMed".padStart(10),
+      "wakeP95".padStart(8),
+      "stmts/tick".padStart(12),
+      "msP50".padStart(9),
+      "msP95".padStart(9),
+    ].join(" ");
+    console.log(`  ${header}`);
+    return runGunDetailed(cfg, "rx");
+  }).pipe(
+    concatMap((rx) => {
+      console.log(`  ${fmtRow("rx", rx.report)}`);
+      return runGunDetailed(cfg, "sql").pipe(
+        map((sqlRes) => {
+          console.log(`  ${fmtRow("sql", sqlRes.report)}`);
+          const agree = rx.sinkDigest === sqlRes.sinkDigest;
+          console.log(
+            `  digestsAgree=${agree}  rx=${rx.sinkDigest.slice(0, 12)}  sql=${sqlRes.sinkDigest.slice(0, 12)}`,
+          );
+        }),
       );
-    }
-  } catch (err) {
-    console.log(`  skipped (non-fatal): ${(err as Error).message}`);
-  }
+    }),
+  );
 }
 
-async function main(): Promise<void> {
-  for (const [label, cfg] of CONFIGS) await printReportTable(label, cfg);
-  await printRetractShootout();
+function printRetractShootout(): Observable<void> {
+  return defer(() => {
+    console.log("\n=== retract shootout (optional timing note — task 1.4 amended, not a ruling) ===");
+    return runRetractShootout();
+  }).pipe(
+    map((results) => {
+      for (const timing of results) {
+        console.log(
+          `  ${timing.variant.padEnd(18)} ms=${timing.ms.toFixed(2).padStart(8)}  stmts=${String(timing.stmts).padStart(6)}  correct=${timing.correct}`,
+        );
+      }
+    }),
+    catchError((failure: unknown) => {
+      console.log(`  skipped (non-fatal): ${(failure as Error).message}`);
+      return of(undefined);
+    }),
+  );
+}
+
+function main(): Observable<void> {
+  return run_then(
+    CONFIGS.map(([label, cfg]) => printReportTable(label, cfg)),
+    () => undefined,
+  ).pipe(concatMap(() => printRetractShootout()));
 }
 
 const isMainModule = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMainModule) {
-  main().catch((err) => {
-    console.error(err);
-    process.exitCode = 1;
+  main().subscribe({
+    error: (failure: unknown) => {
+      console.error(failure);
+      process.exitCode = 1;
+    },
   });
 }

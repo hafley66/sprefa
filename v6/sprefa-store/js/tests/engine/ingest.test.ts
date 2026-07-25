@@ -10,6 +10,7 @@ import { createClient } from "@libsql/client";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { firstValueFrom } from "rxjs";
 
 import { Store, RelStore, key as cascade_key } from "../../src/engine/lib.ts";
 import { reconcile, stmt_counter } from "../../src/engine/engine.ts";
@@ -41,8 +42,8 @@ interface Engine {
 
 async function fresh_engine(): Promise<Engine> {
   const db = createClient({ url: ":memory:", intMode: "bigint" });
-  const store = await Store.open(db);
-  const rels = await RelStore.attach(db);
+  const store = await firstValueFrom(Store.open(db));
+  const rels = await firstValueFrom(RelStore.attach(db));
   return { db, store, rels };
 }
 
@@ -54,7 +55,7 @@ async function table_count(db: Engine["db"], table: string): Promise<number> {
 test("ingest: fixture populates every table, stmt count is O(lines/CHUNK)", async () => {
   const engine = await fresh_engine();
   stmt_counter.reset();
-  const report = await ingestJsonl(engine.store, engine.rels, await fixture_lines(), 1);
+  const report = await firstValueFrom(ingestJsonl(engine.store, engine.rels, await fixture_lines(), 1));
 
   assert.strictEqual(report.lines, TOTAL_LINES, "every non-blank line parsed");
   assert.strictEqual(await table_count(engine.db, "strings"), EXPECT.strs);
@@ -76,7 +77,7 @@ test("ingest: fixture populates every table, stmt count is O(lines/CHUNK)", asyn
 test("ingest: dirty() is exactly the cone of the changed rows; derived rel matches from-scratch; idempotent re-ingest", async () => {
   const engine = await fresh_engine();
   const rev1 = 1;
-  const report1 = await ingestJsonl(engine.store, engine.rels, await fixture_lines(), rev1);
+  const report1 = await firstValueFrom(ingestJsonl(engine.store, engine.rels, await fixture_lines(), rev1));
   assert.ok(report1.changed.length > 0, "first ingest discovers new cells");
 
   // Wire ONE derived rel that reads every ingested node cell: its own reconcile row is
@@ -87,16 +88,18 @@ test("ingest: dirty() is exactly the cone of the changed rows; derived rel match
 
   const DERIVED_REL = 5_000_000; // well clear of REL_STR..REL_EDGE and the named-rel hash bucket
   const derived_key = cascade_key(DERIVED_REL, 0);
-  await reconcile.seed(
-    engine.rels.conn(),
-    engine.rels.ns(),
-    derived_key,
-    0n, // placeholder digest; about to be superseded by the first propagate
-    node_cells.map(([rel, row]) => cascade_key(rel, row)),
-    0, // verified_at=0: stale relative to the node cells' changed_at=rev1
+  await firstValueFrom(
+    reconcile.seed(
+      engine.rels.conn(),
+      engine.rels.ns(),
+      derived_key,
+      0n, // placeholder digest; about to be superseded by the first propagate
+      node_cells.map(([rel, row]) => cascade_key(rel, row)),
+      0, // verified_at=0: stale relative to the node cells' changed_at=rev1
+    ),
   );
 
-  const dirty_before = await engine.rels.dirty();
+  const dirty_before = await firstValueFrom(engine.rels.dirty());
   assert.deepStrictEqual(
     dirty_before,
     [[DERIVED_REL, 0]],
@@ -106,12 +109,10 @@ test("ingest: dirty() is exactly the cone of the changed rows; derived rel match
   // recompute = XOR-fold of the reader's dep digests (order-independent — content_digest
   // XORs mix() per part). The from-scratch reference recomputes the SAME formula directly
   // from the `node` table's own rows, entirely independent of the reconcile plane.
-  const recomputes = await reconcile.propagate(
-    engine.rels.conn(),
-    engine.rels.ns(),
-    [derived_key],
-    rev1,
-    (_id, dep_digests) => content_digest(dep_digests),
+  const recomputes = await firstValueFrom(
+    reconcile.propagate(engine.rels.conn(), engine.rels.ns(), [derived_key], rev1, (_id, dep_digests) =>
+      content_digest(dep_digests),
+    ),
   );
   assert.strictEqual(recomputes, 1, "exactly one derived rel recomputed");
 
@@ -124,29 +125,27 @@ test("ingest: dirty() is exactly the cone of the changed rows; derived rel match
   const stored_digest = memo_res.rows[0]?.digest as bigint;
   assert.strictEqual(stored_digest, reference_digest, "propagated digest matches the from-scratch reference");
 
-  const dirty_after = await engine.rels.dirty();
+  const dirty_after = await firstValueFrom(engine.rels.dirty());
   assert.deepStrictEqual(dirty_after, [], "the reader is verified; nothing left dirty");
 
   // Second, identical ingest at a new rev: append-only identity means nothing is new.
-  const report2 = await ingestJsonl(engine.store, engine.rels, await fixture_lines(), rev1 + 1);
+  const report2 = await firstValueFrom(ingestJsonl(engine.store, engine.rels, await fixture_lines(), rev1 + 1));
   assert.deepStrictEqual(report2.changed, [], "re-ingesting the identical fixture yields changed=[]");
   assert.strictEqual(report2.lines, TOTAL_LINES);
 
-  const dirty_final = await engine.rels.dirty();
+  const dirty_final = await firstValueFrom(engine.rels.dirty());
   assert.deepStrictEqual(dirty_final, [], "no reader went dirty from a no-op ingest");
-  const recomputes2 = await reconcile.propagate(
-    engine.rels.conn(),
-    engine.rels.ns(),
-    dirty_final,
-    rev1 + 1,
-    (_id, dep_digests) => content_digest(dep_digests),
+  const recomputes2 = await firstValueFrom(
+    reconcile.propagate(engine.rels.conn(), engine.rels.ns(), dirty_final, rev1 + 1, (_id, dep_digests) =>
+      content_digest(dep_digests),
+    ),
   );
   assert.strictEqual(recomputes2, 0, "zero propagate recomputes on the idempotent re-ingest (early cutoff)");
 });
 
 test("ingest: named rel tables get the right column shapes (int/int, text/int)", async () => {
   const engine = await fresh_engine();
-  await ingestJsonl(engine.store, engine.rels, await fixture_lines(), 1);
+  await firstValueFrom(ingestJsonl(engine.store, engine.rels, await fixture_lines(), 1));
 
   const demo = await engine.db.execute("SELECT c0, c1 FROM demo_rel ORDER BY c0");
   assert.strictEqual(demo.rows.length, EXPECT.demo_rel);
@@ -168,7 +167,7 @@ test("ingest: named rel tables get the right column shapes (int/int, text/int)",
 
 test("ingest: edges resolve to real node ids, not local stream indices", async () => {
   const engine = await fresh_engine();
-  await ingestJsonl(engine.store, engine.rels, await fixture_lines(), 1);
+  await firstValueFrom(ingestJsonl(engine.store, engine.rels, await fixture_lines(), 1));
 
   // Fixture edge 0 is local (src=0, dst=7); node local index i has byte_start = i*8, so its
   // real node_id is discoverable via that identity, independent of ingest's own bookkeeping.

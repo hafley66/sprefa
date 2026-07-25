@@ -3,16 +3,16 @@
  * connection; callers get ids/rows, never a SeaORM type or SQL text. Writes are batched
  * (the N+1 law) and FK-ordered.
  *
- * ORM seam (src/lib.rs uses sea-orm async): TS uses ONE ASYNC `@libsql/client` connection.
- * `async fn` -> async `function`; `Result<T,DbErr>` -> throw on error; the Rust txn scope
- * maps to `client.batch([...], "write")` for a fixed write list. The spine Store methods
- * mirror lib.rs; RelStore delegates to engine.{cascade,reconcile}. GraphNs + Interner are
- * pure data structures, ported verbatim.
+ * ORM seam (src/lib.rs uses sea-orm async): TS uses ONE `@libsql/client` connection, reached
+ * only through `SqlRunner`, so every method here returns a cold `Observable`. `Result<T,DbErr>`
+ * -> error notification; the Rust txn scope maps to `SqlRunner.batch` for a fixed write list.
+ * The spine Store methods mirror lib.rs; RelStore delegates to engine.{cascade,reconcile}.
+ * GraphNs + Interner are pure data structures, ported verbatim.
  */
 
-import { firstValueFrom } from "rxjs";
+import { type Observable, concat, concatMap, defer, map, of, reduce } from "rxjs";
 import { createClient } from "@libsql/client";
-import { cascade, reconcile, stmt_counter } from "./engine.ts";
+import { cascade, reconcile } from "./engine.ts";
 import { SqlRunner } from "./sqlRunner.ts";
 import { OPEN_PRAGMAS, create_all_tables } from "./spine.ts";
 import type {
@@ -30,6 +30,7 @@ import type {
   NodeRow,
   SpanRow,
   SqliteDb,
+  SqlStatement,
   Stamp,
 } from "./types.ts";
 
@@ -47,6 +48,12 @@ export function open_db(url: string): SqliteDb {
 
 /** Widest table is `node` at 7 columns; 100 rows/statement keeps bound params under 999. */
 const CHUNK_ROWS = 100;
+
+function chunk_list<Item>(items: readonly Item[], size: number): Item[][] {
+  const out: Item[][] = [];
+  for (let start = 0; start < items.length; start += size) out.push(items.slice(start, start + size));
+  return out;
+}
 
 // =============================================================================
 // relstore — RelStore + GraphNs + stamp (the generic incremental relation store)
@@ -117,10 +124,11 @@ export class GraphNs implements IGraphNs {
  * reproduces the live `cx_`/`rx_` set byte-for-byte; a custom prefix yields an independent
  * store in the same db.
  */
-export async function stamp(db: SqliteDb, ns: GraphNs): Promise<void> {
-  await db.executeMultiple(OPEN_PRAGMAS);
-  await cascade.create_schema(db, ns);
-  await reconcile.create_schema(db, ns);
+export function stamp(db: SqliteDb, ns: GraphNs): Observable<void> {
+  return SqlRunner.executeMultiple(db, OPEN_PRAGMAS).pipe(
+    concatMap(() => cascade.create_schema(db, ns)),
+    concatMap(() => reconcile.create_schema(db, ns)),
+  );
 }
 
 /** A handle on one namespaced graph store: a connection + its GraphNs. */
@@ -128,13 +136,12 @@ export class RelStore implements IRelStore {
   constructor(private readonly _db: SqliteDb, private readonly _ns: GraphNs) {}
 
   /** Open (or create) a store at `db` stamped for namespace `ns`. */
-  static async attach_with(db: SqliteDb, ns: GraphNs): Promise<RelStore> {
-    await stamp(db, ns);
-    return new RelStore(db, ns);
+  static attach_with(db: SqliteDb, ns: GraphNs): Observable<RelStore> {
+    return stamp(db, ns).pipe(map(() => new RelStore(db, ns)));
   }
 
   /** Open (or create) a store at `db` with the default namespace (cx_ + rx_). */
-  static async attach(db: SqliteDb): Promise<RelStore> {
+  static attach(db: SqliteDb): Observable<RelStore> {
     return RelStore.attach_with(db, GraphNs.default());
   }
 
@@ -150,71 +157,79 @@ export class RelStore implements IRelStore {
   // ---- FACT plane (generic Z-set over (rel,row)) ----------------------------
 
   /** Insert `(rel, row, weight)` tuples. */
-  async add_rows(rows: ReadonlyArray<readonly [number, number, number]>): Promise<void> {
-    await cascade.insert_rows(this._db, this._ns, rows);
+  add_rows(rows: ReadonlyArray<readonly [number, number, number]>): Observable<void> {
+    return cascade.insert_rows(this._db, this._ns, rows);
   }
   /** Insert dependency edges `(parent_rel, parent_row, child_rel, child_row)`. */
-  async add_deps(edges: ReadonlyArray<readonly [number, number, number, number]>): Promise<void> {
-    await cascade.insert_deps(this._db, this._ns, edges);
+  add_deps(edges: ReadonlyArray<readonly [number, number, number, number]>): Observable<void> {
+    return cascade.insert_deps(this._db, this._ns, edges);
   }
   /** Forward add: propagate aliveness from `seeds`. Returns rounds. */
-  async assert(seeds: ReadonlyArray<readonly [number, number]>): Promise<number> {
+  assert(seeds: ReadonlyArray<readonly [number, number]>): Observable<number> {
     return cascade.assert(this._db, this._ns, seeds);
   }
   /** Counting retraction (fast, correct on ACYCLIC support graphs). Returns rounds. */
-  async retract(seeds: ReadonlyArray<readonly [number, number]>): Promise<number> {
+  retract(seeds: ReadonlyArray<readonly [number, number]>): Observable<number> {
     return cascade.retract(this._db, this._ns, seeds);
   }
   /** Counting retraction with an on-disk SCC-scoped nested fixpoint. Returns rounds. */
-  async retract_scc(seeds: ReadonlyArray<readonly [number, number]>): Promise<number> {
+  retract_scc(seeds: ReadonlyArray<readonly [number, number]>): Observable<number> {
     return cascade.retract_scc(this._db, this._ns, seeds);
   }
   /** Cycle-safe retraction (Delete-and-Rederive), round loop. Returns rounds. */
-  async retract_dred(seeds: ReadonlyArray<readonly [number, number]>): Promise<number> {
+  retract_dred(seeds: ReadonlyArray<readonly [number, number]>): Observable<number> {
     return cascade.retract_dred(this._db, this._ns, seeds);
   }
   /** Cycle-safe retraction as two recursive CTEs. Same result as retract_dred. */
-  async retract_dred_cte(seeds: ReadonlyArray<readonly [number, number]>): Promise<number> {
+  retract_dred_cte(seeds: ReadonlyArray<readonly [number, number]>): Observable<number> {
     return cascade.retract_dred_cte(this._db, this._ns, seeds);
   }
 
   /** Count live rows (weight > 0) across all relations. */
-  async alive(): Promise<number> {
-        const res = await firstValueFrom(SqlRunner.execute(this._db, `SELECT count(*) FROM ${this._ns.row} WHERE weight>0`));
-    return Number(res.rows[0]?.[0] ?? 0);
+  alive(): Observable<number> {
+    return SqlRunner.scalar(this._db, `SELECT count(*) FROM ${this._ns.row} WHERE weight>0`);
   }
 
   /** The live-row survivor SET as sorted encoded keys (`key = rel*KEY_STRIDE + row`). */
-  async alive_keys(): Promise<number[]> {
-        const res = await firstValueFrom(SqlRunner.execute(this._db, `SELECT key FROM ${this._ns.row} WHERE weight>0 ORDER BY key`));
-    return res.rows.map((row) => Number(row[0]));
+  alive_keys(): Observable<number[]> {
+    return SqlRunner.execute(this._db, `SELECT key FROM ${this._ns.row} WHERE weight>0 ORDER BY key`).pipe(
+      map((queryResult) => queryResult.rows.map((row) => Number(row[0]))),
+    );
   }
 
   // ---- CONTROL plane (salsa-in-sql over (rel,row) memos) --------------------
 
   /** Seed a rel's memo (its output digest + the deps it read), at revision `rev`. */
-  async seed_memo(
+  seed_memo(
     rel: number,
     row: number,
     digest: bigint,
     deps: ReadonlyArray<readonly [number, number]>,
     rev: number,
-  ): Promise<void> {
+  ): Observable<void> {
     const dep_keys = deps.map(([relId, rowIndex]) => cascade.key(relId, rowIndex));
-    await reconcile.seed(this._db, this._ns, cascade.key(rel, row), digest, dep_keys, rev);
+    return reconcile.seed(this._db, this._ns, cascade.key(rel, row), digest, dep_keys, rev);
   }
   /** Bump changed_at for `cells` at `rev` (an input's digest moved). */
-  async mark_changed(cells: ReadonlyArray<readonly [number, number]>, rev: number): Promise<void> {
+  mark_changed(cells: ReadonlyArray<readonly [number, number]>, rev: number): Observable<void> {
     const keys = cells.map(([relId, rowIndex]) => cascade.key(relId, rowIndex));
-    await reconcile.mark_changed(this._db, this._ns, keys, rev);
+    return reconcile.mark_changed(this._db, this._ns, keys, rev);
   }
   /** The stale frontier as `(rel, row)` pairs. */
-  async dirty(): Promise<[number, number][]> {
-    const dirtyIds = await reconcile.dirty(this._db, this._ns);
-    return dirtyIds.map((encodedKey) => [Math.trunc(encodedKey / cascade.KEY_STRIDE), encodedKey % cascade.KEY_STRIDE]);
+  dirty(): Observable<[number, number][]> {
+    return reconcile.dirty(this._db, this._ns).pipe(
+      map((dirtyIds) =>
+        dirtyIds.map(
+          (encodedKey): [number, number] => [
+            Math.trunc(encodedKey / cascade.KEY_STRIDE),
+            encodedKey % cascade.KEY_STRIDE,
+          ],
+        ),
+      ),
+    );
   }
   /** Record a recomputed rel's digest; returns whether it moved (early cutoff). */
-  async verify(rel: number, row: number, digest: bigint, rev: number): Promise<boolean> {
+  verify(rel: number, row: number, digest: bigint, rev: number): Observable<boolean> {
     return reconcile.verify(this._db, this._ns, cascade.key(rel, row), digest, rev);
   }
 }
@@ -319,15 +334,18 @@ export class Store implements IStore {
   }
 
   /** Open a store, apply pragmas, create the spine, hydrate the interner mirror. */
-  static async open(db: SqliteDb): Promise<Store> {
-    await db.executeMultiple(OPEN_PRAGMAS);
-    await create_all_tables(db);
-    const store = new Store(db);
-    const res = await db.execute("SELECT string_id, content FROM strings ORDER BY string_id ASC");
-    for (const row of res.rows) {
-      store.interner.load_row(Number(row.string_id), row.content as string);
-    }
-    return store;
+  static open(db: SqliteDb): Observable<Store> {
+    return SqlRunner.executeMultiple(db, OPEN_PRAGMAS).pipe(
+      concatMap(() => create_all_tables(db)),
+      concatMap(() => SqlRunner.execute(db, "SELECT string_id, content FROM strings ORDER BY string_id ASC")),
+      map((mirror) => {
+        const store = new Store(db);
+        for (const row of mirror.rows) {
+          store.interner.load_row(Number(row.string_id), row.content as string);
+        }
+        return store;
+      }),
+    );
   }
 
   db(): SqliteDb {
@@ -344,117 +362,109 @@ export class Store implements IStore {
     return this.interner.resolve(id);
   }
 
-  /** Persist every string interned since the last flush in ONE batched insert. */
-  async flush_strings(): Promise<number> {
-    const dirty = this.interner.take_dirty();
-    if (dirty.length === 0) return 0;
-    const dirtyCount = dirty.length;
-    for (let chunkStart = 0; chunkStart < dirty.length; chunkStart += CHUNK_ROWS) {
-      const chunk = dirty.slice(chunkStart, chunkStart + CHUNK_ROWS);
-      const vals = chunk.map(([id, content]) => `(${id},${sql_str(content)})`).join(",");
-      stmt_counter.incr();
-      await this._db.executeMultiple(
-        `INSERT INTO strings(string_id,content) VALUES ${vals} ON CONFLICT(string_id) DO NOTHING`,
-      );
-    }
-    return dirtyCount;
+  /** Persist every string interned since the last flush in ONE batched insert.
+   *  `defer` so the interner is drained at subscribe time, not at call time. */
+  flush_strings(): Observable<number> {
+    return defer(() => {
+      const dirty = this.interner.take_dirty();
+      const statements = chunk_list(dirty, CHUNK_ROWS).map((chunk) => {
+        const vals = chunk.map(([id, content]) => `(${id},${sql_str(content)})`).join(",");
+        return `INSERT INTO strings(string_id,content) VALUES ${vals} ON CONFLICT(string_id) DO NOTHING`;
+      });
+      return SqlRunner.batch(this._db, statements).pipe(map(() => dirty.length));
+    });
   }
 
   // ---- dimensions ---------------------------------------------------------
 
-  async repo_upsert(slug: string, root: string, url: string): Promise<number> {
-        const foundRes = await firstValueFrom(SqlRunner.execute(this._db, { sql: "SELECT repo_id FROM repos WHERE slug = ?", args: [slug] }));
-    const found = foundRes.rows[0] as { repo_id: number } | undefined;
-    if (found) return Number(found.repo_id);
-        const queryResult = await firstValueFrom(SqlRunner.execute(this._db, {
-      sql: "INSERT INTO repos (slug, root, url) VALUES (?, ?, ?)",
-      args: [slug, root, url],
-    }));
-    return Number(queryResult.lastInsertRowid);
+  repo_upsert(slug: string, root: string, url: string): Observable<number> {
+    return find_or_insert(
+      this._db,
+      { sql: "SELECT repo_id FROM repos WHERE slug = ?", args: [slug] },
+      { sql: "INSERT INTO repos (slug, root, url) VALUES (?, ?, ?)", args: [slug, root, url] },
+    );
   }
 
-  async root_insert(repo_id: number, path_string_id: number): Promise<number> {
-        const queryResult = await firstValueFrom(SqlRunner.execute(this._db, {
+  root_insert(repo_id: number, path_string_id: number): Observable<number> {
+    return SqlRunner.execute(this._db, {
       sql: "INSERT INTO roots (repo_id, path_string_id) VALUES (?, ?)",
       args: [repo_id, path_string_id],
-    }));
-    return Number(queryResult.lastInsertRowid);
+    }).pipe(map((queryResult) => Number(queryResult.lastInsertRowid)));
   }
 
   /** A committed rev (shared across roots that have this sha). Find-or-insert by (repo_id, git_sha). */
-  async rev_committed(repo_id: number, git_sha: Uint8Array): Promise<number> {
-        const foundRes = await firstValueFrom(SqlRunner.execute(this._db, {
-      sql: "SELECT rev_id FROM repo_revs WHERE repo_id = ? AND git_sha = ?",
-      args: [repo_id, Buffer.from(git_sha)],
-    }));
-    const found = foundRes.rows[0] as { rev_id: number } | undefined;
-    if (found) return Number(found.rev_id);
-        const queryResult = await firstValueFrom(SqlRunner.execute(this._db, {
-      sql: "INSERT INTO repo_revs (repo_id, kind, git_sha, root_id, base_rev_id) VALUES (?, 0, ?, NULL, NULL)",
-      args: [repo_id, Buffer.from(git_sha)],
-    }));
-    return Number(queryResult.lastInsertRowid);
+  rev_committed(repo_id: number, git_sha: Uint8Array): Observable<number> {
+    return find_or_insert(
+      this._db,
+      {
+        sql: "SELECT rev_id FROM repo_revs WHERE repo_id = ? AND git_sha = ?",
+        args: [repo_id, Buffer.from(git_sha)],
+      },
+      {
+        sql: "INSERT INTO repo_revs (repo_id, kind, git_sha, root_id, base_rev_id) VALUES (?, 0, ?, NULL, NULL)",
+        args: [repo_id, Buffer.from(git_sha)],
+      },
+    );
   }
 
   /** The WORK rev of a root (its uncommitted working tree). One per root. */
-  async rev_work(repo_id: number, root_id: number, base_rev_id: number): Promise<number> {
-        const foundRes = await firstValueFrom(SqlRunner.execute(this._db, {
-      sql: "SELECT rev_id FROM repo_revs WHERE root_id = ? AND kind = 1",
-      args: [root_id],
-    }));
-    const found = foundRes.rows[0] as { rev_id: number } | undefined;
-    if (found) return Number(found.rev_id);
-        const queryResult = await firstValueFrom(SqlRunner.execute(this._db, {
-      sql: "INSERT INTO repo_revs (repo_id, kind, git_sha, root_id, base_rev_id) VALUES (?, 1, NULL, ?, ?)",
-      args: [repo_id, root_id, base_rev_id],
-    }));
-    return Number(queryResult.lastInsertRowid);
+  rev_work(repo_id: number, root_id: number, base_rev_id: number): Observable<number> {
+    return find_or_insert(
+      this._db,
+      { sql: "SELECT rev_id FROM repo_revs WHERE root_id = ? AND kind = 1", args: [root_id] },
+      {
+        sql: "INSERT INTO repo_revs (repo_id, kind, git_sha, root_id, base_rev_id) VALUES (?, 1, NULL, ?, ?)",
+        args: [repo_id, root_id, base_rev_id],
+      },
+    );
   }
 
   // ---- files (content, dedup by hash) ------------------------------------
 
-  async files_insert_batch(rows: ReadonlyArray<readonly [Uint8Array, number, number]>): Promise<void> {
-    for (let chunkStart = 0; chunkStart < rows.length; chunkStart += CHUNK_ROWS) {
-      const chunk = rows.slice(chunkStart, chunkStart + CHUNK_ROWS);
-      const placeholders = chunk.map(() => "(?,?,?)").join(",");
-      const params = chunk.flatMap(([hash, size, lines]) => [Buffer.from(hash), size, lines]);
-            await firstValueFrom(SqlRunner.execute(this._db, {
-        sql: `INSERT INTO files(content_hash,size,lines) VALUES ${placeholders} ON CONFLICT(content_hash) DO NOTHING`,
-        args: params,
-      }));
-    }
+  files_insert_batch(rows: ReadonlyArray<readonly [Uint8Array, number, number]>): Observable<void> {
+    const statements = chunk_list(rows, CHUNK_ROWS).map((chunk) => ({
+      sql: `INSERT INTO files(content_hash,size,lines) VALUES ${chunk.map(() => "(?,?,?)").join(",")} ON CONFLICT(content_hash) DO NOTHING`,
+      args: chunk.flatMap(([hash, size, lines]) => [Buffer.from(hash), size, lines]),
+    }));
+    return SqlRunner.batch(this._db, statements);
   }
 
-  async file_id_of(content_hash: Uint8Array): Promise<number | null> {
-        const queryResult = await firstValueFrom(SqlRunner.execute(this._db, {
+  file_id_of(content_hash: Uint8Array): Observable<number | null> {
+    return SqlRunner.execute(this._db, {
       sql: "SELECT file_id FROM files WHERE content_hash = ?",
       args: [Buffer.from(content_hash)],
-    }));
-    const found = queryResult.rows[0] as { file_id: number } | undefined;
-    return found ? Number(found.file_id) : null;
+    }).pipe(
+      map((queryResult) => {
+        const found = queryResult.rows[0];
+        return found === undefined ? null : Number(found[0]);
+      }),
+    );
   }
 
   /** Batch `content_hash -> file_id` resolution: ONE query per CHUNK_ROWS hashes. */
-  async file_ids_by_hashes(hashes: ReadonlyArray<Uint8Array>): Promise<Map<string, number>> {
-    const hashToFileId = new Map<string, number>();
-    for (let chunkStart = 0; chunkStart < hashes.length; chunkStart += CHUNK_ROWS) {
-      const chunk = hashes.slice(chunkStart, chunkStart + CHUNK_ROWS);
-      const placeholders = chunk.map(() => "?").join(",");
-            const queryResult = await firstValueFrom(SqlRunner.execute(this._db, {
-        sql: `SELECT content_hash, file_id FROM files WHERE content_hash IN (${placeholders})`,
-        args: chunk.map((hash) => Buffer.from(hash)),
-      }));
-      for (const row of queryResult.rows) {
-        const content_hash = new Uint8Array(row.content_hash as ArrayBuffer);
-        hashToFileId.set(hashHex(content_hash), Number(row.file_id));
-      }
-    }
-    return hashToFileId;
+  file_ids_by_hashes(hashes: ReadonlyArray<Uint8Array>): Observable<Map<string, number>> {
+    return defer(() => {
+      const queries = chunk_list(hashes, CHUNK_ROWS).map((chunk) =>
+        SqlRunner.execute(this._db, {
+          sql: `SELECT content_hash, file_id FROM files WHERE content_hash IN (${chunk.map(() => "?").join(",")})`,
+          args: chunk.map((hash) => Buffer.from(hash)),
+        }),
+      );
+      return concat(...queries).pipe(
+        reduce((hashToFileId, queryResult) => {
+          for (const row of queryResult.rows) {
+            hashToFileId.set(hashHex(new Uint8Array(row.content_hash as ArrayBuffer)), Number(row.file_id));
+          }
+          return hashToFileId;
+        }, new Map<string, number>()),
+      );
+    });
   }
 
   /** Paths in a WORK rev whose content differs from its base HEAD. */
-  async unstaged_path_ids(work_rev: number): Promise<number[]> {
-        const queryResult = await firstValueFrom(SqlRunner.execute(this._db, 
+  unstaged_path_ids(work_rev: number): Observable<number[]> {
+    return SqlRunner.execute(
+      this._db,
       `SELECT w.path_string_id AS p \
              FROM revs_files w \
              JOIN repo_revs r ON r.rev_id = w.rev_id \
@@ -462,64 +472,65 @@ export class Store implements IStore {
                ON h.rev_id = r.base_rev_id AND h.path_string_id = w.path_string_id \
              WHERE w.rev_id = ${work_rev} \
                AND (h.file_id IS NULL OR h.file_id <> w.file_id)`,
-    ));
-    return queryResult.rows.map((row) => Number(row[0]));
+    ).pipe(map((queryResult) => queryResult.rows.map((row) => Number(row[0]))));
   }
 
   // ---- junction: place content at (rev, path) ----------------------------
 
-  async place_files_batch(rows: ReadonlyArray<readonly [number, number, number]>): Promise<void> {
-    for (let chunkStart = 0; chunkStart < rows.length; chunkStart += CHUNK_ROWS) {
-      const chunk = rows.slice(chunkStart, chunkStart + CHUNK_ROWS);
-      const vals = chunk.map(([revisionId, pathStringId, fileId]) => `(${revisionId},${pathStringId},${fileId})`).join(",");
-      stmt_counter.incr();
-      await this._db.executeMultiple(
-        `INSERT INTO revs_files(rev_id,path_string_id,file_id) VALUES ${vals} ON CONFLICT(rev_id,path_string_id) DO NOTHING`,
-      );
-    }
+  place_files_batch(rows: ReadonlyArray<readonly [number, number, number]>): Observable<void> {
+    const statements = chunk_list(rows, CHUNK_ROWS).map((chunk) => {
+      const vals = chunk
+        .map(([revisionId, pathStringId, fileId]) => `(${revisionId},${pathStringId},${fileId})`)
+        .join(",");
+      return `INSERT INTO revs_files(rev_id,path_string_id,file_id) VALUES ${vals} ON CONFLICT(rev_id,path_string_id) DO NOTHING`;
+    });
+    return SqlRunner.batch(this._db, statements);
   }
 
   // ---- unified graph -----------------------------------------------------
 
-  async nodes_insert_batch(rows: ReadonlyArray<NodeRow>): Promise<void> {
-    for (let chunkStart = 0; chunkStart < rows.length; chunkStart += CHUNK_ROWS) {
-      const chunk = rows.slice(chunkStart, chunkStart + CHUNK_ROWS);
+  nodes_insert_batch(rows: ReadonlyArray<NodeRow>): Observable<void> {
+    const statements = chunk_list(rows, CHUNK_ROWS).map((chunk) => {
       const vals = chunk
         .map(
           (row) =>
             `(${row.node_id},${row.family},${row.file_id},${row.byte_start},${row.byte_len},${row.kind},${row.name_id === null ? "NULL" : row.name_id})`,
         )
         .join(",");
-      stmt_counter.incr();
-      await this._db.executeMultiple(
-        `INSERT INTO node(node_id,family,file_id,byte_start,byte_len,kind,name_id) VALUES ${vals} ON CONFLICT(node_id) DO NOTHING`,
-      );
-    }
+      return `INSERT INTO node(node_id,family,file_id,byte_start,byte_len,kind,name_id) VALUES ${vals} ON CONFLICT(node_id) DO NOTHING`;
+    });
+    return SqlRunner.batch(this._db, statements);
   }
 
-  async edges_insert_batch(rows: ReadonlyArray<EdgeRow>): Promise<void> {
-    for (let chunkStart = 0; chunkStart < rows.length; chunkStart += CHUNK_ROWS) {
-      const chunk = rows.slice(chunkStart, chunkStart + CHUNK_ROWS);
+  edges_insert_batch(rows: ReadonlyArray<EdgeRow>): Observable<void> {
+    const statements = chunk_list(rows, CHUNK_ROWS).map((chunk) => {
       const vals = chunk.map((row) => `(${row.family},${row.src_id},${row.dst_id},${row.kind})`).join(",");
-      stmt_counter.incr();
-      await this._db.executeMultiple(
-        `INSERT INTO edge(family,src_id,dst_id,kind) VALUES ${vals} ON CONFLICT(family,src_id,dst_id,kind) DO NOTHING`,
-      );
-    }
+      return `INSERT INTO edge(family,src_id,dst_id,kind) VALUES ${vals} ON CONFLICT(family,src_id,dst_id,kind) DO NOTHING`;
+    });
+    return SqlRunner.batch(this._db, statements);
   }
 
-  async spans_insert_batch(rows: ReadonlyArray<SpanRow>): Promise<void> {
-    for (let chunkStart = 0; chunkStart < rows.length; chunkStart += CHUNK_ROWS) {
-      const chunk = rows.slice(chunkStart, chunkStart + CHUNK_ROWS);
+  spans_insert_batch(rows: ReadonlyArray<SpanRow>): Observable<void> {
+    const statements = chunk_list(rows, CHUNK_ROWS).map((chunk) => {
       const vals = chunk
         .map((row) => `(${row.file_id},${row.start},${row.end},${row.string_id === null ? "NULL" : row.string_id})`)
         .join(",");
-      stmt_counter.incr();
-      await this._db.executeMultiple(
-        `INSERT INTO file_bytes(file_id,start,end,string_id) VALUES ${vals} ON CONFLICT(file_id,start,end) DO NOTHING`,
-      );
-    }
+      return `INSERT INTO file_bytes(file_id,start,end,string_id) VALUES ${vals} ON CONFLICT(file_id,start,end) DO NOTHING`;
+    });
+    return SqlRunner.batch(this._db, statements);
   }
+}
+
+/** The dimension-table shape: the existing surrogate key if `find` hits, else `insert`'s new
+ *  rowid. `find` must select exactly the key column. */
+function find_or_insert(db: SqliteDb, find: SqlStatement, insert: SqlStatement): Observable<number> {
+  return SqlRunner.execute(db, find).pipe(
+    concatMap((foundResult) => {
+      const found = foundResult.rows[0];
+      if (found !== undefined) return of(Number(found[0]));
+      return SqlRunner.execute(db, insert).pipe(map((insertResult) => Number(insertResult.lastInsertRowid)));
+    }),
+  );
 }
 
 /** SQL-string-escape a text literal (the store inlines text into batched inserts). */

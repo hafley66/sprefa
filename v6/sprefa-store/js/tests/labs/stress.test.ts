@@ -7,6 +7,7 @@
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
+import { firstValueFrom } from "rxjs";
 
 import {
   synthProgram,
@@ -46,16 +47,16 @@ test("synthProgram: at least one recursive stratum shows up once rels crosses 32
 
 test("runGun: rx and sql backends agree on the final sink digest (small config)", async () => {
   const cfg: GunConfig = { rels: 20, strataDepth: 3, diamondWidth: 2, rowsPerRel: 8, churnTicks: 10, churnRowsPerTick: 2, seed: 12345 };
-  const rx = await runGunDetailed(cfg, "rx");
-  const sqlRes = await runGunDetailed(cfg, "sql");
+  const rx = await firstValueFrom(runGunDetailed(cfg, "rx"));
+  const sqlRes = await firstValueFrom(runGunDetailed(cfg, "sql"));
   console.log(`  [small] rx.wakeMedian=${rx.report.wakeMedian} sql.wakeMedian=${sqlRes.report.wakeMedian}`);
   assert.equal(rx.sinkDigest, sqlRes.sinkDigest, "rx and sql sink digests must be byte-equal");
 });
 
 test("runGun: public contract returns a GunReport (not the detailed shape) for both backends", async () => {
   const cfg: GunConfig = { rels: 12, strataDepth: 2, diamondWidth: 2, rowsPerRel: 5, churnTicks: 4, churnRowsPerTick: 1, seed: 99 };
-  const rxReport = await runGun(cfg, "rx");
-  const sqlReport = await runGun(cfg, "sql");
+  const rxReport = await firstValueFrom(runGun(cfg, "rx"));
+  const sqlReport = await firstValueFrom(runGun(cfg, "sql"));
   for (const report of [rxReport, sqlReport]) {
     assert.equal(typeof report.peakRssMib, "number");
     assert.equal(typeof report.rssSlope, "number");
@@ -81,8 +82,8 @@ test("E1 epic golden: fixed 0xC0FFEE config — digest parity, wake gate, RSS-sl
   assert.equal(goldenGunConfig.diamondWidth, 4);
   assert.equal(goldenGunConfig.churnTicks, 100);
 
-  const rx = await runGunDetailed(goldenGunConfig, "rx");
-  const sqlRes = await runGunDetailed(goldenGunConfig, "sql");
+  const rx = await firstValueFrom(runGunDetailed(goldenGunConfig, "rx"));
+  const sqlRes = await firstValueFrom(runGunDetailed(goldenGunConfig, "sql"));
 
   console.log(
     `  [golden] rx: wakeMedian=${rx.report.wakeMedian} wakeP95=${rx.report.wakeP95} ` +
@@ -125,7 +126,7 @@ test("E1 epic golden: fixed 0xC0FFEE config — digest parity, wake gate, RSS-sl
 // =============================================================================
 
 test("runRetractShootout: all three variants agree with the from-scratch survivor oracle", async () => {
-  const results = await runRetractShootout();
+  const results = await firstValueFrom(runRetractShootout());
   assert.equal(results.length, 3);
   for (const r of results) {
     console.log(`  [retract] ${r.variant} ms=${r.ms.toFixed(2)} stmts=${r.stmts} correct=${r.correct}`);

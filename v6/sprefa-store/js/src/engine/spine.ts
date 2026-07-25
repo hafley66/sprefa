@@ -17,6 +17,9 @@ import type {
   SqliteDb,
 } from "./types.ts";
 import { createHash } from "node:crypto";
+import type { Observable } from "rxjs";
+
+import { SqlRunner } from "./sqlRunner.ts";
 
 /** The unified graph family discriminator, stored as a small i32 ordinal. */
 export const Family = {
@@ -107,8 +110,8 @@ export function table_names(): string[] {
  * (revs_files, file_bytes, edge) — they become their own PK index instead of paying for a
  * rowid heap plus a duplicate autoindex.
  */
-export async function create_all_tables(db: SqliteDb): Promise<void> {
-  await db.executeMultiple(`CREATE TABLE IF NOT EXISTS strings (string_id INTEGER PRIMARY KEY, content TEXT NOT NULL UNIQUE);
+export function create_all_tables(db: SqliteDb): Observable<void> {
+  const tables = `CREATE TABLE IF NOT EXISTS strings (string_id INTEGER PRIMARY KEY, content TEXT NOT NULL UNIQUE);
          CREATE TABLE IF NOT EXISTS repos (repo_id INTEGER PRIMARY KEY, slug TEXT NOT NULL UNIQUE, root TEXT NOT NULL, url TEXT NOT NULL);
          CREATE TABLE IF NOT EXISTS roots (root_id INTEGER PRIMARY KEY, repo_id INTEGER NOT NULL, path_string_id INTEGER NOT NULL UNIQUE);
          CREATE TABLE IF NOT EXISTS repo_revs (rev_id INTEGER PRIMARY KEY, repo_id INTEGER NOT NULL, kind INTEGER NOT NULL, git_sha BLOB, root_id INTEGER, base_rev_id INTEGER);
@@ -116,8 +119,8 @@ export async function create_all_tables(db: SqliteDb): Promise<void> {
          CREATE TABLE IF NOT EXISTS revs_files (rev_id INTEGER NOT NULL, path_string_id INTEGER NOT NULL, file_id INTEGER NOT NULL, PRIMARY KEY (rev_id, path_string_id)) WITHOUT ROWID;
          CREATE TABLE IF NOT EXISTS file_bytes (file_id INTEGER NOT NULL, start INTEGER NOT NULL, end INTEGER NOT NULL, string_id INTEGER, PRIMARY KEY (file_id, start, end)) WITHOUT ROWID;
          CREATE TABLE IF NOT EXISTS node (node_id INTEGER PRIMARY KEY, family INTEGER NOT NULL, file_id INTEGER NOT NULL, byte_start INTEGER NOT NULL, byte_len INTEGER NOT NULL, kind INTEGER NOT NULL, name_id INTEGER);
-         CREATE TABLE IF NOT EXISTS edge (family INTEGER NOT NULL, src_id INTEGER NOT NULL, dst_id INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY (family, src_id, dst_id, kind)) WITHOUT ROWID;`);
-  for (const sql of secondary_indexes()) await db.executeMultiple(sql);
+         CREATE TABLE IF NOT EXISTS edge (family INTEGER NOT NULL, src_id INTEGER NOT NULL, dst_id INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY (family, src_id, dst_id, kind)) WITHOUT ROWID;`;
+  return SqlRunner.executeMultiple(db, [tables, ...secondary_indexes()].join(";"));
 }
 
 /** Identity-uniqueness and reverse-traversal indexes not expressible as single-col UNIQUE. */
@@ -220,13 +223,13 @@ export function rel_col_text(name: string): RelCol {
  *    The cost is honest and is the reason this is opt-in: `UNIQUE (pk)` is a second b-tree
  *    holding the key columns again.
  */
-export async function create_rel_table(
+export function create_rel_table(
   db: SqliteDb,
   name: string,
   cols: ReadonlyArray<RelCol>,
   pk: ReadonlyArray<string>,
   surrogate?: string,
-): Promise<void> {
+): Observable<void> {
   const col_defs = cols.map((column) => {
     const sqlType = column.kind === "text" ? "TEXT" : "INTEGER";
     const nullConstraint = column.kind === "int_null" ? "" : " NOT NULL";
@@ -236,19 +239,18 @@ export async function create_rel_table(
     let sql = `CREATE TABLE IF NOT EXISTS ${name} (${surrogate} INTEGER PRIMARY KEY, ${col_defs.join(", ")}`;
     if (pk.length > 0) sql += `, UNIQUE (${pk.join(", ")})`;
     sql += ")";
-    await db.executeMultiple(sql);
-    return;
+    return SqlRunner.run(db, sql);
   }
   let sql = `CREATE TABLE IF NOT EXISTS ${name} (${col_defs.join(", ")}`;
   if (pk.length > 0) sql += `, PRIMARY KEY (${pk.join(", ")})`;
   sql += ")";
   if (pk.length > 0) sql += " WITHOUT ROWID";
-  await db.executeMultiple(sql);
+  return SqlRunner.run(db, sql);
 }
 
 /** Drop a rel table (an evicted rel leaves zero bytes). */
-export async function drop_rel_table(db: SqliteDb, name: string): Promise<void> {
-  await db.executeMultiple(`DROP TABLE IF EXISTS ${name}`);
+export function drop_rel_table(db: SqliteDb, name: string): Observable<void> {
+  return SqlRunner.run(db, `DROP TABLE IF EXISTS ${name}`);
 }
 }
 

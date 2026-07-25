@@ -29,6 +29,27 @@ export const SqlRunner: ISqlRunner = {
     return SqlRunner.execute(db, statement, trace).pipe(map((result) => Number(result.rows[0]?.[0] ?? 0)));
   },
 
+  executeMultiple(db: SqliteDb, sql: string, trace?: TraceStatement): Observable<void> {
+    return defer(() => {
+      for (const statement of splitStatements(sql)) {
+        stmt_counter.incr();
+        trace?.(statement);
+      }
+      return from(db.executeMultiple(sql));
+    });
+  },
+
+  batch(db: SqliteDb, statements: readonly SqlStatement[], trace?: TraceStatement): Observable<void> {
+    return defer(() => {
+      if (statements.length === 0) return of(undefined);
+      for (const statement of statements) {
+        stmt_counter.incr();
+        trace?.(typeof statement === "string" ? statement : statement.sql);
+      }
+      return from(db.batch(statements.slice(), "write")).pipe(map(() => undefined));
+    });
+  },
+
   inTransaction<Value>(db: SqliteDb, body: () => Observable<Value>): Observable<Value> {
     return bracket(db, "BEGIN IMMEDIATE").pipe(
       concatMap(body),
@@ -49,4 +70,12 @@ export const SqlRunner: ISqlRunner = {
  */
 function bracket(db: SqliteDb, statement: string): Observable<void> {
   return defer(() => from(db.execute(statement))).pipe(map(() => undefined));
+}
+
+/** `;` never appears inside a literal in the SQL this engine emits. */
+function splitStatements(sql: string): string[] {
+  return sql
+    .split(";")
+    .map((statement) => statement.trim())
+    .filter((statement) => statement.length > 0);
 }
