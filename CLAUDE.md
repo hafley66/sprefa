@@ -182,12 +182,23 @@ lock, rusqlite-coupling Layer 5 call_def fix, _source_stage_owner batch.)
   library-flavoured or abbreviation names that carry no content. `Rx` is the rejected example.
   If one interface needs a vague name it is usually two interfaces glued together; split it and
   both names get obvious.
-- **No async in v6, rxjs instead** (user-set 2026-07-25): `Promise`/`async`/`await` are banned above
-  the single driver seam. That seam is `SqliteDb.execute`, wrapped exactly once per package in a
-  `defer(() => from(...))` helper (`makeExec` in lowerSql.ts, `execute$` in 3_runtime.ts). Sync
-  control flow also goes through rx operators: a nested if/for/switch becomes `from -> concatMap ->
-  toArray`, a fixpoint becomes `expand`, a fan-out becomes `groupBy -> mergeMap`. Exempt: tiny pure
-  functions that would be a `.map` callback or a plain method call in any other language.
+- **Async becomes rxjs; sync stays sync** (user-set 2026-07-25, CORRECTING the earlier
+  "make the whole code rxjs" instruction, which the user withdrew: "i should not have said
+  make it all rxjs, just make the async into rxjs"):
+  - `Promise`/`async`/`await` are banned above the single driver seam. That seam is
+    `SqliteDb.execute`, wrapped exactly once in `SqlRunner` (`engine/sqlRunner.ts`).
+  - Loops, branching, and list building over in-memory data stay **plain array code** and
+    **return arrays**. `map`/`filter`/`flatMap`/`reduce`, not `from -> concatMap -> toArray`.
+    A function that computes a `string[]` returns `string[]`.
+  - The dividing line that works in practice (see `lower/lowerSql.ts`): SQL *building* is
+    sync and returns statements; only *running* statements is an Observable. `runAll` is the
+    single place a `string[]` becomes execution.
+  - Symptom that the line was crossed: an Observable pipeline that ends by throwing its
+    values away (`count()`, `toArray()` then ignore, `ignoreElements()`). That is sync work
+    wearing an Observable. It also hides real values, which cost 8 redundant
+    `SELECT count(*)` scans per conformance run before `rowsAffected` was let through.
+  - `Observable<never>` is not used here. An effect emits one `void` when done and callers
+    chain with `concatMap`; `concat` would union the effect's type into the value type.
   TRAP: `await someObservable` returns the observable without subscribing and TypeScript accepts it
   silently. Use `firstValueFrom`, or better, do not leave an `await` to convert.
 - One rel = one rule kind: never head a rel with both a source rule (scan/match/ast/sg/json/cmd/comment) and a derived rule. `rebuild_derived` does a full `DELETE FROM rel` that would wipe the reconciled source rows. The engine now bails; split into two rels and union in a third derived rule. SAME hazard, separately guarded, for a **term-extract** rule (a `json`/`jsonp` body predicate over a bound string) headed together with a derived rule: `eval_extract_rules` fills the extract rows, then `rebuild_derived` (which runs after it so derived rules can read the extract output) drops them. Notably a term-extract rule cannot feed a `@next` carry directly for this reason — route it through its own rel first (the `pr_number -> change_log` split in gh-cache.dl). Engine bails as of the ghcacher-parity arc.

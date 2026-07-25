@@ -4,7 +4,7 @@
  *  interned-INTEGER tables and plain text tables alike. Nothing here is async: the only
  *  promise is `db.execute`, and it arrives already wrapped by SqlRunner. */
 
-import { EMPTY, Observable, defer, from, last, map, of, reduce, throwError, concatMap, expand } from "rxjs";
+import { EMPTY, Observable, concat, count, defer, expand, from, last, map, of, reduce, throwError, concatMap } from "rxjs";
 
 import type { AggFn, Compare, Program, Rule } from "./ast.ts";
 import { buildRuleGraph, scc, stratify } from "./rulegraph.ts";
@@ -23,7 +23,6 @@ import type {
 } from "./types.ts";
 import type { AssertTrue, QueryResult, SqliteDb, TraceStatement } from "../engine/types.ts";
 import { SqlRunner } from "../engine/sqlRunner.ts";
-import { inSequence } from "../engine/sequence.ts";
 
 /** A rel with an aggregate head inside a recursive SCC: non-monotone, not stratifiable. */
 export class AggregateInRecursionError extends Error {
@@ -76,70 +75,85 @@ export class DatalogEvaluator implements IDatalogEvaluator {
     return this.rulesByHead.get(relName) ?? [];
   }
 
-  run(): Observable<SupportReport> {
-    // Every rule-headed IDB table starts empty: a later stratum reads earlier ones.
-    const clearStatements = this.program.rels
+  /** Every rule-headed IDB table starts empty: a later stratum reads earlier ones. */
+  clearStatements(): string[] {
+    return this.program.rels
       .filter((decl) => decl.origin !== "EDB" && this.rulesByHead.has(decl.name))
       .map((decl) => `DELETE FROM ${this.tableOf(decl.name).table}`);
-
-    return inSequence(clearStatements.map((sql) => this.exec(sql))).pipe(
-      concatMap(() =>
-        inSequence(
-          this.strata.map((stratum) =>
-            stratum.recursive
-              ? new RecursiveStratum(this, stratum.rels).run()
-              : inSequence(stratum.rels.map((relName) => this.acyclicRel(relName))),
-          ),
-        ),
-      ),
-      concatMap(() =>
-        this.support === undefined ? of({ rulesWithoutSupport: [] }) : this.emitSupportEdges(this.support),
-      ),
-    );
   }
 
-  acyclicRel(relName: string): Observable<unknown> {
+  acyclicStatements(relName: string): string[] {
     const head = this.tableOf(relName);
-    const statements = this.rulesFor(relName)
+    return this.rulesFor(relName)
       .map((rule) => this.compileRuleSelect(rule, new Map()))
       .filter((select): select is string => select !== null)
       .map((select) => `INSERT OR IGNORE INTO ${head.table}(${head.columns.join(", ")}) ${select}`);
-    return inSequence(statements.map((sql) => this.exec(sql)));
+  }
+
+  /** The one place a list of SQL becomes execution. Emits once, when the last statement
+   *  finishes. DDL result sets are not values anybody wants, so `void` is the honest
+   *  payload; `count` guarantees the single emission even for an empty list. */
+  runAll(statements: readonly string[]): Observable<void> {
+    return concat(...statements.map((sql) => this.exec(sql))).pipe(
+      count(),
+      map(() => undefined),
+    );
+  }
+
+  run(): Observable<SupportReport> {
+    const settleModel = this.strata.reduce<Observable<void>>(
+      (chain, stratum) =>
+        chain.pipe(
+          concatMap(() =>
+            stratum.recursive
+              ? new RecursiveStratum(this, stratum.rels).run()
+              : this.runAll(stratum.rels.flatMap((relName) => this.acyclicStatements(relName))),
+          ),
+        ),
+      this.runAll(this.clearStatements()),
+    );
+
+    return settleModel.pipe(
+      concatMap(() => {
+        if (this.support === undefined) return of<SupportReport>({ rulesWithoutSupport: [] });
+        const plan = this.supportPlan(this.support);
+        return this.runAll(plan.statements).pipe(map(() => plan));
+      }),
+    );
   }
 
   /** Rows `rule` produces that are not already in the head's full table go into `intoDelta`. */
-  insertNewRows(rule: Rule, bodyPositionOverrides: ReadonlyMap<number, string>, intoDelta: string): Observable<unknown> {
+  insertNewRowsStatement(rule: Rule, bodyPositionOverrides: ReadonlyMap<number, string>, intoDelta: string): string | null {
     const head = this.tableOf(rule.head);
     const select = this.compileRuleSelect(rule, bodyPositionOverrides);
-    if (select === null) return of(undefined);
-    return this.exec(
+    if (select === null) return null;
+    return (
       `INSERT OR IGNORE INTO ${intoDelta}(${head.columns.join(", ")}) ${select} ` +
-        `EXCEPT SELECT ${head.columns.join(", ")} FROM ${head.table}`,
+      `EXCEPT SELECT ${head.columns.join(", ")} FROM ${head.table}`
     );
   }
 
-  /** `rowsAffected` off the INSERT is the growth count. Re-reading it with a pair of
-   *  `SELECT count(*)` scans is what the old signature's `Observable<void>` forced. */
-  mergeDeltaIntoFull(relName: string, delta: string): Observable<number> {
+  /** `rowsAffected` off this INSERT is the growth count, which is why the caller runs it
+   *  through `exec` rather than `runAll`: a pair of `SELECT count(*)` scans used to
+   *  recompute a number the driver already returns. */
+  mergeStatement(relName: string, delta: string): string {
     const full = this.tableOf(relName);
     const columns = full.columns.join(", ");
-    return this.exec(`INSERT OR IGNORE INTO ${full.table}(${columns}) SELECT ${columns} FROM ${delta}`).pipe(
-      map((queryResult) => Number(queryResult.rowsAffected)),
-    );
+    return `INSERT OR IGNORE INTO ${full.table}(${columns}) SELECT ${columns} FROM ${delta}`;
   }
 
-  createLike(name: string, like: RelTable): Observable<unknown> {
+  createLikeStatements(name: string, like: RelTable): string[] {
     const columns = like.columns.join(", ");
-    return inSequence([
-      this.exec(`DROP TABLE IF EXISTS ${name}`),
-      this.exec(`CREATE TEMP TABLE ${name}(${columns}, PRIMARY KEY (${columns})) WITHOUT ROWID`),
-    ]);
+    return [
+      `DROP TABLE IF EXISTS ${name}`,
+      `CREATE TEMP TABLE ${name}(${columns}, PRIMARY KEY (${columns})) WITHOUT ROWID`,
+    ];
   }
 
   /** Support edges, one pass over the settled model. Per rule per positive body position:
    *  the (parent_key, child_key) pairs, joining back to the head table for its surrogate. */
-  emitSupportEdges(support: SupportEdges): Observable<SupportReport> {
-    return defer(() => {
+  supportPlan(support: SupportEdges): { statements: string[]; rulesWithoutSupport: { head: string; reason: string }[] } {
+    {
       const rulesWithoutSupport: { head: string; reason: string }[] = [];
       const statements: string[] = [];
       const tagOf = (relName: string): number => {
@@ -197,8 +211,8 @@ export class DatalogEvaluator implements IDatalogEvaluator {
         }
       }
 
-      return inSequence(statements.map((sql) => this.exec(sql))).pipe(map(() => ({ rulesWithoutSupport })));
-    });
+      return { statements, rulesWithoutSupport };
+    }
   }
 
   /** The FROM / WHERE / variable-binding core of a rule, shared by the model SELECT and
@@ -338,45 +352,61 @@ export class RecursiveStratum implements IRecursiveStratum {
   }
 
   /** Every rule over the full tables. Recursive members are still empty, so only the exit
-   *  rules produce rows, and those become the first delta. */
-  seed(): Observable<unknown> {
-    return inSequence(
-      this.memberRels.map((relName) => this.evaluator.createLike(this.delta(relName), this.evaluator.tableOf(relName))),
-    ).pipe(
-      concatMap(() => inSequence(this.rules.map((rule) => this.evaluator.insertNewRows(rule, new Map(), this.delta(rule.head))))),
-      concatMap(() => inSequence(this.memberRels.map((relName) => this.evaluator.mergeDeltaIntoFull(relName, this.delta(relName))))),
-    );
+   *  rules produce rows, and those become the first delta. Nothing here needs a result
+   *  back, so it is a statement list. */
+  seedStatements(): string[] {
+    return [
+      ...this.memberRels.flatMap((relName) =>
+        this.evaluator.createLikeStatements(this.delta(relName), this.evaluator.tableOf(relName)),
+      ),
+      ...this.rules.flatMap((rule) => {
+        const statement = this.evaluator.insertNewRowsStatement(rule, new Map(), this.delta(rule.head));
+        return statement === null ? [] : [statement];
+      }),
+      ...this.memberRels.map((relName) => this.evaluator.mergeStatement(relName, this.delta(relName))),
+    ];
   }
 
-  /** One semi-naive round. Emits whether anything grew. */
-  round(): Observable<boolean> {
-    return inSequence(
-      this.memberRels.map((relName) => this.evaluator.createLike(this.next(relName), this.evaluator.tableOf(relName))),
-    ).pipe(
-      concatMap(() =>
-        inSequence(
-          this.rules.map((rule) =>
-            inSequence(
-              this.recursivePositions(rule).map((bodyIndex) => {
-                const pred = rule.body[bodyIndex];
-                if (pred?.kind !== "rel") return EMPTY;
-                const override = new Map<number, string>([[bodyIndex, this.delta(pred.rel)]]);
-                return this.evaluator.insertNewRows(rule, override, this.next(rule.head));
-              }),
-            ),
-          ),
-        ),
+  /** Fresh `next` tables, then one delta pass per recursive body position. */
+  deriveStatements(): string[] {
+    return [
+      ...this.memberRels.flatMap((relName) =>
+        this.evaluator.createLikeStatements(this.next(relName), this.evaluator.tableOf(relName)),
       ),
+      ...this.rules.flatMap((rule) =>
+        this.recursivePositions(rule).flatMap((bodyIndex) => {
+          const pred = rule.body[bodyIndex];
+          if (pred?.kind !== "rel") return [];
+          const override = new Map<number, string>([[bodyIndex, this.delta(pred.rel)]]);
+          const statement = this.evaluator.insertNewRowsStatement(rule, override, this.next(rule.head));
+          return statement === null ? [] : [statement];
+        }),
+      ),
+    ];
+  }
+
+  /** `next` becomes the new delta. */
+  promoteStatements(relName: string): string[] {
+    return [
+      `DROP TABLE IF EXISTS ${this.delta(relName)}`,
+      `ALTER TABLE ${this.next(relName)} RENAME TO ${this.delta(relName)}`,
+    ];
+  }
+
+  dropDeltaStatements(): string[] {
+    return this.memberRels.map((relName) => `DROP TABLE IF EXISTS ${this.delta(relName)}`);
+  }
+
+  /** One semi-naive round. The only genuinely async step: each merge's `rowsAffected`
+   *  decides whether the fixpoint runs again. */
+  round(): Observable<boolean> {
+    return this.evaluator.runAll(this.deriveStatements()).pipe(
       concatMap(() =>
         from(this.memberRels).pipe(
           concatMap((relName) =>
-            this.evaluator.mergeDeltaIntoFull(relName, this.next(relName)).pipe(
-              concatMap((rowsAdded) =>
-                inSequence([
-                  this.evaluator.exec(`DROP TABLE IF EXISTS ${this.delta(relName)}`),
-                  this.evaluator.exec(`ALTER TABLE ${this.next(relName)} RENAME TO ${this.delta(relName)}`),
-                ]).pipe(map(() => rowsAdded > 0)),
-              ),
+            this.evaluator.exec(this.evaluator.mergeStatement(relName, this.next(relName))).pipe(
+              map((queryResult) => Number(queryResult.rowsAffected) > 0),
+              concatMap((grew) => this.evaluator.runAll(this.promoteStatements(relName)).pipe(map(() => grew))),
             ),
           ),
           reduce((grew: boolean, relGrew: boolean) => grew || relGrew, false),
@@ -386,17 +416,17 @@ export class RecursiveStratum implements IRecursiveStratum {
   }
 
   /** `expand` IS the loop: each round emits whether anything grew and feeds another round
-   *  back in until nothing does. */
-  run(): Observable<unknown> {
+   *  back in until nothing does. `last` waits for the fixpoint to settle before the drops. */
+  run(): Observable<void> {
     return defer(() => {
       if (this.rules.some((rule) => rule.headTerms.some((term) => term.kind === "hagg"))) {
         return throwError(() => new AggregateInRecursionError(this.memberRels));
       }
-      return this.seed().pipe(
+      return this.evaluator.runAll(this.seedStatements()).pipe(
         concatMap(() => this.round()),
         expand((grew) => (grew ? this.round() : EMPTY)),
         last(),
-        concatMap(() => inSequence(this.memberRels.map((relName) => this.evaluator.exec(`DROP TABLE IF EXISTS ${this.delta(relName)}`)))),
+        concatMap(() => this.evaluator.runAll(this.dropDeltaStatements())),
       );
     });
   }

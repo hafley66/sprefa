@@ -89,6 +89,12 @@ export interface CompiledJoin {
  * thread through every helper as parameters: the connection, the program, the table map,
  * the trace hook, and the derived stratification.
  */
+/** What the support pass produces before anything is executed. */
+export interface SupportPlan {
+  readonly statements: readonly string[];
+  readonly rulesWithoutSupport: readonly { readonly head: string; readonly reason: string }[];
+}
+
 export interface IDatalogEvaluator {
   readonly db: SqliteDb;
   readonly program: Program;
@@ -105,12 +111,25 @@ export interface IDatalogEvaluator {
 
   /** Emits exactly once, when every rule-headed table holds its current rowset. */
   run(): Observable<SupportReport>;
-  acyclicRel(relName: string): Observable<unknown>;
-  insertNewRows(rule: Rule, bodyPositionOverrides: ReadonlyMap<number, string>, intoDelta: string): Observable<unknown>;
-  /** Emits how many rows the merge actually added, read off `rowsAffected`. */
-  mergeDeltaIntoFull(relName: string, delta: string): Observable<number>;
-  createLike(name: string, like: RelTable): Observable<unknown>;
-  emitSupportEdges(support: SupportEdges): Observable<SupportReport>;
+
+  /** SQL building is synchronous: these return statements, not observables. Only `exec`
+   *  and `runAll` touch the connection. */
+  clearStatements(): string[];
+  acyclicStatements(relName: string): string[];
+  insertNewRowsStatement(
+    rule: Rule,
+    bodyPositionOverrides: ReadonlyMap<number, string>,
+    intoDelta: string,
+  ): string | null;
+  /** The caller runs this through `exec`, not `runAll`, because `rowsAffected` is the
+   *  fixpoint's growth signal. */
+  mergeStatement(relName: string, delta: string): string;
+  createLikeStatements(name: string, like: RelTable): string[];
+  supportPlan(support: SupportEdges): SupportPlan;
+
+  /** The one place a list of SQL becomes execution. */
+  runAll(statements: readonly string[]): Observable<void>;
+
   compileRuleJoin(rule: Rule, bodyPositionOverrides: ReadonlyMap<number, string>): CompiledJoin | null;
   compileRuleSelect(rule: Rule, bodyPositionOverrides: ReadonlyMap<number, string>): string | null;
 }
@@ -128,8 +147,14 @@ export interface IRecursiveStratum {
   delta(relName: string): string;
   next(relName: string): string;
   recursivePositions(rule: Rule): number[];
-  seed(): Observable<unknown>;
-  /** Emits whether anything grew this round. */
+
+  seedStatements(): string[];
+  deriveStatements(): string[];
+  promoteStatements(relName: string): string[];
+  dropDeltaStatements(): string[];
+
+  /** The only genuinely async step: each merge's `rowsAffected` decides whether the
+   *  fixpoint runs again. */
   round(): Observable<boolean>;
-  run(): Observable<unknown>;
+  run(): Observable<void>;
 }
