@@ -12,11 +12,12 @@
 //! type/call/df projections are stubbed empty. Commit B ports `walk_go_entities`
 //! (TypeF nodes + arrow-type sigs); commit C ports `go_walk_call_defs` +
 //! `go_walk_call_sites` (CallF); commit D ports `go_dataflow_from` (DfF nodes +
-//! Direct edges).
+//! Direct edges). 4d-i-go ports `go_type_spec_edges` (type-edge candidates in
+//! phase 1) + lands `Resolve<TypeF>`; 4d-ii-go lands `Resolve<CallF>` (the
+//! scip-ratcheted twin of the TsSource arm).
 //!
-//! Deferred to `Resolve<TypeF>` (commit 4): type EDGES (field/impl/generic from
-//! `go_edges_from`). Deferred follow-ups: the docs facet (`walk_go_docs`); the df
-//! enrichment aux (args/fields/lits/param_pos/loops/nests). The const facet is
+//! Deferred follow-ups: the docs facet (`walk_go_docs`); the df enrichment aux
+//! (args/fields/lits/param_pos/loops/nests). The const facet is
 //! NOT ported: v5 go emits no const entities and no const_value rows
 //! (`walk_go_entities` skips `const_declaration`; `extract` leaves `consts`
 //! empty), so v6 matches by emitting none either.
@@ -24,13 +25,18 @@
 use std::collections::BTreeSet;
 
 use crate::family::{
-    CallF, CallKind, CallSite, CstF, DfEdgeKind, DfF, DfNodeKind, SigSlot, TypeEntityKind, TypeF,
-    TypeSig,
+    CallEdgeKind, CallF, CallKind, CallSite, CstF, DfEdgeKind, DfF, DfNodeKind, ProjectEdge,
+    SigSlot, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
-use crate::seams::{Parser, Project};
-use crate::shape::{Span, Strings};
-use crate::source::{ExtractOutput, FamilyMask, Source};
+use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
+use crate::seams::{
+    DefIndex, Parser, Project, Resolve, containing_def_site, corpus_defs, covering_def, def_named,
+    own_blob,
+};
+use crate::shape::{BlobHash, FamilyTag, NodeRef, Span, Strings};
+use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
+use crate::types::ScipIndex;
 use super::astgrep::{AstGrepParser, CstProjector};
 
 // ── the tree-sitter-go parse (one parse feeds type/call/df) ──────────────────
@@ -52,11 +58,15 @@ fn go_text<'a>(node: tree_sitter::Node, src: &'a [u8]) -> &'a str {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// TypeF: entity nodes + arrow-type sigs. Commit B.
+// TypeF: entity nodes + arrow-type sigs + type-edge candidates. Commit B; the
+// candidates land with 4d-i-go.
 //
 // Ports v5 `walk_go_entities` (the entity half) + `go_fn_type` (the arrow-type
-// payload). The name-resolved type EDGES (field/impl/generic from `go_edges_from`)
-// land with `Resolve<TypeF>` (commit 4); phase 1 stays pure-content span nodes.
+// payload) + `go_type_spec_edges` (the UNRESOLVED type-edge candidates: struct
+// field / struct embed / interface embed / generic constraint, owner span +
+// to-name as written + kind - the 4b-iii TypeFAux.candidates pattern). The
+// name-resolved type EDGES themselves land with `Resolve<TypeF>` (4d-i-go
+// below); phase 1 stays pure-content span rows.
 // No const facet (v5 go emits none: walk_go_entities skips const_declaration and
 // extract leaves consts empty, so v6 matches by emitting none).
 //
@@ -111,6 +121,9 @@ fn walk_go_entities(
                     let span = node_span(spec);
                     let name = go_text(name_node, src).to_string();
                     push_entity(sink, strings, span, &name, kind);
+                    if spec.kind() == "type_spec" {
+                        go_edge_candidates(spec, span, src, strings, sink);
+                    }
                 }
             }
             "function_declaration" => {
@@ -157,6 +170,89 @@ fn node_span(node: tree_sitter::Node) -> Span {
         start: node.start_byte() as u32,
         len: (node.end_byte() - node.start_byte()) as u32,
     }
+}
+
+// ── type-edge candidates (port of v5 `go_type_spec_edges`) ───────────────────
+
+/// The type-edge candidates of one `type_spec`: struct fields of named types
+/// (`field`), struct embeds (`impl` - a field_declaration with no name field),
+/// interface `type_elem` embeds (`impl`; `method_elem` intentionally skipped:
+/// no type_sig-equivalent exists for an interface's own method specs at the
+/// type_edge level), and declared type-parameter constraints (`generic`). Port
+/// of v5 `go_type_spec_edges` (src/graph/typegraph/go.rs:320); the
+/// type_declaration/type_spec discovery rides the entity walk above, which
+/// visits exactly the specs v5's `walk_go_types` visits (both recurse into
+/// every child). Method/fn SIGNATURES are NOT edge sources for go (entity-level
+/// `type_sig` covers callables; v5 go's type_edge is shape-only), so no
+/// candidate is sig-sourced. The `to` is the name as written (a `pkg.Type`
+/// qualified ref kept whole); `Resolve<TypeF>` binds it.
+fn go_edge_candidates(
+    spec: tree_sitter::Node,
+    owner: Span,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
+    let mut params: BTreeSet<String> = BTreeSet::new();
+    if let Some(tp_list) = spec.child_by_field_name("type_parameters") {
+        let mut cursor = tp_list.walk();
+        for tp in tp_list.children(&mut cursor).filter(|n| n.kind() == "type_parameter_declaration") {
+            // v5 accumulates the declared names left-to-right and filters each
+            // constraint against the names seen SO FAR - ported verbatim.
+            let mut cc = tp.walk();
+            for n in tp.children(&mut cc).filter(|n| n.kind() == "identifier") {
+                params.insert(go_text(n, src).to_string());
+            }
+            if let Some(constraint) = tp.child_by_field_name("type") {
+                for to in go_type_refs(constraint, src, &params) {
+                    push_candidate(sink, strings, owner, &to, TypeEdgeKind::Generic);
+                }
+            }
+        }
+    }
+
+    let Some(ty) = spec.child_by_field_name("type") else { return };
+    match ty.kind() {
+        "struct_type" => {
+            let mut c = ty.walk();
+            let Some(list) =
+                ty.children(&mut c).find(|n| n.kind() == "field_declaration_list")
+            else {
+                return;
+            };
+            let mut c2 = list.walk();
+            for field in list.children(&mut c2).filter(|n| n.kind() == "field_declaration") {
+                let Some(ftype) = field.child_by_field_name("type") else { continue };
+                let kind = if field.child_by_field_name("name").is_some() {
+                    TypeEdgeKind::Field
+                } else {
+                    TypeEdgeKind::Impl
+                };
+                for to in go_type_refs(ftype, src, &params) {
+                    push_candidate(sink, strings, owner, &to, kind);
+                }
+            }
+        }
+        "interface_type" => {
+            let mut c = ty.walk();
+            for elem in ty.children(&mut c).filter(|n| n.kind() == "type_elem") {
+                for to in go_type_refs(elem, src, &params) {
+                    push_candidate(sink, strings, owner, &to, TypeEdgeKind::Impl);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_candidate(
+    sink: &mut FamilyBundle<TypeF>,
+    strings: &mut Strings,
+    owner: Span,
+    to: &str,
+    kind: TypeEdgeKind,
+) {
+    sink.aux.candidates.push(TypeEdgeCandidate { owner, to: strings.intern(to), kind });
 }
 
 // ── arrow-type signatures (port of v5 `go_fn_type`) ──────────────────────────
@@ -480,8 +576,6 @@ fn go_walk_call_sites(
 
 /// Transient scope: a variable name -> its binding node (param or `let`).
 type Scope = std::collections::HashMap<String, NodeRef>;
-
-use crate::shape::NodeRef;
 
 /// Project the DfF family: each callable's body lifted to its value-flow graph.
 /// Port of v5 `go_dataflow_from` (the driver half). Unlike v5, no post-pass bumps
@@ -1132,3 +1226,221 @@ impl Source for GoSource {
         ExtractOutput { strings, cst, types, call, df }
     }
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// Resolve<TypeF> for GoSource (commit 4d-i-go). The exact twin of the TsSource
+// arm (4b-iii): candidates in, no AST. The candidate row IS the parity target
+// (user ruling 2026-07-24, option (a)): v5's `type_edge.to` is free text, so
+// text dsts STAY text — a candidate whose `to` names no corpus node (a
+// qualified `pkg.Type` ref, a constraint naming no local decl) emits a ZERO dst
+// leg (BlobHash::default + Span::default), never a fake node join. The
+// genuinely-resolved span->blob legs are a v6-only ADDITIVE layer (reported,
+// never asserted). Same-file blob leg: the TypeF node named `to` in THIS
+// bundle gives the span, and the DefIndex span-join gives the blob (the output
+// carries no hash of its own). Corpus fallback: a UNIQUE site only.
+// The helper triplication with ts.rs (`type_edge_candidates` /
+// `resolve_type_dst`) is DELIBERATE per the design audit's SEQUENCING RULING
+// (2026-07-24): ALL dedup lands in ONE sweep AFTER the Resolve pass (4a-4d)
+// fully lands, never interleaved with a resolve arm.
+// ════════════════════════════════════════════════════════════════════════════
+
+impl GoSource {
+    /// The deduped, deterministically-ordered candidate list (v5's BTreeSet
+    /// shaping): the aux candidates, deduped on (owner, to, kind). `resolve`
+    /// emits its edges in EXACTLY this order, one per candidate — the parity
+    /// golden zips the two (the zip discipline: edge i resolves candidate i).
+    pub fn type_edge_candidates(output: &ExtractOutput) -> Vec<TypeEdgeCandidate> {
+        let mut set: BTreeSet<TypeEdgeCandidate> = BTreeSet::new();
+        if let Some(types) = &output.types {
+            for candidate in &types.aux.candidates {
+                set.insert(candidate.clone());
+            }
+        }
+        set.into_iter().collect()
+    }
+}
+
+/// The dst leg of one candidate: same-file TypeF entity first (its span joined
+/// through the `DefIndex` for the blob), else a unique corpus site, else None
+/// (text stays text — the zero leg). Name-only resolution, per the 4a ADDENDUM
+/// site-key discipline (no receiver typing anywhere in commit 4).
+fn resolve_type_dst(
+    types: &FamilyBundle<TypeF>,
+    strings: &Strings,
+    index: Option<&DefIndex>,
+    name: &str,
+) -> Option<(BlobHash, Span)> {
+    let same_file = types
+        .nodes
+        .iter()
+        .find(|node| node.name.map_or(false, |id| strings.lookup(id) == name));
+    if let (Some(node), Some(index)) = (same_file, index) {
+        return corpus_defs(index, name)
+            .iter()
+            .find(|site| site.span == node.span)
+            .map(|site| (site.blob, site.span));
+    }
+    let sites = index.map(|index| corpus_defs(index, name)).unwrap_or(&[]);
+    match sites {
+        [only] => Some((only.blob, only.span)),
+        _ => None,
+    }
+}
+
+impl Resolve<TypeF> for GoSource {
+    fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<TypeF>> {
+        let Some(types) = &output.types else { return Vec::new() };
+        let index = cx.indexes.def_index.get();
+        let mut edges = Vec::new();
+        for candidate in GoSource::type_edge_candidates(output) {
+            // src: the TypeF entity at the owner span. Exists by construction
+            // (candidates are minted beside their entity); a miss would break
+            // the parity golden's zip count loudly, so it is not hidden here.
+            let Some(src_ix) = types.nodes.iter().position(|node| node.span == candidate.owner)
+            else {
+                continue;
+            };
+            let (dst_blob, dst_span) =
+                resolve_type_dst(types, &output.strings, index, output.strings.lookup(candidate.to))
+                    .unwrap_or_default();
+            edges.push(ProjectEdge::new(NodeRef(src_ix as u32), dst_blob, dst_span, candidate.kind));
+        }
+        edges
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Resolve<CallF> for GoSource (commit 4d-ii-go). The exact twin of the TsSource
+// arm (4c-ii), two legs per the user rulings (2026-07-24: scip-override
+// ALLOWED; the v5-shaped name-match stays primary):
+//   NameResolve — callee name -> unique def. Same-file WINS via the span-join
+//     (def_named in THIS CallF bundle -> its span -> the DefIndex gives the
+//     blob); cross-file a UNIQUE corpus blob (CallF facet preferred);
+//     ambiguous/absent -> NO ROW (the 4b-iii discipline). For go the
+//     cross-package ambiguity is the common case: two packages exporting the
+//     same func name make the name-match abstain (exactly the case scip then
+//     settles through the import).
+//   ScipOverride — scip-go's occurrence resolution for the site disagrees with
+//     the name-match outcome (a different corpus target, or any corpus target
+//     where the name-match bound none): scip's target WINS the edge, the
+//     name-match is displaced. The leg needs the corpus scip index
+//     (cx.indexes.scip_index) AND the rev-correct reader (cx.reader); either
+//     absent -> pure name-match (v5-shaped). scip-EXTERNAL (a stdlib symbol -
+//     scip-go tags those `gomod github.com/golang/go/src ...` - an unresolved
+//     reference, or no occurrence at the site) is NOT a corpus target: it
+//     never displaces a NameResolve row and never mints one.
+// The arm learns its own blob by the DefIndex span-join (`own_blob`) and its
+// scip document by content hash (`join_documents`) — the resolve seam carries
+// no path and no bytes (the 4b-i gap), so identity flows through content.
+// Per-site edges, no dedup: two calls to one callee are two resolutions. A
+// site outside every CallF def (package level) emits no row — v5's call_edge
+// has no module caller. `callee_path` stays None for go: v5 go collects no
+// path (go_callee returns name+line only, so V5-IS-CORRECT keeps it empty),
+// the name-only + scip resolution does not need it, and filling it is the
+// same declared-snapshot-increment catch-up ts deferred in 4c-ii.
+// The helper triplication with ts.rs (`call_name_match` / `scip_call_target`)
+// is DELIBERATE per the design audit's SEQUENCING RULING (2026-07-24): ALL
+// dedup lands in ONE sweep AFTER the Resolve pass (4a-4d) fully lands.
+// ════════════════════════════════════════════════════════════════════════════
+
+impl GoSource {
+    /// The name-match target of one callee (the NameResolve leg). Pub so the
+    /// scip ratchet re-runs it to classify overrides — same discipline as
+    /// `type_edge_candidates` in 4d-i-go. Same-file wins via the span-join;
+    /// cross-file a unique corpus blob (the CallF facet's site preferred);
+    /// ambiguous/absent -> None.
+    pub fn call_name_match(
+        output: &ExtractOutput,
+        index: &DefIndex,
+        callee: &str,
+    ) -> Option<(BlobHash, Span)> {
+        let call = output.call.as_ref()?;
+        if let Some(r) = def_named(call, &output.strings, callee) {
+            let span = call.node(r).span;
+            if let Some(site) = corpus_defs(index, callee).iter().find(|site| site.span == span) {
+                return Some((site.blob, site.span));
+            }
+        }
+        let sites = corpus_defs(index, callee);
+        let mut blobs: Vec<BlobHash> = Vec::new();
+        for site in sites {
+            if !blobs.contains(&site.blob) {
+                blobs.push(site.blob);
+            }
+        }
+        let [blob] = blobs.as_slice() else { return None };
+        let site = sites.iter().find(|s| s.family == FamilyTag::Call).unwrap_or(&sites[0]);
+        Some((*blob, site.span))
+    }
+}
+
+/// The scip-resolved corpus target of one call site: the site's occurrence
+/// (the shared `site_occurrence` convention — for a selector callee
+/// `recv.M`/`pkg.F` the occurrence whose text is the trailing field, inside
+/// the whole-selector site span) -> its symbol's definition occurrence
+/// (scip's own resolution; `local ` symbols document-scoped) -> the
+/// containing DefSite (scip's def range marks the identifier, inside v6's
+/// whole-decl span). None = scip has no corpus answer (a stdlib/external
+/// symbol, an unresolved reference, no occurrence at the site, or the target
+/// document is outside the corpus).
+fn scip_call_target<'a>(
+    index: &ScipIndex,
+    joined: &[Option<(BlobHash, Vec<u8>)>],
+    doc_ix: usize,
+    site: &CallSite,
+    callee: &str,
+    def_index: &'a DefIndex,
+) -> Option<(BlobHash, Span, &'a str)> {
+    let doc = &index.documents[doc_ix];
+    let (_, content) = joined[doc_ix].as_ref()?;
+    let occ = site_occurrence(doc, content, site.span, callee)?;
+    let (def_doc_ix, def_occ) = definition_of(index, doc_ix, &occ.symbol)?;
+    let def_doc = &index.documents[def_doc_ix];
+    let (def_blob, def_content) = joined[def_doc_ix].as_ref()?;
+    let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
+    let (name, def_site) = containing_def_site(def_index, *def_blob, ident)?;
+    Some((*def_blob, def_site.span, name))
+}
+
+impl Resolve<CallF> for GoSource {
+    fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<CallF>> {
+        let Some(call) = &output.call else { return Vec::new() };
+        let Some(def_index) = cx.indexes.def_index.get() else { return Vec::new() };
+        // The scip leg: the corpus index + the rev-correct reader + this
+        // file's own document (found by content hash). Any missing piece ->
+        // pure name-match (v5-shaped).
+        let scip = cx.indexes.scip_index.get().zip(cx.reader).and_then(|(index, reader)| {
+            let joined = join_documents(index, reader);
+            let blob = own_blob(output, def_index)?;
+            let doc_ix =
+                joined.iter().position(|j| j.as_ref().map_or(false, |(b, _)| *b == blob))?;
+            Some((index, joined, doc_ix))
+        });
+        let mut edges = Vec::new();
+        for site in &call.aux.sites {
+            // The caller is the innermost covering CallF def (the 4a
+            // caller-binding discipline); a package-level site has no caller
+            // node and emits no row.
+            let Some(caller) = covering_def(call, site.span) else { continue };
+            let callee = output.strings.lookup(site.callee);
+            let name_t = GoSource::call_name_match(output, def_index, callee);
+            let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
+                scip_call_target(index, joined, *doc_ix, site, callee, def_index)
+            });
+            // Agreement is judged at (blob, name): the name-match binds the
+            // call FACET (the callable def) while scip can name the type facet
+            // (a conversion `Mode(0)`'s type) — one definition, two facet
+            // coordinates (the ORACLE entry's "the models differ by
+            // construction").
+            let ((dst_blob, dst_span), kind) = match (name_t, scip_t) {
+                (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => (n, CallEdgeKind::NameResolve),
+                (_, Some(s)) => ((s.0, s.1), CallEdgeKind::ScipOverride),
+                (Some(n), None) => (n, CallEdgeKind::NameResolve),
+                (None, None) => continue,
+            };
+            edges.push(ProjectEdge::new(caller, dst_blob, dst_span, kind));
+        }
+        edges
+    }
+}
+
