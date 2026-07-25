@@ -35,12 +35,12 @@ pub use family::{
 };
 pub use lang::{source_for, sources, AstgrepSource, GoSource, RustSource, TsSource};
 pub use rows::{Edge, FamilyBundle, Node};
-pub use scip::{ScipTypescript, byte_range};
+pub use scip::{ScipTypescript, byte_range, definition_of, join_documents, site_occurrence};
 pub use seams::{
     BlobSource, DefIndex, DefSite, FileSet, IndexBag, ManifestMap, OccurrenceRole, ParseError,
     Parser, PositionEncoding, Project, ProjectCx, ProjectDigest, Resolve, ScipDocument,
     ScipError, ScipIndex, ScipOccurrence, ScipSource, ScipSymbolInfo, build_def_index,
-    corpus_defs, covering_def, def_named,
+    containing_def_site, corpus_defs, covering_def, def_named, own_blob,
 };
 pub use shape::{BlobHash, FamilyTag, NameId, NodeRef, Span, Strings};
 pub use source::{ExtractOutput, FamilyMask, Source};

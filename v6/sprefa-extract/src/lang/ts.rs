@@ -22,11 +22,13 @@ use oxc_ast::ast::Program;
 use oxc_ast_visit::Visit as OxcVisit;
 use oxc_span::{GetSpan, SourceType};
 
-use crate::family::{CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfEdgeKind, DfF, DfNodeKind, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF};
+use crate::family::{CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfEdgeKind, DfF, DfNodeKind, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF};
 use crate::rows::{Edge, FamilyBundle, Node};
-use crate::seams::{DefIndex, ParseError, Parser, Project, Resolve, corpus_defs};
-use crate::shape::{BlobHash, NameId, NodeRef, Span, Strings};
+use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
+use crate::seams::{DefIndex, ParseError, Parser, Project, Resolve, containing_def_site, corpus_defs, covering_def, def_named, own_blob};
+use crate::shape::{BlobHash, FamilyTag, NameId, NodeRef, Span, Strings};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
+use crate::types::ScipIndex;
 use super::astgrep::{AstGrepParser, CstProjector};
 
 /// `oxc_span::Span` (start + end) -> our byte `Span` (start + len). One
@@ -2140,6 +2142,130 @@ impl Resolve<TypeF> for TsSource {
                 resolve_type_dst(types, &output.strings, index, output.strings.lookup(candidate.to))
                     .unwrap_or_default();
             edges.push(ProjectEdge::new(NodeRef(src_ix as u32), dst_blob, dst_span, candidate.kind));
+        }
+        edges
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Resolve<CallF> for TsSource (commit 4c-ii). Two legs per the user rulings
+// (2026-07-24: scip-override ALLOWED; the v5-shaped name-match stays primary):
+//   NameResolve — callee name -> unique def. Same-file WINS via the span-join
+//     (def_named in THIS CallF bundle -> its span -> the DefIndex gives the
+//     blob); cross-file a UNIQUE corpus blob (CallF facet preferred);
+//     ambiguous/absent -> NO ROW (the 4b-iii discipline).
+//   ScipOverride — scip's occurrence resolution for the site disagrees with
+//     the name-match outcome (a different corpus target, or any corpus target
+//     where the name-match bound none): scip's target WINS the edge, the
+//     name-match is displaced. The leg needs the corpus scip index
+//     (cx.indexes.scip_index) AND the rev-correct reader (cx.reader); either
+//     absent -> pure name-match (v5-shaped). scip-EXTERNAL (a library symbol,
+//     an unresolved reference, or no occurrence at the site) is NOT a corpus
+//     target: it never displaces a NameResolve row and never mints one.
+// The arm learns its own blob by the DefIndex span-join (`own_blob`) and its
+// scip document by content hash (`join_documents`) — the resolve seam carries
+// no path and no bytes (the 4b-i gap), so identity flows through content.
+// Per-site edges, no dedup: two calls to one callee are two resolutions. A
+// site outside every CallF def (module level) emits no row — v5's call_edge
+// has no module caller. `callee_path` stays None for ts: filling it would
+// change the committed sample.callf.snap and UPDATE_SNAP is forbidden for
+// this increment (the addendum's ts catch-up is DEFERRED to a declared
+// snapshot increment — flagged in the 4c-ii report).
+// ════════════════════════════════════════════════════════════════════════════
+
+impl TsSource {
+    /// The name-match target of one callee (the NameResolve leg). Pub so the
+    /// scip ratchet re-runs it to classify overrides — same discipline as
+    /// `type_edge_candidates` in 4b-iii. Same-file wins via the span-join;
+    /// cross-file a unique corpus blob (the CallF facet's site preferred);
+    /// ambiguous/absent -> None.
+    pub fn call_name_match(
+        output: &ExtractOutput,
+        index: &DefIndex,
+        callee: &str,
+    ) -> Option<(BlobHash, Span)> {
+        let call = output.call.as_ref()?;
+        if let Some(r) = def_named(call, &output.strings, callee) {
+            let span = call.node(r).span;
+            if let Some(site) = corpus_defs(index, callee).iter().find(|site| site.span == span) {
+                return Some((site.blob, site.span));
+            }
+        }
+        let sites = corpus_defs(index, callee);
+        let mut blobs: Vec<BlobHash> = Vec::new();
+        for site in sites {
+            if !blobs.contains(&site.blob) {
+                blobs.push(site.blob);
+            }
+        }
+        let [blob] = blobs.as_slice() else { return None };
+        let site = sites.iter().find(|s| s.family == FamilyTag::Call).unwrap_or(&sites[0]);
+        Some((*blob, site.span))
+    }
+}
+
+/// The scip-resolved corpus target of one call site: the site's occurrence
+/// (the shared `site_occurrence` convention) -> its symbol's definition
+/// occurrence (scip's own resolution; `local ` symbols document-scoped) ->
+/// the containing DefSite (scip's def range marks the identifier, which sits
+/// inside v6's whole-declaration def span). None = scip has no corpus answer
+/// (external library symbol, unresolved reference, no occurrence at the site,
+/// or the target document is outside the corpus).
+fn scip_call_target<'a>(
+    index: &ScipIndex,
+    joined: &[Option<(BlobHash, Vec<u8>)>],
+    doc_ix: usize,
+    site: &CallSite,
+    callee: &str,
+    def_index: &'a DefIndex,
+) -> Option<(BlobHash, Span, &'a str)> {
+    let doc = &index.documents[doc_ix];
+    let (_, content) = joined[doc_ix].as_ref()?;
+    let occ = site_occurrence(doc, content, site.span, callee)?;
+    let (def_doc_ix, def_occ) = definition_of(index, doc_ix, &occ.symbol)?;
+    let def_doc = &index.documents[def_doc_ix];
+    let (def_blob, def_content) = joined[def_doc_ix].as_ref()?;
+    let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
+    let (name, def_site) = containing_def_site(def_index, *def_blob, ident)?;
+    Some((*def_blob, def_site.span, name))
+}
+
+impl Resolve<CallF> for TsSource {
+    fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<CallF>> {
+        let Some(call) = &output.call else { return Vec::new() };
+        let Some(def_index) = cx.indexes.def_index.get() else { return Vec::new() };
+        // The scip leg: the corpus index + the rev-correct reader + this
+        // file's own document (found by content hash). Any missing piece ->
+        // pure name-match (v5-shaped).
+        let scip = cx.indexes.scip_index.get().zip(cx.reader).and_then(|(index, reader)| {
+            let joined = join_documents(index, reader);
+            let blob = own_blob(output, def_index)?;
+            let doc_ix =
+                joined.iter().position(|j| j.as_ref().map_or(false, |(b, _)| *b == blob))?;
+            Some((index, joined, doc_ix))
+        });
+        let mut edges = Vec::new();
+        for site in &call.aux.sites {
+            // The caller is the innermost covering CallF def (the 4a
+            // caller-binding discipline); a module-level site has no caller
+            // node and emits no row.
+            let Some(caller) = covering_def(call, site.span) else { continue };
+            let callee = output.strings.lookup(site.callee);
+            let name_t = TsSource::call_name_match(output, def_index, callee);
+            let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
+                scip_call_target(index, joined, *doc_ix, site, callee, def_index)
+            });
+            // Agreement is judged at (blob, name): the name-match binds the
+            // call FACET (e.g. the ctor def) while scip may name the type
+            // facet (the class) — one definition, two facet coordinates (the
+            // ORACLE entry's "the models differ by construction").
+            let ((dst_blob, dst_span), kind) = match (name_t, scip_t) {
+                (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => (n, CallEdgeKind::NameResolve),
+                (_, Some(s)) => ((s.0, s.1), CallEdgeKind::ScipOverride),
+                (Some(n), None) => (n, CallEdgeKind::NameResolve),
+                (None, None) => continue,
+            };
+            edges.push(ProjectEdge::new(caller, dst_blob, dst_span, kind));
         }
         edges
     }

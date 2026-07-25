@@ -380,6 +380,15 @@ pub enum CallEdgeKind {
     ScipOverride,
 }
 
+impl CallEdgeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CallEdgeKind::NameResolve => "name_resolve",
+            CallEdgeKind::ScipOverride => "scip_override",
+        }
+    }
+}
+
 /// One call expression. `callee` = trailing segment as written (resolution key);
 /// `callee_path` = full qualified path when >1 segment (filled by resolution).
 /// ADDENDUM 4a (site-key discipline): `callee_path` is collected UNIFORMLY at
@@ -880,6 +889,65 @@ pub fn corpus_defs<'a>(index: &'a DefIndex, name: &str) -> &'a [DefSite] {
     index.map.get(name).map(Vec::as_slice).unwrap_or(&[])
 }
 
+/// Which blob produced `output`: the 4b-iii self-blob trick generalized. A
+/// named def node in THIS output (CallF def or TypeF entity) joined against
+/// its own `DefSite` gives the file's content key — the arm learns its own
+/// blob with NO path and NO bytes (the resolve seam carries neither). None
+/// when the output has no named def (a file with nothing to resolve FROM) or
+/// the output was not in the index's corpus.
+pub fn own_blob(output: &ExtractOutput, index: &DefIndex) -> Option<BlobHash> {
+    let mut named_spans: Vec<Span> = Vec::new();
+    if let Some(call) = &output.call {
+        named_spans.extend(call.nodes.iter().filter(|n| n.name.is_some()).map(|n| n.span));
+    }
+    if let Some(types) = &output.types {
+        named_spans.extend(types.nodes.iter().filter(|n| n.name.is_some()).map(|n| n.span));
+    }
+    named_spans.sort();
+    named_spans.dedup();
+    for span in named_spans {
+        if let Some(site) =
+            index.map.values().flatten().find(|site| site.span == span)
+        {
+            return Some(site.blob);
+        }
+    }
+    None
+}
+
+/// The corpus def site in `blob` whose node span CONTAINS `span` (the scip
+/// def-occurrence join: scip's def range marks the def IDENTIFIER, which sits
+/// inside v6's whole-declaration def span). Prefers the CallF facet (a call
+/// edge binds a callable), then the smallest containing span (the innermost
+/// def). Returns the index's map-key name + the site. Pure fn over the index;
+/// zero AST. Written ONCE here for the ts/rust/go resolve arms (4c/4d).
+pub fn containing_def_site(index: &DefIndex, blob: BlobHash, span: Span) -> Option<(&str, DefSite)> {
+    let mut best: Option<(&str, DefSite)> = None;
+    for (name, sites) in &index.map {
+        for site in sites {
+            if site.blob != blob
+                || !(site.span.start <= span.start && span.end() <= site.span.end())
+            {
+                continue;
+            }
+            let better = match best {
+                None => true,
+                Some((_, b)) => {
+                    let call_bias =
+                        (site.family == CallF::TAG, b.family == CallF::TAG);
+                    call_bias.0 && !call_bias.1
+                        || (call_bias.0 == call_bias.1
+                            && site.span.end() - site.span.start < b.span.end() - b.span.start)
+                }
+            };
+            if better {
+                best = Some((name.as_str(), *site));
+            }
+        }
+    }
+    best
+}
+
 /// Phase 2: "here is a codebase, get data" — the cross-file resolution half of
 /// a `Source` (spec: seed `_2_traits.rs`:80-97 `ProjectExtract`, adapted to the
 /// crate's type-level families + Epic U's uniform surface).
@@ -915,7 +983,7 @@ pub trait Resolve<F: Family>: Source {
     /// one blob (spec: `_2_traits.rs`:88-96).
     fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<F>> {
         let _ = (output, cx);
-        todo!("4b-iii landed Resolve<TypeF> for TsSource; next: 4c ScipSource + Resolve<CallF>, 4d rust/go arms")
+        todo!("4b-iii landed Resolve<TypeF> + 4c-ii Resolve<CallF> for TsSource; next: 4d rust/go arms")
     }
 }
 
@@ -1191,7 +1259,7 @@ pub enum FlatFact {
 //
 // DEFERRED (per-lang gates noted; the rest lands with Resolve<F>/follow-ups):
 //   type_edge (field/impl/variant/uses/generic)   -> TS ASSERTED (4b-iii); rust/go = 4d
-//   resolved caller -> callee                     -> Resolve<CallF> (4c)
+//   resolved caller -> callee                     -> TS RATCHETED vs scip (4c-ii); rust/go = 4d
 //   docs facet                                    -> follow-up
 //   df aux (args/fields/lits/param_pos)           -> labels, follow-up
 //

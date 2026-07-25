@@ -286,3 +286,87 @@ pub fn byte_range(content: &[u8], range: [i32; 4], encoding: PositionEncoding) -
     }
     Some(Span { start, len: end - start })
 }
+
+// ── the resolution joins (4c-ii; shared by the Resolve<CallF> arms and the
+//    golden_parity scip ratchet — the arm and the test MUST read the same
+//    occurrence the same way, so the conventions live here exactly once) ────
+
+/// The content join for one loaded index: for every document, its blob hash +
+/// bytes from the rev-correct reader (None when the reader can't read the
+/// document — it is then external to the corpus). Parallel to
+/// `index.documents` (same order, same length). Whole-project state built once
+/// per refresh; the resolve arms build it per call at fixture scale (the
+/// engine caches when this gets hot — the OnceLock discipline of `IndexBag`
+/// covers it).
+pub fn join_documents(
+    index: &ScipIndex,
+    reader: &dyn Fn(&str) -> Option<Vec<u8>>,
+) -> Vec<Option<(crate::shape::BlobHash, Vec<u8>)>> {
+    index
+        .documents
+        .iter()
+        .map(|doc| {
+            reader(&doc.relative_path)
+                .map(|content| (crate::shape::BlobHash::of(&content), content))
+        })
+        .collect()
+}
+
+/// The scip occurrence answering one call site: contained in the site span
+/// (v6's site convention — a call site is the callee expression, a new-
+/// expression the whole expression; the callee identifier's occurrence sits
+/// inside either) whose source text equals the callee name (the trailing
+/// segment; filters the receiver/path occurrences — `Math` in `Math.sqrt` —
+/// and the argument occurrences inside a new-expression). Deterministic:
+/// first by (start, end).
+pub fn site_occurrence<'a>(
+    doc: &'a ScipDocument,
+    content: &[u8],
+    site: Span,
+    callee: &str,
+) -> Option<&'a ScipOccurrence> {
+    let mut hit: Option<(&'a ScipOccurrence, [i32; 4])> = None;
+    for occ in &doc.occurrences {
+        let Some(span) = byte_range(content, occ.range, doc.position_encoding) else {
+            continue;
+        };
+        if !(site.start <= span.start && span.end() <= site.end()) {
+            continue;
+        }
+        let text = &content[span.start as usize..span.end() as usize];
+        if text != callee.as_bytes() {
+            continue;
+        }
+        if hit.map_or(true, |(_, r)| occ.range < r) {
+            hit = Some((occ, occ.range));
+        }
+    }
+    hit.map(|(occ, _)| occ)
+}
+
+/// The definition occurrence of a symbol: `local ` symbols are DOCUMENT-
+/// scoped (scip reuses `local 0` per file — v5's per-document keying), so the
+/// search starts and ends at the site's own document; global symbols are
+/// corpus-unique, so the first definition-role occurrence across all
+/// documents answers. Returns (document_ix, occurrence) — None means the
+/// symbol has no definition in the indexed corpus (an EXTERNAL: a library
+/// symbol, or an unresolved reference).
+pub fn definition_of<'a>(
+    index: &'a ScipIndex,
+    doc_ix: usize,
+    symbol: &str,
+) -> Option<(usize, &'a ScipOccurrence)> {
+    let is_def = |occ: &'a ScipOccurrence| {
+        occ.symbol == symbol && occ.roles.contains(OccurrenceRole::DEFINITION)
+    };
+    if symbol.starts_with("local ") {
+        let doc = &index.documents[doc_ix];
+        return doc.occurrences.iter().find(|occ| is_def(occ)).map(|occ| (doc_ix, occ));
+    }
+    for (ix, doc) in index.documents.iter().enumerate() {
+        if let Some(occ) = doc.occurrences.iter().find(|occ| is_def(occ)) {
+            return Some((ix, occ));
+        }
+    }
+    None
+}

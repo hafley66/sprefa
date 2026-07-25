@@ -88,13 +88,13 @@
 //! design-audit ADDENDUM (4a APPROVED 2026-07-24: scip-override allowed, blake3 in) + the
 //! lambda/docs parity fixtures + the closure-name waiverkill (v5-is-correct consequence (a):
 //! lam_sym ported, golden_parity asserts with ZERO waivers) + commit 4b COMPLETE (ts type_edge
-//! asserted) + commit 4c-i (the ScipSource seam: scip-typescript build + load, prost)) LANDED
-//! in v6/sprefa-extract/.
+//! asserted) + commit 4c COMPLETE (the ScipSource seam + Resolve<CallF> for TsSource + the
+//! scip ratchet: 5 NameResolve / 1 ScipOverride / 0 misses)) LANDED in v6/sprefa-extract/.
 //! The TS + Rust + Go phase-1
 //! families - Cst / Type(+sigs) / Call / Df (+const) - all project + stream + snapshot through
 //! ONE uniform surface, AND each ported set matches a captured v5 oracle (see the (parity) /
-//! (rust) / (go) entries). NEXT: 4c-ii Resolve<CallF> for TsSource + the scip
-//! ratchet (4c-i landed the seam; 4d = rust/go resolve arms) - 4b
+//! (rust) / (go) entries). NEXT: 4d rust + go resolve arms (rust-analyzer-scip
+//! / scip-go reuse the 4c shape; 4c landed COMPLETE) - 4b
 //! landed COMPLETE: machinery (4b-i) + specifiers (4b-ii) + the type_edge arm
 //! (4b-iii, ts type_edge asserted, zero divergence; the (4b-i) STOP was ruled
 //! option (a) by the human):
@@ -513,10 +513,86 @@
 //!             "scip-typescript 0.4.0". Gate green; zero .snap diffs (the
 //!             seam is phase-2 only; flatten never sees it). NO lang code
 //!             (4c-ii wires Resolve<CallF> + the ratchet).
+//!   (4c)     COMMIT 4c-ii: Resolve<CallF> for TsSource + the scip RATCHET.
+//!             lang/ts.rs arm (pure, zero AST; the 4b-iii discipline): per
+//!             CallFAux site, caller = covering_def (module-level sites emit
+//!             no row - v5's call_edge has no module caller), then two legs
+//!             per the user rulings (scip-override ALLOWED; the v5-shaped
+//!             name-match stays primary): NameResolve = callee -> same-file
+//!             def via the span-join, else unique corpus blob (CallF facet
+//!             preferred), ambiguous/absent -> no row; ScipOverride = scip's
+//!             occurrence resolution for the site disagrees with the
+//!             name-match outcome (a different corpus target, or any corpus
+//!             target where the name-match bound none) -> scip's target wins
+//!             the edge, the name-match is displaced. The scip leg needs the
+//!             corpus index (cx.indexes.scip_index, the 4c-i slot) AND the
+//!             rev-correct reader (cx.reader); either absent -> pure
+//!             name-match. scip-EXTERNAL (a library symbol / unresolved / no
+//!             occurrence at the site) never displaces and never mints.
+//!             Identity with NO path/bytes (the 4b-i gap): the arm learns
+//!             its own blob by the DefIndex span-join (new `own_blob` helper)
+//!             and its scip document by content hash (`join_documents`).
+//!             Agreement is judged at (blob, def-name): the name-match binds
+//!             the call facet (the ctor def), scip can name the type facet
+//!             (the class) - one definition, two facet coordinates (the
+//!             ORACLE entry's "the models differ by construction"). New
+//!             shared helpers (types.rs, 4d-reusable): `own_blob`,
+//!             `containing_def_site` (scip's def range marks the identifier,
+//!             inside v6's whole-decl span; CallF-preferred, innermost wins);
+//!             scip.rs: `join_documents` / `site_occurrence` /
+//!             `definition_of` (`local ` symbols document-scoped, v5's per-
+//!             document keying). `callee_path` stays None for ts: filling it
+//!             would change the committed sample.callf.snap and UPDATE_SNAP
+//!             is forbidden this increment - the addendum's ts catch-up is
+//!             DEFERRED to a declared snapshot increment (flagged in the 4c
+//!             report). THE RATCHET (golden_parity
+//!             call_resolve_scip_ratchet_ts; scip is the ONLY ground truth -
+//!             v5's captured oracle has no call-edge facet, so there is NO v5
+//!             parity for these rows): ScipSource runs over
+//!             tests/fixtures/ts; for each call SITE v6 emits, scip's
+//!             occurrence at that span answers. EXACT ASSERTION (per file,
+//!             per site s with callee c):
+//!             (1) OCCURRENCE PARITY (the subset leg): scip's document for
+//!             the file contains an occurrence inside s's span whose source
+//!             text == c (asserted: 0 missing);
+//!             (2) RESOLUTION PARITY: every v6 NameResolve edge whose site
+//!             scip also resolves to a corpus target T AGREES with T at
+//!             (blob, def-name) (asserted: 0 disagreements);
+//!             (3) every ScipOverride is a counted, LISTED divergence:
+//!             scip's corpus target exists, the edge carries exactly it, and
+//!             the name-match outcome differs from it (per-edge asserted);
+//!             (4) NO SILENT MISS: a site scip resolves to a corpus target
+//!             always has a v6 edge (asserted: 0 misses);
+//!             (5) NO OVERBINDING: a NameResolve edge whose site scip
+//!             resolves to an external/none target is a v6 false binding
+//!             (asserted: 0 overbound);
+//!             (6) sites scip resolves externally (library symbols) get NO
+//!             v6 edge - v6 models corpus call edges only (counted, not a
+//!             divergence). The arm's emitted edge multiset is also asserted
+//!             equal to the twin's per-site expected outcomes per file (the
+//!             orchestration check). A missing/failed scip-typescript is a
+//!             loud test failure, never a skipped green. MEASURED
+//!             (scip-typescript 0.4.0, 15 sites over 7 files): NameResolve 5
+//!             (sample 4: clamp x2 + Vec2 x2; docs 1: Vec2), ScipOverride 1
+//!             (LISTED: scip/gamma.ts:7 helper - name-match ambiguous
+//!             (alpha.helper vs beta.helper) -> none, scip binds
+//!             alpha.helper through the import), external-no-edge 9 (sqrt x2,
+//!             map x4, filter, reduce, flat - all typescript lib symbols),
+//!             0 missing / 0 disagreements / 0 misses / 0 overbound. NEW
+//!             FIXTURES: the scip/ trio (alpha/beta/gamma.ts - scip-ratchet
+//!             only, NOT in CASES; no v5 oracle, scip is the ground truth)
+//!             + the fixture tsconfig.json (lib es2020: --infer-tsconfig
+//!             defaults to the ES5 lib, which lacks Array#flat (ES2019) -
+//!             the flat site then has NO scip occurrence and leg (1) cannot
+//!             hold; the corpus's language level is now declared). Snapshots
+//!             byte-identical (no UPDATE_SNAP); the ledger test reports the
+//!             v6-only call-edge counts per case (CASES corpus, no scip
+//!             loaded = the pure name-match leg: sample 4, docs 1).
 //!   PENDING:   TS type EDGES are now ASSERTED (see (4b): phase-1 candidates +
 //!              Resolve<TypeF>; field/variant/impl/generic/uses/param/returns).
-//!              Still pending: rust/go type_edge arms (4d), resolved caller ->
-//!              callee (Resolve<CallF>, 4c). ts_const_facts_from is PORTED (see (const)).
+//!              TS resolved caller -> callee is now RATCHETED vs scip (see (4c)).
+//!              Still pending: rust/go type_edge arms (4d), rust/go Resolve<CallF>
+//!              arms (4d). ts_const_facts_from is PORTED (see (const)).
 //!   ORACLE:     scip-typescript 0.4.0 was run on the fixture (throwaway /tmp). The
 //!              real correctness gate is occurrence/resolution parity (the commit 4
 //!              ratchet), NOT a raw symbol diff (scip is a flat exhaustive symbol
