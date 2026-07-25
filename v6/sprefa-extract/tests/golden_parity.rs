@@ -112,6 +112,13 @@ const CASES: &[Case] = &[
         baseline: include_str!("fixtures/go/edges.v5.jsonl"),
         fixture_dir: "go",
     },
+    Case {
+        name: "kotlin_sample",
+        path: "v6/sprefa-extract/tests/fixtures/kotlin/sample.kt",
+        fixture: include_bytes!("fixtures/kotlin/sample.kt"),
+        baseline: include_str!("fixtures/kotlin/sample.v5.jsonl"),
+        fixture_dir: "kotlin",
+    },
 ];
 
 const PORTED: &[&str] = &[

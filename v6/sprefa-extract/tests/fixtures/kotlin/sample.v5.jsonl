@@ -1,0 +1,147 @@
+call_def	function	foldAll	36
+call_def	function	resolve	28
+call_def	function	wrap	34
+call_def	lambda		37
+call_def	lambda		38
+call_def	method	Color	26
+call_def	method	Repo	15
+call_def	method	fetch	18
+call_site	Cache	16
+call_site	Cfg	29
+call_site	fold	37
+call_site	get	19
+call_site	map	38
+call_site	pick	31
+df_args	13	0	11
+df_args	13	1	12
+df_args	18	0	17
+df_args	34	-1	25
+df_args	34	0	26
+df_args	34	1	33
+df_args	4	-1	2
+df_args	4	0	3
+df_args	43	-1	36
+df_args	43	0	42
+df_edge	1004	1061
+df_edge	1018	1075
+df_edge	1044	1093
+df_edge	1050	1044
+df_edge	1061	1050
+df_edge	1075	1050
+df_edge	1086	1118
+df_edge	1093	1086
+df_edge	1093	1093
+df_edge	1106	1034
+df_edge	1113	1106
+df_edge	1118	1113
+df_edge	1194	1230
+df_edge	1194	1281
+df_edge	1224	1310
+df_edge	1230	1224
+df_edge	1230	1230
+df_edge	1238	1230
+df_edge	1241	1230
+df_edge	1243	1253
+df_edge	1248	1259
+df_edge	1253	1253
+df_edge	1253	1262
+df_edge	1259	1253
+df_edge	1281	1271
+df_edge	1281	1281
+df_edge	1288	1281
+df_edge	1288	1290
+df_edge	1290	1290
+df_edge	1290	1298
+df_edge	1295	1290
+df_edge	1303	1214
+df_edge	1310	1303
+df_edge	834	886
+df_edge	868	905
+df_edge	876	868
+df_edge	876	876
+df_edge	886	876
+df_edge	898	854
+df_edge	905	898
+df_fields	13	host	11
+df_fields	13	port	12
+df_node	binop		1253
+df_node	binop		1290
+df_node	call_res		1113
+df_node	call_res		1230
+df_node	call_res		1281
+df_node	call_res		876
+df_node	closure	v6/sprefa-extract/tests/fixtures/kotlin/sample.kt::function::foldAll::closure::36_25	1241
+df_node	closure	v6/sprefa-extract/tests/fixtures/kotlin/sample.kt::function::foldAll::closure::37_25	1288
+df_node	let_bind	cfg	1044
+df_node	let_bind	doubled	1271
+df_node	let_bind	found	868
+df_node	let_bind	host	1086
+df_node	let_bind	out	1224
+df_node	lit		1238
+df_node	lit		1295
+df_node	member	host	1093
+df_node	new	Cfg	1050
+df_node	param	acc	1243
+df_node	param	id	834
+df_node	param	it	1288
+df_node	param	item	1149
+df_node	param	model	1004
+df_node	param	n	1018
+df_node	param	sink	1158
+df_node	param	x	1248
+df_node	param	xs	1194
+df_node	ret		1034
+df_node	ret		1106
+df_node	ret		1214
+df_node	ret		1262
+df_node	ret		1298
+df_node	ret		1303
+df_node	ret		854
+df_node	ret		898
+df_node	var_read	acc	1253
+df_node	var_read	cfg	1093
+df_node	var_read	found	905
+df_node	var_read	host	1118
+df_node	var_read	id	886
+df_node	var_read	it	1290
+df_node	var_read	model	1061
+df_node	var_read	n	1075
+df_node	var_read	out	1310
+df_node	var_read	store	876
+df_node	var_read	x	1259
+df_node	var_read	xs	1230
+df_node	var_read	xs	1281
+df_param_pos	0	0
+df_param_pos	21	0
+df_param_pos	22	1
+df_param_pos	23	0
+df_param_pos	27	0
+df_param_pos	28	1
+df_param_pos	37	0
+df_param_pos	8	0
+df_param_pos	9	1
+type_edge	Color	Color::GREEN	variant
+type_edge	Color	Color::RED	variant
+type_edge	Repo	Base	impl
+type_edge	Repo	Cache	field
+type_edge	Repo	Entity	generic
+type_edge	Repo	Item	field
+type_edge	Repo	Meta	field
+type_edge	Repo	Pricing	impl
+type_edge	Repo	Store	field
+type_edge	Single	Pricing	impl
+type_node	class	Repo	15
+type_node	class	Single	24
+type_node	enum	Color	26
+type_node	function	fetch	18
+type_node	function	foldAll	36
+type_node	function	resolve	28
+type_node	function	wrap	34
+type_node	interface	Pricing	13
+type_sig	18	param	0	NodeId
+type_sig	18	ret	0	Report
+type_sig	28	param	0	Model
+type_sig	28	ret	0	NodeId
+type_sig	34	param	1	Report
+type_sig	34	param	1	Sink
+type_sig	36	param	0	List

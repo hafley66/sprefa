@@ -31,7 +31,7 @@
 
 use std::collections::BTreeSet;
 
-use sprefa_v5::graph::typegraph::{TypeLang, GoTypes, RustTypes, TsTypes};
+use sprefa_v5::graph::typegraph::{TypeLang, GoTypes, KotlinTypes, RustTypes, TsTypes};
 
 fn main() {
     let path = std::env::args().nth(1).expect("usage: v5_normalize <path>");
@@ -41,11 +41,15 @@ fn main() {
     // Language is selected by extension (v5 `type_langs()` first-match). The
     // TypeFacts/CallFacts/DataflowFacts shapes are shared, so the canonical-line
     // emission below is language-agnostic; only the front-end differs (syn for
-    // Rust, oxc for TS/JS, tree-sitter-go for Go).
+    // Rust, oxc for TS/JS, tree-sitter-go for Go, tree-sitter-kotlin-sg for
+    // Kotlin). The `.kt`/`.kts` arm must precede the `.ts` fallback:
+    // `"x.kts".ends_with(".ts")` is true (v5's type_langs ordering rule).
     let lang: &dyn TypeLang = if path.ends_with(".rs") {
         &RustTypes
     } else if path.ends_with(".go") {
         &GoTypes
+    } else if path.ends_with(".kt") || path.ends_with(".kts") {
+        &KotlinTypes
     } else {
         &TsTypes
     };
