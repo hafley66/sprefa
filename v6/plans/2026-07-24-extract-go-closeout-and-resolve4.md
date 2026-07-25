@@ -821,3 +821,33 @@ COMMIT: `v6/extract: stdin input with --ext language override`
 
 STOPs: touching the lib (dispatch/roster/lib.rs); adding deps; buffering
 concerns (stdin read-to-end is fine — single file by design).
+
+## Dogfood analysis #2 (2026-07-25 — v6/dl + v6/sprefa-store measured with the CLI)
+
+38 src files + consumer trees extracted (208k facts, name-joined offline).
+Headlines: (1) dl code-depends on store-js via direct ESM imports
+(0_ast_bridge -> lower/rulegraph; 3_runtime -> engine cascade/lib/lowerSql) —
+no FFI anywhere; store-js<->store-rs is a MIRROR-BY-CONVENTION (43 shared
+callable + 59 shared type names; tasks/lib/spine/algo paired; measure.rs
+rust-only harness). (2) Feature envy: GENUINELY ZERO signals (classes +
+interfaces, own-vs-foreign member-name heuristic) — the TS is
+functional-module; OOP mass sits in 5 god-classes (DatalogEvaluator 175 defs,
+Store 152, Tasks 99, HostRunner 71, DlRuntime 29). (3) Useless separation,
+grep-verified: the Tasks write/nav surface (upsert_node/upsert_edges/
+children/parents/mint/create + rs thread_namespace/two_stores_independent/
+per_tuple_unlock_evidence) has ZERO textual call sites in BOTH languages
+incl. tests/examples/seed — dead surface kept in mirror-sync twice. Also dead
+both langs: spine table_names + int codecs; measure.rs record_*/on_* family.
+dl-only dead: negation path (slotToNegArg; toNegArg single-caller),
+support-retract trio (retractThroughSupport/supportCoverageGaps/sqlTuple),
+shHost. dl layering: ONE numeric violation (1_hosts -> 3_runtime via
+normalizeValue/rows/commit). storejs-only cycle: tasks<->algo mutual
+(rust is one-directional — mirror drift).
+
+TOOL-GAP EVIDENCE for parked arcs: dep matrix needed import SPECIFIERS
+(had to source-grep) -> strengthens the ModuleF/specifiers ruling; envy-grade
+analysis needs receiver identity on member nodes -> design input beyond I1
+(df_fields alone insufficient); the 52-file shell-loop driver is exactly what
+CLI-8 project mode should absorb; cross-blob dead-def needed consumer name
+pools -> resolve-layer territory. Raw artifacts: /tmp/extract-dogfood/
+(v6-*.jsonl + analyze.py), ephemeral.
