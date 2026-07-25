@@ -1,0 +1,471 @@
+# sprefa-extract: Go closeout → Resolve<\*> (commit 4) → fixture broadening
+
+Execution plan for **delegated subagents**. The orchestrator audits; the human
+approves pushes and the 4a design. Executors: treat this file + the spec docs
+as the whole truth. If anything here conflicts with the code or the spec,
+STOP and report — do not improvise.
+
+## Context
+
+All work happens in ONE place:
+
+- Worktree: `/Users/chrishafley/projects/sprefa/.claude/worktrees/extract-golden-plan`
+- Branch: `plan/extract-golden-plan` · Base SHA: `74a12940`
+- Crate: `v6/sprefa-extract` (its own isolated workspace; all cargo commands
+  run with cwd `v6/sprefa-extract` unless stated)
+
+Landed so far: commits 1–3c (TS families + Epic U uniform surface), Tier-2
+parity gold (TS + const facet), the Rust second language (`de94cceb`…`d28f43f8`
++ `f501e5bd`), and the Go third language (A–E: `8abdc38e` skeleton, `aa3c782e`
+TypeF, `aab204d1` CallF, `d6427eab` DfF, `16bc0855` parity gold) merged as
+`74a12940`. Four golden cases green, zero divergence.
+
+The spec (do NOT re-derive decisions from v5; read these first, every brief):
+- `v6/plans/2026-07-23-sprefa-extract-golden-plan.md` — the arc plan
+- `v6/sprefa-seed/src/_3_extract/_7_tasks.rs` — the canonical ledger/BUILD STATUS
+- `v6/sprefa-seed/src/_3_extract/_2_traits.rs` — the trait model (ProjectCx at
+  lines 35–51; `Resolve<F>` signature + which families resolve at lines 80–97)
+
+Interrupted state (what the previous session died inside of): three files carry
+uncommitted, verified bookkeeping edits — `v6/sprefa-extract/src/lib.rs`
+(GoSource re-export), `v6/sprefa-extract/src/types.rs` (status matrix Go column
+`[x]`, const `[-] n/a`), `v6/sprefa-seed/src/_3_extract/_7_tasks.rs` (BUILD
+STATUS header updated for GO). The `(go)` ledger entry was never inserted; its
+frozen text is in Phase 0 below.
+
+Code-cleanliness judgment (receipts-based, not a re-review): the arc stayed
+clean and consistent. Evidence: zero-divergence parity vs the captured v5 oracle
+on all 4 golden cases; the Go merge (`74a12940`) added one `lang/go.rs` + roster
+line with no structural change to dispatch/seams/types; the single waiver (rust
+closure df-node name) is self-verifying by test; dependency hygiene held
+(tree-sitter unified with ast-grep transitives, only the pre-existing hashbrown
+dup; banned-dep grep empty); Epic U's byte-identical-snapshots condition held
+through two language ports. Residual risk: no fresh-eyes read of `go.rs` itself
+— Phase 0.5 closes that.
+
+## Decisions
+
+- **V5 IS CORRECT (2026-07-24, user ruling; supersedes anything conflicting
+  below).** Wherever v6's behavior diverges from v5 on a facet v5 emits, v6
+  changes to match v5. Divergences are not codified; waivers are scaffolding
+  to eliminate, not ratifications. Consequences:
+  (a) the closure df-node name waiver is queued for ELIMINATION — derive v5's
+  closure names (`lam_sym` shape, e.g. `...::closure::<byte>`) inside v6's
+  ts.rs/rust.rs df walkers from span data (no sym machinery), then delete the
+  waiver machinery — sequenced AFTER the lambda increment (same files);
+  (b) the deferred v5 facets (type_edge, df aux, docs) are all ports-to-do on
+  this arc, none optional — docs loses its "no ratchet, human decides" status;
+  (c) cross-lang v6 inconsistencies resolve PER-LANG toward v5 (v5's own
+  per-lang behavior is the target), not toward v6-internal unification.
+  **AMENDMENT (2026-07-24, user): v5 oddities may now be questioned + fixed —
+  the port discipline is proven.** Two-lane rule: PORTED rows stay v5-byte-
+  exact (the ratchet is the asset); FIXES arrive either as v6-only ADDITIVE
+  rows (free — the harness only reports v6-only, never asserts) or as
+  explicit adjudicated breaking changes (the harness then shows exactly what
+  moved). Oddity candidates found during the CLI spot-check:
+  1. df ret self-edges (`809→809`) — artifact of expr-body == ret span
+     identity; candidate: suppress self-edges or merge the nodes (BREAKING
+     the df_edge stream; adjudicate).
+  2. rust `if/match/loop/block` vs ts `cond/logic` — same concepts, two
+     slugs; DfNodeKind(23) is the union of v5's per-lang vocab. Candidate:
+     unify slugs as ADDITIVE normalized kind, or rename (BREAKING;
+     adjudicate).
+  3. missing closure-capture edges — NOT an oddity, deliberate scope: v5 df
+     is intra-procedural; the join is commit-4 Resolve work (span
+     containment). Do not "fix" in df.
+- Subagents execute one increment each; the orchestrator audits every increment
+  before the next starts. Rejected: letting one agent run multiple phases
+  (context drift is how the last session died mid-ledger).
+- The `(go)` ledger entry text is FROZEN (recovered verbatim from the dead
+  session). Insert exactly; do not wordsmith. Rejected: regenerating it (it
+  would drift from the commit hashes the session cited).
+- The untracked `chat_log/20260723.0/.1`, `20260724.0` files and the modified
+  `chat_log/20260722.0` are OUT OF SCOPE for every commit here (the prior
+  session deliberately excluded them).
+- Push, `extract-go` worktree removal, and `port/go-extractor` branch deletion
+  require explicit human approval — never an agent's call.
+- Resolve order: TS first (scip-typescript), then rust-analyzer-scip / scip-go
+  reuse the proven shape. `df`/`cst` NEVER resolve (spec, `_2_traits.rs`:80-84).
+- The docs facet has no ratchet anywhere in the spec; Phase 2 measures it,
+  does not port it. Rejected: bundling docs into commit 4 (spec defers it).
+- Kimi-agent commits carry no `Co-Authored-By` trailer (the Claude trailer was
+  that session's own convention).
+
+## Conventions (binding on every increment)
+
+- Gate: `cargo test --features cli` (cwd `v6/sprefa-extract`) — all green.
+- Snapshots are committed `.snap` files diffed byte-for-byte. `UPDATE_SNAP=1`
+  is FORBIDDEN unless the increment exists to change snapshots, and then it
+  must be declared in the report.
+- Dep rails: `cargo tree | grep -E 'tokio|sqlx|sea-orm|rusqlite|axum'` empty;
+  `cargo tree -d` shows no NEW dupes (pre-existing dups allowed: `hashbrown`;
+  `syn 2.0.119` vs `3.0.3` via serde_derive/thiserror-impl — predates even the
+  Rust skeleton, verified at `de94cceb^`).
+- Frozen seams: `shape.rs`, `family.rs`, `rows.rs`, `seams.rs`, `source.rs`,
+  `wire.rs`, `dispatch.rs`, `lang/ts.rs`, `lang/astgrep.rs`, `bin/` are
+  read-only EXCEPT where a phase's allowlist explicitly names them.
+- Commit style: `v6/extract: <imperative summary>` + structured hyphen-bullet
+  body. Commit each green increment. NEVER push, NEVER `git stash`.
+- Shell: non-interactive forms only (`cp -f`, `mv -f`, `rm -f`).
+- Formatting: a non-concern (repo AGENTS.md: "formatting churn is not a review
+  concern") — spend zero effort on it. The ONE rail: never run `cargo fmt` in
+  this worktree, because the installed nightly rustfmt disagrees with the
+  build the merged code was formatted under and produces ~1000 lines of churn
+  across the frozen seams (Phase 0 nearly committed this; recovered via
+  `git checkout HEAD -- v6/sprefa-extract`).
+- Ledger ritual on every landed increment: `_7_tasks.rs` BUILD STATUS date,
+  entry inserted before the `PENDING:` line, `NEXT:` kept current.
+- Oracle regen (only when a phase adds fixtures): from the WORKTREE ROOT,
+  `cargo build --quiet --example v5_normalize && cargo run --quiet --example
+  v5_normalize -- <fixture> > <name>.v5.jsonl`. The oracle is captured, never
+  linked.
+
+## Phase 0 — Go closeout (one agent, ~30 min)
+
+Allowlist (edit): `v6/sprefa-seed/src/_3_extract/_7_tasks.rs` only.
+
+1. Verify the three pending diffs match the description in Context
+   (`git diff` — lib.rs one line, types.rs matrix block, _7_tasks.rs header).
+   If they differ in any unexpected way: STOP, report.
+2. Insert the following text VERBATIM into `_7_tasks.rs`, between the end of
+   the `(cli)` entry (line 211) and the `PENDING:` line (line 212):
+
+```rust
+//!   (go)     THIRD LANGUAGE LANDED: `GoSource` (lang/go.rs, ~1120 lines), PREPENDED in the
+//!             roster so .go routes to it. Mirror of TsSource/RustSource: cst via ast-grep
+//!             (ast-grep's go grammar) + type/call/df via tree-sitter-go (`go_parse` ->
+//!             `tree_sitter::Tree`, the "floor as the only tier" - no oxc/syn analog for go).
+//!             Ports v5 `src/graph/typegraph/go.rs` (GoTypes): TypeF entities + arrow sigs,
+//!             CallF (defs + sites), DfF (nodes + Direct edges). tree-sitter yields BYTE
+//!             offsets directly (node.start_byte/end_byte) -> v6 Span with NO line/col bridge
+//!             (simpler than the syn port). TIER-2 PARITY GREEN vs the v5 oracle (go arm in
+//!             v5_normalize.rs): ZERO divergence (type/call line-exact, df byte-exact). v5 go
+//!             emits NO const facet (walk_go_entities skips const_declaration); v6 matches
+//!             (const_value=0 both sides). DEFERRED (same set as TS/Rust): type_edge
+//!             (Resolve<TypeF> commit 4), docs, df aux. Commits 8abdc38e (skeleton) /
+//!             aa3c782e (TypeF) / aab204d1 (CallF) / d6427eab (DfF) / 16bc0855 (parity gold).
+//!             tree-sitter + tree-sitter-go unify with ast-grep's transitives (one copy each).
+```
+
+3. `cargo fmt`, then gate: `cargo test --features cli` green.
+4. Commit exactly the three files (+ this plan file if the orchestrator asks)
+   with message:
+
+```
+v6/extract: re-export GoSource from crate root + ledger entries
+
+- lib.rs: pub use GoSource (mirrors f501e5bd for RustSource)
+- types.rs: status matrix Go column [x]; const facet [-] n/a (v5 go emits none)
+- _7_tasks.rs: BUILD STATUS header for GO; (go) ledger entry
+```
+
+Done condition: `git status` shows only the three untracked chat_log files;
+gate green; ledger reads header → (go) → PENDING with no seam.
+
+<!-- todo(docs): commit the go-closeout bookkeeping (lib.rs export, types.rs matrix, _7_tasks.rs header + (go) entry) — text frozen in v6/plans/2026-07-24-extract-go-closeout-and-resolve4.md -->
+
+## Phase 0.5 — consistency sweep (one agent, read-only, report-only)
+
+Judge whether `lang/go.rs` actually matches the ts.rs/rust.rs conventions.
+Checks (all read-only):
+- `lang/mod.rs` roster order: GoSource routes `.go` before AstgrepSource.
+- Module-doc header shape of `go.rs` vs `ts.rs`/`rust.rs` (ports-cited,
+  dropped-machinery list, span story).
+- The rust closure waiver test still asserts every waived line is a
+  `df_node closure` row.
+- All 4 snapshots byte-identical with NO `UPDATE_SNAP`.
+- `extract --schema` / `--help` mention go (bin is self-describing).
+- Dep rails from Conventions.
+Report findings as a list: OK / DRIFT (file:line). Fixes are NOT this phase —
+each DRIFT becomes its own micro-increment assigned by the orchestrator.
+
+## Phase 1 — Resolve<\*> (commit 4), four increments — **COMPLETE 2026-07-24**
+
+All of 4a–4d landed and merged; see the State + recovery section at the end
+of this file for the SHAs and the final gate. The text below is the frozen
+historical decomposition.
+
+### 4a — hollow Resolve surface (design freeze; HUMAN REVIEW GATE)
+
+Allowlist: `seams.rs`, `source.rs`, `types.rs`, `family.rs`, `lib.rs`,
+`_7_tasks.rs`. (This phase — and only this phase — may touch the frozen
+seam files, because the seam IS the deliverable.)
+
+Deliverable: the phase-2 surface exactly per spec — `Resolve<F>` with
+`resolve(&ExtractOutput, &ProjectCx) -> Vec<ProjectEdge>` extending `Source`;
+`ProjectCx` per `_2_traits.rs`:35-51; cache key `(BlobHash, ProjectDigest,
+FamilyMask)`; resolves for call/type/module only. Bodies `todo!()`. Also
+answer, in the ledger entry: how phase-2 edges surface on the wire
+(`FlatFact` extension vs side channel) and whether snapshots grow type_edge
+lines. NO behavior, no call-site changes. STOP for human review before 4b.
+
+### 4b — Resolve<TypeF> for TsSource
+
+Allowlist: `lang/ts.rs`, `tests/golden_parity.rs`, `tests/fixtures/**`,
+`wire.rs` (only if 4a's wire answer requires it).
+Emit `TypeEdgeKind{Field, Variant, Impl, Generic, Param, Returns, Uses}`
+(types.rs:194-202). Measurement harness already exists: the golden_parity
+deferred `type_edge` facet flips from reported to asserted per fixture.
+`UPDATE_SNAP=1` allowed ONLY if 4a declared snapshot growth.
+
+### 4c — ScipSource seam + Resolve<CallF> (TS)
+
+Allowlist: new `lang/scip.rs` (or per 4a), `seams.rs` registration,
+`lang/ts.rs`, fixtures. Implement the spec's `ScipSource` (build = subprocess,
+load = protobuf parse) for scip-typescript; emit
+`CallEdgeKind{NameResolve, ScipOverride}` (types.rs:316-323). The ratchet:
+occurrence/resolution parity vs SCIP as ground truth — NOT a raw symbol diff
+(`_7_tasks.rs` ORACLE entry, lines 215-219).
+
+### 4d — rust + go resolve arms
+
+Only after 4c's ratchet shape is proven. rust-analyzer-scip, scip-go. Same
+allowlist pattern as 4c.
+
+<!-- CLOSED 2026-07-24: commit 4 Resolve<*> COMPLETE (4a approved design, 4b ts, 4c scip ratchet, 4d rust+go) — see State + recovery below -->
+
+## Phase 2 — broaden parity fixtures — **LANDED 2026-07-24** (lambda:
+`56b729c6`; docs ×3: `c321935d`; merged `b93b576a` + `1a824f51`)
+
+- Lambda fixture: mine v5 `tests/fixtures/callables/ts.ts` for lambda-heavy
+  input; capture the v5 oracle; add a golden_parity `Case`; the deferred
+  df/lambda rows become measured, not assumed.
+- Docs fixture: input that exercises v5's `doc` facet (ts docs,
+  `rust_docs_from`, `walk_go_docs`); oracle captured; reported-only (docs has
+  no ratchet — human decides later whether to port).
+
+<!-- CLOSED 2026-07-24: fixtures broadened (lambda + docs ×3, merged) -->
+
+## Design audit findings (2026-07-24, read-only structural audit)
+
+Verdict: CLEAN-WITH-DEBT. Coupling is one-directional (lang/* → seams/family/
+rows/shape only; no ts↔rust↔go cross-imports; zero store/engine/db names in
+code; bin is parser-blind — Epic U's condition holds; dispatch fully generic).
+The per-language walker triplication is DELIBERATE (per-parser AST types);
+the family dimension is type-level as claimed (a plain 6th family touches
+~10 pinned sites, no new wire arm unless it brings a new aux shape).
+
+Share-worthy accidental duplication (~140 lines). SEQUENCING RULING
+(2026-07-24, user): ALL dedup is deferred to ONE sweep AFTER the Resolve
+pass (4a–4d) fully lands — not interleaved with it, not even after 4a.
+Rationale: the dedup items and the resolve arms live in the same files
+(lang/*.rs, types.rs, wire.rs), and weaker agents are uncoordinated —
+concurrent structural churn guarantees merge conflicts and moving seams
+under in-flight resolve work. One coherent arc at a time; the dedup sweep
+is its own arc with its own audit afterward.
+
+1. cst masked-extract block, 4 byte-identical copies — ts.rs:1471-1480,
+   rust.rs:1130-1139, go.rs:1075-1084, astgrep.rs:121-130. → one
+   `project_cst(path, content, &mut Strings)` helper in astgrep.rs.
+2. Push helpers (~11 fns, ~70 lines) triplicated — df_push/df_edge/push_entity/
+   push_sig/push_def; the empty-name filter rule exists in 3 places
+   (ts.rs:1177, rust.rs:1089, go.rs:1034). → generic
+   `FamilyBundle<F>::push_named/push_edge` in types.rs; span conversion stays
+   per-lang.
+3. Go param-seeding ×2 intra-file — go.rs:541-560 vs 849-875. → one
+   `go_seed_params` helper.
+4. wire.rs per-family flatten loops ×4 (nodes ×3, edges ×2) + the inline
+   `CstEdgeKind::Child => "child"` match (wire.rs:71-73). →
+   `Family::kind_str` + `CstEdgeKind::as_str`, one generic node/edge pass.
+
+Documented divergences, NOT debt (do not "fix"): ts df nodes carry full spans
+vs rust/go zero-length anchors (parity keys on span.start; undocumented —
+document, don't unify); rust/go sort+dedup sig refs, ts does not
+(deterministic anyway); rust/go native front-ends bypass the Parser/Project
+seams with free project_* fns where ts.rs implements them → 4a rules on
+whether Resolve<F> impls mirror that or must implement the seams.
+
+### 4a must-encodes (from the audit's Resolve-arm triplication preview)
+
+Without these, 4b–4d WILL copy-paste resolution across three langs:
+
+1. A lang-agnostic `DefIndex` (name → (blob, span, kind)[]), orchestrator-built
+   ONCE per refresh from phase-1 CallF+TypeF bundles — never per-lang, never
+   built by re-parsing `reader` bytes. Handed into `resolve` explicitly or via
+   a pre-filled OnceLock.
+2. Shared caller-binding + same-file lookup helpers (site span → innermost
+   covering def span via sorted-span binary search; name → def within one
+   bundle). Pure functions over FamilyBundle/DefIndex, zero AST, written once.
+3. Phase-1 specifier rows need a home BEFORE 4b (aux on an existing family or
+   revived ModuleF) — today NO lang collects import/use specifiers; without
+   phase-1 rows, each resolve arm re-walks its own AST in phase 2 (the exact
+   triplication the phase split exists to prevent).
+4. One site-key discipline: rule whether `callee_path` is collected uniformly
+   (today rust fills it, ts/go emit None), and state that method resolution is
+   name-only + ScipOverride so 4b–4d don't each invent receiver typing.
+
+These fold into 4a as an addendum (agent resume) BEFORE the human review gate.
+
+### 4b-i candidate ruling (2026-07-24, user): OPTION (a) APPROVED
+
+The 4b agent STOPPED (correctly): v5's `type_edge` is itself UNRESOLVED
+text-target rows (`to` = free text, never node-joined — decls.rs:517), and
+phase-1 carried candidates only for param/returns (TypeFAux.sigs). Ruling:
+add unresolved type-edge-CANDIDATE rows to `TypeFAux` (owner span, to-name as
+written, kind) collected by TypeProjector during the one parse — the
+CallFAux.specifiers pattern. Sub-rulings: text dsts STAY text (no fake node
+joins — the candidate row IS the parity target); same-file blob via DefIndex
+span-join; sig-sourced param/returns filtered to Function-kind owners (v5
+emits no method-sig type_edges). The genuinely RESOLVED span-to-blob edges
+are a v6-only ADDITIVE layer (reported, never asserted). The 4a seam is
+unchanged; phase 2 stays zero-AST. Delivery was ordered TDD-style for the
+human: red parity run first (rows missing), then green.
+
+### Diet-SCIP tier mapping (2026-07-24, user: "want all that purely here too")
+
+v5's diet scenario = the Phase D diet-SCIP call graph
+(`src/engine/family/mod.rs:405`): the static-parse call graph that works when
+no scip index is available. In v6 this is NOT a mode — it is the Ast producer
+alone, and the distinction is carried per-edge:
+
+- DIET tier (always on, index or not): all phase-1 AST facts + every
+  `CallEdgeKind::NameResolve` edge (static name-match via DefIndex).
+- FULL tier (index present): `CallEdgeKind::ScipOverride` upgrades individual
+  edges where scip disagrees with the name-match (user-allowed override).
+- Index unavailable ⇒ structural degradation: no scip run → zero ScipOverride
+  rows, all NameResolve rows still emitted. No special code path.
+- The GENERAL ratchet — `ratchet(&[(Producer, ExtractOutput)]) -> Merged`,
+  per-fact best-producer-wins over `Ast`/`Scip(&indexer)`/`Ghcacher`, the
+  Producer tag riding the bundle — is EPIC 3 (seed _7_tasks.rs:56-57,
+  688-691, 754, 784-785), sequenced after commit 4 + Epic 2 (RAM). The
+  extract crate does not yet tag bundles with Producer — Epic 3 adds it.
+- OPEN PIN: an explicit "scip unavailable ⇒ NameResolve-only output, no
+  failure" test belongs at the tail of 4c or in Epic 3 — the degradation is
+  structural today but unasserted. (Track under the 4c/Epic-3 increments.)
+
+## Verification
+
+The arc proves itself per increment: `cargo test --features cli` green;
+snapshots byte-identical without `UPDATE_SNAP` (unless declared); golden_parity
+cases green (4 today, growing in Phase 2); 4b's type_edge deferred-set flips to
+asserted; 4c's ratchet report (occurrence/resolution parity vs scip) in the
+ledger; ledger updated every increment; dep rails clean.
+
+## Staffing
+
+- Executors: Kimi coder subagents, ONE increment each, run in the existing
+  worktree (no new worktrees; base SHA `74a12940` + subsequent closeout commit).
+- Suite budget per increment: one full gate (~minutes) + oracle regen only
+  where the phase says so.
+- Orchestrator audits per the checklist below before starting the next
+  increment; the human reviews the 4a design and any push/cleanup.
+
+### Subagent brief template (orchestrator fills `[...]`)
+
+```
+Work in /Users/chrishafley/projects/sprefa/.claude/worktrees/extract-golden-plan
+(branch plan/extract-golden-plan). Do NOT create commits beyond the one this
+task specifies; NEVER push; NEVER git stash; NEVER touch chat_log/.
+Read first: v6/plans/2026-07-24-extract-go-closeout-and-resolve4.md (your phase
+is [X]), then the spec docs it names. Task: [phase text verbatim].
+Edit allowlist: [files]. Everything else is read-only.
+Gate: cd v6/sprefa-extract && cargo test --features cli (must be green).
+UPDATE_SNAP=1 is forbidden [unless declared].
+Commit message: [exact message].
+If anything is ambiguous, conflicts with the spec, or requires editing outside
+the allowlist: STOP and report — do not improvise.
+Report: files changed, gate output tail, commit SHA, divergences (must be zero),
+open questions.
+```
+
+### Orchestrator audit checklist (per increment)
+
+- `git show --stat` — only allowlisted files touched.
+- Independent `cargo test --features cli` run — green.
+- No `UPDATE_SNAP` in the diff history unless declared; `.snap` diffs
+  byte-reviewed when present.
+- Dep rails clean; no new dupes.
+- Ledger: entry before `PENDING:`, BUILD STATUS date, `NEXT:` current.
+- Report's claims match the actual diff.
+
+## State + recovery (2026-07-24 — written so any session can pick this up)
+
+READ FIRST on pickup: this file, then `v6/sprefa-seed/src/_3_extract/_7_tasks.rs`
+(the ledger), then `v6/plans/2026-07-23-sprefa-extract-golden-plan.md`. Do NOT
+re-derive decisions.
+
+### Landed (branch `plan/extract-golden-plan`, worktree `.claude/worktrees/extract-golden-plan`)
+
+- `f9b8ce37` Go closeout (GoSource export + ledger) · `7c72249a` --help matrix fix
+- `875258cf` + `652fc46a` 4a hollow `Resolve<F>` surface + must-encodes addendum
+  (HUMAN-APPROVED: scip-override allowed; blake3 in)
+- `b93b576a` + `1a824f51` fixture merges (docs ×3 measured; lambda fixture +
+  TS lambda call_defs ported per v5)
+- `e117bf2e` 4b-i partial (blake3, DefIndex helpers, ProjectEdge wire arm) ·
+  `beb60e73` 4b-ii TS specifiers (CallFAux.specifiers, v6-only)
+- `2f377fd2` 4b-iii type-edge candidates + `Resolve<TypeF>` ts → type_edge
+  ASSERTED ts (user ruling: option (a) phase-1 candidates; text dsts stay text;
+  Function-only sigs)
+- `29c7977a` waiver-kill (lam_sym closure names ts+rust+go; waiver DELETED)
+- `d9e98f27` 4c-i ScipSource seam (vendored proto/scip.proto + prost runtime;
+  bindings committed at `src/scip/scip_proto.rs`; v5's scip+protobuf pairing
+  rejected — measured dup violation)
+- `6a948a7f` 4c-ii `Resolve<CallF>` ts + 6-leg scip ratchet (5 NameResolve,
+  1 ScipOverride, 9 external-no-edge; 0 miss/disagree/overbound; missing scip
+  = loud test failure)
+- `efa11843` + `9f4760ec` 4d-go (type arm — v5 go DOES emit type_edge, new
+  edges.go case 7 rows 0 divergence; call arm + scip-go ratchet 1/1/0 misses),
+  merged `139d94e3` (+ `0a4a7ef2` INDEX regen)
+- `6b5d80f6` + `d31bb93d` 4d-rust (type arm 3+3 rows 0 divergence; call arm +
+  rust-analyzer-scip ratchet 2 NameResolve / 3 ScipOverride / 0 misses; leg-6
+  local-symbol adaptation), merged `e579e5ec`
+- RESOLVE PASS (commit 4) COMPLETE 2026-07-24. Final gate: golden_parity 8/8
+  (ported facets, type_edge ts+go+rust, ledger, ratchets ts+go+rust — all
+  three real indexers run in-test), snapshot 2/2, all resolve worktrees
+  retired.
+
+### In flight — RESOLVED 2026-07-24: both landed + merged. THE RESOLVE PASS IS COMPLETE.
+
+- 4d-go landed: `efa11843` (type arm, go_edges 7 rows 0 divergence — v5 go DOES
+  emit type_edge, fixtures just never exercised it) + `9f4760ec` (call arm +
+  scip-go 0.2.7 ratchet: NameResolve 1 / ScipOverride 1 / external 1, zero
+  misses). Merged as `139d94e3` (+ `0a4a7ef2` INDEX regen).
+- 4d-rust landed: `6b5d80f6` (type arm, rust 3+3 asserted 0 divergence) +
+  `d31bb93d` (call arm + rust-analyzer-scip ratchet: NameResolve 2 /
+  ScipOverride 3 / external 2, zero misses; leg-6 rust local-symbol adaptation
+  documented). Merged as `e579e5ec`.
+- Final gate after both merges: `cargo test --features cli` — golden_parity
+  8/8 (ported facets, type_edge ts+go+rust, ledger, ratchets ts+go+rust — all
+  three REAL indexers run in-test), snapshot 2/2. Both worktrees retired.
+
+### NEXT — nothing scheduled. The user unparks arcs explicitly.
+
+### Parked (do NOT start without the user's explicit word)
+
+- df aux port (args/fields/lits/param_pos/loops/nests) — v5-is-correct port.
+- docs facet port — v5-is-correct; docs now measured (ts 8, rust 5, go 6).
+- Oddity-fix arc (two-lane: additive v6-only rows free; breaking adjudicated):
+  df ret self-edges (`809→809`); rust `if/match` vs ts `cond/logic` slug split.
+- Dedup sweep (~140 lines; audit items 1–4: cst block ×4 → `project_cst`;
+  push helpers → `FamilyBundle::push_named/push_edge`; `go_seed_params`;
+  wire flatten loops → `Family::kind_str` + `CstEdgeKind::as_str`) — own arc.
+- `callee_path` ts fill — declared-snapshot micro-increment (4c deferred;
+  filling changes `sample.callf.snap`).
+- Diet-tier hard-assert of scip-less name_resolve count (currently exercised +
+  counted, not asserted) — user's call.
+- Epic 3: general ratchet `ratchet(&[(Producer, ExtractOutput)]) -> Merged` +
+  Producer tag rides bundles (after commit 4 + Epic 2 RAM).
+- Housekeeping (HUMAN-APPROVED only): push `plan/extract-golden-plan`; retire
+  extract-go worktree + `port/go-extractor` + `exp/fixture-*` branches;
+  chat_log files stay uncommitted (session convention).
+
+### Operating machine (conventions for any agent/orchestrator)
+
+- Supreme ruling: V5 IS CORRECT — divergences resolve toward v5; waivers get
+  eliminated, never created. Two-lane: ported rows asserted byte-exact;
+  v6-only rows reported, never asserted.
+- Subagents do the work (one increment each, frozen file allowlist,
+  stop-and-report on ambiguity); orchestrator audits (`git show --stat` vs
+  allowlist + independent gate) and merges. Humans gate design + pushes.
+- Hard rules: no push, no stash, NO `cargo fmt` (nightly rustfmt churns
+  ~1000 lines; the merged code was formatted under a different build), no
+  chat_log/ commits, THIS plan file stays untracked, non-interactive shell
+  (`cp -f`/`mv -f`/`rm -f`), commit style `v6/extract: <imperative>` with no
+  Co-Authored-By trailer, INDEX.md hook auto-stage allowed.
+- `UPDATE_SNAP=1` forbidden unless the increment IS a declared snapshot
+  change, with eyeballed diffs quoted in the report.
+- Dep rails: `cargo tree | grep -E 'tokio|sqlx|sea-orm|rusqlite|axum'` empty;
+  `cargo tree -d` no NEW dupes (pre-existing: hashbrown; syn 2.0.119/3.0.3).
+- Gate: `cd v6/sprefa-extract && cargo test --features cli`. Oracle regen from
+  the WORKTREE ROOT: `cargo run --quiet --example v5_normalize -- <fixture> >
+  <name>.v5.jsonl` (captured, never linked).
