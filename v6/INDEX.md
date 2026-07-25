@@ -95,6 +95,7 @@
 | [plans/2026-07-23-v6-transports-as-rels.md](plans/2026-07-23-v6-transports-as-rels.md) | 123 | Transports as rels — http/ws/LSP/shell with zero effect syntax (F4/F10 working note, 2026-07-23) |
 | [plans/2026-07-24-fork-pipeline-syntax-findings.md](plans/2026-07-24-fork-pipeline-syntax-findings.md) | 80 | Fork findings: pipeline syntax + surface rulings (2026-07-24, session forked-for-sql-pipeline-syntax) |
 | [plans/2026-07-24-m9-storage-plane-continuation.md](plans/2026-07-24-m9-storage-plane-continuation.md) | 90 | M9 storage-plane continuation — codex brief (2026-07-24) |
+| [plans/2026-07-24-sqlite-retract-perf-lab.md](plans/2026-07-24-sqlite-retract-perf-lab.md) | 425 | 2026-07-24 SQLite retraction perf lab |
 | [plans/2026-07-24-v6-dl-mvp-slice.md](plans/2026-07-24-v6-dl-mvp-slice.md) | 664 | v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
@@ -1554,6 +1555,23 @@
 68:## Gates (run, do not trust memory)
 81:## Commit protocol
 86:## Final summary shape
+```
+
+### plans/2026-07-24-sqlite-retract-perf-lab.md
+```
+1:# 2026-07-24 SQLite retraction perf lab
+12:## Prior art (constrains the hypothesis set; cited, not re-measured)
+45:## Method
+54:## Baseline (this lab, 3 runs per cell, median [min-max])
+79:## H1: `ix_cx_dep_child` is already covering; an explicit `(child_key, parent_key)` index buys nothing
+126:## H2: replacing `INSERT INTO ... SELECT DISTINCT` with `INSERT OR IGNORE` in `retract_dred` removes the temp-b-tree dedup and speeds the loop 5-15%
+168:## H3: the scc/dred 4.4x gap vs counting on DAG cuts is cone amplification (work proportional to the whole reachable cone, twice), not a few expensive rounds
+207:## H4: ANALYZE / sqlite_stat1 does not move retract time, because CROSS JOIN already pins every join order
+251:## H5: frontier ping-pong (role swap in Rust instead of `DELETE frontier; INSERT frontier SELECT FROM next`) removes a full extra copy of every wavefront row and speeds dred-loop/scc ~5-15%
+298:## H6: page_size does not materially move an all-in-RAM retract
+334:## H7: pinning the CTE phase-2 base join order (CROSS JOIN, cone-driven) removes its full index scan and speeds dred-cte 5-15%
+385:## Final state (all adopted changes: H2 DISTINCT removal + H5 ping-pong)
+423:## B0: baseline reproduction (no code change)
 ```
 
 ### plans/2026-07-24-v6-dl-mvp-slice.md

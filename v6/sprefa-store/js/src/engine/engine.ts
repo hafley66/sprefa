@@ -1,8 +1,41 @@
 /**
  * engine.ts — the ONE semi-naive cascade: frontier -> one hop -> prune -> fixpoint.
  * Three prune modes: reconcile=digest(A) . retract/assert=weight(B) . reach/temporal=reached(C).
- * Ported character-for-character from src/engine.rs. SQLite is production; dd/salsa live
- * in oracle.ts (the from-scratch math only).
+ * Ported character-for-character from src/engine.rs, and identical to it through
+ * merge-base e97b1d74. SQLite is production; dd/salsa live in oracle.ts (the
+ * from-scratch math only).
+ *
+ * DIVERGENCE FROM src/engine.rs (opened 2026-07-24, unported, awaiting a ruling).
+ * The sqlite-retract-perf lab landed two cascade optimizations on the Rust side only,
+ * in commits a13d62eb (H2) and 96f14b12 (H5); the measurements and the two rejected
+ * hypotheses are written up in v6/plans/2026-07-24-sqlite-retract-perf-lab.md. This
+ * file still carries the pre-lab SQL, so the claims below about statement text being
+ * the Rust string unchanged hold for every function EXCEPT the four cascade sites
+ * listed here:
+ *   1. DISTINCT -> INSERT OR IGNORE. engine.rs replaced `INSERT INTO {next} SELECT
+ *      DISTINCT ...` with `INSERT OR IGNORE INTO {next} SELECT ...` (measured -6..-8%
+ *      on the dred loop; equivalent rowset because ns.frontier / ns.next are declared
+ *      `key INTEGER PRIMARY KEY`, engine.rs:127-128, mirrored below at 212-213). This
+ *      file keeps DISTINCT at lines 446 (assert), 493 (retract_dred cascade), 512
+ *      (retract_dred rederive base) and 524 (retract_dred rederive loop). The DISTINCT
+ *      at line 944 (`dirty`) is NOT a divergence: engine.rs:1148 still carries it.
+ *   2. Frontier ping-pong. engine.rs holds `frontier_table` / `next_table` as `&str`
+ *      role names and `std::mem::swap`s them at the end of each round (measured
+ *      -8..-10%), deleting the per-round `DELETE FROM frontier; INSERT INTO frontier
+ *      SELECT key FROM next` full-wavefront copy. This file still issues that copy in
+ *      retract (319-320), retract_scc (377-378, 410-411), assert (454-455) and
+ *      retract_dred (502-503, 533-534).
+ * Nothing here is blocked from being ported: `exec` already splits multi-statement
+ * strings at top-level `;` (split_statements below), so a role-name swap is invisible
+ * to the transaction bracket. The port would lower stmt_counter by two per round in
+ * retract / assert / retract_dred, which no test in js/tests asserts on.
+ *
+ * Scope note: v6/dl's tick loop does NOT reach this namespace's retract/assert. It
+ * imports only `with_txn` (v6/dl/src/3_runtime.ts:62-63) and runs its fixpoint through
+ * lower/lowerSql.ts, which already uses INSERT OR IGNORE with no DISTINCT and swaps
+ * delta tables by ALTER TABLE RENAME rather than copying rows. The cascade retract and
+ * assert entry points are called only from js/tests/engine/golden.test.ts and
+ * src/labs/stress.ts.
  *
  * ORM seam: Rust uses sea-orm/sqlx async (ConnectionTrait, DatabaseConnection, DbErr,
  * db.transaction(|txn| async {...})). TS uses ONE `@libsql/client` ASYNC connection
@@ -26,8 +59,9 @@
  * otherwise the Rust string unchanged.
  * `client.execute(sql)` reads scalars/rows, with every bigint column wrapped in
  * `Number(...)` at its number-use site (array indices, counts, comparisons) — the digest
- * columns alone stay `bigint` end to end. Every SQL string is the Rust string unchanged;
- * only the `format!` interpolation became template-literal `${ns.x}`.
+ * columns alone stay `bigint` end to end. Outside the four divergent cascade sites named
+ * above, every SQL string is the Rust string unchanged; only the `format!` interpolation
+ * became template-literal `${ns.x}`.
  */
 
 import type { InArgs } from "@libsql/client";
