@@ -6,7 +6,13 @@
 //! phase-1/phase-2 traits. The ADDENDUM adds the shared resolve machinery:
 //! `DefIndex` / `DefSite` / `build_def_index` + the pure helper fns
 //! (`covering_def` / `def_named` / `corpus_defs`) every lang resolve arm uses.
+//! Commit 4c-i adds the Tier-1 seam: `ScipSource` + the diet wire types
+//! (`ScipIndex` / `ScipDocument` / `ScipOccurrence` / `ScipSymbolInfo` /
+//! `OccurrenceRole` / `PositionEncoding` / `ScipError`); the build/load logic
+//! lives in `crate::scip`.
 pub use crate::types::{
-    BlobSource, DefIndex, DefSite, FileSet, IndexBag, ManifestMap, ParseError, Parser, Project,
-    ProjectCx, ProjectDigest, Resolve, build_def_index, corpus_defs, covering_def, def_named,
+    BlobSource, DefIndex, DefSite, FileSet, IndexBag, ManifestMap, OccurrenceRole, ParseError,
+    Parser, PositionEncoding, Project, ProjectCx, ProjectDigest, Resolve, ScipDocument,
+    ScipError, ScipIndex, ScipOccurrence, ScipSource, ScipSymbolInfo, build_def_index,
+    corpus_defs, covering_def, def_named,
 };

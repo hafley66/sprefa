@@ -83,15 +83,18 @@
 //!                must survive for the node-level type join. The Param/Returns EDGES
 //!                (span-to-span, resolved) still land at Resolve<TypeF> (commit 4).
 //!
-//! BUILD STATUS (2026-07-24, commits 1-3c + Tier-2 PARITY GOLD (TS, incl. const facet) + the
+//! BUILD STATUS (2026-07-25, commits 1-3c + Tier-2 PARITY GOLD (TS, incl. const facet) + the
 //! RUST + GO languages + a self-describing CLI + the commit-4a Resolve DESIGN FREEZE incl. its
 //! design-audit ADDENDUM (4a APPROVED 2026-07-24: scip-override allowed, blake3 in) + the
 //! lambda/docs parity fixtures + the closure-name waiverkill (v5-is-correct consequence (a):
-//! lam_sym ported, golden_parity asserts with ZERO waivers)) LANDED in v6/sprefa-extract/.
+//! lam_sym ported, golden_parity asserts with ZERO waivers) + commit 4b COMPLETE (ts type_edge
+//! asserted) + commit 4c-i (the ScipSource seam: scip-typescript build + load, prost)) LANDED
+//! in v6/sprefa-extract/.
 //! The TS + Rust + Go phase-1
 //! families - Cst / Type(+sigs) / Call / Df (+const) - all project + stream + snapshot through
 //! ONE uniform surface, AND each ported set matches a captured v5 oracle (see the (parity) /
-//! (rust) / (go) entries). NEXT: 4c ScipSource seam + Resolve<CallF> (TS) - 4b
+//! (rust) / (go) entries). NEXT: 4c-ii Resolve<CallF> for TsSource + the scip
+//! ratchet (4c-i landed the seam; 4d = rust/go resolve arms) - 4b
 //! landed COMPLETE: machinery (4b-i) + specifiers (4b-ii) + the type_edge arm
 //! (4b-iii, ts type_edge asserted, zero divergence; the (4b-i) STOP was ruled
 //! option (a) by the human):
@@ -467,6 +470,49 @@
 //!             carries a closure); go has no closure fixture (its walker is
 //!             ported identically, CLI-verified on a scratch file); dep rails
 //!             unchanged. (User ruling, v5-is-correct consequence (a).)
+//!   (4c-i)   COMMIT 4c-i: ScipSource SEAM landed (scip-typescript build + load).
+//!             src/scip.rs is the wire.rs-style logic half; the seam trait +
+//!             diet types live in types.rs (new S6 section after Resolve;
+//!             seams.rs re-export per convention). `ScipTypescript` impls the
+//!             seed `_4_scip.rs`:118-124 ScipSource: `build` shells out
+//!             `scip-typescript index` (v5 scip_setup.rs INDEXERS argv; PATH
+//!             binary first, npx @sourcegraph/scip-typescript@0.4.0 fallback -
+//!             the bare `scip-typescript` npm package is a 0.0.1-security
+//!             placeholder, the real one is the scoped package), writing
+//!             index.scip to a HERMETIC temp dir (no tsconfig at root => the
+//!             sources are staged-copied first: --infer-tsconfig WRITES a
+//!             tsconfig; the source dir is never mutated); `load` decodes to
+//!             the diet ScipIndex (documents: relative_path + position_encoding
+//!             + occurrences(symbol, [sl,sc,el,ec] quad, roles bitfield) +
+//!             symbols(symbol, display_name, kind); external_symbols; the
+//!             tool-info identity). typed_range preferred, deprecated packed
+//!             range as fallback (upstream proto's own precedence law).
+//!             `byte_range` is the pure line/col -> byte Span bridge (content
+//!             stays with the consumer; Unspecified = UTF-16 per the SCIP
+//!             spec). DEP RULING (the brief's "justify your choice"): v5's
+//!             scip=0.7.1 + protobuf=3.7 pairing REJECTED - protobuf 3.7.2
+//!             hard-deps thiserror 1 = a NEW dup against this tree's
+//!             thiserror 2 (every scip crate version, 0.7.1 through 0.9.0,
+//!             pins protobuf 3.7.2); prost-build at build time rejected too
+//!             (its build tree forks `cargo tree -d` with build-kind dup
+//!             groups: bitflags/regex/prost via tempfile/prost-build).
+//!             Landed: prost runtime ONLY + vendored proto/scip.proto
+//!             (sourcegraph/scip @ 44d39fcfc954, 2026-07-21) + the prost
+//!             bindings COMMITTED at src/scip/scip_proto.rs (the `scip`
+//!             crate's own generated-code pattern; regen instructions in the
+//!             file header; bare ``` doc fences tagged ```text so rustdoc
+//!             does not compile the symbol grammar). Rails: banned-dep grep
+//!             empty; `cargo tree -d` dup set byte-identical to pre-4c
+//!             (prost/bytes/prost-derive/anyhow/itertools are new, unique,
+//!             single-version). IndexBag gains the corpus-wide `scip_index`
+//!             OnceLock slot (hollow; 4c-ii's Resolve<CallF> reads it for the
+//!             ScipOverride leg - same discipline as def_index in 4a/4b).
+//!             Unit proof (throwaway integration test, not committed per the
+//!             brief): build+load over tests/fixtures/ts -> 4 docs, 179
+//!             occurrences (92 defs), 92 symbols, 0 external; tool string
+//!             "scip-typescript 0.4.0". Gate green; zero .snap diffs (the
+//!             seam is phase-2 only; flatten never sees it). NO lang code
+//!             (4c-ii wires Resolve<CallF> + the ratchet).
 //!   PENDING:   TS type EDGES are now ASSERTED (see (4b): phase-1 candidates +
 //!              Resolve<TypeF>; field/variant/impl/generic/uses/param/returns).
 //!              Still pending: rust/go type_edge arms (4d), resolved caller ->

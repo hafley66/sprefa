@@ -20,6 +20,7 @@ pub mod dispatch;
 pub mod family;
 pub mod lang;
 pub mod rows;
+pub mod scip;
 pub mod seams;
 pub mod shape;
 pub mod source;
@@ -34,9 +35,12 @@ pub use family::{
 };
 pub use lang::{source_for, sources, AstgrepSource, GoSource, RustSource, TsSource};
 pub use rows::{Edge, FamilyBundle, Node};
+pub use scip::{ScipTypescript, byte_range};
 pub use seams::{
-    BlobSource, DefIndex, DefSite, FileSet, IndexBag, ManifestMap, ParseError, Parser, Project,
-    ProjectCx, ProjectDigest, Resolve, build_def_index, corpus_defs, covering_def, def_named,
+    BlobSource, DefIndex, DefSite, FileSet, IndexBag, ManifestMap, OccurrenceRole, ParseError,
+    Parser, PositionEncoding, Project, ProjectCx, ProjectDigest, Resolve, ScipDocument,
+    ScipError, ScipIndex, ScipOccurrence, ScipSource, ScipSymbolInfo, build_def_index,
+    corpus_defs, covering_def, def_named,
 };
 pub use shape::{BlobHash, FamilyTag, NameId, NodeRef, Span, Strings};
 pub use source::{ExtractOutput, FamilyMask, Source};

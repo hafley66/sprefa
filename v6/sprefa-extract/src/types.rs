@@ -761,9 +761,14 @@ pub struct ManifestMap;
 /// - per-language erased slots (RustCrates / ts_packages / GoIndex): the seed's
 ///   per-lang OnceLock shape (`_2_traits.rs`:46-51) covers THIS kind only; they
 ///   land in 4b+ behind the same OnceLock discipline.
+/// - `scip_index` (commit 4c): THE Tier-1 resolution index, one corpus-wide
+///   slot, set once per refresh by the engine/ratchet when an index.scip is in
+///   hand. `Resolve<CallF>` reads it for the ScipOverride leg; an unset slot
+///   means pure name-match resolution (no scip ground truth loaded).
 #[derive(Default)]
 pub struct IndexBag {
     pub def_index: std::sync::OnceLock<DefIndex>,
+    pub scip_index: std::sync::OnceLock<ScipIndex>,
 }
 
 // ── the corpus name index + shared resolve helpers (ADDENDUM 4a) ────────────
@@ -912,6 +917,125 @@ pub trait Resolve<F: Family>: Source {
         let _ = (output, cx);
         todo!("4b-iii landed Resolve<TypeF> for TsSource; next: 4c ScipSource + Resolve<CallF>, 4d rust/go arms")
     }
+}
+
+// ── S6 SCIP: the Tier-1 resolution wire (commit 4c) ─────────────────────────
+// The diet slice of scip.proto (seed `_4_scip.rs`): "we keep ONLY the fields
+// that project onto the four families (symbol + range + role + ...), and drop
+// the rest". Boundary law (seed, owner ruling): indexers are FOREIGN TOOLS
+// behind a subprocess seam — NEVER a bespoke indexer, NEVER compiler FFI. The
+// concrete impl (`ScipTypescript`: build subprocess + load protobuf decode)
+// lives in `crate::scip`; only types + the seam trait live here.
+
+/// The SCIP `SymbolRole` bitfield, lifted from scip.proto (seed
+/// `_4_scip.rs`:46-61). Composes (a definition that is also a write).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub struct OccurrenceRole(pub i32);
+
+impl OccurrenceRole {
+    pub const DEFINITION: Self = Self(0x1);
+    pub const IMPORT: Self = Self(0x2);
+    pub const WRITE_ACCESS: Self = Self(0x4);
+    pub const READ_ACCESS: Self = Self(0x8);
+    pub const GENERATED: Self = Self(0x10);
+    pub const TEST: Self = Self(0x20);
+    pub const FORWARD_DEF: Self = Self(0x40);
+    pub fn contains(self, bit: Self) -> bool {
+        (self.0 & bit.0) != 0
+    }
+}
+
+/// SCIP `PositionEncoding` (scip.proto): the column unit of every occurrence
+/// range in one document. `Unspecified` reads as UTF-16 per the SCIP spec.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum PositionEncoding {
+    #[default]
+    Unspecified,
+    Utf8,
+    Utf16,
+    Utf32,
+}
+
+/// One occurrence: a (symbol, range, roles) triple — a definition or a
+/// reference site (seed `_4_scip.rs`:26-35). `range` is scip.proto's packed
+/// quad normalized to `[start_line, start_col, end_line, end_col]` (the 3-
+/// element short form expanded), 0-based, cols in the document's
+/// `PositionEncoding` — deliberately NOT a v6 byte `Span`: the line/col ->
+/// byte bridge needs the document's content, which only the consumer holds
+/// (the ratchet / the engine). `crate::scip::byte_range` is that bridge.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScipOccurrence {
+    pub symbol: String,
+    pub range: [i32; 4],
+    pub roles: OccurrenceRole,
+}
+
+/// Diet `SymbolInformation` (seed `_4_scip.rs`:37-44): the identity string +
+/// its display name + the raw kind ordinal. Markdown docs, type signatures,
+/// and relationships are dropped per the diet law.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScipSymbolInfo {
+    pub symbol: String,
+    pub display_name: String,
+    pub kind: i32,
+}
+
+/// One indexed document: path relative to the indexed root + occurrences +
+/// symbol infos (seed `_4_scip.rs`:96-104). NO blob leg: the content join
+/// (relative_path -> reader/content) is the consumer's — the seed's
+/// `ScipDocument.blob` is a join product, not a parse product.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScipDocument {
+    pub relative_path: String,
+    pub position_encoding: PositionEncoding,
+    pub occurrences: Vec<ScipOccurrence>,
+    pub symbols: Vec<ScipSymbolInfo>,
+}
+
+/// One parsed index.scip: documents + externally-referenced symbols + the
+/// producing indexer identity (metadata.tool_info, kept for the ledger).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScipIndex {
+    pub documents: Vec<ScipDocument>,
+    pub external_symbols: Vec<ScipSymbolInfo>,
+    pub tool: String,
+}
+
+/// Why a scip build/load failed (seed `_4_scip.rs`:126-132; String payloads
+/// where the subprocess/decode detail matters for the report).
+#[derive(Debug)]
+pub enum ScipError {
+    /// The foreign tool is not installed (no PATH binary, no npx fallback).
+    IndexerMissing(&'static str),
+    /// Non-zero exit from the indexer subprocess (stderr tail attached).
+    IndexerFailed(String),
+    /// The index file could not be read / protobuf decode failed.
+    Parse(String),
+}
+
+impl fmt::Display for ScipError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ScipError::IndexerMissing(name) => write!(f, "scip indexer not found: {name}"),
+            ScipError::IndexerFailed(msg) => write!(f, "scip indexer failed: {msg}"),
+            ScipError::Parse(msg) => write!(f, "scip index parse failed: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for ScipError {}
+
+/// The Tier-1 source seam (seed `_4_scip.rs`:118-124). Two ops, both SYNC +
+/// CPU-bound: `build` shells out the foreign indexer over `root`, writing
+/// index.scip to a HERMETIC temp path (the source dir is never written — the
+/// indexer's inferred tsconfig lands in a staged copy) and returning that
+/// path; `load` parses an index.scip into the diet `ScipIndex`. The seed's
+/// `build -> Result<(), _>` reads `-> Result<PathBuf, _>` here: the caller
+/// must know where the hermetic output landed.
+pub trait ScipSource: Sync + Send {
+    fn indexer(&self) -> &'static str;
+    fn build(&self, root: &std::path::Path) -> Result<std::path::PathBuf, ScipError>;
+    fn load(&self, index_path: &std::path::Path) -> Result<ScipIndex, ScipError>;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

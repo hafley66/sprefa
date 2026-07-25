@@ -52,6 +52,17 @@ serde_json = "1"
 # phase-1/phase-2 cache keys). Same major as v5 (root Cargo.toml: blake3 = "1").
 # Human-approved dep (4b ruling 2026-07-24).
 blake3 = "1"
+# prost decodes index.scip for the ScipSource seam (commit 4c). v5's pairing
+# (scip = "0.7.1" + protobuf = "3.7"; src/scip_import.rs) was REJECTED here:
+# protobuf 3.7.2 hard-deps thiserror 1, a NEW dup against this tree's
+# thiserror 2 (every scip crate version pins that runtime). prost + the
+# vendored proto/scip.proto keeps the rails clean. The generated bindings are
+# COMMITTED at src/scip/scip_proto.rs (the `scip` crate's own pattern): no
+# build.rs, no build-time protoc. Regen: prost-build + protoc-bin-vendored
+# over proto/scip.proto (run anywhere; diff the result against the committed
+# file) - the prost-build route was measured to fork `cargo tree -d` with
+# build-kind dup groups (bitflags/regex/prost via tempfile/prost-build).
+prost = "0.13"
 
 # clap is BIN-only: gated behind `cli` so `cargo tree --lib` stays free of it.
 # The bin adds only clap; the lib never touches it.
