@@ -912,3 +912,46 @@ Precision is a program-level dial: context-insensitive first, k-limited
 later, summaries after. Eager whole-repo context-sensitive extraction = the
 IFDS trap, correctly feared, never queued. Lambdas (LambdaElem/LambdaRet) =
 cheapest first win, hooks/JSX is full of them.
+
+### S4 — Analysis family map (what's a PROGRAM vs a FACET vs a RABBIT HOLE)
+
+Frame: extract -> fact store -> query programs IS the CodeQL shape
+(Semmle extractor -> db -> QL); cst+df+call as merged graph planes IS
+Joern's Code Property Graph. The field was not missed; it was rebuilt.
+
+PROGRAMS over already-emitted facts (zero new extraction):
+- dead code / liveness (dead stores = one df query)
+- TAINT (source->sink + sanitizers = S3 flow + endpoint annotations; THE
+  killer app; sqli/xss demos)
+- TYPESTATE / API-protocol ("open before read"; rules-of-hooks IS one;
+  call graph + temporal rule)
+- metrics/architecture (coupling, cohesion, cyclomatic; dogfood #2 was
+  this by hand)
+- effect/purity ("touches globals/DOM/network" = call-graph reach to an
+  effectful-API list; render-purity + hook discipline want it)
+
+ONE NEW FACET, then a program:
+- CONTROL DEPENDENCE (dominance/frontiers from cst) -> PROGRAM SLICING
+  ("what affects this line" = PDG complete; the nav superpower)
+- POINTER/ALIAS (underlies call-graph QUALITY + field-write questions;
+  Doop = the datalog-native lineage; deepest facet, own arc later)
+- abstract interpretation lite (const facet is already baby constant
+  propagation; interval/range = same fixpoint over a lattice)
+- escape/capture (lam_sym closures already carry captures; escape-lite =
+  a df query)
+
+ADJACENT UNIVERSES (know, don't build):
+- symbolic execution (SMT religion, not facts-first)
+- shape/heap (TVLA; eats careers)
+- concurrency (races hard statically; cheap slice = lock-order graphs +
+  await-across-lock lints)
+- termination (the ENGINE guarantees it; analyzer needn't prove it)
+
+THE TRAP: big-O. Precise static complexity is unsolved; heuristics only
+(loop depth x call-graph cycles x input-size params). Sell as "smells
+quadratic" or it lies.
+
+TAKEAWAY (priority): taint + slicing = the two highest-value next
+programs (ride S3 + control-dependence); pointer = deepest facet arc;
+typestate = the everyday workhorse (hooks/RTK/API-misuse). Everything
+else: programs, NOT extractors.
