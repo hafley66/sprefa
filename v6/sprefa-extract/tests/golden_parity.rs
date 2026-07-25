@@ -34,6 +34,10 @@ use sprefa_extract::{
 
 struct Case {
     name: &'static str,
+    /// The fixture path AS THE ORACLE WAS INVOKED WITH IT (from the worktree
+    /// root). v5's closure df-node name (`lam_sym`) embeds this exact string as
+    /// its root segment, so byte-exact parity requires dispatching with it
+    /// verbatim — not the bare file name.
     path: &'static str,
     fixture: &'static [u8],
     baseline: &'static str,
@@ -44,56 +48,56 @@ struct Case {
 const CASES: &[Case] = &[
     Case {
         name: "sample",
-        path: "sample.ts",
+        path: "v6/sprefa-extract/tests/fixtures/ts/sample.ts",
         fixture: include_bytes!("fixtures/ts/sample.ts"),
         baseline: include_str!("fixtures/ts/sample.v5.jsonl"),
         fixture_dir: "ts",
     },
     Case {
         name: "consts",
-        path: "consts.ts",
+        path: "v6/sprefa-extract/tests/fixtures/ts/consts.ts",
         fixture: include_bytes!("fixtures/ts/consts.ts"),
         baseline: include_str!("fixtures/ts/consts.v5.jsonl"),
         fixture_dir: "ts",
     },
     Case {
         name: "docs",
-        path: "docs.ts",
+        path: "v6/sprefa-extract/tests/fixtures/ts/docs.ts",
         fixture: include_bytes!("fixtures/ts/docs.ts"),
         baseline: include_str!("fixtures/ts/docs.v5.jsonl"),
         fixture_dir: "ts",
     },
     Case {
         name: "lambdas",
-        path: "lambdas.ts",
+        path: "v6/sprefa-extract/tests/fixtures/ts/lambdas.ts",
         fixture: include_bytes!("fixtures/ts/lambdas.ts"),
         baseline: include_str!("fixtures/ts/lambdas.v5.jsonl"),
         fixture_dir: "ts",
     },
     Case {
         name: "rust_sample",
-        path: "sample.rs",
+        path: "v6/sprefa-extract/tests/fixtures/rust/sample.rs",
         fixture: include_bytes!("fixtures/rust/sample.rs"),
         baseline: include_str!("fixtures/rust/sample.v5.jsonl"),
         fixture_dir: "rust",
     },
     Case {
         name: "rust_docs",
-        path: "docs.rs",
+        path: "v6/sprefa-extract/tests/fixtures/rust/docs.rs",
         fixture: include_bytes!("fixtures/rust/docs.rs"),
         baseline: include_str!("fixtures/rust/docs.v5.jsonl"),
         fixture_dir: "rust",
     },
     Case {
         name: "go_sample",
-        path: "sample.go",
+        path: "v6/sprefa-extract/tests/fixtures/go/sample.go",
         fixture: include_bytes!("fixtures/go/sample.go"),
         baseline: include_str!("fixtures/go/sample.v5.jsonl"),
         fixture_dir: "go",
     },
     Case {
         name: "go_docs",
-        path: "docs.go",
+        path: "v6/sprefa-extract/tests/fixtures/go/docs.go",
         fixture: include_bytes!("fixtures/go/docs.go"),
         baseline: include_str!("fixtures/go/docs.v5.jsonl"),
         fixture_dir: "go",
@@ -176,47 +180,23 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
 }
 
 /// THE GOLD: for every fixture, the PORTED facets v6 emits must equal the v5
-/// oracle. A non-empty diff is a v6 regression (port bug) or an intentional
-/// rename to codify (added to the waiver list).
+/// oracle. A non-empty diff is a v6 regression (port bug).
 ///
-/// One documented waiver: the closure df-node NAME. v5 stored `lam_sym` (the
-/// closure-to-body join key, encoding the file path + enclosing fn) as the
-/// `closure` node's `var`; v6 drops it (the join is span-containment, not a
-/// sym). The closure node's KIND + byte offset still match exactly, so the
-/// waiver normalizes only the name field. The waiver is SELF-VERIFYING: the
-/// test asserts that every line it removes is a `df_node closure` row, so a
-/// future real regression cannot hide behind it. It applies per-LINE, so it
-/// covers every case with closure df-nodes (the rust sample, the ts lambdas
-/// case) — the first two TS fixtures simply had none.
+/// ZERO WAIVERS: the closure df-node NAME is asserted byte-exact — v6's df
+/// walkers mint v5's `lam_sym` (`{file}::function::{fn}::closure::{coord}`;
+/// coord = byte offset for ts, `{line}_{col}` 1-based/0-based for rust,
+/// `{row}_{col}` 0-based for go; nesting chains) derived from the walk's
+/// containment path + span data, no sym machinery.
 #[test]
 fn ported_facets_match_v5() {
     for case in CASES {
-        let v5_raw: BTreeSet<String> = case
+        let v5_ported: BTreeSet<String> = case
             .baseline
             .lines()
             .filter(|l| PORTED.contains(&facet_of(l)))
             .map(str::to_owned)
             .collect();
-        // Apply the documented closure-name waiver (line-based, case-agnostic;
-        // see strip_closure_name).
-        let v5_ported: BTreeSet<String> =
-            v5_raw.iter().map(|line| strip_closure_name(line)).collect();
         let v6 = v6_ported(case.path, case.fixture);
-
-        // Self-verify the waiver: every v5 line it changed must be a closure
-        // df-node. If a non-closure line ever differs, that is a real regression
-        // and the waiver must not mask it.
-        let unwaivered_only_v5: Vec<&String> = v5_raw.difference(&v6).collect();
-        let hidden: Vec<&&String> = unwaivered_only_v5
-            .iter()
-            .filter(|line| !is_closure_df_node(line))
-            .collect();
-        assert!(
-            hidden.is_empty(),
-            "[{}] a divergence outside the closure-name waiver would be hidden by it:\n{}",
-            case.name,
-            hidden.iter().map(|s| format!("    {s}")).collect::<Vec<_>>().join("\n"),
-        );
 
         let only_v5: Vec<&String> = v5_ported.difference(&v6).collect();
         let only_v6: Vec<&String> = v6.difference(&v5_ported).collect();
@@ -229,38 +209,17 @@ fn ported_facets_match_v5() {
         panic!(
             "[{}] PORTED parity diff vs v5 oracle:\n  only in v5 ({}):\n{}\n  only in v6 ({}):\n{}\n\
              Regenerate the oracle: cargo run --example v5_normalize -- \
-             v6/sprefa-extract/tests/fixtures/{}/{} > v6/sprefa-extract/tests/fixtures/{}/{}.v5.jsonl",
+             {} > v6/sprefa-extract/tests/fixtures/{}/{}.v5.jsonl",
             case.name,
             only_v5.len(),
             dump(&only_v5, 50),
             only_v6.len(),
             dump(&only_v6, 50),
-            case.fixture_dir,
             case.path,
             case.fixture_dir,
             case.name,
         );
     }
-}
-
-/// Whether a canonical line is a `df_node closure` row (the closure-name waiver
-/// target). Fields: `df_node\tclosure\t<name>\t<byte>`.
-fn is_closure_df_node(line: &str) -> bool {
-    let mut parts = line.split('\t');
-    parts.next() == Some("df_node") && parts.next() == Some("closure")
-}
-
-/// Normalize the closure df-node NAME to "" (v6 drops v5's lam_sym; see the
-/// waiver note on `ported_facets_match_v5`). No-op for non-closure lines.
-fn strip_closure_name(line: &str) -> String {
-    if !is_closure_df_node(line) {
-        return line.to_string();
-    }
-    let mut parts: Vec<&str> = line.split('\t').collect();
-    if parts.len() > 2 {
-        parts[2] = "";
-    }
-    parts.join("\t")
 }
 
 /// Build the phase-2 corpus: every case's ExtractOutput + its real blake3 blob

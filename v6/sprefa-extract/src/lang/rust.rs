@@ -591,15 +591,16 @@ fn peel_parens(expr: &syn::Expr) -> &syn::Expr {
 // closure walks.
 //
 // What is DROPPED vs v5 (each deliberate, matching the TS DfF port):
-//  - `fn_sym` / `mint_sym` / `lambda_sym`: the enclosing callable is NOT stored
-//    on a df node (derived at the seam by span-containment over CallF defs).
+//  - `fn_sym` ON NODES: the enclosing callable is not stored on every df node;
+//    it is threaded through the walk (v5's own mechanism) purely so the
+//    `closure` VALUE node carries v5's exact `lam_sym` name
+//    (`{file}::function::{fn}::closure::{line}_{col}`, syn's 1-based line /
+//    0-based col; methods root at `{file}::method::{Owner}.{m}`). No sym store:
+//    the name derives from the walk's containment path + the closure's span.
 //  - `line`/`col`: a node is a byte Span (start via line_col_to_byte), never a
 //    line/col pair.
 //  - the enrichment aux: `args`, `fields`, `lits`, `param_pos`, `loops`,
 //    `nests`, `allocators`. The EDGES already carry every value flow.
-//  - the closure value node's `lam_sym` name: v5 stored it as the closure-to-
-//    body join key; v6 replaces that join with span-containment (TS-port
-//    precedent), so the closure node carries no name. See the parity ledger.
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Transient scope: a variable name -> its binding node (param or `let`).
@@ -611,9 +612,12 @@ type Scope = std::collections::HashMap<String, NodeRef>;
 type LoopBreaks = Vec<(Option<String>, Vec<NodeRef>)>;
 
 /// Project the DfF family: each callable's body lifted to its value-flow graph.
-/// Port of v5 `rust_dataflow_from` (the driver half).
+/// Port of v5 `rust_dataflow_from` (the driver half). `file` roots each fn_sym:
+/// `{file}::function::{name}` for free fns, `{file}::method::{Owner}.{name}` for
+/// impl methods (v5 `mint_sym`; the closure value node's name derives from it).
 fn project_df(
     parsed: &syn::File,
+    file: &str,
     line_starts: &[u32],
     strings: &mut Strings,
     sink: &mut FamilyBundle<DfF>,
@@ -621,16 +625,22 @@ fn project_df(
     for item in &parsed.items {
         match item {
             syn::Item::Fn(f) => {
+                let fn_sym = format!("{file}::function::{}", f.sig.ident);
                 let mut scope = Scope::new();
                 let mut loop_breaks = LoopBreaks::new();
-                flow_fn_body(&f.sig, &f.block, line_starts, strings, &mut scope, sink, &mut loop_breaks);
+                flow_fn_body(&f.sig, &f.block, &fn_sym, line_starts, strings, &mut scope, sink, &mut loop_breaks);
             }
             syn::Item::Impl(i) => {
+                let owner = primary_type(&i.self_ty);
                 for ii in &i.items {
                     if let syn::ImplItem::Fn(m) = ii {
+                        let fn_sym = match &owner {
+                            Some(o) => format!("{file}::method::{o}.{}", m.sig.ident),
+                            None => format!("{file}::function::{}", m.sig.ident),
+                        };
                         let mut scope = Scope::new();
                         let mut loop_breaks = LoopBreaks::new();
-                        flow_fn_body(&m.sig, &m.block, line_starts, strings, &mut scope, sink, &mut loop_breaks);
+                        flow_fn_body(&m.sig, &m.block, &fn_sym, line_starts, strings, &mut scope, sink, &mut loop_breaks);
                     }
                 }
             }
@@ -639,12 +649,30 @@ fn project_df(
     }
 }
 
+/// The impl self-type's primary name (`&Foo` / `Foo<T>` / `(Foo)` -> `Foo`),
+/// None for noise/primitive/unnamable types. Port of v5 `primary_type` — the
+/// method sym's owner. (`path_name` / `is_noise_type` are the existing ports
+/// above, shared with the type-edge walk.)
+fn primary_type(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Group(t) => primary_type(&t.elem),
+        Type::Paren(t) => primary_type(&t.elem),
+        Type::Path(t) => path_name(&t.path),
+        Type::Ptr(t) => primary_type(&t.elem),
+        Type::Reference(t) => primary_type(&t.elem),
+        _ => None,
+    }
+}
+
 /// Seed the scope with param nodes, then walk the body. The block's tail
 /// expression (last stmt, no semicolon) is the fn's implicit return: mint a
-/// `ret` node and flow the tail into it. Port of v5 `flow_fn_body`.
+/// `ret` node and flow the tail into it. Port of v5 `flow_fn_body`. `fn_sym`
+/// is the callable's v5 sym (only a closure node's name derives from it).
+#[allow(clippy::too_many_arguments)]
 fn flow_fn_body(
     sig: &syn::Signature,
     block: &syn::Block,
+    fn_sym: &str,
     line_starts: &[u32],
     strings: &mut Strings,
     scope: &mut Scope,
@@ -664,7 +692,7 @@ fn flow_fn_body(
             }
         }
     }
-    if let Some((tail, line, col)) = flow_block(block, line_starts, strings, scope, sink, loop_breaks) {
+    if let Some((tail, line, col)) = flow_block(block, fn_sym, line_starts, strings, scope, sink, loop_breaks) {
         let ret = df_push(sink, strings, line_starts, line, col, DfNodeKind::Ret, None);
         df_edge(sink, tail, ret);
     }
@@ -673,8 +701,10 @@ fn flow_fn_body(
 /// Walk a block. Returns the (node, line, col) of the block's tail value (the
 /// last statement when it is a no-semicolon expression) so a caller can treat it
 /// as an implicit return. Port of v5 `flow_block`.
+#[allow(clippy::too_many_arguments)]
 fn flow_block(
     block: &syn::Block,
+    fn_sym: &str,
     line_starts: &[u32],
     strings: &mut Strings,
     scope: &mut Scope,
@@ -687,7 +717,7 @@ fn flow_block(
         match stmt {
             syn::Stmt::Local(local) => {
                 if let Some(init) = local.init.as_ref() {
-                    let rhs = flow_expr(&init.expr, line_starts, strings, scope, sink, loop_breaks);
+                    let rhs = flow_expr(&init.expr, fn_sym, line_starts, strings, scope, sink, loop_breaks);
                     // Bind every ident in the pattern (`let (a, b) = pair`), each
                     // tainted by the rhs conservatively.
                     for (_, binding) in bind_pat(&local.pat, line_starts, strings, scope, sink) {
@@ -697,7 +727,7 @@ fn flow_block(
             }
             syn::Stmt::Expr(expr, semi) => {
                 let start = expr.span().start();
-                let node = flow_expr(expr, line_starts, strings, scope, sink, loop_breaks);
+                let node = flow_expr(expr, fn_sym, line_starts, strings, scope, sink, loop_breaks);
                 if idx + 1 == statement_count && semi.is_none() {
                     tail = Some((node, start.line as u32, start.column as u32));
                 }
@@ -725,9 +755,12 @@ fn ctor_name(expr: &syn::Expr) -> Option<String> {
 /// Post-order value flow for one expression. Returns the node carrying its value
 /// and emits every internal edge as a side effect. `loop_breaks` is the live
 /// stack of enclosing `loop` frames for break-value routing. Port of v5
-/// `flow_expr`.
+/// `flow_expr`. `fn_sym` is the enclosing callable's v5 sym (a closure node's
+/// name = `{fn_sym}::closure::{line}_{col}`).
+#[allow(clippy::too_many_arguments)]
 fn flow_expr(
     expr: &syn::Expr,
+    fn_sym: &str,
     line_starts: &[u32],
     strings: &mut Strings,
     scope: &mut Scope,
@@ -758,7 +791,7 @@ fn flow_expr(
             let constructor = ctor_name(&call.func);
             let mut children = Vec::new();
             for arg in &call.args {
-                children.push(flow_expr(arg, line_starts, strings, scope, sink, loop_breaks));
+                children.push(flow_expr(arg, fn_sym, line_starts, strings, scope, sink, loop_breaks));
             }
             let kind = if constructor.is_some() { DfNodeKind::New } else { DfNodeKind::CallRes };
             let node = df_push(sink, strings, line_starts, line, col, kind, constructor.as_deref());
@@ -770,10 +803,10 @@ fn flow_expr(
         // recv.m(args): receiver + args flow into the result. The node sits at
         // the METHOD ident (the same line the call-site extractor records).
         syn::Expr::MethodCall(call) => {
-            let receiver = flow_expr(&call.receiver, line_starts, strings, scope, sink, loop_breaks);
+            let receiver = flow_expr(&call.receiver, fn_sym, line_starts, strings, scope, sink, loop_breaks);
             let mut children = Vec::new();
             for arg in &call.args {
-                children.push(flow_expr(arg, line_starts, strings, scope, sink, loop_breaks));
+                children.push(flow_expr(arg, fn_sym, line_starts, strings, scope, sink, loop_breaks));
             }
             let method_start = call.method.span().start();
             let node = df_push(
@@ -792,9 +825,9 @@ fn flow_expr(
             let type_name = struct_expr.path.segments.last().map(|segment| segment.ident.to_string()).unwrap_or_default();
             let mut values = Vec::new();
             for field in &struct_expr.fields {
-                values.push(flow_expr(&field.expr, line_starts, strings, scope, sink, loop_breaks));
+                values.push(flow_expr(&field.expr, fn_sym, line_starts, strings, scope, sink, loop_breaks));
             }
-            let base = struct_expr.rest.as_ref().map(|rest| flow_expr(rest, line_starts, strings, scope, sink, loop_breaks));
+            let base = struct_expr.rest.as_ref().map(|rest| flow_expr(rest, fn_sym, line_starts, strings, scope, sink, loop_breaks));
             let node = df_push(sink, strings, line_starts, line, col, DfNodeKind::New, Some(type_name.as_str()));
             for value in values {
                 df_edge(sink, value, node);
@@ -807,7 +840,7 @@ fn flow_expr(
         // `base.f` / `tuple.0`: a field read. The base flows into a `member` node
         // whose name is the field name (field-sensitive flow).
         syn::Expr::Field(field) => {
-            let base = flow_expr(&field.base, line_starts, strings, scope, sink, loop_breaks);
+            let base = flow_expr(&field.base, fn_sym, line_starts, strings, scope, sink, loop_breaks);
             let name = match &field.member {
                 syn::Member::Named(ident) => ident.to_string(),
                 syn::Member::Unnamed(index) => index.index.to_string(),
@@ -816,34 +849,34 @@ fn flow_expr(
             df_edge(sink, base, node);
             node
         }
-        syn::Expr::Paren(paren) => flow_expr(&paren.expr, line_starts, strings, scope, sink, loop_breaks),
+        syn::Expr::Paren(paren) => flow_expr(&paren.expr, fn_sym, line_starts, strings, scope, sink, loop_breaks),
         syn::Expr::Reference(reference) => {
-            let inner = flow_expr(&reference.expr, line_starts, strings, scope, sink, loop_breaks);
+            let inner = flow_expr(&reference.expr, fn_sym, line_starts, strings, scope, sink, loop_breaks);
             let node = df_push(sink, strings, line_starts, line, col, DfNodeKind::Borrow, None);
             df_edge(sink, inner, node);
             node
         }
         syn::Expr::Binary(binary) => {
-            let left = flow_expr(&binary.left, line_starts, strings, scope, sink, loop_breaks);
-            let right = flow_expr(&binary.right, line_starts, strings, scope, sink, loop_breaks);
+            let left = flow_expr(&binary.left, fn_sym, line_starts, strings, scope, sink, loop_breaks);
+            let right = flow_expr(&binary.right, fn_sym, line_starts, strings, scope, sink, loop_breaks);
             let node = df_push(sink, strings, line_starts, line, col, DfNodeKind::Binop, None);
             df_edge(sink, left, node);
             df_edge(sink, right, node);
             node
         }
         syn::Expr::Unary(unary) => {
-            let inner = flow_expr(&unary.expr, line_starts, strings, scope, sink, loop_breaks);
+            let inner = flow_expr(&unary.expr, fn_sym, line_starts, strings, scope, sink, loop_breaks);
             let node = df_push(sink, strings, line_starts, line, col, DfNodeKind::Unop, None);
             df_edge(sink, inner, node);
             node
         }
         // Transparent pass-through: the `?` operator does not alter value flow.
-        syn::Expr::Try(try_expr) => flow_expr(&try_expr.expr, line_starts, strings, scope, sink, loop_breaks),
+        syn::Expr::Try(try_expr) => flow_expr(&try_expr.expr, fn_sym, line_starts, strings, scope, sink, loop_breaks),
         // `return EXPR`: the returned value flows into the fn's `ret` node.
         syn::Expr::Return(return_expr) => {
             let node = df_push(sink, strings, line_starts, line, col, DfNodeKind::Ret, None);
             if let Some(inner) = &return_expr.expr {
-                let value = flow_expr(inner, line_starts, strings, scope, sink, loop_breaks);
+                let value = flow_expr(inner, fn_sym, line_starts, strings, scope, sink, loop_breaks);
                 df_edge(sink, value, node);
             }
             node
@@ -854,7 +887,7 @@ fn flow_expr(
         syn::Expr::Break(break_expr) => {
             let node = df_push(sink, strings, line_starts, line, col, DfNodeKind::Break, None);
             if let Some(value_expr) = &break_expr.expr {
-                let value = flow_expr(value_expr, line_starts, strings, scope, sink, loop_breaks);
+                let value = flow_expr(value_expr, fn_sym, line_starts, strings, scope, sink, loop_breaks);
                 df_edge(sink, value, node);
                 let target_label = break_expr.label.as_ref().map(|lifetime| lifetime.ident.to_string());
                 let frame = match &target_label {
@@ -873,22 +906,22 @@ fn flow_expr(
         // `for pat in coll { body }`: bind the loop variable from the collection
         // (each element tainted conservatively), then walk the body.
         syn::Expr::ForLoop(for_loop) => {
-            let collection = flow_expr(&for_loop.expr, line_starts, strings, scope, sink, loop_breaks);
+            let collection = flow_expr(&for_loop.expr, fn_sym, line_starts, strings, scope, sink, loop_breaks);
             let binds = bind_pat(&for_loop.pat, line_starts, strings, scope, sink);
             for (_, binding) in &binds {
                 df_edge(sink, collection, *binding);
             }
             let loop_var = binds.first().map(|(name, _)| name.clone()).unwrap_or_default();
-            flow_block(&for_loop.body, line_starts, strings, scope, sink, loop_breaks);
+            flow_block(&for_loop.body, fn_sym, line_starts, strings, scope, sink, loop_breaks);
             df_push(sink, strings, line_starts, line, col, DfNodeKind::Loop, Some(&loop_var))
         }
         // `while cond { body }`: no collection; walk cond + body.
         syn::Expr::While(while_expr) => {
-            let _ = flow_expr(&while_expr.cond, line_starts, strings, scope, sink, loop_breaks);
+            let _ = flow_expr(&while_expr.cond, fn_sym, line_starts, strings, scope, sink, loop_breaks);
             if let syn::Expr::Let(let_expr) = &*while_expr.cond {
                 let _ = bind_pat(&let_expr.pat, line_starts, strings, scope, sink);
             }
-            flow_block(&while_expr.body, line_starts, strings, scope, sink, loop_breaks);
+            flow_block(&while_expr.body, fn_sym, line_starts, strings, scope, sink, loop_breaks);
             df_push(sink, strings, line_starts, line, col, DfNodeKind::Loop, None)
         }
         // `loop { body }`: Rust's value-yielding loop. Push a fresh `loop_breaks`
@@ -896,7 +929,7 @@ fn flow_expr(
         // break tail into this loop's node.
         syn::Expr::Loop(loop_expr) => {
             loop_breaks.push((loop_expr.label.as_ref().map(|label| label.name.ident.to_string()), Vec::new()));
-            flow_block(&loop_expr.body, line_starts, strings, scope, sink, loop_breaks);
+            flow_block(&loop_expr.body, fn_sym, line_starts, strings, scope, sink, loop_breaks);
             let (_, break_tails) = loop_breaks.pop().expect("Expr::Loop popping the frame it pushed");
             let node = df_push(sink, strings, line_starts, line, col, DfNodeKind::Loop, None);
             for tail in break_tails {
@@ -907,12 +940,12 @@ fn flow_expr(
         // `if cond { then } else { els }`: branch TAILS flow into the `if` node,
         // so a value-position if carries both branches through to the binding.
         syn::Expr::If(if_expr) => {
-            let _ = flow_expr(&if_expr.cond, line_starts, strings, scope, sink, loop_breaks);
-            let then_tail = flow_block(&if_expr.then_branch, line_starts, strings, scope, sink, loop_breaks);
+            let _ = flow_expr(&if_expr.cond, fn_sym, line_starts, strings, scope, sink, loop_breaks);
+            let then_tail = flow_block(&if_expr.then_branch, fn_sym, line_starts, strings, scope, sink, loop_breaks);
             let else_tail = if_expr
                 .else_branch
                 .as_ref()
-                .map(|(_, els)| flow_expr(els, line_starts, strings, scope, sink, loop_breaks));
+                .map(|(_, els)| flow_expr(els, fn_sym, line_starts, strings, scope, sink, loop_breaks));
             let node = df_push(sink, strings, line_starts, line, col, DfNodeKind::If, None);
             if let Some((tail, _, _)) = then_tail {
                 df_edge(sink, tail, node);
@@ -925,16 +958,16 @@ fn flow_expr(
         // `match scrut { arms }`: scrut + each arm body; arm-bound patterns derive
         // from the scrutinee. Arm tails flow into the `match` node.
         syn::Expr::Match(match_expr) => {
-            let scrut = flow_expr(&match_expr.expr, line_starts, strings, scope, sink, loop_breaks);
+            let scrut = flow_expr(&match_expr.expr, fn_sym, line_starts, strings, scope, sink, loop_breaks);
             let mut arm_tails = Vec::new();
             for arm in &match_expr.arms {
                 for (_, binding) in bind_pat(&arm.pat, line_starts, strings, scope, sink) {
                     df_edge(sink, scrut, binding);
                 }
                 if let Some((_, guard)) = &arm.guard {
-                    let _ = flow_expr(guard, line_starts, strings, scope, sink, loop_breaks);
+                    let _ = flow_expr(guard, fn_sym, line_starts, strings, scope, sink, loop_breaks);
                 }
-                arm_tails.push(flow_expr(&arm.body, line_starts, strings, scope, sink, loop_breaks));
+                arm_tails.push(flow_expr(&arm.body, fn_sym, line_starts, strings, scope, sink, loop_breaks));
             }
             let node = df_push(sink, strings, line_starts, line, col, DfNodeKind::Match, None);
             for tail in arm_tails {
@@ -944,7 +977,7 @@ fn flow_expr(
         }
         // `{ stmts }` as an expression: the tail statement's value flows through.
         syn::Expr::Block(block_expr) => {
-            let tail = flow_block(&block_expr.block, line_starts, strings, scope, sink, loop_breaks);
+            let tail = flow_block(&block_expr.block, fn_sym, line_starts, strings, scope, sink, loop_breaks);
             let node = df_push(sink, strings, line_starts, line, col, DfNodeKind::Block, None);
             if let Some((tail, _, _)) = tail {
                 df_edge(sink, tail, node);
@@ -952,11 +985,13 @@ fn flow_expr(
             node
         }
         // `|params| body`: lift the lambda as its own scope (seed params, walk the
-        // body, mint a ret for the body value), then mint the `closure` VALUE node
-        // in the enclosing fn. The enclosing scope is shared so captures resolve.
-        // The closure node carries no name in v6 (v5's lam_sym join key is
-        // replaced by span-containment; TS-port precedent).
+        // body under v5's `lam_sym`, mint a ret for the body value), then mint the
+        // `closure` VALUE node in the enclosing fn carrying that exact sym as its
+        // name (`{fn_sym}::closure::{line}_{col}`, syn's 1-based line / 0-based
+        // col; chains when nested). The enclosing scope is shared so captures
+        // resolve.
         syn::Expr::Closure(closure) => {
+            let lam_sym = format!("{fn_sym}::closure::{line}_{col}");
             for input in &closure.inputs {
                 let ident_pat = match input {
                     syn::Pat::Type(pat_type) => pat_type.pat.as_ref(),
@@ -977,10 +1012,10 @@ fn flow_expr(
             // loop_breaks stack.
             let mut closure_loop_breaks = LoopBreaks::new();
             let body_val = match closure.body.as_ref() {
-                syn::Expr::Block(block) => flow_block(&block.block, line_starts, strings, scope, sink, &mut closure_loop_breaks),
+                syn::Expr::Block(block) => flow_block(&block.block, &lam_sym, line_starts, strings, scope, sink, &mut closure_loop_breaks),
                 other => {
                     let other_start = other.span().start();
-                    let value = flow_expr(other, line_starts, strings, scope, sink, &mut closure_loop_breaks);
+                    let value = flow_expr(other, &lam_sym, line_starts, strings, scope, sink, &mut closure_loop_breaks);
                     Some((value, other_start.line as u32, other_start.column as u32))
                 }
             };
@@ -988,12 +1023,12 @@ fn flow_expr(
                 let ret = df_push(sink, strings, line_starts, ret_line, ret_col, DfNodeKind::Ret, None);
                 df_edge(sink, value, ret);
             }
-            df_push(sink, strings, line_starts, line, col, DfNodeKind::Closure, None)
+            df_push(sink, strings, line_starts, line, col, DfNodeKind::Closure, Some(&lam_sym))
         }
         // `lhs = rhs`: flow rhs; rebind a write slot so later reads see the new
         // value (taint-correct for reassignment).
         syn::Expr::Assign(assign) => {
-            let rhs = flow_expr(&assign.right, line_starts, strings, scope, sink, loop_breaks);
+            let rhs = flow_expr(&assign.right, fn_sym, line_starts, strings, scope, sink, loop_breaks);
             if let syn::Expr::Path(path) = assign.left.as_ref() {
                 if let Some(name) = path.path.segments.last().map(|segment| segment.ident.to_string()) {
                     let node = df_push(sink, strings, line_starts, line, col, DfNodeKind::VarWrite, Some(&name));
@@ -1161,7 +1196,7 @@ impl Source for RustSource {
                     }
                     if mask.df {
                         let mut bundle = FamilyBundle::<DfF>::default();
-                        project_df(&parsed, &line_starts, &mut strings, &mut bundle);
+                        project_df(&parsed, path, &line_starts, &mut strings, &mut bundle);
                         df = Some(bundle);
                     }
                 }

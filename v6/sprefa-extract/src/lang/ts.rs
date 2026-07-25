@@ -1080,9 +1080,13 @@ fn callee_name(expr: &ts::Expression) -> Option<String> {
 // The two are the dataflow graph the engine's `df_reaches` closure walks.
 //
 // What is DROPPED vs v5 (each is a deliberate, documented deferral):
-//  - `fn_sym` / `mint_sym` / `lambda_sym`: the enclosing callable is NOT stored
-//    on a df node. It is derived at the seam by span-containment over the CallF
-//    defs (the same pattern as the CallF site caller). The transient scope
+//  - `fn_sym` ON NODES: the enclosing callable is not stored on every df node;
+//    it is threaded through the walk (v5's own mechanism) purely so the
+//    `closure` VALUE node can carry v5's exact `lam_sym` name
+//    (`{file}::function::{fn}::closure::{byte}`, nesting chains; `<top>` for
+//    module level, `{file}::method::{Owner}.{m}` for methods, the binding name
+//    for a const-bound arrow). No sym store: the name derives from the AST
+//    walk's containment path + the closure's span start. The transient scope
 //    HashMap (var name -> NodeRef) for intra-procedural resolution is kept.
 //  - `line_at` / `line_index` / `line_col`: a node is a byte Span, never a line.
 //  - the enrichment aux: `args` (positional slots), `fields` (object/array
@@ -1093,104 +1097,126 @@ fn callee_name(expr: &ts::Expression) -> Option<String> {
 // ════════════════════════════════════════════════════════════════════════════
 
 /// The DfF projector: lifts each callable's body to its value-flow graph.
-pub struct DfProjector;
+/// Carries the file path: the `closure` value node's NAME is v5's `lam_sym`,
+/// whose root segment is `{file}::function::{name}` (parity is byte-exact).
+pub struct DfProjector<'a>(pub &'a str);
 
-impl Project<DfF> for DfProjector {
+impl Project<DfF> for DfProjector<'_> {
     type Parsed<'a> = Program<'a>;
 
     fn project(&self, program: &Program<'_>, strings: &mut Strings, sink: &mut FamilyBundle<DfF>) {
         for stmt in &program.body {
-            df_flow_stmt(stmt, strings, sink);
+            df_flow_stmt(stmt, self.0, strings, sink);
         }
     }
 }
 
 type Scope = std::collections::HashMap<String, NodeRef>;
 
-fn df_flow_stmt(stmt: &ts::Statement, strings: &mut Strings, sink: &mut FamilyBundle<DfF>) {
+fn df_flow_stmt(stmt: &ts::Statement, file: &str, strings: &mut Strings, sink: &mut FamilyBundle<DfF>) {
     use ts::Statement as S;
     match stmt {
         S::FunctionDeclaration(func) => {
             if let Some(body) = func.body.as_deref() {
+                let name = func.id.as_ref().map(|id| id.name.to_string()).unwrap_or_default();
+                let fn_sym = format!("{file}::function::{name}");
                 let mut scope = Scope::new();
                 df_seed_params(&func.params, strings, &mut scope, sink);
-                df_flow_body(body, strings, &mut scope, sink);
+                df_flow_body(body, file, &fn_sym, strings, &mut scope, sink);
             }
         }
         S::ExportNamedDeclaration(export) => {
             if let Some(decl) = &export.declaration {
-                df_flow_decl(decl, strings, sink);
+                df_flow_decl(decl, file, strings, sink);
             }
         }
         S::ExportDefaultDeclaration(export) => match &export.declaration {
             ts::ExportDefaultDeclarationKind::FunctionDeclaration(func) => {
                 if let Some(body) = func.body.as_deref() {
+                    let name = func.id.as_ref().map(|id| id.name.to_string()).unwrap_or_default();
+                    let fn_sym = format!("{file}::function::{name}");
                     let mut scope = Scope::new();
                     df_seed_params(&func.params, strings, &mut scope, sink);
-                    df_flow_body(body, strings, &mut scope, sink);
+                    df_flow_body(body, file, &fn_sym, strings, &mut scope, sink);
                 }
             }
             ts::ExportDefaultDeclarationKind::ClassDeclaration(class) => {
-                df_flow_class(class, strings, sink);
+                df_flow_class(class, file, strings, sink);
             }
             _ => {}
         },
-        S::ClassDeclaration(class) => df_flow_class(class, strings, sink),
+        S::ClassDeclaration(class) => df_flow_class(class, file, strings, sink),
         // Top-level var/expr/return statements have no enclosing callable; walk
-        // them under a fresh empty scope (their nodes' caller is "none" / top).
+        // them under a fresh empty scope (v5 keys them `{file}::function::<top>`).
         S::VariableDeclaration(_) | S::ExpressionStatement(_) | S::ReturnStatement(_) => {
+            let fn_sym = format!("{file}::function::<top>");
             let mut scope = Scope::new();
-            df_flow_body_stmt(stmt, strings, &mut scope, sink);
+            df_flow_body_stmt(stmt, file, &fn_sym, strings, &mut scope, sink);
         }
         _ => {}
     }
 }
 
-fn df_flow_decl(decl: &ts::Declaration, strings: &mut Strings, sink: &mut FamilyBundle<DfF>) {
+fn df_flow_decl(decl: &ts::Declaration, file: &str, strings: &mut Strings, sink: &mut FamilyBundle<DfF>) {
     use ts::Declaration as D;
     match decl {
         D::FunctionDeclaration(func) => {
             if let Some(body) = func.body.as_deref() {
+                let name = func.id.as_ref().map(|id| id.name.to_string()).unwrap_or_default();
+                let fn_sym = format!("{file}::function::{name}");
                 let mut scope = Scope::new();
                 df_seed_params(&func.params, strings, &mut scope, sink);
-                df_flow_body(body, strings, &mut scope, sink);
+                df_flow_body(body, file, &fn_sym, strings, &mut scope, sink);
             }
         }
-        D::ClassDeclaration(class) => df_flow_class(class, strings, sink),
+        D::ClassDeclaration(class) => df_flow_class(class, file, strings, sink),
         _ => {}
     }
 }
 
-/// Each method body flows like a free function's. Field initializers are not
-/// covered (no natural enclosing callable scope). Port of v5 `ts_flow_class`.
-fn df_flow_class(class: &ts::Class, strings: &mut Strings, sink: &mut FamilyBundle<DfF>) {
+/// Each method body flows like a free function's, scoped under v5's
+/// `{file}::method::{Owner}.{method}` sym. Field initializers are not covered
+/// (no natural enclosing callable scope). Port of v5 `ts_flow_class`.
+fn df_flow_class(class: &ts::Class, file: &str, strings: &mut Strings, sink: &mut FamilyBundle<DfF>) {
+    let owner = class.id.as_ref().map(|id| id.name.to_string()).unwrap_or_default();
     for element in &class.body.body {
         let ts::ClassElement::MethodDefinition(method) = element else { continue };
         let Some(body) = method.value.body.as_deref() else { continue };
+        let method_name = match &method.key {
+            ts::PropertyKey::StaticIdentifier(key) => key.name.to_string(),
+            _ => String::new(),
+        };
+        let fn_sym = format!("{file}::method::{owner}.{method_name}");
         let mut scope = Scope::new();
         df_seed_params(&method.value.params, strings, &mut scope, sink);
-        df_flow_body(body, strings, &mut scope, sink);
+        df_flow_body(body, file, &fn_sym, strings, &mut scope, sink);
     }
 }
 
 fn df_flow_body(
     body: &ts::FunctionBody,
+    file: &str,
+    fn_sym: &str,
     strings: &mut Strings,
     scope: &mut Scope,
     sink: &mut FamilyBundle<DfF>,
 ) {
     for stmt in &body.statements {
-        df_flow_body_stmt(stmt, strings, scope, sink);
+        df_flow_body_stmt(stmt, file, fn_sym, strings, scope, sink);
     }
 }
 
 /// Lift a function value (arrow or function expression) as its own scope: seed
 /// params, then walk the body. An expression-body arrow (`(x) => expr`) wraps
 /// the expr as an implicit return into a `ret` node. Port of v5 `ts_lift_fn`.
+/// `fn_sym` is the lambda's own sym (the binding-name sym for a const-bound
+/// arrow, the `lam_sym` for an inline one): the body's nodes walk under it.
 fn df_lift_fn(
     params: &ts::FormalParameters,
     body: &ts::FunctionBody,
     expression: bool,
+    file: &str,
+    fn_sym: &str,
     strings: &mut Strings,
     sink: &mut FamilyBundle<DfF>,
 ) {
@@ -1198,19 +1224,21 @@ fn df_lift_fn(
     df_seed_params(params, strings, &mut scope, sink);
     if expression {
         if let Some(ts::Statement::ExpressionStatement(expr_stmt)) = body.statements.first() {
-            let value = df_flow_expr(&expr_stmt.expression, strings, &mut scope, sink);
+            let value = df_flow_expr(&expr_stmt.expression, file, fn_sym, strings, &mut scope, sink);
             let ret = df_push(sink, strings, expr_stmt.span, DfNodeKind::Ret, None);
             df_edge(sink, value, ret);
         }
     } else {
         for stmt in &body.statements {
-            df_flow_body_stmt(stmt, strings, &mut scope, sink);
+            df_flow_body_stmt(stmt, file, fn_sym, strings, &mut scope, sink);
         }
     }
 }
 
 fn df_flow_body_stmt(
     stmt: &ts::Statement,
+    file: &str,
+    fn_sym: &str,
     strings: &mut Strings,
     scope: &mut Scope,
     sink: &mut FamilyBundle<DfF>,
@@ -1220,17 +1248,19 @@ fn df_flow_body_stmt(
         S::VariableDeclaration(var) => {
             for declarator in &var.declarations {
                 // A const-bound arrow / function expression is a callable, not a
-                // value: lift its body as its own scope (its nodes' caller is
-                // derived by containment at the seam).
-                if let ts::BindingPattern::BindingIdentifier(_) = &declarator.id {
+                // value: lift its body as its own scope keyed by the binding name
+                // (v5 mints `{file}::function::{binding}` and NO closure node).
+                if let ts::BindingPattern::BindingIdentifier(binding) = &declarator.id {
                     match &declarator.init {
                         Some(ts::Expression::ArrowFunctionExpression(arrow)) => {
-                            df_lift_fn(&arrow.params, &arrow.body, arrow.expression, strings, sink);
+                            let sym = format!("{file}::function::{}", binding.name);
+                            df_lift_fn(&arrow.params, &arrow.body, arrow.expression, file, &sym, strings, sink);
                             continue;
                         }
                         Some(ts::Expression::FunctionExpression(func)) => {
                             if let Some(body) = func.body.as_deref() {
-                                df_lift_fn(&func.params, body, false, strings, sink);
+                                let sym = format!("{file}::function::{}", binding.name);
+                                df_lift_fn(&func.params, body, false, file, &sym, strings, sink);
                             }
                             continue;
                         }
@@ -1240,7 +1270,7 @@ fn df_flow_body_stmt(
                 let rhs = declarator
                     .init
                     .as_ref()
-                    .map(|init| df_flow_expr(init, strings, scope, sink));
+                    .map(|init| df_flow_expr(init, file, fn_sym, strings, scope, sink));
                 if let Some(name) = binding_name(&declarator.id) {
                     let bind = df_push(sink, strings, declarator.span, DfNodeKind::LetBind, Some(&name));
                     if let Some(rhs) = rhs {
@@ -1251,27 +1281,27 @@ fn df_flow_body_stmt(
             }
         }
         S::ExpressionStatement(expr_stmt) => {
-            let _ = df_flow_expr(&expr_stmt.expression, strings, scope, sink);
+            let _ = df_flow_expr(&expr_stmt.expression, file, fn_sym, strings, scope, sink);
         }
         // `return EXPR`: the returned value flows into the fn's `ret` node (the
         // sink the interprocedural backward hop reads).
         S::ReturnStatement(ret_stmt) => {
             let ret = df_push(sink, strings, ret_stmt.span, DfNodeKind::Ret, None);
             if let Some(arg) = &ret_stmt.argument {
-                let value = df_flow_expr(arg, strings, scope, sink);
+                let value = df_flow_expr(arg, file, fn_sym, strings, scope, sink);
                 df_edge(sink, value, ret);
             }
         }
         S::BlockStatement(block) => {
             for inner in &block.body {
-                df_flow_body_stmt(inner, strings, scope, sink);
+                df_flow_body_stmt(inner, file, fn_sym, strings, scope, sink);
             }
         }
         S::IfStatement(if_stmt) => {
-            let _ = df_flow_expr(&if_stmt.test, strings, scope, sink);
-            df_flow_body_stmt(&if_stmt.consequent, strings, scope, sink);
+            let _ = df_flow_expr(&if_stmt.test, file, fn_sym, strings, scope, sink);
+            df_flow_body_stmt(&if_stmt.consequent, file, fn_sym, strings, scope, sink);
             if let Some(alternate) = &if_stmt.alternate {
-                df_flow_body_stmt(alternate, strings, scope, sink);
+                df_flow_body_stmt(alternate, file, fn_sym, strings, scope, sink);
             }
         }
         S::ForStatement(for_stmt) => {
@@ -1280,7 +1310,7 @@ fn df_flow_body_stmt(
                     let rhs = declarator
                         .init
                         .as_ref()
-                        .map(|init| df_flow_expr(init, strings, scope, sink));
+                        .map(|init| df_flow_expr(init, file, fn_sym, strings, scope, sink));
                     if let Some(name) = binding_name(&declarator.id) {
                         let bind = df_push(sink, strings, declarator.span, DfNodeKind::LetBind, Some(&name));
                         if let Some(rhs) = rhs {
@@ -1291,17 +1321,19 @@ fn df_flow_body_stmt(
                 }
             }
             if let Some(test) = &for_stmt.test {
-                let _ = df_flow_expr(test, strings, scope, sink);
+                let _ = df_flow_expr(test, file, fn_sym, strings, scope, sink);
             }
             if let Some(update) = &for_stmt.update {
-                let _ = df_flow_expr(update, strings, scope, sink);
+                let _ = df_flow_expr(update, file, fn_sym, strings, scope, sink);
             }
-            df_flow_body_stmt(&for_stmt.body, strings, scope, sink);
+            df_flow_body_stmt(&for_stmt.body, file, fn_sym, strings, scope, sink);
         }
         S::ForOfStatement(for_stmt) => df_for_in_of(
             &for_stmt.left,
             &for_stmt.right,
             &for_stmt.body,
+            file,
+            fn_sym,
             strings,
             scope,
             sink,
@@ -1310,17 +1342,19 @@ fn df_flow_body_stmt(
             &for_stmt.left,
             &for_stmt.right,
             &for_stmt.body,
+            file,
+            fn_sym,
             strings,
             scope,
             sink,
         ),
         S::WhileStatement(while_stmt) => {
-            let _ = df_flow_expr(&while_stmt.test, strings, scope, sink);
-            df_flow_body_stmt(&while_stmt.body, strings, scope, sink);
+            let _ = df_flow_expr(&while_stmt.test, file, fn_sym, strings, scope, sink);
+            df_flow_body_stmt(&while_stmt.body, file, fn_sym, strings, scope, sink);
         }
         S::DoWhileStatement(do_stmt) => {
-            let _ = df_flow_expr(&do_stmt.test, strings, scope, sink);
-            df_flow_body_stmt(&do_stmt.body, strings, scope, sink);
+            let _ = df_flow_expr(&do_stmt.test, file, fn_sym, strings, scope, sink);
+            df_flow_body_stmt(&do_stmt.body, file, fn_sym, strings, scope, sink);
         }
         _ => {}
     }
@@ -1332,11 +1366,13 @@ fn df_for_in_of(
     left: &ts::ForStatementLeft,
     right: &ts::Expression,
     body: &ts::Statement,
+    file: &str,
+    fn_sym: &str,
     strings: &mut Strings,
     scope: &mut Scope,
     sink: &mut FamilyBundle<DfF>,
 ) {
-    let collection = df_flow_expr(right, strings, scope, sink);
+    let collection = df_flow_expr(right, file, fn_sym, strings, scope, sink);
     if let ts::ForStatementLeft::VariableDeclaration(var) = left {
         if let Some(declarator) = var.declarations.first() {
             if let Some(name) = binding_name(&declarator.id) {
@@ -1346,7 +1382,7 @@ fn df_for_in_of(
             }
         }
     }
-    df_flow_body_stmt(body, strings, scope, sink);
+    df_flow_body_stmt(body, file, fn_sym, strings, scope, sink);
 }
 
 /// `f(args)` / `recv.m(args)`: each argument flows into the call result; a
@@ -1355,6 +1391,8 @@ fn df_for_in_of(
 fn df_flow_call(
     call: &ts::CallExpression,
     span: oxc_span::Span,
+    file: &str,
+    fn_sym: &str,
     strings: &mut Strings,
     scope: &mut Scope,
     sink: &mut FamilyBundle<DfF>,
@@ -1362,17 +1400,17 @@ fn df_flow_call(
     use ts::Expression as E;
     let receiver = match &call.callee {
         E::StaticMemberExpression(member) => {
-            Some(df_flow_expr(&member.object, strings, scope, sink))
+            Some(df_flow_expr(&member.object, file, fn_sym, strings, scope, sink))
         }
         E::ComputedMemberExpression(member) => {
-            Some(df_flow_expr(&member.object, strings, scope, sink))
+            Some(df_flow_expr(&member.object, file, fn_sym, strings, scope, sink))
         }
         _ => None,
     };
     let mut arg_ids = Vec::new();
     for arg in &call.arguments {
         if let Some(expr) = arg.as_expression() {
-            arg_ids.push(df_flow_expr(expr, strings, scope, sink));
+            arg_ids.push(df_flow_expr(expr, file, fn_sym, strings, scope, sink));
         }
     }
     let call_res = df_push(sink, strings, span, DfNodeKind::CallRes, None);
@@ -1392,11 +1430,13 @@ fn df_flow_member(
     object: &ts::Expression,
     property: Option<&str>,
     span: oxc_span::Span,
+    file: &str,
+    fn_sym: &str,
     strings: &mut Strings,
     scope: &mut Scope,
     sink: &mut FamilyBundle<DfF>,
 ) -> NodeRef {
-    let object_id = df_flow_expr(object, strings, scope, sink);
+    let object_id = df_flow_expr(object, file, fn_sym, strings, scope, sink);
     let member = df_push(sink, strings, span, DfNodeKind::Member, property);
     df_edge(sink, object_id, member);
     member
@@ -1404,9 +1444,12 @@ fn df_flow_member(
 
 /// Post-order value flow for one TS expression. Returns the node carrying its
 /// value, or a generic `expr` node when the variant isn't chased (conservative:
-/// may miss, never invents). Port of v5 `ts_flow_expr`.
+/// may miss, never invents). Port of v5 `ts_flow_expr`. `fn_sym` is the enclosing
+/// callable's sym — an inline lambda's `closure` node name derives from it.
 fn df_flow_expr(
     expr: &ts::Expression,
+    file: &str,
+    fn_sym: &str,
     strings: &mut Strings,
     scope: &mut Scope,
     sink: &mut FamilyBundle<DfF>,
@@ -1430,7 +1473,7 @@ fn df_flow_expr(
         | E::NullLiteral(_)
         | E::BigIntLiteral(_)
         | E::RegExpLiteral(_) => df_push(sink, strings, span, DfNodeKind::Lit, None),
-        E::CallExpression(call) => df_flow_call(call, span, strings, scope, sink),
+        E::CallExpression(call) => df_flow_call(call, span, file, fn_sym, strings, scope, sink),
         // `new Foo(args)`: a `new` node carrying the class name; each arg flows in.
         E::NewExpression(new_expr) => {
             let type_name = match &new_expr.callee {
@@ -1441,7 +1484,7 @@ fn df_flow_expr(
             let mut arg_ids = Vec::new();
             for arg in &new_expr.arguments {
                 if let Some(expr) = arg.as_expression() {
-                    arg_ids.push(df_flow_expr(expr, strings, scope, sink));
+                    arg_ids.push(df_flow_expr(expr, file, fn_sym, strings, scope, sink));
                 }
             }
             let new_node = df_push(sink, strings, span, DfNodeKind::New, type_name.as_deref());
@@ -1457,10 +1500,10 @@ fn df_flow_expr(
             for property in &object.properties {
                 match property {
                     ts::ObjectPropertyKind::ObjectProperty(prop) => {
-                        value_ids.push(df_flow_expr(&prop.value, strings, scope, sink));
+                        value_ids.push(df_flow_expr(&prop.value, file, fn_sym, strings, scope, sink));
                     }
                     ts::ObjectPropertyKind::SpreadProperty(spread) => {
-                        value_ids.push(df_flow_expr(&spread.argument, strings, scope, sink));
+                        value_ids.push(df_flow_expr(&spread.argument, file, fn_sym, strings, scope, sink));
                     }
                 }
             }
@@ -1475,12 +1518,12 @@ fn df_flow_expr(
             for element in &array.elements {
                 match element {
                     ts::ArrayExpressionElement::SpreadElement(spread) => {
-                        element_ids.push(df_flow_expr(&spread.argument, strings, scope, sink));
+                        element_ids.push(df_flow_expr(&spread.argument, file, fn_sym, strings, scope, sink));
                     }
                     ts::ArrayExpressionElement::Elision(_) => {}
                     _ => {
                         if let Some(expr) = element.as_expression() {
-                            element_ids.push(df_flow_expr(expr, strings, scope, sink));
+                            element_ids.push(df_flow_expr(expr, file, fn_sym, strings, scope, sink));
                         }
                     }
                 }
@@ -1493,16 +1536,16 @@ fn df_flow_expr(
         }
         // recv.prop / recv[prop]: receiver flows into a `member` node.
         E::StaticMemberExpression(member) => {
-            df_flow_member(&member.object, Some(member.property.name.as_str()), span, strings, scope, sink)
+            df_flow_member(&member.object, Some(member.property.name.as_str()), span, file, fn_sym, strings, scope, sink)
         }
         E::ComputedMemberExpression(member) => {
-            df_flow_member(&member.object, None, span, strings, scope, sink)
+            df_flow_member(&member.object, None, span, file, fn_sym, strings, scope, sink)
         }
         // `a + b` is its own `concat` kind (so a string-construction query matches
         // `kind IN (template, concat)`); any other binary op is `binop`.
         E::BinaryExpression(binary) => {
-            let left = df_flow_expr(&binary.left, strings, scope, sink);
-            let right = df_flow_expr(&binary.right, strings, scope, sink);
+            let left = df_flow_expr(&binary.left, file, fn_sym, strings, scope, sink);
+            let right = df_flow_expr(&binary.right, file, fn_sym, strings, scope, sink);
             let kind = if binary.operator == ts::BinaryOperator::Addition {
                 DfNodeKind::Concat
             } else {
@@ -1513,47 +1556,51 @@ fn df_flow_expr(
             df_edge(sink, right, node);
             node
         }
-        // An INLINE lambda: lift its body as its own scope, then mint the
-        // `closure` VALUE node here. (The join sym is deferred; the node marks
-        // the closure value for now.)
+        // An INLINE lambda: lift its body as its own scope under v5's `lam_sym`
+        // (`{enclosing}::closure::{byte}`; chains when nested), then mint the
+        // `closure` VALUE node carrying that exact sym as its name.
         E::ArrowFunctionExpression(arrow) => {
-            df_lift_fn(&arrow.params, &arrow.body, arrow.expression, strings, sink);
-            df_push(sink, strings, span, DfNodeKind::Closure, None)
+            let lam_sym = format!("{fn_sym}::closure::{}", span.start);
+            df_lift_fn(&arrow.params, &arrow.body, arrow.expression, file, &lam_sym, strings, sink);
+            df_push(sink, strings, span, DfNodeKind::Closure, Some(&lam_sym))
         }
         E::FunctionExpression(func) => match func.body.as_deref() {
             Some(body) => {
-                df_lift_fn(&func.params, body, false, strings, sink);
-                df_push(sink, strings, span, DfNodeKind::Closure, None)
+                let lam_sym = format!("{fn_sym}::closure::{}", span.start);
+                df_lift_fn(&func.params, body, false, file, &lam_sym, strings, sink);
+                df_push(sink, strings, span, DfNodeKind::Closure, Some(&lam_sym))
             }
             None => df_push(sink, strings, span, DfNodeKind::Expr, None),
         },
         // Transparent wrappers: flow the inner expression straight through.
-        E::ParenthesizedExpression(paren) => df_flow_expr(&paren.expression, strings, scope, sink),
-        E::TSAsExpression(inner) => df_flow_expr(&inner.expression, strings, scope, sink),
-        E::TSSatisfiesExpression(inner) => df_flow_expr(&inner.expression, strings, scope, sink),
-        E::TSNonNullExpression(inner) => df_flow_expr(&inner.expression, strings, scope, sink),
-        E::AwaitExpression(inner) => df_flow_expr(&inner.argument, strings, scope, sink),
-        E::TSTypeAssertion(inner) => df_flow_expr(&inner.expression, strings, scope, sink),
-        E::TSInstantiationExpression(inner) => df_flow_expr(&inner.expression, strings, scope, sink),
+        E::ParenthesizedExpression(paren) => df_flow_expr(&paren.expression, file, fn_sym, strings, scope, sink),
+        E::TSAsExpression(inner) => df_flow_expr(&inner.expression, file, fn_sym, strings, scope, sink),
+        E::TSSatisfiesExpression(inner) => df_flow_expr(&inner.expression, file, fn_sym, strings, scope, sink),
+        E::TSNonNullExpression(inner) => df_flow_expr(&inner.expression, file, fn_sym, strings, scope, sink),
+        E::AwaitExpression(inner) => df_flow_expr(&inner.argument, file, fn_sym, strings, scope, sink),
+        E::TSTypeAssertion(inner) => df_flow_expr(&inner.expression, file, fn_sym, strings, scope, sink),
+        E::TSInstantiationExpression(inner) => df_flow_expr(&inner.expression, file, fn_sym, strings, scope, sink),
         E::ChainExpression(chain) => {
             use ts::ChainElement as Chain;
             use ts::MemberExpression as Member;
             match &chain.expression {
-                Chain::CallExpression(call) => df_flow_call(call, span, strings, scope, sink),
+                Chain::CallExpression(call) => df_flow_call(call, span, file, fn_sym, strings, scope, sink),
                 other => match other.member_expression() {
                     Some(Member::StaticMemberExpression(member)) => df_flow_member(
                         &member.object,
                         Some(member.property.name.as_str()),
                         span,
+                        file,
+                        fn_sym,
                         strings,
                         scope,
                         sink,
                     ),
                     Some(Member::ComputedMemberExpression(member)) => {
-                        df_flow_member(&member.object, None, span, strings, scope, sink)
+                        df_flow_member(&member.object, None, span, file, fn_sym, strings, scope, sink)
                     }
                     Some(Member::PrivateFieldExpression(member)) => {
-                        df_flow_member(&member.object, None, span, strings, scope, sink)
+                        df_flow_member(&member.object, None, span, file, fn_sym, strings, scope, sink)
                     }
                     None => df_push(sink, strings, span, DfNodeKind::Expr, None),
                 },
@@ -1561,14 +1608,14 @@ fn df_flow_expr(
         }
         // `x = y` as a value evaluates to the assigned value.
         E::AssignmentExpression(assignment) => {
-            df_flow_expr(&assignment.right, strings, scope, sink)
+            df_flow_expr(&assignment.right, file, fn_sym, strings, scope, sink)
         }
         // `test ? cons : alt`: the value is EITHER branch (both flow in); the
         // test is a guard (walked, not edged).
         E::ConditionalExpression(cond) => {
-            let _test = df_flow_expr(&cond.test, strings, scope, sink);
-            let consequent = df_flow_expr(&cond.consequent, strings, scope, sink);
-            let alternate = df_flow_expr(&cond.alternate, strings, scope, sink);
+            let _test = df_flow_expr(&cond.test, file, fn_sym, strings, scope, sink);
+            let consequent = df_flow_expr(&cond.consequent, file, fn_sym, strings, scope, sink);
+            let alternate = df_flow_expr(&cond.alternate, file, fn_sym, strings, scope, sink);
             let node = df_push(sink, strings, span, DfNodeKind::Cond, None);
             df_edge(sink, consequent, node);
             df_edge(sink, alternate, node);
@@ -1578,8 +1625,8 @@ fn df_flow_expr(
         // `&&` the value is the right (left is a guard).
         E::LogicalExpression(logic) => {
             use ts::LogicalOperator as Op;
-            let left = df_flow_expr(&logic.left, strings, scope, sink);
-            let right = df_flow_expr(&logic.right, strings, scope, sink);
+            let left = df_flow_expr(&logic.left, file, fn_sym, strings, scope, sink);
+            let right = df_flow_expr(&logic.right, file, fn_sym, strings, scope, sink);
             let node = df_push(sink, strings, span, DfNodeKind::Logic, None);
             if matches!(logic.operator, Op::Or | Op::Coalesce) {
                 df_edge(sink, left, node);
@@ -1591,7 +1638,7 @@ fn df_flow_expr(
         E::SequenceExpression(sequence) => {
             let mut last = df_push(sink, strings, span, DfNodeKind::Expr, None);
             for sub in &sequence.expressions {
-                last = df_flow_expr(sub, strings, scope, sink);
+                last = df_flow_expr(sub, file, fn_sym, strings, scope, sink);
             }
             last
         }
@@ -1599,16 +1646,16 @@ fn df_flow_expr(
         E::TemplateLiteral(template) => {
             let node = df_push(sink, strings, span, DfNodeKind::Template, None);
             for sub in &template.expressions {
-                let value = df_flow_expr(sub, strings, scope, sink);
+                let value = df_flow_expr(sub, file, fn_sym, strings, scope, sink);
                 df_edge(sink, value, node);
             }
             node
         }
         E::TaggedTemplateExpression(tagged) => {
-            let _tag = df_flow_expr(&tagged.tag, strings, scope, sink);
+            let _tag = df_flow_expr(&tagged.tag, file, fn_sym, strings, scope, sink);
             let node = df_push(sink, strings, span, DfNodeKind::Template, None);
             for sub in &tagged.quasi.expressions {
-                let value = df_flow_expr(sub, strings, scope, sink);
+                let value = df_flow_expr(sub, file, fn_sym, strings, scope, sink);
                 df_edge(sink, value, node);
             }
             node
@@ -2011,7 +2058,7 @@ impl Source for TsSource {
                 }
                 if mask.df {
                     let mut bundle = FamilyBundle::<DfF>::default();
-                    DfProjector.project(&parsed, &mut strings, &mut bundle);
+                    DfProjector(path).project(&parsed, &mut strings, &mut bundle);
                     df = Some(bundle);
                 }
             }

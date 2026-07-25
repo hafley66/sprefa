@@ -1060,9 +1060,10 @@ pub enum FlatFact {
 //   const facet              [x]         [x]            [-] n/a (v5 go emits none)
 //   call defs + sites        [x]         [x]            [x]
 //   df nodes + edges         [x]         [x]            [x]
-//   parity vs v5 oracle      [x]         [x] *          [x]
+//   parity vs v5 oracle      [x]         [x]            [x]
 //
-//   * rust parity: one self-verifying closure-df-node-name waiver.
+//   Parity is asserted with ZERO waivers: the closure df-node name (v5's
+//   lam_sym) is ported - minted in the df walks from span/containment data.
 //
 // DEFERRED (per-lang gates noted; the rest lands with Resolve<F>/follow-ups):
 //   type_edge (field/impl/variant/uses/generic)   -> TS ASSERTED (4b-iii); rust/go = 4d

@@ -86,7 +86,9 @@
 //! BUILD STATUS (2026-07-24, commits 1-3c + Tier-2 PARITY GOLD (TS, incl. const facet) + the
 //! RUST + GO languages + a self-describing CLI + the commit-4a Resolve DESIGN FREEZE incl. its
 //! design-audit ADDENDUM (4a APPROVED 2026-07-24: scip-override allowed, blake3 in) + the
-//! lambda/docs parity fixtures) LANDED in v6/sprefa-extract/. The TS + Rust + Go phase-1
+//! lambda/docs parity fixtures + the closure-name waiverkill (v5-is-correct consequence (a):
+//! lam_sym ported, golden_parity asserts with ZERO waivers)) LANDED in v6/sprefa-extract/.
+//! The TS + Rust + Go phase-1
 //! families - Cst / Type(+sigs) / Call / Df (+const) - all project + stream + snapshot through
 //! ONE uniform surface, AND each ported set matches a captured v5 oracle (see the (parity) /
 //! (rust) / (go) entries). NEXT: 4c ScipSource seam + Resolve<CallF> (TS) - 4b
@@ -443,6 +445,28 @@
 //!             (candidates flatten nowhere, verified by the byte-diff test);
 //!             dep rails unchanged (no dep changes this increment). rust/go
 //!             resolve arms = 4d.
+//!   (waiverkill) v5 lam_sym closure names ported to ts+rust df (+go): the
+//!             closure VALUE node's name is v5's exact `lam_sym`
+//!             (`{file}::function::{fn}::closure::{coord}`; coord = the oxc
+//!             byte offset for ts, syn `{line}_{col}` 1-based/0-based for
+//!             rust, tree-sitter `{row}_{col}` 0-based for go; methods root
+//!             at `{file}::method::{Owner}.{m}`, ts module level at
+//!             `{file}::function::<top>`, a const-bound arrow at
+//!             `{file}::function::{binding}`; nested closures chain), derived
+//!             by threading the enclosing sym through the df walk (v5's own
+//!             mechanism) - PURELY from span/containment data, NO sym store,
+//!             no new machinery. WHICH nodes/edges are emitted is unchanged;
+//!             only the closure nodes' name field is populated. golden_parity:
+//!             the closure-name waiver machinery (strip_closure_name /
+//!             is_closure_df_node / the self-verify block) is DELETED - parity
+//!             is asserted with ZERO exceptions, the 7 oracle closure rows
+//!             (lambdas 5, rust sample+docs 2) matching byte-exactly; Case
+//!             paths are now the full worktree-relative fixture paths (the
+//!             exact strings the oracle embedded as the lam_sym root).
+//!             Snapshots UNCHANGED (no UPDATE_SNAP - no snapshotted fixture
+//!             carries a closure); go has no closure fixture (its walker is
+//!             ported identically, CLI-verified on a scratch file); dep rails
+//!             unchanged. (User ruling, v5-is-correct consequence (a).)
 //!   PENDING:   TS type EDGES are now ASSERTED (see (4b): phase-1 candidates +
 //!              Resolve<TypeF>; field/variant/impl/generic/uses/param/returns).
 //!              Still pending: rust/go type_edge arms (4d), resolved caller ->

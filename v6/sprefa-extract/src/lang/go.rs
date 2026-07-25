@@ -468,13 +468,14 @@ fn go_walk_call_sites(
 // exactly.
 //
 // What is DROPPED vs v5 (each deliberate, matching the TS/Rust DfF ports):
-//  - `fn_sym` / `mint_sym` / `lambda_sym`: the enclosing callable is NOT stored
-//    on a df node (derived at the seam by span-containment over CallF defs).
+//  - `fn_sym` ON NODES: the enclosing callable is not stored on every df node;
+//    it is threaded through the walk (v5's own mechanism) purely so the
+//    `closure` VALUE node carries v5's exact `lam_sym` name
+//    (`{file}::function::{fn}::closure::{row}_{col}`, tree-sitter's 0-based
+//    row/col; methods root at `{file}::method::{Recv}.{m}`). No sym store:
+//    the name derives from the walk's containment path + the literal's start.
 //  - the enrichment aux: `args`, `fields`, `lits`, `param_pos`, `loops`,
 //    `nests`. The EDGES already carry every value flow.
-//  - the closure value node's `lam_sym` name (v5 stored it as the closure-to-
-//    body join key); v6 replaces that join with span-containment, so the closure
-//    node carries no name. The golden_parity waiver normalizes the name field.
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Transient scope: a variable name -> its binding node (param or `let`).
@@ -485,22 +486,26 @@ use crate::shape::NodeRef;
 /// Project the DfF family: each callable's body lifted to its value-flow graph.
 /// Port of v5 `go_dataflow_from` (the driver half). Unlike v5, no post-pass bumps
 /// (v6 stores bytes directly, not 0-based rows), and `loops`/`nests` aux is dropped.
+/// `file` roots each fn_sym (the closure value node's name derives from it).
 fn project_df(
     root: tree_sitter::Node,
     src: &[u8],
+    file: &str,
     strings: &mut Strings,
     sink: &mut FamilyBundle<DfF>,
 ) {
-    go_walk_fns(root, src, strings, sink);
+    go_walk_fns(root, src, file, strings, sink);
 }
 
 /// Walk every function/method declaration, lifting each body. Port of v5
-/// `go_walk_fns`. The receiver is NOT seeded as a param (it lives in the
-/// `receiver` field, not `parameters`); a read of the receiver in the body has no
-/// binding edge, matching v5.
+/// `go_walk_fns` (incl. its syms: `{file}::function::{name}` /
+/// `{file}::method::{Recv}.{name}`). The receiver is NOT seeded as a param (it
+/// lives in the `receiver` field, not `parameters`); a read of the receiver in
+/// the body has no binding edge, matching v5.
 fn go_walk_fns(
     node: tree_sitter::Node,
     src: &[u8],
+    file: &str,
     strings: &mut Strings,
     sink: &mut FamilyBundle<DfF>,
 ) {
@@ -508,21 +513,22 @@ fn go_walk_fns(
     for child in node.children(&mut cursor) {
         match child.kind() {
             "function_declaration" => {
-                if child.child_by_field_name("name").is_some() {
-                    go_flow_fn(child, src, strings, sink);
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let fn_sym = format!("{file}::function::{}", go_text(name_node, src));
+                    go_flow_fn(child, src, &fn_sym, strings, sink);
                 }
             }
             "method_declaration" => {
-                if let Some(name_node) = child.child_by_field_name("name") {
-                    if go_receiver_type(child, src).is_some() {
-                        let _ = name_node; // v5 mints a fn_sym here; v6 drops it.
-                        go_flow_fn(child, src, strings, sink);
-                    }
+                if let (Some(name_node), Some(owner)) =
+                    (child.child_by_field_name("name"), go_receiver_type(child, src))
+                {
+                    let fn_sym = format!("{file}::method::{owner}.{}", go_text(name_node, src));
+                    go_flow_fn(child, src, &fn_sym, strings, sink);
                 }
             }
             _ => {}
         }
-        go_walk_fns(child, src, strings, sink);
+        go_walk_fns(child, src, file, strings, sink);
     }
 }
 
@@ -534,6 +540,7 @@ fn go_walk_fns(
 fn go_flow_fn(
     fn_node: tree_sitter::Node,
     src: &[u8],
+    fn_sym: &str,
     strings: &mut Strings,
     sink: &mut FamilyBundle<DfF>,
 ) {
@@ -560,7 +567,7 @@ fn go_flow_fn(
         }
     }
     if let Some(body) = fn_node.child_by_field_name("body") {
-        flow_go(body, src, strings, &mut scope, sink);
+        flow_go(body, src, fn_sym, strings, &mut scope, sink);
     }
 }
 
@@ -571,6 +578,7 @@ fn go_flow_fn(
 fn flow_go(
     node: tree_sitter::Node,
     src: &[u8],
+    fn_sym: &str,
     strings: &mut Strings,
     scope: &mut Scope,
     sink: &mut FamilyBundle<DfF>,
@@ -598,7 +606,7 @@ fn flow_go(
             if let Some(func) = func {
                 if func.kind() == "selector_expression" {
                     if let Some(operand) = func.child_by_field_name("operand") {
-                        receiver = flow_go(operand, src, strings, scope, sink);
+                        receiver = flow_go(operand, src, fn_sym, strings, scope, sink);
                     }
                 }
             }
@@ -606,7 +614,7 @@ fn flow_go(
             if let Some(args) = node.child_by_field_name("arguments") {
                 let mut cursor = args.walk();
                 for arg in args.children(&mut cursor) {
-                    if let Some(id) = flow_go(arg, src, strings, scope, sink) {
+                    if let Some(id) = flow_go(arg, src, fn_sym, strings, scope, sink) {
                         arg_ids.push(id);
                     }
                 }
@@ -628,7 +636,7 @@ fn flow_go(
             }
             let operand = node
                 .child_by_field_name("operand")
-                .and_then(|o| flow_go(o, src, strings, scope, sink));
+                .and_then(|o| flow_go(o, src, fn_sym, strings, scope, sink));
             let name = node
                 .child_by_field_name("field")
                 .map(|f| go_text(f, src).to_string())
@@ -649,7 +657,7 @@ fn flow_go(
                 .unwrap_or_default();
             let new_node = df_push(sink, strings, start_byte, DfNodeKind::New, Some(&type_name));
             if let Some(body) = node.child_by_field_name("body") {
-                go_flow_literal_fields(body, src, strings, scope, sink, new_node);
+                go_flow_literal_fields(body, src, fn_sym, strings, scope, sink, new_node);
             }
             Some(new_node)
         }
@@ -657,16 +665,16 @@ fn flow_go(
         // nested element literal whose type is implied by the enclosing composite.
         "literal_value" => {
             let new_node = df_push(sink, strings, start_byte, DfNodeKind::New, None);
-            go_flow_literal_fields(node, src, strings, scope, sink, new_node);
+            go_flow_literal_fields(node, src, fn_sym, strings, scope, sink, new_node);
             Some(new_node)
         }
         "binary_expression" => {
             let left = node
                 .child_by_field_name("left")
-                .and_then(|n| flow_go(n, src, strings, scope, sink));
+                .and_then(|n| flow_go(n, src, fn_sym, strings, scope, sink));
             let right = node
                 .child_by_field_name("right")
-                .and_then(|n| flow_go(n, src, strings, scope, sink));
+                .and_then(|n| flow_go(n, src, fn_sym, strings, scope, sink));
             let binop = df_push(sink, strings, start_byte, DfNodeKind::Binop, None);
             if let Some(left) = left {
                 df_edge(sink, left, binop);
@@ -679,7 +687,7 @@ fn flow_go(
         "unary_expression" => {
             let inner = node
                 .child_by_field_name("operand")
-                .and_then(|n| flow_go(n, src, strings, scope, sink));
+                .and_then(|n| flow_go(n, src, fn_sym, strings, scope, sink));
             let unop = df_push(sink, strings, start_byte, DfNodeKind::Unop, None);
             if let Some(inner) = inner {
                 df_edge(sink, inner, unop);
@@ -692,7 +700,7 @@ fn flow_go(
         "short_var_declaration" => {
             let rhs_ids = node
                 .child_by_field_name("right")
-                .map(|right| go_flow_expr_list(right, src, strings, scope, sink))
+                .map(|right| go_flow_expr_list(right, src, fn_sym, strings, scope, sink))
                 .unwrap_or_default();
             if let Some(left) = node.child_by_field_name("left") {
                 let mut cursor = left.walk();
@@ -710,7 +718,7 @@ fn flow_go(
                 .children(&mut cursor)
                 .filter(|n| matches!(n.kind(), "var_spec" | "const_spec"))
             {
-                go_flow_spec(spec, src, strings, scope, sink);
+                go_flow_spec(spec, src, fn_sym, strings, scope, sink);
             }
             None
         }
@@ -720,7 +728,7 @@ fn flow_go(
         "assignment_statement" => {
             let rhs_ids = node
                 .child_by_field_name("right")
-                .map(|right| go_flow_expr_list(right, src, strings, scope, sink))
+                .map(|right| go_flow_expr_list(right, src, fn_sym, strings, scope, sink))
                 .unwrap_or_default();
             if let Some(left) = node.child_by_field_name("left") {
                 let mut cursor = left.walk();
@@ -735,7 +743,7 @@ fn flow_go(
                     .iter()
                     .filter(|n| n.kind() != "identifier" && n.kind() != ",")
                 {
-                    flow_go(*target, src, strings, scope, sink);
+                    flow_go(*target, src, fn_sym, strings, scope, sink);
                 }
             }
             None
@@ -753,7 +761,7 @@ fn flow_go(
             if let Some(list) = list {
                 let mut list_cursor = list.walk();
                 for expr in list.children(&mut list_cursor) {
-                    if let Some(value) = flow_go(expr, src, strings, scope, sink) {
+                    if let Some(value) = flow_go(expr, src, fn_sym, strings, scope, sink) {
                         let ret = df_push(sink, strings, expr.start_byte() as u32, DfNodeKind::Ret, None);
                         df_edge(sink, value, ret);
                         minted = true;
@@ -767,16 +775,16 @@ fn flow_go(
         }
         "if_statement" => {
             if let Some(init) = node.child_by_field_name("initializer") {
-                flow_go(init, src, strings, scope, sink);
+                flow_go(init, src, fn_sym, strings, scope, sink);
             }
             if let Some(cond) = node.child_by_field_name("condition") {
-                flow_go(cond, src, strings, scope, sink);
+                flow_go(cond, src, fn_sym, strings, scope, sink);
             }
             if let Some(cons) = node.child_by_field_name("consequence") {
-                flow_go(cons, src, strings, scope, sink);
+                flow_go(cons, src, fn_sym, strings, scope, sink);
             }
             if let Some(alt) = node.child_by_field_name("alternative") {
-                flow_go(alt, src, strings, scope, sink);
+                flow_go(alt, src, fn_sym, strings, scope, sink);
             }
             Some(df_push(sink, strings, start_byte, DfNodeKind::If, None))
         }
@@ -791,7 +799,7 @@ fn flow_go(
                 match child.kind() {
                     "range_clause" => {
                         if let Some(right) = child.child_by_field_name("right") {
-                            flow_go(right, src, strings, scope, sink);
+                            flow_go(right, src, fn_sym, strings, scope, sink);
                         }
                         if let Some(left) = child.child_by_field_name("left") {
                             let mut left_cursor = left.walk();
@@ -820,32 +828,35 @@ fn flow_go(
                     }
                     "for_clause" => {
                         if let Some(init) = child.child_by_field_name("initializer") {
-                            flow_go(init, src, strings, scope, sink);
+                            flow_go(init, src, fn_sym, strings, scope, sink);
                         }
                         if let Some(cond) = child.child_by_field_name("condition") {
-                            flow_go(cond, src, strings, scope, sink);
+                            flow_go(cond, src, fn_sym, strings, scope, sink);
                         }
                         if let Some(update) = child.child_by_field_name("update") {
-                            flow_go(update, src, strings, scope, sink);
+                            flow_go(update, src, fn_sym, strings, scope, sink);
                         }
                     }
                     "block" | "for" => {}
                     _ => {
-                        flow_go(child, src, strings, scope, sink);
+                        flow_go(child, src, fn_sym, strings, scope, sink);
                     }
                 }
             }
             if let Some(body) = node.child_by_field_name("body") {
-                flow_go(body, src, strings, scope, sink);
+                flow_go(body, src, fn_sym, strings, scope, sink);
             }
             Some(df_push(sink, strings, start_byte, DfNodeKind::Loop, Some(&loop_var)))
         }
-        // `func(...) {...}`: lift as its OWN fn scope, same shape as Rust
+        // `func(...) {...}`: lift as its OWN fn scope under v5's `lam_sym`
+        // (`{fn_sym}::closure::{row}_{col}`, tree-sitter's 0-based row/col of the
+        // literal's start; chains when nested), same shape as Rust
         // closures/Kotlin lambda literals. The enclosing `scope` is shared, so a
         // captured outer variable's read still resolves. The `closure` VALUE node
-        // stays in the enclosing fn; v6 carries no name (v5's lam_sym join key is
-        // replaced by span-containment; the golden_parity waiver covers it).
+        // stays in the enclosing fn and carries that exact sym as its name.
         "func_literal" => {
+            let pos = node.start_position();
+            let lam_sym = format!("{fn_sym}::closure::{}_{}", pos.row, pos.column);
             if let Some(params) = node.child_by_field_name("parameters") {
                 let mut cursor = params.walk();
                 for param in params.children(&mut cursor) {
@@ -874,15 +885,15 @@ fn flow_go(
                 }
             }
             if let Some(body) = node.child_by_field_name("body") {
-                flow_go(body, src, strings, scope, sink);
+                flow_go(body, src, &lam_sym, strings, scope, sink);
             }
-            Some(df_push(sink, strings, start_byte, DfNodeKind::Closure, None))
+            Some(df_push(sink, strings, start_byte, DfNodeKind::Closure, Some(&lam_sym)))
         }
         // everything else (blocks/statement lists, expression statements,
         // parenthesized/index/slice/type-assertion/conversion expressions,
         // go/defer/send/select/switch/labeled statements, ...): recurse
         // conservatively, surfacing the last value-bearing child.
-        _ => go_recurse_children(node, src, strings, scope, sink),
+        _ => go_recurse_children(node, src, fn_sym, strings, scope, sink),
     }
 }
 
@@ -891,13 +902,14 @@ fn flow_go(
 fn go_flow_expr_list(
     list: tree_sitter::Node,
     src: &[u8],
+    fn_sym: &str,
     strings: &mut Strings,
     scope: &mut Scope,
     sink: &mut FamilyBundle<DfF>,
 ) -> Vec<Option<NodeRef>> {
     let mut cursor = list.walk();
     list.children(&mut cursor)
-        .map(|e| flow_go(e, src, strings, scope, sink))
+        .map(|e| flow_go(e, src, fn_sym, strings, scope, sink))
         .collect()
 }
 
@@ -937,6 +949,7 @@ fn go_bind(
 fn go_flow_spec(
     spec: tree_sitter::Node,
     src: &[u8],
+    fn_sym: &str,
     strings: &mut Strings,
     scope: &mut Scope,
     sink: &mut FamilyBundle<DfF>,
@@ -948,7 +961,7 @@ fn go_flow_spec(
         .collect();
     let rhs_ids = spec
         .child_by_field_name("value")
-        .map(|value| go_flow_expr_list(value, src, strings, scope, sink))
+        .map(|value| go_flow_expr_list(value, src, fn_sym, strings, scope, sink))
         .unwrap_or_default();
     go_bind(&names, &rhs_ids, DfNodeKind::LetBind, src, strings, scope, sink);
 }
@@ -960,6 +973,7 @@ fn go_flow_spec(
 fn go_flow_literal_fields(
     lit: tree_sitter::Node,
     src: &[u8],
+    fn_sym: &str,
     strings: &mut Strings,
     scope: &mut Scope,
     sink: &mut FamilyBundle<DfF>,
@@ -974,7 +988,7 @@ fn go_flow_literal_fields(
         };
         let Some(value_wrap) = value_wrap else { continue };
         let Some(inner) = value_wrap.named_child(0) else { continue };
-        if let Some(value) = flow_go(inner, src, strings, scope, sink) {
+        if let Some(value) = flow_go(inner, src, fn_sym, strings, scope, sink) {
             df_edge(sink, value, owner);
         }
     }
@@ -1004,6 +1018,7 @@ fn go_type_name_text(node: tree_sitter::Node, src: &[u8]) -> String {
 fn go_recurse_children(
     node: tree_sitter::Node,
     src: &[u8],
+    fn_sym: &str,
     strings: &mut Strings,
     scope: &mut Scope,
     sink: &mut FamilyBundle<DfF>,
@@ -1011,7 +1026,7 @@ fn go_recurse_children(
     let mut cursor = node.walk();
     let mut last = None;
     for child in node.children(&mut cursor) {
-        if let Some(id) = flow_go(child, src, strings, scope, sink) {
+        if let Some(id) = flow_go(child, src, fn_sym, strings, scope, sink) {
             last = Some(id);
         }
     }
@@ -1107,7 +1122,7 @@ impl Source for GoSource {
                     }
                     if mask.df {
                         let mut bundle = FamilyBundle::<DfF>::default();
-                        project_df(root, src_bytes, &mut strings, &mut bundle);
+                        project_df(root, src_bytes, path, &mut strings, &mut bundle);
                         df = Some(bundle);
                     }
                 }
