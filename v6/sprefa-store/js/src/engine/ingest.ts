@@ -86,7 +86,7 @@ import type {
   IRelStore,
   IStore,
 } from "./types.ts";
-import { key as cascade_key, KEY_STRIDE } from "./lib.ts";
+import { hashHex, key as cascade_key, KEY_STRIDE } from "./lib.ts";
 import { stmt_counter } from "./engine.ts";
 import { mix } from "./oracle.ts";
 import { rels as rel_tables } from "./spine.ts";
@@ -146,12 +146,6 @@ export function content_digest(parts: ReadonlyArray<number | string | bigint | n
   return BigInt.asIntN(64, digestAccumulator);
 }
 
-/** Lowercase hex, matching lib.ts's private `key_of` (unexported; duplicated here — 3 lines). */
-function hex_of(bytes: Uint8Array): string {
-  let hexString = "";
-  for (const byte of bytes) hexString += byte.toString(16).padStart(2, "0");
-  return hexString;
-}
 
 // ---- phase 1: parse the whole stream into typed, position-indexed buffers ---------------
 interface ParsedFile {
@@ -269,11 +263,11 @@ async function resolve_files(
     await store.files_insert_batch(chunk.map((fileData) => [fileData.hash, fileData.size, fileData.lines] as const));
     const after_map = await store.file_ids_by_hashes(hashes);
     for (const fileData of chunk) {
-      const hashHex = hex_of(fileData.hash);
-      const file_id = after_map.get(hashHex);
-      if (file_id === undefined) throw new Error(`file ${hashHex} vanished after insert (should be impossible)`);
+      const contentHex = hashHex(fileData.hash);
+      const file_id = after_map.get(contentHex);
+      if (file_id === undefined) throw new Error(`file ${contentHex} vanished after insert (should be impossible)`);
       local_to_file_id.set(fileData.local, file_id);
-      if (!before_map.has(hashHex)) {
+      if (!before_map.has(contentHex)) {
         changed.set(cascade_key(REL_FILE, file_id), [REL_FILE, file_id]);
       }
     }

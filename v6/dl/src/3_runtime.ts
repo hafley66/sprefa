@@ -42,6 +42,7 @@ const { with_txn, KEY_STRIDE } = cascade;
 import { rels as rel_tables } from "sprefa-store-engine/src/engine/spine.ts";
 import { RelStore, Store, open_db } from "sprefa-store-engine/src/engine/lib.ts";
 import { evalProgramSql } from "sprefa-store-engine/src/lower/lowerSql.ts";
+import { RowCodec } from "./0_row.ts";
 import type { RelTable, RelTables, SupportEdges } from "sprefa-store-engine/src/lower/types.ts";
 import type { Arg, BodyPred, LitValue, Program, RelDecl, Rule } from "sprefa-store-engine/src/lower/ast.ts";
 
@@ -128,19 +129,7 @@ interface SettledOutcome {
 }
 
 
-function normalizeValue(raw: unknown): Value {
-  if (raw === undefined || raw === null) return null;
-  if (typeof raw === "bigint") return Number(raw);
-  if (typeof raw === "number" || typeof raw === "string" || typeof raw === "boolean") return raw;
-  return String(raw);
-}
 
-function rowFromRaw(rawRow: unknown, columns: readonly string[]): Row {
-  const raw = rawRow as Record<string, unknown>;
-  const row: Record<string, Value> = {};
-  for (const column of columns) row[column] = normalizeValue(raw[column]);
-  return row as Row;
-}
 
 type StoredRow = readonly number[];
 
@@ -340,7 +329,7 @@ function rowMatchJoinCondition(columns: readonly string[], relAlias: string, tem
 function selectAll(db: Db, relName: string, columns: readonly string[]): Observable<Row[]> {
   return execute$(db, `SELECT ${columns.join(",")} FROM rel_${relName}`).pipe(
     concatMap((result) => from(result.rows)),
-    map((rawRow) => rowFromRaw(rawRow, columns)),
+    map((rawRow) => RowCodec.rowFromRaw(rawRow, columns)),
     toArray(),
   );
 }
@@ -640,7 +629,7 @@ function resolveFactKeys(state: RuntimeState, keys: readonly number[]): Observab
             `SELECT ${decl.columns.join(",")} FROM rel_${relName} WHERE ${ROW_SURROGATE} IN (${rowIds.join(",")})`,
           ).pipe(
             concatMap((result) => from(result.rows)),
-            map((rawRow) => ({ rel: relName, row: rowFromRaw(rawRow, decl.columns) })),
+            map((rawRow) => ({ rel: relName, row: RowCodec.rowFromRaw(rawRow, decl.columns) })),
           );
         }),
       ),

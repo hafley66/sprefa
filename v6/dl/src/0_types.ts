@@ -402,3 +402,10 @@ export type StartServer = (cfg: { dbPath: string; port: number }) => Promise<DlS
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type AssertTrue<Holds extends true> = Holds;
+
+/** Decoding driver rows into `Value`. One copy: the two that existed had drifted, and the
+ *  one without a `bigint` branch turned every INTEGER column into text. */
+export interface IRowCodec {
+  normalizeValue(raw: unknown): Value;
+  rowFromRaw(rawRow: unknown, columns: readonly string[]): Row;
+}

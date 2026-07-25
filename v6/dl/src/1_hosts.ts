@@ -35,6 +35,7 @@ import { fileURLToPath } from "node:url";
 import { EMPTY, Subscription, concatMap, filter, from, mergeMap, type Observable } from "rxjs";
 
 import { foldRowDigest } from "./0_digest.ts";
+import { RowCodec } from "./0_row.ts";
 import type {
   AssertTrue,
   CacheDb,
@@ -56,11 +57,6 @@ export type { CacheDb, HostDef };
 // Value plumbing shared by every host below.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function normalizeValue(raw: unknown): Value {
-  if (raw === undefined || raw === null) return null;
-  if (typeof raw === "number" || typeof raw === "string" || typeof raw === "boolean") return raw;
-  return String(raw);
-}
 
 function valueToShellText(value: Value): string {
   if (value === null || value === undefined) return "";
@@ -109,14 +105,14 @@ function mapItemToRow(item: unknown, responseCols: readonly string[]): Row {
     const values = hasAllKeys ? responseCols.map((column) => record[column]) : Object.values(record);
     const row: Record<string, Value> = {};
     responseCols.forEach((column, index) => {
-      row[column] = normalizeValue(values[index] ?? null);
+      row[column] = RowCodec.normalizeValue(values[index] ?? null);
     });
     return row as Row;
   }
   const values = Array.isArray(item) ? item : [item];
   const row: Record<string, Value> = {};
   responseCols.forEach((column, index) => {
-    row[column] = normalizeValue(values[index] ?? null);
+    row[column] = RowCodec.normalizeValue(values[index] ?? null);
   });
   return row as Row;
 }

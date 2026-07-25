@@ -87,6 +87,68 @@ export { stmt_counter };
 // =============================================================================
 // cascade — mutating Z-set over cx_row (prune = weight ≠ 0)
 // =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
+// Statement helpers, shared by every namespace below. They were duplicated once
+// per namespace; the reconcile copy of `exec` used `executeMultiple` and neither
+// split nor traced, so every reconcile statement was invisible to DL_CASCADE_TRACE.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Per-statement wall-time trace, opt-in via DL_CASCADE_TRACE=1. Off by default. */
+function traced(): boolean {
+  const traceSetting = process.env.DL_CASCADE_TRACE;
+  return traceSetting !== undefined && traceSetting !== "0" && traceSetting.length > 0;
+}
+
+/** Top-level statement split. Safe here: cascade SQL inlines only integers, never text
+ *  literals, so a `;` is always a statement boundary. */
+function split_statements(sql: string): string[] {
+  return sql
+    .split(";")
+    .map((stmt) => stmt.trim())
+    .filter((stmt) => stmt.length > 0);
+}
+async function exec(db: Db, sql: string): Promise<void> {
+  stmt_counter.incr();
+  if (traced()) {
+    const startedAt = process.hrtime.bigint();
+    for (const stmt of split_statements(sql)) await db.execute(stmt);
+    const elapsedMilliseconds = Number(process.hrtime.bigint() - startedAt) / 1e6;
+    const head = sql.slice(0, 50).replace(/\n/g, " ");
+    console.error(`[cascade] ${elapsedMilliseconds.toFixed(2)} ms  ${head}`);
+    return;
+  }
+  for (const stmt of split_statements(sql)) await db.execute(stmt);
+}
+
+/** One scalar (first column of first row), 0 if no row. */
+async function scalar(db: Db, sql: string): Promise<number> {
+  stmt_counter.incr();
+  const res = await db.execute(sql);
+  const value = res.rows[0]?.[0];
+  return value === undefined ? 0 : Number(value);
+}
+
+/** Run a fixed, upfront-known list of write statements as one atomic batch. */
+async function execBatch(db: Db, stmts: ReadonlyArray<string>): Promise<void> {
+  if (stmts.length === 0) return;
+  for (const _s of stmts) stmt_counter.incr();
+  await db.batch(stmts.slice(), "write");
+}
+
+/** Ids from the first column. */
+async function query_ids(db: Db, sql: string): Promise<number[]> {
+  stmt_counter.incr();
+  const result = await db.execute(sql);
+  return result.rows.map((row) => Number(row[0]));
+}
+
+/** Query bigint ids/digests (full 64-bit fidelity, the client's global intMode). */
+async function query_bigints(db: Db, sql: string): Promise<bigint[]> {
+  stmt_counter.incr();
+  const result = await db.execute(sql);
+  return result.rows.map((row) => row[0] as bigint);
+}
+
 export namespace cascade {
 //! Manual, scalable cascade retraction over a generic `(tag, id)` reference graph,
 //! with Z-set weights. State on disk in SQLite; cascade by hand so we owe nothing to a
@@ -110,33 +172,8 @@ export function key(tag: number, id: number): number {
   return tag * KEY_STRIDE + id;
 }
 
-/** Per-statement wall-time trace, opt-in via DL_CASCADE_TRACE=1. Off by default. */
-function traced(): boolean {
-  const traceSetting = process.env.DL_CASCADE_TRACE;
-  return traceSetting !== undefined && traceSetting !== "0" && traceSetting.length > 0;
-}
 
-/** Top-level statement split. Safe here: cascade SQL inlines only integers, never text
- *  literals, so a `;` is always a statement boundary. */
-function split_statements(sql: string): string[] {
-  return sql
-    .split(";")
-    .map((stmt) => stmt.trim())
-    .filter((stmt) => stmt.length > 0);
-}
 
-async function exec(db: Db, sql: string): Promise<void> {
-  stmt_counter.incr();
-  if (traced()) {
-    const startedAt = process.hrtime.bigint();
-    for (const stmt of split_statements(sql)) await db.execute(stmt);
-    const elapsedMilliseconds = Number(process.hrtime.bigint() - startedAt) / 1e6;
-    const head = sql.slice(0, 50).replace(/\n/g, " ");
-    console.error(`[cascade] ${elapsedMilliseconds.toFixed(2)} ms  ${head}`);
-    return;
-  }
-  for (const stmt of split_statements(sql)) await db.execute(stmt);
-}
 
 /**
  * The Rust `db.transaction(...)` bracket for the interactive round loops: BEGIN IMMEDIATE
@@ -161,20 +198,7 @@ export async function with_txn<T>(db: Db, body: () => Promise<T>): Promise<T> {
   }
 }
 
-/** One scalar (first column of first row), 0 if no row. */
-async function scalar(db: Db, sql: string): Promise<number> {
-  stmt_counter.incr();
-  const res = await db.execute(sql);
-  const value = res.rows[0]?.[0];
-  return value === undefined ? 0 : Number(value);
-}
 
-/** Run a fixed, upfront-known list of write statements as one atomic batch. */
-async function execBatch(db: Db, stmts: ReadonlyArray<string>): Promise<void> {
-  if (stmts.length === 0) return;
-  for (const _s of stmts) stmt_counter.incr();
-  await db.batch(stmts.slice(), "write");
-}
 
 /**
  * Create the generic cascade schema and apply the traversal tuning. The store pins to ONE
@@ -850,25 +874,6 @@ export namespace reconcile {
 //! `digest` is a full i64; it flows as bigint here. The client's `intMode:"bigint"` (set
 //! once, at connection open) makes every integer column round-trip as bigint, so the
 //! digest reads below need no per-statement opt-in: they get 64-bit fidelity for free.
-
-async function exec(db: Db, sql: string): Promise<void> {
-  stmt_counter.incr();
-  await db.executeMultiple(sql);
-}
-
-async function query_ids(db: Db, sql: string): Promise<number[]> {
-  stmt_counter.incr();
-  const res = await db.execute(sql);
-  return res.rows.map((row) => Number(row[0]));
-}
-
-/** Query bigint ids/digests (full 64-bit fidelity, the client's global intMode). */
-async function query_bigints(db: Db, sql: string): Promise<bigint[]> {
-  stmt_counter.incr();
-  const res = await db.execute(sql);
-  return res.rows.map((row) => row[0] as bigint);
-}
-
 export async function create_schema(db: Db, ns: IGraphNs): Promise<void> {
   await db.executeMultiple(`CREATE TABLE ${ns.memo} (
             id          INTEGER PRIMARY KEY,
@@ -903,13 +908,6 @@ export async function seed(
     stmts.push(`INSERT OR IGNORE INTO ${ns.rdep}(reader,read) VALUES (${id},${dep})`);
   }
   await execBatch(db, stmts);
-}
-
-/** Run a fixed, upfront-known list of write statements as one atomic batch. */
-async function execBatch(db: Db, stmts: ReadonlyArray<string>): Promise<void> {
-  if (stmts.length === 0) return;
-  for (const _s of stmts) stmt_counter.incr();
-  await db.batch(stmts.slice(), "write");
 }
 
 /** An input's digest moved at `rev`: bump its changed_at so the CTE sees it stale. */

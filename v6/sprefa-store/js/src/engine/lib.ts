@@ -456,7 +456,7 @@ export class Store implements IStore {
       });
       for (const row of queryResult.rows) {
         const content_hash = new Uint8Array(row.content_hash as ArrayBuffer);
-        hashToFileId.set(key_of(content_hash), Number(row.file_id));
+        hashToFileId.set(hashHex(content_hash), Number(row.file_id));
       }
     }
     return hashToFileId;
@@ -538,9 +538,9 @@ function sql_str(s: string): string {
   return `'${s.replace(/'/g, "''")}'`;
 }
 
-/** Stable Map key for a 16-byte content hash. */
-function key_of(hash: Uint8Array): string {
-  let hashHex = "";
-  for (const byte of hash) hashHex += byte.toString(16).padStart(2, "0");
-  return hashHex;
+/** Stable Map key for a content hash: lowercase hex. */
+export function hashHex(hash: Uint8Array): string {
+  let hex = "";
+  for (const byte of hash) hex += byte.toString(16).padStart(2, "0");
+  return hex;
 }

@@ -97,6 +97,7 @@
 | [plans/2026-07-24-m9-storage-plane-continuation.md](plans/2026-07-24-m9-storage-plane-continuation.md) | 90 | M9 storage-plane continuation — codex brief (2026-07-24) |
 | [plans/2026-07-24-sqlite-retract-perf-lab.md](plans/2026-07-24-sqlite-retract-perf-lab.md) | 425 | 2026-07-24 SQLite retraction perf lab |
 | [plans/2026-07-24-v6-dl-mvp-slice.md](plans/2026-07-24-v6-dl-mvp-slice.md) | 664 | v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24) |
+| [plans/2026-07-25-sql-builder-build-vs-buy.md](plans/2026-07-25-sql-builder-build-vs-buy.md) | 322 | SQL query-builder / templating: build-vs-buy for `lowerSql.ts` |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
@@ -1614,6 +1615,25 @@
 553:### M5 · diag + v5 LSP front
 620:### M6 · http front
 651:## Frontier (deferred, with the evidence that will resolve each)
+```
+
+### plans/2026-07-25-sql-builder-build-vs-buy.md
+```
+1:# SQL query-builder / templating: build-vs-buy for `lowerSql.ts`
+14:## Comparison table
+40:## Per-candidate detail
+42:### Kysely — first-class dynamic-schema escape hatch, but no current libsql dialect
+88:### Drizzle ORM — heaviest, and its typed path needs column TYPES we don't carry
+107:### Knex — insists on owning the connection; that's the disqualifier, not maturity
+125:### sql-template-tag — the smaller primitive, values only
+150:### @databases/sql + @databases/escape-identifier — the same primitive, one more layer
+163:### Ruled out with a receipt
+183:## The two defects
+185:### 1. `sqlLit` inlines values as text (`lowerSql.ts:435-440`)
+215:### 2. Identifiers are interpolated raw — bounded by grammar, not by escaping
+244:## Recommendation
+280:## Migration sketch
+301:## Could not verify
 ```
 
 ### skills/mermaid-living-map.md
