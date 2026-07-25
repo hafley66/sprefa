@@ -144,5 +144,38 @@ lock, rusqlite-coupling Layer 5 call_def fix, _source_stage_owner batch.)
 - N+1: never a per-row write. Collect the set, call `Db::insert_rows` once. The tick counter screams if you don't.
 - No `provenance`/`substrate`/`load-bearing`/`regime` as prose or identifiers (use source/base/critical/mode).
 - Sync tick engine: plural-API + collect-then-flush, NOT async DataLoader (the redux-out-of-hand trap).
+- **Every new class declares its interface in the package's header `types.ts`** (user-set 2026-07-25): a
+  class that ships without a contract in the header is an incomplete change, not a follow-up. The
+  header declares each name exactly once, no `export type Foo = SomeFoo` aliases. v6 headers are
+  `v6/sprefa-store/js/src/engine/types.ts`, `v6/sprefa-store/js/src/lower/types.ts`,
+  `v6/dl/src/0_types.ts`. Currently uncovered: `tasks.ts` `Namespaced`/`Independent`/`Evidence`,
+  `engine.ts` `AscendingIdQueue`. `Error` subclasses are exempt.
+- **Important functions are interface-bound, never bare `export function`** (user-set 2026-07-25):
+  TypeScript cannot conformance-check a standalone function against anything. A free
+  `export function foo()` can drift from its documented signature and the compiler stays silent.
+  So any function that matters gets bound to a header interface one of two ways:
+  - namespace object, the default: `interface ISqlRunner { ... }` in the header,
+    `export const SqlRunner: ISqlRunner = { ... }` in the module.
+  - a class `implements` the interface, when there is real per-instance state or arg-object envy.
+  The annotation is what buys the check. `satisfies` also checks and additionally keeps the
+  literal's narrow inferred type; use it only when a caller needs that narrower type.
+  Small leaf helpers that would be a `.map` callback or a plain method call in another language stay
+  bare functions. This is the same exemption as the rxjs law.
+- **Interfaces carry the `I` prefix** (user-set 2026-07-25): `IStore`, `IGraphNs`, `IDlRuntime`.
+  The prefix is what lets the interface and its implementing object hold the same root word
+  without an alias. `lower/types.ts` (`RelTable`, `Graph`, `Stratum`, `IDatalog`) is inconsistent
+  and is the rename target, not the other way round.
+- **A type name must say what the thing is on first reading** (user-set 2026-07-25): no
+  library-flavoured or abbreviation names that carry no content. `Rx` is the rejected example.
+  If one interface needs a vague name it is usually two interfaces glued together; split it and
+  both names get obvious.
+- **No async in v6, rxjs instead** (user-set 2026-07-25): `Promise`/`async`/`await` are banned above
+  the single driver seam. That seam is `SqliteDb.execute`, wrapped exactly once per package in a
+  `defer(() => from(...))` helper (`makeExec` in lowerSql.ts, `execute$` in 3_runtime.ts). Sync
+  control flow also goes through rx operators: a nested if/for/switch becomes `from -> concatMap ->
+  toArray`, a fixpoint becomes `expand`, a fan-out becomes `groupBy -> mergeMap`. Exempt: tiny pure
+  functions that would be a `.map` callback or a plain method call in any other language.
+  TRAP: `await someObservable` returns the observable without subscribing and TypeScript accepts it
+  silently. Use `firstValueFrom`, or better, do not leave an `await` to convert.
 - One rel = one rule kind: never head a rel with both a source rule (scan/match/ast/sg/json/cmd/comment) and a derived rule. `rebuild_derived` does a full `DELETE FROM rel` that would wipe the reconciled source rows. The engine now bails; split into two rels and union in a third derived rule. SAME hazard, separately guarded, for a **term-extract** rule (a `json`/`jsonp` body predicate over a bound string) headed together with a derived rule: `eval_extract_rules` fills the extract rows, then `rebuild_derived` (which runs after it so derived rules can read the extract output) drops them. Notably a term-extract rule cannot feed a `@next` carry directly for this reason — route it through its own rel first (the `pr_number -> change_log` split in gh-cache.dl). Engine bails as of the ghcacher-parity arc.
 - Recompute guard: a fn that re-derives a relation/embedding FROM SCRATCH (a global op like `embed_graph`, run on a reactive rule) must early-out when its input is unchanged — a `load_rel_digest` digest skip (see `eval_node2vec_rule`, the scc/closure `ConditionCache.digest`) — or carry a `// @recompute unguarded: <reason>` waiver in its body. `examples/recompute-guard.dl --check` (exit 2) is the rail that enforces it; an unguarded recompute re-runs on every git-checkout re-tick under the daemon lock.
