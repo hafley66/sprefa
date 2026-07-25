@@ -428,7 +428,10 @@ re-derive decisions.
   8/8 (ported facets, type_edge ts+go+rust, ledger, ratchets ts+go+rust — all
   three REAL indexers run in-test), snapshot 2/2. Both worktrees retired.
 
-### NEXT — nothing scheduled. The user unparks arcs explicitly.
+### NEXT — queued 2026-07-25 (user: "write briefs so we can resume"): launch
+order I1 → I2 → I3 → I4a–d → I5 → I6 → I7, STRICTLY SEQUENTIAL (shared lang
+files; parallel weak agents = merge collisions). Full briefs in "Increment
+briefs" below. I8 + ModuleF/specifiers stay human-gated.
 
 ### Parked (do NOT start without the user's explicit word)
 
@@ -469,3 +472,226 @@ re-derive decisions.
 - Gate: `cd v6/sprefa-extract && cargo test --features cli`. Oracle regen from
   the WORKTREE ROOT: `cargo run --quiet --example v5_normalize -- <fixture> >
   <name>.v5.jsonl` (captured, never linked).
+
+## Next-arc seed: new-language traits + codegen (2026-07-24, user ask)
+
+What the arc MEASURED about adding a language (ts+rust+go as the sample):
+a port is ~15 junction sites split into two cost classes.
+
+**Hand-written (NOT generatable — the "Kotlin-sized" unit):** the AST walkers
+in `lang/<lang>.rs` (type/call/df projectors, edge-candidate collector,
+lam_sym coords). Deliberately per-parser divergent (audit verdict; the repo
+bar: three similar lines > premature abstraction). Never trait-ify these.
+
+**Generatable/mechanical (the scavenger hunt to kill):** roster entry
+(`lang/mod.rs`), `lib.rs` export, `scip.rs` indexer row, fixtures (sample +
+oracle, the scip/ module trio + per-lang manifest: go.mod/Cargo.toml/
+tsconfig.json), golden_parity Case + ledger match arms, the type_edge parity
+test fn (currently copy-paste ×3), the ratchet test fn (copy-paste ×3,
+~200 lines each), `--help` matrix line, `types.rs` status matrix, the
+`v5_normalize.rs` oracle arm (root crate), ledger entries.
+
+### Traits/generics to build (lands with the parked dedup sweep, in this order)
+
+1. **Single copies of the lang-neutral helpers** (audit items 1–4 + the 4d
+   triplications the agents flagged: `resolve_type_dst`, `call_name_match`,
+   `scip_call_target`, `ScipGo::load` vs shared `load_index`).
+2. **`ResolveLang` trait** — the per-lang resolve entry points
+   (`type_edge_candidates`, `call_name_match`) currently inherent methods
+   copy-pasted ×3. One small trait so the harness is generic; impls stay in
+   `lang/<lang>.rs`.
+3. **ScipSource impls → DATA** — one `IndexerSpec` row per lang (binary,
+   argv, discovery/fallback, staging policy) mirroring v5's `INDEXERS` row
+   (`src/scip_setup.rs:50`). `load` is already shared (`load_index`); go's
+   staged-vs-not and rust's always-staged become two policy variants, not
+   two code paths.
+4. **Table-driven tests** — ONE type_edge parity body + ONE ratchet body,
+   generic over a `LangDescriptor { dir, extensions, source, resolve_lang,
+   scip: Option<IndexerSpec>, fixture notes }`; N descriptors. Epic-U
+   precedent: "4 hand tests → ONE loop-driven test". The ratchet body
+   duplication is the single biggest copy-paste in the crate today.
+5. Explicitly NOT traits: per-family kind enums (enum-not-trait, spec), the
+   walkers (above).
+
+### The generator (after 1–4 stabilize the skeleton)
+
+`xtask new-lang <name> <exts...>` (or a `.dl` script, house style) writing
+every mechanical site above from templates, with `todo!()` walkers. Port v5's
+honesty mechanism verbatim: every junction carries
+`// LANG-JUNCTION(<slug>): <what a new language wires here>` and a
+`gen-lang-junctions.dl --check` drift rail (pattern: `examples/gen-lang-skill.dl`
++ `sprf-add-language` skill). The generator writes the markers; the rail keeps
+the map true forever after.
+
+## Increment briefs (queued 2026-07-25 — launch in order, ONE agent each)
+
+Launch each by pasting the Staffing §Subagent brief template with `[X]` =
+the increment id and the fields below. Shared constants for ALL briefs (the
+template's fixed lines): worktree
+`/Users/chrishafley/projects/sprefa/.claude/worktrees/extract-golden-plan`,
+branch `plan/extract-golden-plan`; gate
+`cd v6/sprefa-extract && cargo test --features cli`; oracle regen (only where
+an increment declares it) from the WORKTREE ROOT
+`cargo run --quiet --example v5_normalize -- <fixture> > <name>.v5.jsonl`;
+one commit only, NEVER push/stash/chat_log; STOP-and-report on ambiguity or
+out-of-allowlist edits; report = files changed + gate tail + commit SHA +
+divergences (must be zero) + open questions. "Ledger" everywhere =
+`v6/sprefa-seed/src/_3_extract/_7_tasks.rs` (entry before `PENDING:`, BUILD
+STATUS date, `NEXT:` current).
+
+PRECONDITION for I1–I3: the KOTLIN increment (in flight at queue time) is
+merged. If it is not, drop `kotlin.rs` + kotlin fixtures from the allowlist
+and ledger-note that kotlin's aux/docs rows ride the NEXT port increment.
+Never rebase onto in-flight kotlin commits.
+
+### I1 — df aux port (df_args / df_fields / df_lits / df_param_pos)
+
+Grounding established at queue time (do not re-probe):
+
+- The four row kinds ALREADY sit in the captured oracles — they are the
+  assertion targets and are NEVER regenerated in this increment:
+  ts/sample 8 args / 2 lits / 7 param_pos; go/sample 2 args / 1 fields /
+  2 param_pos; rust/sample 2 / 1 / 4; ts/docs 4 / 2 / 5; ts/lambdas
+  14 / 2 / 9; go/docs 2 / 1 / 2; rust/docs 2 / 1 / 4. Kotlin oracle: probe
+  at launch (`cut -f1 kotlin/sample.v5.jsonl | sort | uniq -c`).
+- v5 emission homes: `src/engine/extract/dataflow.rs` + the per-lang walkers
+  (`src/graph/typegraph/ts/flow.rs`, `rust/mod.rs`, `go.rs`, `kotlin.rs`).
+- `loops`/`nests` (named in the parked line) appear in NO captured oracle:
+  do NOT fabricate rows; ledger-note the absence.
+
+TASK: port v5's df aux emission for ts, go, rust, kotlin into the v6 Df
+family (aux rows on the existing DfF projection, V5-IS-CORRECT byte-exact).
+Move the four row kinds from DEFERRED to PORTED in golden_parity (zip
+discipline, the type_edge precedent). FIRST determine whether the aux rows
+reach flatten_jsonl: if yes this is a DECLARED SNAPSHOT CHANGE —
+UPDATE_SNAP=1 permitted for the affected .snap files only, eyeballed diffs
+quoted in the report; if no, snapshots stay frozen (prove byte-identical).
+
+ALLOWLIST: `v6/sprefa-extract/src/lang/{ts,go,rust,kotlin}.rs`;
+`v6/sprefa-extract/src/types.rs` (DfF aux fields only);
+`v6/sprefa-extract/tests/golden_parity.rs`;
+`v6/sprefa-extract/tests/snapshots/**` (only via the declared UPDATE_SNAP);
+ledger.
+
+COMMIT: `v6/extract: port df aux rows (args/fields/lits/param_pos) for ts+go+rust+kotlin`
+
+STOPs: any captured aux row not byte-reproducible (no waivers — report the
+row); finding wire.rs/dispatch.rs/snapshot.rs in your edit set; any urge to
+"also fix" the df ret self-edge or the slug split (that is I3, not here).
+
+### I2 — docs facet port (`doc` rows)
+
+Grounding established at queue time:
+
+- `doc` × 19 captured: ts/docs 8, go/docs 6, rust/docs 5. ZERO `doc` rows in
+  the sample/lambdas oracles — assertions live in the docs fixtures only.
+- v5 side: the `doc_comment`/`doc_tag` "built-in doc relation" emitted by
+  the per-lang typegraph extractors (split note at
+  `src/rels/extract_family.rs:28`). `src/ingest/mod.rs` `IngestLang` is the
+  MARKDOWN-document lane — NOT this one; do not port MarkdownDoc.
+
+TASK / ALLOWLIST / SNAP-ruling / STOPs: same shape as I1, for the single row
+kind `doc`.
+
+COMMIT: `v6/extract: port doc rows for ts+go+rust+kotlin`
+
+### I3 — oddity fix, ADDITIVE LANE ONLY (evidence-first)
+
+Scope: df ret self-edges (`809→809`). FIRST lay evidence in the report: v5
+oracle df_edge rows vs v6 emission on every fixture. Two-lane ruling: v5
+emits & v6 drops → port it (asserted); v6 emits & v5 doesn't → v6-only row
+(keep + report, never assert) or remove — recommend with evidence, implement
+only the v5-is-correct direction.
+
+The slug split (rust `if/match` vs ts `cond/logic`) is the BREAKING lane:
+NOT in this increment, awaits user adjudication; touching it = STOP.
+
+ALLOWLIST: `v6/sprefa-extract/src/lang/*.rs`;
+`v6/sprefa-extract/tests/golden_parity.rs`; snapshots per the I1 ruling;
+ledger.
+
+COMMIT: `v6/extract: reconcile df ret self-edges with v5 (additive lane)`
+
+### I4 — dedup sweep → traits (FOUR increments, strict order; ALL pure
+refactors: snapshots byte-identical, zero behavior change, gate green)
+
+- I4a single-copy helpers: audit items 1–4 (cst block ×4 → `project_cst`;
+  push helpers → `FamilyBundle::push_named`/`push_edge`; `go_seed_params`;
+  wire flatten loops → `Family::kind_str` + `CstEdgeKind::as_str`) + the 4d
+  triplications (`resolve_type_dst` ×3, `call_name_match` ×3,
+  `scip_call_target` ×3, `ScipGo::load` → shared `load_index`). Expect
+  ~140+ lines net removal.
+  COMMIT: `v6/extract: dedup lang-neutral helpers (audit items 1-4 + 4d triplications)`
+- I4b `ResolveLang` trait (seed §2): trait-ify `type_edge_candidates` +
+  `call_name_match`; impls stay in `lang/<lang>.rs`; the harness goes
+  generic.
+  COMMIT: `v6/extract: ResolveLang trait over the per-lang resolve entry points`
+- I4c `IndexerSpec` as data (seed §3): one row per lang (binary, argv,
+  discovery/fallback, staging policy) mirroring v5 `src/scip_setup.rs:50`
+  INDEXERS; staged-vs-not and always-staged become policy variants, not
+  code paths.
+  COMMIT: `v6/extract: ScipSource impls to data-driven IndexerSpec rows`
+- I4d table-driven tests (seed §4): ONE type_edge parity body + ONE ratchet
+  body, generic over `LangDescriptor` (Epic-U precedent). Test COUNT may
+  drop (~400 dup lines); assertions must be identical.
+  COMMIT: `v6/extract: table-driven parity + ratchet tests over LangDescriptor`
+
+STOPs (all of I4): any snapshot or oracle drift; any behavior change
+"while here"; scope creep into the walkers (deliberately per-parser
+divergent, NEVER trait-ified — seed §Hand-written).
+
+### I5 — micro-batch (ONE agent session, TWO commits)
+
+- 5a `callee_path` ts fill (4c-deferred): DECLARED SNAPSHOT CHANGE — the ts
+  callf snaps grow; eyeballed diffs quoted in the report.
+  COMMIT: `v6/extract: fill callee_path for ts call sites`
+- 5b diet-tier hard-assert of the scip-less name_resolve count —
+  CONDITIONAL: launch only on the user's explicit opt-in (currently
+  exercised + counted, not asserted).
+  COMMIT: `v6/extract: hard-assert diet-tier name_resolve count`
+
+### I6 — codegen (launch only after I4a–d merged)
+
+`xtask new-lang <name> <exts...>` writing every mechanical site from the
+seed's Generatable list (roster entry, lib.rs export, scip.rs indexer row,
+fixtures + per-lang manifest, golden_parity case + ledger match arms,
+`--help` matrix line, types.rs status matrix, the v5_normalize oracle arm in
+the ROOT crate) with `todo!()` walkers. Port v5's honesty mechanism
+verbatim: `// LANG-JUNCTION(<slug>): <what a new language wires here>`
+markers + a `gen-lang-junctions --check` drift rail (pattern:
+`examples/gen-lang-skill.dl` + the `sprf-add-language` skill). The generator
+writes the markers; the rail keeps the map true.
+
+COMMIT: `v6/extract: xtask new-lang generator + LANG-JUNCTION drift rail`
+
+### I7 — python port (first consumer of I6; proves the generator)
+
+v5 semantics: `src/graph/typegraph/python.rs`. Front-end: tree-sitter floor
+per the go/kotlin precedent (proposing rustpython-parser instead = STOP for
+adjudication). Fixture + captured oracle via a new `.py` arm on the root
+`examples/v5_normalize.rs`. IN SCOPE: phase-1 families + parity. Resolve
+arms + scip ratchet: orchestrator's call at launch time (the kotlin ruling
+deferred them; post-I4d the table-driven harness makes them cheap — decide
+then).
+
+COMMIT: `v6/extract: python port on the generated skeleton (phase-1 + parity)`
+
+### I8 — Epic 3 general ratchet — STUB ONLY
+
+Needs its own design pass (Producer tag rides bundles;
+`ratchet(&[(Producer, ExtractOutput)]) -> Merged`). Do NOT launch an agent
+from this section.
+
+### Decision block — ModuleF/specifiers (HUMAN GATE; no increment until ruled)
+
+4a addendum (3) flagged `CallFAux.specifiers`
+(`Specifier{span, name: NameId, kind: SpecifierKind}`; vocabulary = the
+seed's BindingKind Named/Default/Namespace/SideEffect/Reexport) as the
+module-binding home — hollow row shape only, ZERO lang emission today
+(verified by grep at 4a). v5's fuller Binding side table
+(`_1_mask.rs`:67-76; local/source/imported) is the evolution path; the TS
+from-module question is the open sub-question. If ruled IN: the increment is
+"collect specifiers in all four langs + wire the from-module side data" and
+its assertion strategy is part of the ruling (NO captured oracle rows exist
+for specifiers). If ruled OUT: the DefIndex remains the whole cross-file
+story and the shape stays hollow forever.

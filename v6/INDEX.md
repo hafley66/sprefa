@@ -32,7 +32,7 @@
 | [plans/2026-07-21-spine-orm.md](plans/2026-07-21-spine-orm.md) | 200 | V6 spine — the 6 tables, one ORM, hard boundaries |
 | [plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md](plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md) | 184 | v6 core: the lab arc — oracles, why, efficiency, measured Big-O + empirical ratios |
 | [plans/2026-07-23-sprefa-extract-golden-plan.md](plans/2026-07-23-sprefa-extract-golden-plan.md) | 537 | sprefa-extract - the golden plan (distill v5, normalize for v6) |
-| [plans/2026-07-24-extract-go-closeout-and-resolve4.md](plans/2026-07-24-extract-go-closeout-and-resolve4.md) | 524 | sprefa-extract: Go closeout → Resolve<\*> (commit 4) → fixture broadening |
+| [plans/2026-07-24-extract-go-closeout-and-resolve4.md](plans/2026-07-24-extract-go-closeout-and-resolve4.md) | 697 | sprefa-extract: Go closeout → Resolve<\*> (commit 4) → fixture broadening |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
@@ -409,6 +409,16 @@
 476:## Next-arc seed: new-language traits + codegen (2026-07-24, user ask)
 494:### Traits/generics to build (lands with the parked dedup sweep, in this order)
 516:### The generator (after 1–4 stabilize the skeleton)
+526:## Increment briefs (queued 2026-07-25 — launch in order, ONE agent each)
+547:### I1 — df aux port (df_args / df_fields / df_lits / df_param_pos)
+582:### I2 — docs facet port (`doc` rows)
+598:### I3 — oddity fix, ADDITIVE LANE ONLY (evidence-first)
+615:### I4 — dedup sweep → traits (FOUR increments, strict order; ALL pure
+643:### I5 — micro-batch (ONE agent session, TWO commits)
+653:### I6 — codegen (launch only after I4a–d merged)
+667:### I7 — python port (first consumer of I6; proves the generator)
+679:### I8 — Epic 3 general ratchet — STUB ONLY
+685:### Decision block — ModuleF/specifiers (HUMAN GATE; no increment until ruled)
 ```
 
 ### skills/mermaid-living-map.md
