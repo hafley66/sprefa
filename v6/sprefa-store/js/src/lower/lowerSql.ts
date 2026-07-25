@@ -10,6 +10,7 @@ import type { AggFn, Compare, Program, Rule } from "./ast.ts";
 import { buildRuleGraph, scc, stratify } from "./rulegraph.ts";
 import type {
   CompiledJoin,
+  CompiledSelect,
   EvalProgram,
   IDatalogEvaluator,
   IRecursiveStratum,
@@ -21,7 +22,7 @@ import type {
   SupportEdges,
   SupportReport,
 } from "./types.ts";
-import type { AssertTrue, QueryResult, SqliteDb, TraceStatement } from "../engine/types.ts";
+import type { AssertTrue, QueryResult, SqlStatement, SqlValue, SqliteDb, TraceStatement } from "../engine/types.ts";
 import { SqlRunner } from "../engine/sqlRunner.ts";
 
 /** A rel with an aggregate head inside a recursive SCC: non-monotone, not stratifiable. */
@@ -61,8 +62,8 @@ export class DatalogEvaluator implements IDatalogEvaluator {
   }
 
   /** Every statement in this file goes through here, so every one is counted and traced. */
-  exec(sql: string): Observable<QueryResult> {
-    return SqlRunner.execute(this.db, sql, this.trace);
+  exec(statement: SqlStatement): Observable<QueryResult> {
+    return SqlRunner.execute(this.db, statement, this.trace);
   }
 
   tableOf(relName: string): RelTable {
@@ -76,25 +77,28 @@ export class DatalogEvaluator implements IDatalogEvaluator {
   }
 
   /** Every rule-headed IDB table starts empty: a later stratum reads earlier ones. */
-  clearStatements(): string[] {
+  clearStatements(): SqlStatement[] {
     return this.program.rels
       .filter((decl) => decl.origin !== "EDB" && this.rulesByHead.has(decl.name))
-      .map((decl) => `DELETE FROM ${this.tableOf(decl.name).table}`);
+      .map((decl) => `DELETE FROM ${quoteIdent(this.tableOf(decl.name).table)}`);
   }
 
-  acyclicStatements(relName: string): string[] {
+  acyclicStatements(relName: string): SqlStatement[] {
     const head = this.tableOf(relName);
     return this.rulesFor(relName)
       .map((rule) => this.compileRuleSelect(rule, new Map()))
-      .filter((select): select is string => select !== null)
-      .map((select) => `INSERT OR IGNORE INTO ${head.table}(${head.columns.join(", ")}) ${select}`);
+      .filter((select): select is CompiledSelect => select !== null)
+      .map((select) => ({
+        sql: `INSERT OR IGNORE INTO ${quoteIdent(head.table)}(${columnList(head.columns)}) ${select.sql}`,
+        args: select.args,
+      }));
   }
 
   /** The one place a list of SQL becomes execution. Emits once, when the last statement
    *  finishes. DDL result sets are not values anybody wants, so `void` is the honest
    *  payload; `count` guarantees the single emission even for an empty list. */
-  runAll(statements: readonly string[]): Observable<void> {
-    return concat(...statements.map((sql) => this.exec(sql))).pipe(
+  runAll(statements: readonly SqlStatement[]): Observable<void> {
+    return concat(...statements.map((statement) => this.exec(statement))).pipe(
       count(),
       map(() => undefined),
     );
@@ -123,39 +127,45 @@ export class DatalogEvaluator implements IDatalogEvaluator {
   }
 
   /** Rows `rule` produces that are not already in the head's full table go into `intoDelta`. */
-  insertNewRowsStatement(rule: Rule, bodyPositionOverrides: ReadonlyMap<number, string>, intoDelta: string): string | null {
+  insertNewRowsStatement(
+    rule: Rule,
+    bodyPositionOverrides: ReadonlyMap<number, string>,
+    intoDelta: string,
+  ): SqlStatement | null {
     const head = this.tableOf(rule.head);
     const select = this.compileRuleSelect(rule, bodyPositionOverrides);
     if (select === null) return null;
-    return (
-      `INSERT OR IGNORE INTO ${intoDelta}(${head.columns.join(", ")}) ${select} ` +
-      `EXCEPT SELECT ${head.columns.join(", ")} FROM ${head.table}`
-    );
+    return {
+      sql:
+        `INSERT OR IGNORE INTO ${quoteIdent(intoDelta)}(${columnList(head.columns)}) ${select.sql} ` +
+        `EXCEPT SELECT ${columnList(head.columns)} FROM ${quoteIdent(head.table)}`,
+      args: select.args,
+    };
   }
 
   /** `rowsAffected` off this INSERT is the growth count, which is why the caller runs it
    *  through `exec` rather than `runAll`: a pair of `SELECT count(*)` scans used to
    *  recompute a number the driver already returns. */
-  mergeStatement(relName: string, delta: string): string {
+  mergeStatement(relName: string, delta: string): SqlStatement {
     const full = this.tableOf(relName);
-    const columns = full.columns.join(", ");
-    return `INSERT OR IGNORE INTO ${full.table}(${columns}) SELECT ${columns} FROM ${delta}`;
+    const columns = columnList(full.columns);
+    return `INSERT OR IGNORE INTO ${quoteIdent(full.table)}(${columns}) SELECT ${columns} FROM ${quoteIdent(delta)}`;
   }
 
-  createLikeStatements(name: string, like: RelTable): string[] {
-    const columns = like.columns.join(", ");
+  createLikeStatements(name: string, like: RelTable): SqlStatement[] {
+    const columns = columnList(like.columns);
     return [
-      `DROP TABLE IF EXISTS ${name}`,
-      `CREATE TEMP TABLE ${name}(${columns}, PRIMARY KEY (${columns})) WITHOUT ROWID`,
+      `DROP TABLE IF EXISTS ${quoteIdent(name)}`,
+      `CREATE TEMP TABLE ${quoteIdent(name)}(${columns}, PRIMARY KEY (${columns})) WITHOUT ROWID`,
     ];
   }
 
   /** Support edges, one pass over the settled model. Per rule per positive body position:
    *  the (parent_key, child_key) pairs, joining back to the head table for its surrogate. */
-  supportPlan(support: SupportEdges): { statements: string[]; rulesWithoutSupport: { head: string; reason: string }[] } {
+  supportPlan(support: SupportEdges): { statements: SqlStatement[]; rulesWithoutSupport: { head: string; reason: string }[] } {
     {
       const rulesWithoutSupport: { head: string; reason: string }[] = [];
-      const statements: string[] = [];
+      const statements: SqlStatement[] = [];
       const tagOf = (relName: string): number => {
         const tag = support.tagOf.get(relName);
         if (tag === undefined) throw new Error(`lowerSql: no dense tag registered for rel '${relName}'`);
@@ -199,15 +209,18 @@ export class DatalogEvaluator implements IDatalogEvaluator {
           continue;
         }
 
-        const childKey = `${tagOf(rule.head)} * ${support.stride} + ${headAlias}.${support.surrogate}`;
-        const fromClause = [...compiled.fromParts, `${headTable.table} ${headAlias}`].join(", ");
+        const childKey = `${tagOf(rule.head)} * ${support.stride} + ${headAlias}.${quoteIdent(support.surrogate)}`;
+        const fromClause = [...compiled.fromParts, `${quoteIdent(headTable.table)} ${headAlias}`].join(", ");
         const whereClause = [...compiled.where, ...headMatch];
 
         for (const source of compiled.positiveSources) {
-          const parentKey = `${tagOf(source.rel)} * ${support.stride} + ${source.alias}.${support.surrogate}`;
-          let sql = `INSERT OR IGNORE INTO ${support.table}(parent_key, child_key) SELECT ${parentKey}, ${childKey} FROM ${fromClause}`;
+          const parentKey = `${tagOf(source.rel)} * ${support.stride} + ${source.alias}.${quoteIdent(support.surrogate)}`;
+          let sql = `INSERT OR IGNORE INTO ${quoteIdent(support.table)}(parent_key, child_key) SELECT ${parentKey}, ${childKey} FROM ${fromClause}`;
           if (whereClause.length > 0) sql += ` WHERE ${whereClause.join(" AND ")}`;
-          statements.push(sql);
+          // compiled.where carries `?` placeholders; headMatch binds nothing, so the arg
+          // order is exactly compiled.args. Pushing sql without them silently emptied the
+          // support graph while leaving the model query correct.
+          statements.push({ sql, args: [...compiled.args] });
         }
       }
 
@@ -222,6 +235,13 @@ export class DatalogEvaluator implements IDatalogEvaluator {
     const fromParts: string[] = [];
     const where: string[] = [];
     const positiveSources: PositiveSource[] = [];
+    // Values are bound, never spliced. Positional `?` means arg order must match the
+    // order the fragments are concatenated in, which is the order they are pushed here.
+    const args: SqlValue[] = [];
+    const bind = (value: SqlValue): string => {
+      args.push(value);
+      return "?";
+    };
 
     let positiveIndex = 0;
     let negIndex = 0;
@@ -238,7 +258,7 @@ export class DatalogEvaluator implements IDatalogEvaluator {
         if (argument.kind === "wild") continue;
         const columnRef = `${alias}.${relTable.columns[columnIndex]}`;
         if (argument.kind === "lit") {
-          where.push(`${columnRef} = ${sqlLit(argument.value)}`);
+          where.push(`${columnRef} = ${bind(argument.value)}`);
         } else {
           const boundValue = bound.get(argument.name);
           if (boundValue !== undefined) where.push(`${columnRef} = ${boundValue}`);
@@ -253,7 +273,7 @@ export class DatalogEvaluator implements IDatalogEvaluator {
       if (predicate.kind === "cmp") {
         const lhs = bound.get(predicate.lhs.name);
         if (lhs === undefined) continue; // range-restriction should bind it; skip defensively
-        where.push(`${lhs} ${sqlCmpOp(predicate.op)} ${sqlLit(predicate.rhs.value)}`);
+        where.push(`${lhs} ${sqlCmpOp(predicate.op)} ${bind(predicate.rhs.value)}`);
       } else if (predicate.kind === "notrel") {
         const negTable = this.tableOf(predicate.rel);
         const negatedTableAlias = `n${negIndex++}`;
@@ -263,7 +283,7 @@ export class DatalogEvaluator implements IDatalogEvaluator {
           if (argument.kind === "wild") continue;
           const columnRef = `${negatedTableAlias}.${negTable.columns[columnIndex]}`;
           if (argument.kind === "lit") {
-            conditions.push(`${columnRef} = ${sqlLit(argument.value)}`);
+            conditions.push(`${columnRef} = ${bind(argument.value)}`);
           } else {
             const boundValue = bound.get(argument.name);
             // A bound var equi-joins into the anti-check; an unbound var is existential
@@ -277,10 +297,10 @@ export class DatalogEvaluator implements IDatalogEvaluator {
       }
     }
 
-    return { bound, fromParts, where, positiveSources };
+    return { bound, fromParts, where, positiveSources, args };
   }
 
-  compileRuleSelect(rule: Rule, bodyPositionOverrides: ReadonlyMap<number, string>): string | null {
+  compileRuleSelect(rule: Rule, bodyPositionOverrides: ReadonlyMap<number, string>): CompiledSelect | null {
     const compiled = this.compileRuleJoin(rule, bodyPositionOverrides);
     if (compiled === null) return null;
     const { bound, fromParts, where } = compiled;
@@ -301,6 +321,7 @@ export class DatalogEvaluator implements IDatalogEvaluator {
 
     let sql = `SELECT ${selectList.join(", ")} FROM ${fromParts.join(", ")}`;
     if (where.length > 0) sql += ` WHERE ${where.join(" AND ")}`;
+    const args = compiled.args;
     if (hasAgg) {
       const groupRefs = rule.headTerms
         .filter((term): term is Extract<typeof term, { kind: "hvar" }> => term.kind === "hvar")
@@ -313,7 +334,7 @@ export class DatalogEvaluator implements IDatalogEvaluator {
       // satisfying body derives no fact — and is a no-op once any binding exists.
       else sql += " HAVING count(*) > 0";
     }
-    return sql;
+    return { sql, args };
   }
 }
 
@@ -354,7 +375,7 @@ export class RecursiveStratum implements IRecursiveStratum {
   /** Every rule over the full tables. Recursive members are still empty, so only the exit
    *  rules produce rows, and those become the first delta. Nothing here needs a result
    *  back, so it is a statement list. */
-  seedStatements(): string[] {
+  seedStatements(): SqlStatement[] {
     return [
       ...this.memberRels.flatMap((relName) =>
         this.evaluator.createLikeStatements(this.delta(relName), this.evaluator.tableOf(relName)),
@@ -368,7 +389,7 @@ export class RecursiveStratum implements IRecursiveStratum {
   }
 
   /** Fresh `next` tables, then one delta pass per recursive body position. */
-  deriveStatements(): string[] {
+  deriveStatements(): SqlStatement[] {
     return [
       ...this.memberRels.flatMap((relName) =>
         this.evaluator.createLikeStatements(this.next(relName), this.evaluator.tableOf(relName)),
@@ -386,15 +407,15 @@ export class RecursiveStratum implements IRecursiveStratum {
   }
 
   /** `next` becomes the new delta. */
-  promoteStatements(relName: string): string[] {
+  promoteStatements(relName: string): SqlStatement[] {
     return [
-      `DROP TABLE IF EXISTS ${this.delta(relName)}`,
-      `ALTER TABLE ${this.next(relName)} RENAME TO ${this.delta(relName)}`,
+      `DROP TABLE IF EXISTS ${quoteIdent(this.delta(relName))}`,
+      `ALTER TABLE ${quoteIdent(this.next(relName))} RENAME TO ${quoteIdent(this.delta(relName))}`,
     ];
   }
 
-  dropDeltaStatements(): string[] {
-    return this.memberRels.map((relName) => `DROP TABLE IF EXISTS ${this.delta(relName)}`);
+  dropDeltaStatements(): SqlStatement[] {
+    return this.memberRels.map((relName) => `DROP TABLE IF EXISTS ${quoteIdent(this.delta(relName))}`);
   }
 
   /** One semi-naive round. The only genuinely async step: each merge's `rowsAffected`
@@ -432,11 +453,19 @@ export class RecursiveStratum implements IRecursiveStratum {
   }
 }
 
-function sqlLit(value: string | number | boolean | null): string {
-  if (value === null) return "NULL";
-  if (typeof value === "number") return String(value);
-  if (typeof value === "boolean") return value ? "1" : "0";
-  return `'${value.replace(/'/g, "''")}'`;
+/** Table and column names are not values, so they cannot be bound. They come from `.dl`
+ *  rel declarations through bridge(), which is grammar-constrained, but quoting also
+ *  makes reserved words safe. Anything a double quote could escape out of is rejected. */
+export function quoteIdent(name: string): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    throw new Error(`lowerSql: refusing to build SQL with the identifier ${JSON.stringify(name)}`);
+  }
+  return `"${name}"`;
+}
+
+/** A quoted, comma-separated column list. */
+function columnList(columns: readonly string[]): string {
+  return columns.map(quoteIdent).join(", ");
 }
 
 function sqlCmpOp(op: Compare["op"]): string {

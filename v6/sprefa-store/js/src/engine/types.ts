@@ -28,7 +28,7 @@
 
 import type { Observable } from "rxjs";
 
-import type { Client, InStatement, ResultSet } from "@libsql/client";
+import type { Client, InStatement, InValue, ResultSet } from "@libsql/client";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Connection.
@@ -39,6 +39,9 @@ export type SqliteDb = Client;
 
 /** A statement as `db.execute` accepts it: bare SQL, or SQL plus bound args. */
 export type SqlStatement = InStatement;
+
+/** A value a statement may bind. */
+export type SqlValue = InValue;
 
 /** What `db.execute` resolves to. */
 export type QueryResult = ResultSet;

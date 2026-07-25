@@ -3,7 +3,7 @@
 import type { Observable } from "rxjs";
 
 import type { Program, RelDecl, Rule } from "./ast.ts";
-import type { QueryResult, SqliteDb, TraceStatement } from "../engine/types.ts";
+import type { QueryResult, SqlStatement, SqlValue, SqliteDb, TraceStatement } from "../engine/types.ts";
 
 /** A rel's physical table plus its column names, positional. */
 export interface RelTable {
@@ -82,6 +82,14 @@ export interface CompiledJoin {
   readonly fromParts: readonly string[];
   readonly where: readonly string[];
   readonly positiveSources: readonly PositiveSource[];
+  /** Bound values, in the order the fragments above will be concatenated. */
+  readonly args: SqlValue[];
+}
+
+/** A rule's SELECT plus the values its WHERE binds. */
+export interface CompiledSelect {
+  readonly sql: string;
+  readonly args: SqlValue[];
 }
 
 /**
@@ -91,7 +99,7 @@ export interface CompiledJoin {
  */
 /** What the support pass produces before anything is executed. */
 export interface SupportPlan {
-  readonly statements: readonly string[];
+  readonly statements: readonly SqlStatement[];
   readonly rulesWithoutSupport: readonly { readonly head: string; readonly reason: string }[];
 }
 
@@ -105,7 +113,7 @@ export interface IDatalogEvaluator {
   readonly strata: readonly Stratum[];
 
   /** Every statement goes through here, so every one is counted and traced. */
-  exec(sql: string): Observable<QueryResult>;
+  exec(statement: SqlStatement): Observable<QueryResult>;
   tableOf(relName: string): RelTable;
   rulesFor(relName: string): readonly Rule[];
 
@@ -114,24 +122,24 @@ export interface IDatalogEvaluator {
 
   /** SQL building is synchronous: these return statements, not observables. Only `exec`
    *  and `runAll` touch the connection. */
-  clearStatements(): string[];
-  acyclicStatements(relName: string): string[];
+  clearStatements(): SqlStatement[];
+  acyclicStatements(relName: string): SqlStatement[];
   insertNewRowsStatement(
     rule: Rule,
     bodyPositionOverrides: ReadonlyMap<number, string>,
     intoDelta: string,
-  ): string | null;
+  ): SqlStatement | null;
   /** The caller runs this through `exec`, not `runAll`, because `rowsAffected` is the
    *  fixpoint's growth signal. */
-  mergeStatement(relName: string, delta: string): string;
-  createLikeStatements(name: string, like: RelTable): string[];
+  mergeStatement(relName: string, delta: string): SqlStatement;
+  createLikeStatements(name: string, like: RelTable): SqlStatement[];
   supportPlan(support: SupportEdges): SupportPlan;
 
   /** The one place a list of SQL becomes execution. */
-  runAll(statements: readonly string[]): Observable<void>;
+  runAll(statements: readonly SqlStatement[]): Observable<void>;
 
   compileRuleJoin(rule: Rule, bodyPositionOverrides: ReadonlyMap<number, string>): CompiledJoin | null;
-  compileRuleSelect(rule: Rule, bodyPositionOverrides: ReadonlyMap<number, string>): string | null;
+  compileRuleSelect(rule: Rule, bodyPositionOverrides: ReadonlyMap<number, string>): CompiledSelect | null;
 }
 
 /** One recursive SCC's semi-naive fixpoint. Its delta/next table names live only for the
@@ -148,10 +156,10 @@ export interface IRecursiveStratum {
   next(relName: string): string;
   recursivePositions(rule: Rule): number[];
 
-  seedStatements(): string[];
-  deriveStatements(): string[];
-  promoteStatements(relName: string): string[];
-  dropDeltaStatements(): string[];
+  seedStatements(): SqlStatement[];
+  deriveStatements(): SqlStatement[];
+  promoteStatements(relName: string): SqlStatement[];
+  dropDeltaStatements(): SqlStatement[];
 
   /** The only genuinely async step: each merge's `rowsAffected` decides whether the
    *  fixpoint runs again. */
