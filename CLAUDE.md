@@ -139,6 +139,27 @@ lock, rusqlite-coupling Layer 5 call_def fix, _source_stage_owner batch.)
 - Kimi trio prompts (reading-order/lib-taint/session-compile) — worktrees stale off old next; recut or delete.
 - Low: 159-changed-paths mystery; tick_root pairing residual (c33ffc04).
 
+### v6 STANDING PLAN (user-set 2026-07-25, execute IN ORDER, do not improvise past it)
+1. **Restore green + commit.** `v6/sprefa-store/js/src/engine/engine.ts` is missing 4
+   definitions deleted mid-cleanup (`sequence`, `uncounted_query`, `uncounted_multi`,
+   `execBatch`) and `exec` references an unimported name; `src/lib/rxjs.ts` is an orphan
+   to delete. Restore the agent-verified text, verify store 84/84 + dl 74/74 + both
+   typechecks, COMMIT immediately. Every green state gets a commit from now on.
+2. **Undo rxjs over sync code** (the user withdrew the "make it all rxjs" ask). Sync
+   loops/list building are plain array code returning arrays. Observables exist only
+   where a real async boundary lives (the SqlRunner driver seam, spawn, HTTP). While
+   here: values always flow; completion IS the `complete` notification; `Observable<void>`
+   only where the driver itself returns nothing; `map(() => undefined)`,
+   reduce-to-undefined, and named completion-signal helpers (`sequence`/`run_then`
+   and kin) are banned. Sequential run-and-collect is `concat(...).pipe(toArray())`, inline.
+3. **Single subscribe point.** Collapse the 3 manual `.subscribe()` sites
+   (`dl/src/3_runtime.ts` keepAlive, `dl/src/1_hosts.ts` host effects,
+   `dl/src/6_http.ts` SSE) into the one terminal subscription in `main.ts`
+   (`v6/tools/one-subscribe.sh` ratchet 3 -> 1). This is the next milestone after 2.
+4. **Rxjs rule of engagement**: before writing ANY new rxjs, stop and ask the user
+   first: is this making sense, is there a shorter/more direct way, fewer variables,
+   fewer methods. No new operator chains land without that check.
+
 ### Style notes for this repo
 - dl variable names are descriptive, never single-letter: `path`/`line`/`callee_name`, not `p`/`l`/`q`. Applies to every snippet in skills, examples, book, tests, and agent prompts; rename opportunistically when touching old files.
 - N+1: never a per-row write. Collect the set, call `Db::insert_rows` once. The tick counter screams if you don't.
