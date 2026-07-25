@@ -562,7 +562,7 @@ export async function applyDerivedTxn(state: RuntimeState, outcome: EdbTickOutco
 
   return with_txn(db, async () => {
     if (edbMoved && state.derivedRelNames.length > 0) {
-      await evalProgramSql(db, state.storageProgram, state.relTables, state.supportEdges);
+      await firstValueFrom(evalProgramSql(db, state.storageProgram, state.relTables, state.supportEdges));
       await refreshFactPlane(state);
     }
     const perRel = edbMoved ? await diffAgainstTables(state) : new Map<string, PerRelDiff>();
@@ -743,7 +743,7 @@ export class DlRuntime implements IDlRuntime {
     // Report the coverage limit once, at boot, from the real rule set rather than from a
     // guess: a negated body or an aggregate head has non-monotone support, so those heads
     // are not retractable through the graph.
-    const { rulesWithoutSupport } = await evalProgramSql(db, storageProgram, relTables, supportEdges);
+    const { rulesWithoutSupport } = await firstValueFrom(evalProgramSql(db, storageProgram, relTables, supportEdges));
 
     const derivedRelNames = cfg.bridge.program.rels.filter((decl) => decl.origin === "IDB").map((decl) => decl.name);
     const derivedTableMirror = new Map<string, Row[]>();

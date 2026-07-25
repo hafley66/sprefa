@@ -14,7 +14,7 @@
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { ReplaySubject, type Observable } from "rxjs";
+import { ReplaySubject, firstValueFrom, type Observable } from "rxjs";
 import { createClient } from "@libsql/client";
 
 import {
@@ -56,7 +56,7 @@ async function runSql(prog: Program, edb: Record<string, Row[]>): Promise<Map<st
         await db.executeMultiple(`INSERT OR IGNORE INTO ${t.table}(${t.columns.join(", ")}) VALUES (${vals})`);
       }
     }
-    await evalProgramSql(db, prog, tables as RelTables);
+    await firstValueFrom(evalProgramSql(db, prog, tables as RelTables));
 
     const out = new Map<string, Row[]>();
     for (const decl of prog.rels) {

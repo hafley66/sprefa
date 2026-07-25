@@ -1,5 +1,7 @@
 /** Contract header for the lowering plane. Imports only ./ast.ts and ../engine/types.ts. */
 
+import type { Observable } from "rxjs";
+
 import type { Program, RelDecl, Rule } from "./ast.ts";
 import type { SqliteDb } from "../engine/types.ts";
 
@@ -49,8 +51,8 @@ export interface SupportReport {
 /**
  * Evaluate every rule-headed IDB rel into its table, stratum by stratum.
  *
- * When the promise settles every such table holds exactly its current rowset. No
- * further emission follows, which is why this is not an rx operator type.
+ * Emits exactly once, when every such table holds its current rowset. No further
+ * emission follows, which is why this is not an rx operator type.
  *
  * The caller owns the transaction. Single statements only: `executeMultiple` would
  * trip the adapter's rollback guard.
@@ -61,7 +63,7 @@ export type EvalProgram = (
   tables: RelTables,
   support?: SupportEdges,
   traceStatement?: (sql: string) => void,
-) => Promise<SupportReport>;
+) => Observable<SupportReport>;
 
 export interface IDatalog {
   readonly evalProgram: EvalProgram;
