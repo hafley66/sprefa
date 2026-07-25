@@ -28,7 +28,7 @@ use serde::Serialize;
 // ════════════════════════════════════════════════════════════════════════════
 
 /// THE one coordinate. Byte offsets into the file; line/col derived, never stored.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Span {
     pub start: u32,
     pub len: u32,
@@ -82,7 +82,7 @@ impl BlobHash {
 pub struct ProjectDigest(pub [u8; 16]);
 
 /// Dense u32 into the per-file `Strings` interner.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NameId(pub u32);
 
 /// Local index into one file's node vec; flattened to a span at the wire.
@@ -187,7 +187,8 @@ impl Family for CstF {
 
 /// The type graph: declared entities (class/interface/alias/enum/function/method/
 /// struct/trait/const) + their structural edges. Entity NODES ship in phase 1; the
-/// type EDGES (field/impl/uses/...) land with Resolve<TypeF>.
+/// type EDGES (field/impl/uses/...) are phase-2 `Resolve<TypeF>` output, bound
+/// from the phase-1 candidate rows (4b-iii; see `TypeEdgeCandidate`).
 #[derive(Default, Copy, Clone, Debug)]
 pub struct TypeF;
 
@@ -221,9 +222,10 @@ impl TypeEntityKind {
     }
 }
 
-/// type_edge kind. 7 variants. Declared to close the vocabulary; emitted ONLY by
-/// Resolve<TypeF>.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// type_edge kind. 7 variants. Rides the phase-1 candidate row (unresolved) and
+/// the `ProjectEdge` (resolved) — the edges themselves are emitted ONLY by
+/// `Resolve<TypeF>`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TypeEdgeKind {
     Field,
     Variant,
@@ -302,11 +304,30 @@ impl ConstKind {
     }
 }
 
-/// The TypeF side-channel: arrow-type sigs + the const facet.
+/// One UNRESOLVED type-edge candidate: `owner` = the owning entity's span (the
+/// TypeF node join key), `to` = the referenced name AS WRITTEN — including v5's
+/// synthetic `Owner::Member` variant text, which names no node — and `kind`.
+/// USER RULING (2026-07-24, option (a)): collected in PHASE 1 during the one
+/// parse, exactly the `CallFAux.specifiers` pattern, so the resolve arm binds
+/// purely with zero AST. RESOLVE INPUT ONLY: no FlatFact arm (the 4a wire
+/// ruling stands — the wire carries the resolved `ProjectEdge`, never the
+/// candidate). The candidate row IS the parity target: v5's `type_edge.to` is
+/// free text (decls.rs:517), so text dsts STAY text — the twin-normalize reads
+/// this row's owner/to/kind, never a node join.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TypeEdgeCandidate {
+    pub owner: Span,
+    pub to: NameId,
+    pub kind: TypeEdgeKind,
+}
+
+/// The TypeF side-channel: arrow-type sigs + the const facet + the unresolved
+/// type-edge candidates (4b-iii).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TypeFAux {
     pub sigs: Vec<TypeSig>,
     pub consts: Vec<ConstValue>,
+    pub candidates: Vec<TypeEdgeCandidate>,
 }
 
 impl Family for TypeF {
@@ -889,7 +910,7 @@ pub trait Resolve<F: Family>: Source {
     /// one blob (spec: `_2_traits.rs`:88-96).
     fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<F>> {
         let _ = (output, cx);
-        todo!("commit 4b: Resolve<TypeF> for TsSource; 4c: ScipSource + Resolve<CallF>")
+        todo!("4b-iii landed Resolve<TypeF> for TsSource; next: 4c ScipSource + Resolve<CallF>, 4d rust/go arms")
     }
 }
 
@@ -1043,9 +1064,9 @@ pub enum FlatFact {
 //
 //   * rust parity: one self-verifying closure-df-node-name waiver.
 //
-// DEFERRED FOR ALL LANGS (gated on Resolve<F> commit 4, or follow-ups):
-//   type_edge (field/impl/variant/uses/generic)   -> Resolve<TypeF>
-//   resolved caller -> callee                     -> Resolve<CallF>
+// DEFERRED (per-lang gates noted; the rest lands with Resolve<F>/follow-ups):
+//   type_edge (field/impl/variant/uses/generic)   -> TS ASSERTED (4b-iii); rust/go = 4d
+//   resolved caller -> callee                     -> Resolve<CallF> (4c)
 //   docs facet                                    -> follow-up
 //   df aux (args/fields/lits/param_pos)           -> labels, follow-up
 //

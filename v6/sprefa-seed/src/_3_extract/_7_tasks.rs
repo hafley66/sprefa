@@ -89,9 +89,10 @@
 //! lambda/docs parity fixtures) LANDED in v6/sprefa-extract/. The TS + Rust + Go phase-1
 //! families - Cst / Type(+sigs) / Call / Df (+const) - all project + stream + snapshot through
 //! ONE uniform surface, AND each ported set matches a captured v5 oracle (see the (parity) /
-//! (rust) / (go) entries). NEXT: 4b Resolve<TypeF> for TsSource - the machinery
-//! + the 4b-ii specifier emission landed; the resolve ARM is STOPPED on the
-//! type-edge-candidate design gap (see (4b-i)); a human ruling unblocks it:
+//! (rust) / (go) entries). NEXT: 4c ScipSource seam + Resolve<CallF> (TS) - 4b
+//! landed COMPLETE: machinery (4b-i) + specifiers (4b-ii) + the type_edge arm
+//! (4b-iii, ts type_edge asserted, zero divergence; the (4b-i) STOP was ruled
+//! option (a) by the human):
 //!   6a29d920  commit 1   CstF via ast-grep (one dep = rust/ts/tsx/js/go grammars);
 //!              clap bin streaming flat JSONL with --bench; snapshot. Piping proof.
 //!   f3ceb4fa  commit 2a  Parser/Project seam -> arena-passing GAT: oxc's
@@ -405,9 +406,47 @@
 //!             byte-diff snapshot test; the collector itself is proven by a
 //!             scratch-file CLI check of all 9 forms (4 import kinds incl.
 //!             type-import, 4 reexport forms, 2 no-row forms). Gate green.
-//!   PENDING:   the name-resolved type EDGES (field/impl/variant/uses + the
-//!              resolved param/returns binding) still land at Resolve<TypeF>
-//!              (commit 4) by design. ts_const_facts_from is PORTED (see (const)).
+//!   (4b)     COMMIT 4b-iii: type_edge ASSERTED for ts - the (4b-i) STOP is
+//!             answered. RULING (user, 2026-07-24, option (a)): phase-1
+//!             UNRESOLVED type-edge candidate rows on TypeFAux - the
+//!             CallFAux.specifiers pattern - resolve binds/filters purely; the
+//!             4a seam unchanged, phase 2 stays zero-AST. Sub-rulings: text
+//!             dsts STAY text (no fake node joins; the candidate row IS the
+//!             parity target; a candidate whose `to` names no corpus node -
+//!             v5's synthetic Owner::Member variant text, externals - emits a
+//!             ZERO dst leg); the same-file blob leg via the DefIndex span-
+//!             join (the TypeF node named `to` gives the span, the index gives
+//!             the blob); sig-sourced param/returns restricted to Function-
+//!             kind owners (v5 emits no method-sig type_edges); the genuinely-
+//!             resolved span->blob legs are a v6-only ADDITIVE layer (reported,
+//!             never asserted). TypeFAux.candidates = {owner span, to NameId as
+//!             written, kind: TypeEdgeKind} - NO FlatFact arm (resolve input
+//!             only; the 4a wire ruling stands). lang/ts.rs: the
+//!             `edge_candidates` walk ports v5 ts_edges_from (enum variant with
+//!             the synthetic Owner::Member text; alias union variant/field;
+//!             class heritage impl + prop/accessor/ctor-param-prop field;
+//!             interface extends generic + prop field; constraint generic; fn
+//!             body uses), param/returns riding fn_sigs at the Function-entity
+//!             call sites only (ONE refs walk feeds sigs + candidates, they
+//!             cannot drift). Resolve<TypeF> for TsSource = dedup (v5's
+//!             BTreeSet shaping) + the dst leg (same-file span-join; unique
+//!             corpus site; else zero leg). RED->GREEN: the assertion was wired
+//!             FIRST against an empty stub (the red listed all 10 missing
+//!             sample rows verbatim), then the arm filled it. golden_parity's
+//!             type_edge_resolve_parity_ts asserts the twin-normalized text
+//!             (owner name via the entity span, to text via the candidate; the
+//!             zip discipline: edge i resolves candidate i): sample 10 /
+//!             consts 3 / docs 5 / lambdas 0 rows compared, ZERO divergence.
+//!             The ledger drops ts type_edge from the deferred set (rust/go
+//!             keep theirs, 3+3, until 4d) + reports the v6-only resolved legs
+//!             (sample 6, docs 3, consts/lambdas 0). Snapshots byte-identical
+//!             (candidates flatten nowhere, verified by the byte-diff test);
+//!             dep rails unchanged (no dep changes this increment). rust/go
+//!             resolve arms = 4d.
+//!   PENDING:   TS type EDGES are now ASSERTED (see (4b): phase-1 candidates +
+//!              Resolve<TypeF>; field/variant/impl/generic/uses/param/returns).
+//!              Still pending: rust/go type_edge arms (4d), resolved caller ->
+//!              callee (Resolve<CallF>, 4c). ts_const_facts_from is PORTED (see (const)).
 //!   ORACLE:     scip-typescript 0.4.0 was run on the fixture (throwaway /tmp). The
 //!              real correctness gate is occurrence/resolution parity (the commit 4
 //!              ratchet), NOT a raw symbol diff (scip is a flat exhaustive symbol

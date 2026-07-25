@@ -22,11 +22,11 @@ use oxc_ast::ast::Program;
 use oxc_ast_visit::Visit as OxcVisit;
 use oxc_span::{GetSpan, SourceType};
 
-use crate::family::{CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfEdgeKind, DfF, DfNodeKind, SigSlot, Specifier, SpecifierKind, TypeEntityKind, TypeF};
+use crate::family::{CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfEdgeKind, DfF, DfNodeKind, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF};
 use crate::rows::{Edge, FamilyBundle, Node};
-use crate::seams::{ParseError, Parser, Project};
-use crate::shape::{NameId, NodeRef, Span, Strings};
-use crate::source::{ExtractOutput, FamilyMask, Source};
+use crate::seams::{DefIndex, ParseError, Parser, Project, Resolve, corpus_defs};
+use crate::shape::{BlobHash, NameId, NodeRef, Span, Strings};
+use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use super::astgrep::{AstGrepParser, CstProjector};
 
 /// `oxc_span::Span` (start + end) -> our byte `Span` (start + len). One
@@ -144,6 +144,11 @@ impl Project<TypeF> for TypeProjector {
                 _ => {}
             }
         }
+        // The second walk (mirroring v5's separate `ts_edges_from` pass): the
+        // unresolved type-edge candidates (variant/field/impl/generic/uses).
+        // param/returns candidates ride `fn_sigs` at the Function-entity call
+        // sites above (v5 emits no method-signature type_edges).
+        edge_candidates(program, strings, sink);
     }
 }
 
@@ -190,6 +195,7 @@ fn class_entity(class: &ts::Class, strings: &mut Strings, sink: &mut FamilyBundl
             if let ts::PropertyKey::StaticIdentifier(key) = &method.key {
                 push_entity(sink, strings, method.span, key.name.to_string(), TypeEntityKind::Method);
                 // A method IS a type: carry its arrow signature (param/ret refs).
+                // v5 emits NO method-signature type_edges, so no candidates.
                 fn_sigs(
                     method.span,
                     &method.value.type_parameters,
@@ -197,6 +203,7 @@ fn class_entity(class: &ts::Class, strings: &mut Strings, sink: &mut FamilyBundl
                     &method.value.return_type,
                     strings,
                     sink,
+                    false,
                 );
             }
         }
@@ -213,6 +220,7 @@ fn fn_entity(func: &ts::Function, strings: &mut Strings, sink: &mut FamilyBundle
         &func.return_type,
         strings,
         sink,
+        true,
     );
 }
 
@@ -235,6 +243,7 @@ fn var_fn_entity(var: &ts::VariableDeclaration, strings: &mut Strings, sink: &mu
                     &arrow.return_type,
                     strings,
                     sink,
+                    true,
                 );
             }
             Some(ts::Expression::FunctionExpression(func)) => {
@@ -246,6 +255,7 @@ fn var_fn_entity(var: &ts::VariableDeclaration, strings: &mut Strings, sink: &mu
                     &func.return_type,
                     strings,
                     sink,
+                    true,
                 );
             }
             _ => {}
@@ -263,7 +273,11 @@ fn var_fn_entity(var: &ts::VariableDeclaration, strings: &mut Strings, sink: &mu
 
 /// The signature slots of one callable: param type-refs (with their positional
 /// index) + the return type-refs. `owner` is the callable node's span; the sigs
-/// join back to that node at the wire and the resolution seam.
+/// join back to that node at the wire and the resolution seam. When
+/// `record_candidates` (the Function-entity call sites — v5 emits no method-
+/// signature type_edges), each ref ALSO lands as an unresolved param/returns
+/// type-edge candidate (4b-iii); the sigs and the candidates then share ONE
+/// refs walk, so they cannot drift.
 fn fn_sigs(
     owner: oxc_span::Span,
     type_parameters: &Option<oxc_allocator::Box<ts::TSTypeParameterDeclaration>>,
@@ -271,18 +285,25 @@ fn fn_sigs(
     return_type: &Option<oxc_allocator::Box<ts::TSTypeAnnotation>>,
     strings: &mut Strings,
     sink: &mut FamilyBundle<TypeF>,
+    record_candidates: bool,
 ) {
     let exclude = type_param_names(type_parameters);
     for (pos, param) in params.items.iter().enumerate() {
         if let Some(ann) = &param.type_annotation {
             for name in refs_in_type(&ann.type_annotation, &exclude) {
                 push_sig(sink, strings, owner, SigSlot::Param, pos as u32, &name);
+                if record_candidates {
+                    push_candidate(sink, strings, owner, &name, TypeEdgeKind::Param);
+                }
             }
         }
     }
     if let Some(rt) = return_type {
         for name in refs_in_type(&rt.type_annotation, &exclude) {
             push_sig(sink, strings, owner, SigSlot::Ret, 0, &name);
+            if record_candidates {
+                push_candidate(sink, strings, owner, &name, TypeEdgeKind::Returns);
+            }
         }
     }
 }
@@ -351,6 +372,283 @@ fn ts_type_name(name: &ts::TSTypeName) -> Option<String> {
             ts_type_name(&qualified.left).map(|left| format!("{left}.{}", qualified.right.name))
         }
         ts::TSTypeName::ThisExpression(_) => None,
+    }
+}
+
+// ── type-edge candidates (TypeFAux.candidates; commit 4b-iii) ───────────────
+//
+// Port of v5 `ts_edges_from` (src/graph/typegraph/ts/mod.rs:103-421) onto the
+// candidate row: the same top-level walk (v5 itself runs edges as a second
+// pass over the program), the same kind vocabulary, the same `to` text —
+// qualified where v5 qualifies (`A.B`), synthetic where v5 synthesizes
+// (`Owner::Member` for enum variants). The owner is the entity's SPAN (the
+// TypeF node join key) instead of v5's name string. param/returns candidates
+// are NOT collected here: they ride `fn_sigs` at the Function-entity call
+// sites (one refs walk feeds sigs + candidates; v5 emits no method-signature
+// type_edges). Resolve input only — these rows flatten nowhere.
+
+/// The top-level walk (port of v5 `ts_edges_from`'s statement match).
+fn edge_candidates(program: &Program<'_>, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
+    for stmt in &program.body {
+        use ts::Statement as S;
+        match stmt {
+            S::ExportNamedDeclaration(export) => {
+                if let Some(decl) = &export.declaration {
+                    decl_edge_candidates(decl, strings, sink);
+                }
+            }
+            S::ExportDefaultDeclaration(export) => match &export.declaration {
+                ts::ExportDefaultDeclarationKind::ClassDeclaration(class) => class_edge_candidates(class, strings, sink),
+                ts::ExportDefaultDeclarationKind::TSInterfaceDeclaration(interface) => interface_edge_candidates(interface, strings, sink),
+                ts::ExportDefaultDeclarationKind::FunctionDeclaration(func) => fn_edge_candidates(func, strings, sink),
+                _ => {}
+            },
+            S::ClassDeclaration(class) => class_edge_candidates(class, strings, sink),
+            S::TSInterfaceDeclaration(interface) => interface_edge_candidates(interface, strings, sink),
+            S::TSTypeAliasDeclaration(alias) => alias_edge_candidates(alias, strings, sink),
+            S::TSEnumDeclaration(enum_decl) => enum_edge_candidates(enum_decl, strings, sink),
+            S::FunctionDeclaration(func) => fn_edge_candidates(func, strings, sink),
+            S::VariableDeclaration(var) => var_fn_edge_candidates(var, strings, sink),
+            _ => {}
+        }
+    }
+}
+
+fn decl_edge_candidates(decl: &ts::Declaration, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
+    match decl {
+        ts::Declaration::ClassDeclaration(class) => class_edge_candidates(class, strings, sink),
+        ts::Declaration::TSInterfaceDeclaration(interface) => interface_edge_candidates(interface, strings, sink),
+        ts::Declaration::TSTypeAliasDeclaration(alias) => alias_edge_candidates(alias, strings, sink),
+        ts::Declaration::TSEnumDeclaration(enum_decl) => enum_edge_candidates(enum_decl, strings, sink),
+        ts::Declaration::FunctionDeclaration(func) => fn_edge_candidates(func, strings, sink),
+        ts::Declaration::VariableDeclaration(var) => var_fn_edge_candidates(var, strings, sink),
+        _ => {}
+    }
+}
+
+fn push_candidate(
+    sink: &mut FamilyBundle<TypeF>,
+    strings: &mut Strings,
+    owner: oxc_span::Span,
+    to: &str,
+    kind: TypeEdgeKind,
+) {
+    sink.aux.candidates.push(TypeEdgeCandidate {
+        owner: to_span(owner),
+        to: strings.intern(to),
+        kind,
+    });
+}
+
+/// Every ref under a type subtree becomes one candidate (dedup is resolve's
+/// shaping, matching v5's BTreeSet).
+fn refs_candidates(
+    sink: &mut FamilyBundle<TypeF>,
+    strings: &mut Strings,
+    owner: oxc_span::Span,
+    ty: &ts::TSType,
+    exclude: &BTreeSet<String>,
+    kind: TypeEdgeKind,
+) {
+    for name in refs_in_type(ty, exclude) {
+        push_candidate(sink, strings, owner, &name, kind);
+    }
+}
+
+/// Declared type-parameter names + their constraint refs as "generic" edges.
+/// Port of v5 `ts_param_edges`; returns the exclusion set (the declared names).
+fn param_constraint_candidates(
+    owner: oxc_span::Span,
+    type_parameters: &Option<oxc_allocator::Box<ts::TSTypeParameterDeclaration>>,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) -> BTreeSet<String> {
+    let params = type_param_names(type_parameters);
+    if let Some(tp) = type_parameters {
+        for param in &tp.params {
+            if let Some(constraint) = &param.constraint {
+                refs_candidates(sink, strings, owner, constraint, &params, TypeEdgeKind::Generic);
+            }
+        }
+    }
+    params
+}
+
+/// The shared body of every function form's non-signature edges: every
+/// TSTypeReference inside the body is "uses" (port of v5
+/// `ts_fn_signature_edges`'s body half; the generic half rides
+/// `param_constraint_candidates`, param/returns ride `fn_sigs`).
+fn fn_body_uses(
+    owner: oxc_span::Span,
+    type_parameters: &Option<oxc_allocator::Box<ts::TSTypeParameterDeclaration>>,
+    body: Option<&ts::FunctionBody>,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
+    let params = param_constraint_candidates(owner, type_parameters, strings, sink);
+    if let Some(body) = body {
+        let mut collector = TypeRefCollector { exclude: &params, out: Vec::new() };
+        collector.visit_function_body(body);
+        for name in collector.out {
+            push_candidate(sink, strings, owner, &name, TypeEdgeKind::Uses);
+        }
+    }
+}
+
+/// A named `function foo(...)`. Anonymous functions have no owner, so skip
+/// (v5 `ts_function_edges`).
+fn fn_edge_candidates(func: &ts::Function, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
+    if func.id.is_none() {
+        return;
+    }
+    fn_body_uses(func.span, &func.type_parameters, func.body.as_deref(), strings, sink);
+}
+
+/// `const foo = (...) => ...` / `const foo = function (...) {...}` at the top
+/// level: the binding name owns the function's edges (v5 `ts_var_fn_edges`).
+/// Plain value consts carry no type shape and are skipped.
+fn var_fn_edge_candidates(var: &ts::VariableDeclaration, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
+    for declarator in &var.declarations {
+        let ts::BindingPattern::BindingIdentifier(_) = &declarator.id else {
+            continue;
+        };
+        match &declarator.init {
+            Some(ts::Expression::ArrowFunctionExpression(arrow)) => {
+                fn_body_uses(declarator.span, &arrow.type_parameters, Some(&arrow.body), strings, sink);
+            }
+            Some(ts::Expression::FunctionExpression(func)) => {
+                fn_body_uses(declarator.span, &func.type_parameters, func.body.as_deref(), strings, sink);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Port of v5 `ts_class_edges`: heritage is "impl" (super class + super type
+/// args + implements + implements type args), property / accessor / ctor
+/// param-property type refs are "field", type-param constraint refs are
+/// "generic". Method SIGNATURES mint no type_edges in v5 (nothing here).
+fn class_edge_candidates(class: &ts::Class, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
+    let Some(_) = &class.id else { return };
+    let owner = class.span;
+    let params = param_constraint_candidates(owner, &class.type_parameters, strings, sink);
+    if let Some(sup) = &class.super_class {
+        if let ts::Expression::Identifier(idr) = sup {
+            push_candidate(sink, strings, owner, &idr.name, TypeEdgeKind::Impl);
+        }
+    }
+    if let Some(args) = &class.super_type_arguments {
+        for ty in &args.params {
+            refs_candidates(sink, strings, owner, ty, &params, TypeEdgeKind::Impl);
+        }
+    }
+    for imp in &class.implements {
+        if let Some(to) = ts_type_name(&imp.expression) {
+            push_candidate(sink, strings, owner, &to, TypeEdgeKind::Impl);
+        }
+        if let Some(args) = &imp.type_arguments {
+            for ty in &args.params {
+                refs_candidates(sink, strings, owner, ty, &params, TypeEdgeKind::Impl);
+            }
+        }
+    }
+    for element in &class.body.body {
+        match element {
+            ts::ClassElement::PropertyDefinition(prop) => {
+                if let Some(ann) = &prop.type_annotation {
+                    refs_candidates(sink, strings, owner, &ann.type_annotation, &params, TypeEdgeKind::Field);
+                }
+            }
+            ts::ClassElement::AccessorProperty(prop) => {
+                if let Some(ann) = &prop.type_annotation {
+                    refs_candidates(sink, strings, owner, &ann.type_annotation, &params, TypeEdgeKind::Field);
+                }
+            }
+            // Constructor parameter properties (`constructor(private db: Db)`)
+            // declare fields; plain constructor args are not part of the shape.
+            ts::ClassElement::MethodDefinition(method) => {
+                if method.kind != ts::MethodDefinitionKind::Constructor {
+                    continue;
+                }
+                for fp in &method.value.params.items {
+                    if fp.accessibility.is_none() && !fp.readonly {
+                        continue;
+                    }
+                    if let Some(ann) = &fp.type_annotation {
+                        refs_candidates(sink, strings, owner, &ann.type_annotation, &params, TypeEdgeKind::Field);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Port of v5 `ts_interface_edges`: extends is "generic" (identifier + type
+/// args), property signatures are "field", constraint refs are "generic".
+fn interface_edge_candidates(interface: &ts::TSInterfaceDeclaration, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
+    let owner = interface.span;
+    let params = param_constraint_candidates(owner, &interface.type_parameters, strings, sink);
+    for ext in &interface.extends {
+        if let ts::Expression::Identifier(idr) = &ext.expression {
+            push_candidate(sink, strings, owner, &idr.name, TypeEdgeKind::Generic);
+        }
+        if let Some(args) = &ext.type_arguments {
+            for ty in &args.params {
+                refs_candidates(sink, strings, owner, ty, &params, TypeEdgeKind::Generic);
+            }
+        }
+    }
+    for member in &interface.body.body {
+        if let ts::TSSignature::TSPropertySignature(prop) = member {
+            if let Some(ann) = &prop.type_annotation {
+                refs_candidates(sink, strings, owner, &ann.type_annotation, &params, TypeEdgeKind::Field);
+            }
+        }
+    }
+}
+
+/// Port of v5 `ts_alias_edges`: a union alias is a sum type — alternatives
+/// that are plain refs are "variant" (their type args stay "field"); anything
+/// else is shape ("field"). Non-union: all refs are "field".
+fn alias_edge_candidates(alias: &ts::TSTypeAliasDeclaration, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
+    let owner = alias.span;
+    let params = param_constraint_candidates(owner, &alias.type_parameters, strings, sink);
+    if let ts::TSType::TSUnionType(union) = &alias.type_annotation {
+        for member in &union.types {
+            if let ts::TSType::TSTypeReference(reference) = member {
+                if let Some(to) = ts_type_name(&reference.type_name) {
+                    if !params.contains(&to) {
+                        push_candidate(sink, strings, owner, &to, TypeEdgeKind::Variant);
+                    }
+                }
+                if let Some(args) = &reference.type_arguments {
+                    for ty in &args.params {
+                        refs_candidates(sink, strings, owner, ty, &params, TypeEdgeKind::Field);
+                    }
+                }
+            } else {
+                refs_candidates(sink, strings, owner, member, &params, TypeEdgeKind::Field);
+            }
+        }
+        return;
+    }
+    refs_candidates(sink, strings, owner, &alias.type_annotation, &params, TypeEdgeKind::Field);
+}
+
+/// Port of v5 `ts_enum_edges`: every member is a "variant" whose `to` is the
+/// synthetic `Owner::Member` text — exactly as v5 synthesizes it (Identifier
+/// and String member names only; computed names are skipped).
+fn enum_edge_candidates(enum_decl: &ts::TSEnumDeclaration, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
+    let owner = enum_decl.span;
+    let owner_name = enum_decl.id.name.to_string();
+    for member in &enum_decl.body.members {
+        let name = match &member.id {
+            ts::TSEnumMemberName::Identifier(id) => id.name.to_string(),
+            ts::TSEnumMemberName::String(s) => s.value.to_string(),
+            _ => continue,
+        };
+        push_candidate(sink, strings, owner, &format!("{owner_name}::{name}"), TypeEdgeKind::Variant);
     }
 }
 
@@ -1720,5 +2018,82 @@ impl Source for TsSource {
         }
 
         ExtractOutput { strings, cst, types, call, df }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Resolve<TypeF> for TsSource (commit 4b-iii). Pure: candidates + sigs in, no
+// AST. The candidate row IS the parity target (user ruling 2026-07-24, option
+// (a)): v5's `type_edge.to` is free text, so text dsts STAY text — a candidate
+// whose `to` names no corpus node (v5's synthetic `Owner::Member`, externals)
+// emits a ZERO dst leg (BlobHash::default + Span::empty), never a fake node
+// join. The genuinely-resolved span->blob legs are a v6-only ADDITIVE layer
+// (reported, never asserted). Same-file blob leg: the TypeF node named `to` in
+// THIS bundle gives the span, and the DefIndex span-join gives the blob (the
+// output carries no hash of its own). Corpus fallback: a UNIQUE site only.
+// ════════════════════════════════════════════════════════════════════════════
+
+impl TsSource {
+    /// The deduped, deterministically-ordered candidate list (v5's BTreeSet
+    /// shaping): the aux candidates, deduped on (owner, to, kind). `resolve`
+    /// emits its edges in EXACTLY this order, one per candidate — the parity
+    /// golden zips the two (the zip discipline: edge i resolves candidate i).
+    pub fn type_edge_candidates(output: &ExtractOutput) -> Vec<TypeEdgeCandidate> {
+        let mut set: BTreeSet<TypeEdgeCandidate> = BTreeSet::new();
+        if let Some(types) = &output.types {
+            for candidate in &types.aux.candidates {
+                set.insert(candidate.clone());
+            }
+        }
+        set.into_iter().collect()
+    }
+}
+
+/// The dst leg of one candidate: same-file TypeF entity first (its span joined
+/// through the `DefIndex` for the blob), else a unique corpus site, else None
+/// (text stays text — the zero leg). Name-only resolution, per the 4a ADDENDUM
+/// site-key discipline (no receiver typing anywhere in commit 4).
+fn resolve_type_dst(
+    types: &FamilyBundle<TypeF>,
+    strings: &Strings,
+    index: Option<&DefIndex>,
+    name: &str,
+) -> Option<(BlobHash, Span)> {
+    let same_file = types
+        .nodes
+        .iter()
+        .find(|node| node.name.map_or(false, |id| strings.lookup(id) == name));
+    if let (Some(node), Some(index)) = (same_file, index) {
+        return corpus_defs(index, name)
+            .iter()
+            .find(|site| site.span == node.span)
+            .map(|site| (site.blob, site.span));
+    }
+    let sites = index.map(|index| corpus_defs(index, name)).unwrap_or(&[]);
+    match sites {
+        [only] => Some((only.blob, only.span)),
+        _ => None,
+    }
+}
+
+impl Resolve<TypeF> for TsSource {
+    fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<TypeF>> {
+        let Some(types) = &output.types else { return Vec::new() };
+        let index = cx.indexes.def_index.get();
+        let mut edges = Vec::new();
+        for candidate in TsSource::type_edge_candidates(output) {
+            // src: the TypeF entity at the owner span. Exists by construction
+            // (candidates are minted beside their entity); a miss would break
+            // the parity golden's zip count loudly, so it is not hidden here.
+            let Some(src_ix) = types.nodes.iter().position(|node| node.span == candidate.owner)
+            else {
+                continue;
+            };
+            let (dst_blob, dst_span) =
+                resolve_type_dst(types, &output.strings, index, output.strings.lookup(candidate.to))
+                    .unwrap_or_default();
+            edges.push(ProjectEdge::new(NodeRef(src_ix as u32), dst_blob, dst_span, candidate.kind));
+        }
+        edges
     }
 }

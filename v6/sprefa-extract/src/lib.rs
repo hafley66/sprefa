@@ -29,8 +29,8 @@ pub mod wire;
 pub use dispatch::dispatch;
 pub use family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfEdgeKind, DfF, DfNodeKind,
-    Family, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeKind, TypeEntityKind,
-    TypeFAux, TypeF, TypeSig,
+    Family, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind,
+    TypeEntityKind, TypeFAux, TypeF, TypeSig,
 };
 pub use lang::{source_for, sources, AstgrepSource, GoSource, RustSource, TsSource};
 pub use rows::{Edge, FamilyBundle, Node};
