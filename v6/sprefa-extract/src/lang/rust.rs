@@ -13,21 +13,31 @@
 //! parity oracle (v5_normalize) reconstructs the byte as `line_starts[line-1] +
 //! col`, which is exactly `line_col_to_byte`.
 //!
-//! Deferred to `Resolve<TypeF>` (commit 4): type EDGES (field/impl/variant/uses/
-//! generic). Deferred follow-ups: the docs facet (`rust_docs_from`); the df
-//! enrichment aux (args/fields/lits/param_pos/loops/nests).
+//! Commit 4d-i lands the type EDGES: unresolved candidates ride `TypeFAux` out
+//! of the one parse (port of v5 `edges_from`: field/variant/generic/impl — v5
+//! rust emits NO param/returns and NO uses), and `Resolve<TypeF>` binds them
+//! (the 4b-iii discipline, mirrored from the ts arm). Commit 4d-ii lands
+//! `Resolve<CallF>` (the 4c-ii ts arm mirrored: NameResolve primary,
+//! ScipOverride on scip disagreement; the rust-analyzer `local `-symbol
+//! adaptation documented on the arm) + the scip ratchet. Deferred follow-ups:
+//! the docs facet (`rust_docs_from`); the df enrichment aux (args/fields/
+//! lits/param_pos/loops/nests).
+
+use std::collections::BTreeSet;
 
 use syn::spanned::Spanned;
 use syn::{
-    AngleBracketedGenericArguments, GenericArgument, Path, PathArguments, ReturnType, Type,
-    TypeParamBound,
+    AngleBracketedGenericArguments, Fields, GenericArgument, GenericParam, Path, PathArguments,
+    ReturnType, Type, TypeParamBound, WherePredicate,
 };
 
-use crate::family::{CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfEdgeKind, DfF, DfNodeKind, SigSlot, TypeEntityKind, TypeF, TypeSig};
+use crate::family::{CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfEdgeKind, DfF, DfNodeKind, ProjectEdge, SigSlot, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig};
 use crate::rows::{Edge, FamilyBundle, Node};
-use crate::seams::{Parser, Project};
-use crate::shape::{NodeRef, Span, Strings};
-use crate::source::{ExtractOutput, FamilyMask, Source};
+use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
+use crate::seams::{DefIndex, Parser, Project, Resolve, containing_def_site, corpus_defs, covering_def, def_named, own_blob};
+use crate::shape::{BlobHash, FamilyTag, NodeRef, Span, Strings};
+use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
+use crate::types::ScipIndex;
 use super::astgrep::{AstGrepParser, CstProjector};
 
 // ── span bridge: proc_macro2 line/col -> v6 byte Span ───────────────────────
@@ -93,6 +103,10 @@ fn project_types(
         item_entity(item, line_starts, strings, sink);
     }
     const_values(parsed, line_starts, strings, sink);
+    // The candidates walk runs AFTER every entity is in the bundle so an
+    // impl-owned candidate finds its in-file self-type entity regardless of
+    // item order (v5's text-keyed pass has no order sensitivity; spans do).
+    edge_candidates(parsed, line_starts, strings, sink);
 }
 
 /// One declared entity per item, mirroring v5 `rust_item_entity`. A callable
@@ -370,6 +384,380 @@ fn const_values(
             text: strings.intern(&s.value()),
             kind: ConstKind::Lit,
         });
+    }
+}
+
+// ── type-edge candidates (4d-i; the Resolve<TypeF> input) ───────────────────
+//
+// Port of v5 `edges_from` (src/graph/typegraph/rust/mod.rs:88-183), collected
+// during the ONE syn parse into TypeFAux.candidates — the 4b-iii ruling (the
+// CallFAux.specifiers pattern: unresolved rows; owner span + to-name as
+// written + kind; resolve binds purely, phase 2 stays zero-AST). v5 rust emits
+// field/variant/generic/impl ONLY — NO param/returns (v5's rust edges_from
+// never walks a fn signature, so the ts arm's Function-only sig filter has no
+// rust analogue; per-lang toward v5 per the v5-is-correct ruling) and NO uses
+// (ts-only). TWO v5 rows are unrepresentable in the candidate shape (the
+// owner is a Span; v5's `from` is free text) and are SKIPPED with this comment
+// as the loud marker — NEITHER is exercised by any fixture or oracle row, so
+// the asserted oracle diff stays green; the honest fix is a candidate-shape
+// evolution (an adjudicated increment, not a silent skip):
+//  - enum-variant FIELD edges: v5's from is the synthetic `Owner::Variant`
+//    text and no entity exists for the owner span to point at.
+//  - impl-owned edges (generic bounds + the trait `impl` edge) on a self-type
+//    declared OUTSIDE this file: no in-file entity carries the owner name.
+//    An impl on an IN-FILE self-type IS minted (owner = that entity's span;
+//    v5's from-text is exactly the entity name).
+
+/// Collect one file's unresolved type-edge candidates. Port of v5 `edges_from`
+/// + `item_edges`.
+fn edge_candidates(
+    parsed: &syn::File,
+    line_starts: &[u32],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
+    for item in &parsed.items {
+        item_edge_candidates(item, line_starts, strings, sink);
+    }
+}
+
+fn item_edge_candidates(
+    item: &syn::Item,
+    line_starts: &[u32],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
+    match item {
+        syn::Item::Struct(s) => {
+            let owner = syn_span(line_starts, s.ident.span());
+            generic_candidates(owner, &s.generics, strings, sink);
+            field_candidates(owner, &s.fields, strings, sink);
+        }
+        syn::Item::Enum(e) => {
+            let owner = syn_span(line_starts, e.ident.span());
+            generic_candidates(owner, &e.generics, strings, sink);
+            for variant in &e.variants {
+                // The `to` is v5's synthetic `Owner::Member` text — text dsts
+                // STAY text (the 4b-iii ruling). The variant's own field edges
+                // are unrepresentable (see the section comment).
+                push_candidate(
+                    sink,
+                    strings,
+                    owner,
+                    &format!("{}::{}", e.ident, variant.ident),
+                    TypeEdgeKind::Variant,
+                );
+            }
+        }
+        // v5 maps Union to Struct for entities and walks its fields the same way.
+        syn::Item::Union(u) => {
+            let owner = syn_span(line_starts, u.ident.span());
+            generic_candidates(owner, &u.generics, strings, sink);
+            field_candidates(owner, &Fields::Named(u.fields.clone()), strings, sink);
+        }
+        syn::Item::Trait(t) => {
+            let owner = syn_span(line_starts, t.ident.span());
+            generic_candidates(owner, &t.generics, strings, sink);
+            for bound in &t.supertraits {
+                bound_candidate(owner, bound, strings, sink);
+            }
+        }
+        syn::Item::Impl(i) => {
+            // Port of v5: the whole impl is skipped when the self-type has no
+            // primary name. The owner is the IN-FILE entity of that name; an
+            // external self-type is unrepresentable (see the section comment).
+            let Some(owner_name) = primary_type(&i.self_ty) else { return };
+            let Some(owner) = entity_span_named(sink, strings, &owner_name) else { return };
+            generic_candidates(owner, &i.generics, strings, sink);
+            if let Some((_, path, _)) = &i.trait_ {
+                if let Some(to) = path_name(path) {
+                    push_candidate(sink, strings, owner, &to, TypeEdgeKind::Impl);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The span of the TypeF entity interned as `name` in this bundle (the owner
+/// leg of an impl-owned candidate: v5's from-text is the self-type name, which
+/// the in-file entity carries verbatim).
+fn entity_span_named(sink: &FamilyBundle<TypeF>, strings: &Strings, name: &str) -> Option<Span> {
+    sink.nodes
+        .iter()
+        .find(|node| node.name.map_or(false, |id| strings.lookup(id) == name))
+        .map(|node| node.span)
+}
+
+/// One field candidate per named type reference under each field's type. Port
+/// of v5 `field_edges` (`type_refs` is the shared port above).
+fn field_candidates(
+    owner: Span,
+    fields: &Fields,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
+    for field in fields.iter() {
+        for to in type_refs(&field.ty) {
+            push_candidate(sink, strings, owner, &to, TypeEdgeKind::Field);
+        }
+    }
+}
+
+/// Generic-bound + where-clause candidates. Port of v5 `generic_edges`.
+fn generic_candidates(
+    owner: Span,
+    generics: &syn::Generics,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
+    for param in &generics.params {
+        if let GenericParam::Type(t) = param {
+            for bound in &t.bounds {
+                bound_candidate(owner, bound, strings, sink);
+            }
+        }
+    }
+    if let Some(where_clause) = &generics.where_clause {
+        for pred in &where_clause.predicates {
+            if let WherePredicate::Type(t) = pred {
+                for bound in &t.bounds {
+                    bound_candidate(owner, bound, strings, sink);
+                }
+            }
+        }
+    }
+}
+
+/// One generic candidate per trait bound. Port of v5 `bound_edge` (the kind is
+/// always Generic here — v5 rust binds bounds under no other edge kind).
+fn bound_candidate(
+    owner: Span,
+    bound: &TypeParamBound,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
+    if let TypeParamBound::Trait(t) = bound {
+        if let Some(to) = path_name(&t.path) {
+            push_candidate(sink, strings, owner, &to, TypeEdgeKind::Generic);
+        }
+    }
+}
+
+fn push_candidate(
+    sink: &mut FamilyBundle<TypeF>,
+    strings: &mut Strings,
+    owner: Span,
+    to: &str,
+    kind: TypeEdgeKind,
+) {
+    sink.aux.candidates.push(TypeEdgeCandidate { owner, to: strings.intern(to), kind });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Resolve<TypeF> for RustSource (commit 4d-i). The 4b-iii discipline, mirrored
+// from the ts arm: the candidate row IS the parity target; text dsts STAY
+// text — a candidate whose `to` names no corpus node (v5's synthetic
+// `Owner::Member` variant text, externals) emits a ZERO dst leg. The
+// genuinely-resolved span->blob legs are a v6-only ADDITIVE layer (reported,
+// never asserted). Same-file blob leg: the TypeF node named `to` in THIS
+// bundle gives the span, the DefIndex span-join gives the blob. Corpus
+// fallback: a UNIQUE site only.
+// ════════════════════════════════════════════════════════════════════════════
+
+impl RustSource {
+    /// The deduped, deterministically-ordered candidate list (v5's BTreeSet
+    /// shaping): the aux candidates, deduped on (owner, to, kind). `resolve`
+    /// emits its edges in EXACTLY this order, one per candidate — the parity
+    /// golden zips the two (the zip discipline: edge i resolves candidate i).
+    pub fn type_edge_candidates(output: &ExtractOutput) -> Vec<TypeEdgeCandidate> {
+        let mut set: BTreeSet<TypeEdgeCandidate> = BTreeSet::new();
+        if let Some(types) = &output.types {
+            for candidate in &types.aux.candidates {
+                set.insert(candidate.clone());
+            }
+        }
+        set.into_iter().collect()
+    }
+}
+
+/// The dst leg of one candidate: same-file TypeF entity first (its span joined
+/// through the `DefIndex` for the blob), else a unique corpus site, else None
+/// (text stays text — the zero leg). Name-only resolution, per the 4a ADDENDUM
+/// site-key discipline. Mirror of the ts arm's `resolve_type_dst` (the post-4d
+/// dedup sweep owns unifying the per-lang copies).
+fn resolve_type_dst(
+    types: &FamilyBundle<TypeF>,
+    strings: &Strings,
+    index: Option<&DefIndex>,
+    name: &str,
+) -> Option<(BlobHash, Span)> {
+    let same_file = types
+        .nodes
+        .iter()
+        .find(|node| node.name.map_or(false, |id| strings.lookup(id) == name));
+    if let (Some(node), Some(index)) = (same_file, index) {
+        return corpus_defs(index, name)
+            .iter()
+            .find(|site| site.span == node.span)
+            .map(|site| (site.blob, site.span));
+    }
+    let sites = index.map(|index| corpus_defs(index, name)).unwrap_or(&[]);
+    match sites {
+        [only] => Some((only.blob, only.span)),
+        _ => None,
+    }
+}
+
+impl Resolve<TypeF> for RustSource {
+    fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<TypeF>> {
+        let Some(types) = &output.types else { return Vec::new() };
+        let index = cx.indexes.def_index.get();
+        let mut edges = Vec::new();
+        for candidate in RustSource::type_edge_candidates(output) {
+            // src: the TypeF entity at the owner span. Exists by construction
+            // (candidates are minted beside their entity); a miss would break
+            // the parity golden's zip count loudly, so it is not hidden here.
+            let Some(src_ix) = types.nodes.iter().position(|node| node.span == candidate.owner)
+            else {
+                continue;
+            };
+            let (dst_blob, dst_span) =
+                resolve_type_dst(types, &output.strings, index, output.strings.lookup(candidate.to))
+                    .unwrap_or_default();
+            edges.push(ProjectEdge::new(NodeRef(src_ix as u32), dst_blob, dst_span, candidate.kind));
+        }
+        edges
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Resolve<CallF> for RustSource (commit 4d-ii). The 4c-ii ts arm mirrored, two
+// legs per the user rulings (scip-override ALLOWED; the v5-shaped name-match
+// stays primary):
+//   NameResolve — callee name -> unique def. Same-file WINS via the span-join
+//     (def_named in THIS CallF bundle -> its span -> the DefIndex gives the
+//     blob); cross-file a UNIQUE corpus blob (CallF facet preferred);
+//     ambiguous/absent -> NO ROW (the 4b-iii discipline).
+//   ScipOverride — scip's occurrence resolution for the site disagrees with
+//     the name-match outcome: scip's corpus target WINS the edge, the
+//     name-match is displaced. Needs the corpus scip index
+//     (cx.indexes.scip_index) AND the rev-correct reader (cx.reader); either
+//     absent -> pure name-match. scip-EXTERNAL never displaces and never
+//     mints.
+// RUST-ANALYZER ADAPTATION (the honest per-indexer difference, mirrored by
+// the ratchet and logged in the ledger): a `local ` symbol at a call site is
+// a LOCAL BINDING (`let func = |x| ..; func(..)`) — df-owned, not a call-
+// graph def (rust-analyzer names no closure symbol; scip's answer is the
+// binding, and the 4c containing_def_site join would misroute it to the
+// ENCLOSING fn, minting a false self-edge). Local-symbol sites are treated
+// as scip-external: NO v6 edge. Method resolution stays NAME-ONLY per the 4a
+// ADDENDUM (receiver typing out of scope). `callee_path` rides phase 1 as
+// collected (rust fills it); the resolution key stays the trailing segment —
+// no path-qualified matching is invented (unexercised by the fixtures and
+// unratchetable where scip already arbitrates).
+// The arm learns its own blob by the DefIndex span-join (`own_blob`) and its
+// scip document by content hash (`join_documents`). Per-site edges, no dedup.
+// A site outside every CallF def (module level) emits no row.
+// ════════════════════════════════════════════════════════════════════════════
+
+impl RustSource {
+    /// The name-match target of one callee (the NameResolve leg). Pub so the
+    /// scip ratchet re-runs it to classify overrides — same discipline as
+    /// `type_edge_candidates` in 4d-i. Mirror of `TsSource::call_name_match`
+    /// (the post-4d dedup sweep owns unifying the per-lang copies).
+    pub fn call_name_match(
+        output: &ExtractOutput,
+        index: &DefIndex,
+        callee: &str,
+    ) -> Option<(BlobHash, Span)> {
+        let call = output.call.as_ref()?;
+        if let Some(r) = def_named(call, &output.strings, callee) {
+            let span = call.node(r).span;
+            if let Some(site) = corpus_defs(index, callee).iter().find(|site| site.span == span) {
+                return Some((site.blob, site.span));
+            }
+        }
+        let sites = corpus_defs(index, callee);
+        let mut blobs: Vec<BlobHash> = Vec::new();
+        for site in sites {
+            if !blobs.contains(&site.blob) {
+                blobs.push(site.blob);
+            }
+        }
+        let [blob] = blobs.as_slice() else { return None };
+        let site = sites.iter().find(|s| s.family == FamilyTag::Call).unwrap_or(&sites[0]);
+        Some((*blob, site.span))
+    }
+}
+
+/// The scip-resolved corpus target of one call site: the site's occurrence
+/// (the shared `site_occurrence` convention) -> its symbol's definition
+/// occurrence -> the containing DefSite. None = scip has no corpus CALL
+/// target: an external library symbol, an unresolved reference, no occurrence
+/// at the site, the target document outside the corpus — OR a `local `
+/// symbol, the rust-analyzer adaptation documented on the arm above (a local
+/// binding is df-owned; the enclosing fn is NOT the callee).
+fn scip_call_target<'a>(
+    index: &ScipIndex,
+    joined: &[Option<(BlobHash, Vec<u8>)>],
+    doc_ix: usize,
+    site: &CallSite,
+    callee: &str,
+    def_index: &'a DefIndex,
+) -> Option<(BlobHash, Span, &'a str)> {
+    let doc = &index.documents[doc_ix];
+    let (_, content) = joined[doc_ix].as_ref()?;
+    let occ = site_occurrence(doc, content, site.span, callee)?;
+    if occ.symbol.starts_with("local ") {
+        return None;
+    }
+    let (def_doc_ix, def_occ) = definition_of(index, doc_ix, &occ.symbol)?;
+    let def_doc = &index.documents[def_doc_ix];
+    let (def_blob, def_content) = joined[def_doc_ix].as_ref()?;
+    let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
+    let (name, def_site) = containing_def_site(def_index, *def_blob, ident)?;
+    Some((*def_blob, def_site.span, name))
+}
+
+impl Resolve<CallF> for RustSource {
+    fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<CallF>> {
+        let Some(call) = &output.call else { return Vec::new() };
+        let Some(def_index) = cx.indexes.def_index.get() else { return Vec::new() };
+        // The scip leg: the corpus index + the rev-correct reader + this
+        // file's own document (found by content hash). Any missing piece ->
+        // pure name-match (v5-shaped).
+        let scip = cx.indexes.scip_index.get().zip(cx.reader).and_then(|(index, reader)| {
+            let joined = join_documents(index, reader);
+            let blob = own_blob(output, def_index)?;
+            let doc_ix =
+                joined.iter().position(|j| j.as_ref().map_or(false, |(b, _)| *b == blob))?;
+            Some((index, joined, doc_ix))
+        });
+        let mut edges = Vec::new();
+        for site in &call.aux.sites {
+            // The caller is the innermost covering CallF def (the 4a
+            // caller-binding discipline); a module-level site has no caller
+            // node and emits no row.
+            let Some(caller) = covering_def(call, site.span) else { continue };
+            let callee = output.strings.lookup(site.callee);
+            let name_t = RustSource::call_name_match(output, def_index, callee);
+            let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
+                scip_call_target(index, joined, *doc_ix, site, callee, def_index)
+            });
+            // Agreement is judged at (blob, name): the name-match binds the
+            // call FACET while scip can name the type facet — one definition,
+            // two facet coordinates (the ORACLE entry's "the models differ by
+            // construction").
+            let ((dst_blob, dst_span), kind) = match (name_t, scip_t) {
+                (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => (n, CallEdgeKind::NameResolve),
+                (_, Some(s)) => ((s.0, s.1), CallEdgeKind::ScipOverride),
+                (Some(n), None) => (n, CallEdgeKind::NameResolve),
+                (None, None) => continue,
+            };
+            edges.push(ProjectEdge::new(caller, dst_blob, dst_span, kind));
+        }
+        edges
     }
 }
 

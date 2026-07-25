@@ -89,16 +89,19 @@
 //! lambda/docs parity fixtures + the closure-name waiverkill (v5-is-correct consequence (a):
 //! lam_sym ported, golden_parity asserts with ZERO waivers) + commit 4b COMPLETE (ts type_edge
 //! asserted) + commit 4c COMPLETE (the ScipSource seam + Resolve<CallF> for TsSource + the
-//! scip ratchet: 5 NameResolve / 1 ScipOverride / 0 misses) + commit 4d-i-go (go
-//! type_edge ASSERTED: go_edges_from candidates ported + Resolve<TypeF>, the new
-//! edges.go case, 7 rows, zero divergence) + commit 4d-ii-go (Resolve<CallF> for
-//! GoSource + the scip-go ratchet over the scip/ module: 1 NameResolve / 1
-//! ScipOverride / 0 misses)) LANDED in v6/sprefa-extract/.
+//! scip ratchet: 5 NameResolve / 1 ScipOverride / 0 misses) + commit 4d COMPLETE for go
+//! (4d-i-go go type_edge ASSERTED: go_edges_from candidates ported + Resolve<TypeF>, the new
+//! edges.go case, 7 rows, zero divergence; 4d-ii-go Resolve<CallF> for GoSource + the scip-go
+//! ratchet over the scip/ module: 1 NameResolve / 1 ScipOverride / 0 misses) + commit 4d
+//! COMPLETE for rust (4d-i-rust type_edge asserted, 3+3 rows zero divergence; 4d-ii-rust
+//! Resolve<CallF> + the rust-analyzer scip ratchet: 2 NameResolve / 3 ScipOverride / 0
+//! misses)) LANDED in v6/sprefa-extract/.
 //! The TS + Rust + Go phase-1
 //! families - Cst / Type(+sigs) / Call / Df (+const) - all project + stream + snapshot through
 //! ONE uniform surface, AND each ported set matches a captured v5 oracle (see the (parity) /
-//! (rust) / (go) entries). NEXT: 4d-rust (the rust type_edge + Resolve<CallF>
-//! arms, rust-analyzer-scip reusing the proven 4c/4d shape) - 4b
+//! (rust) / (go) entries). THE RESOLVE PASS (commit 4) IS COMPLETE: type_edge asserted for
+//! ts+go+rust, call edges ratcheted vs three indexers. NEXT: the parked arcs (df aux port,
+//! docs port, oddity arc, dedup sweep, Epic 3) - 4b
 //! landed COMPLETE: machinery (4b-i) + specifiers (4b-ii) + the type_edge arm
 //! (4b-iii, ts type_edge asserted, zero divergence; the (4b-i) STOP was ruled
 //! option (a) by the human):
@@ -694,6 +697,115 @@
 //!              Still pending: the rust type_edge + Resolve<CallF> arms
 //!              (4d-rust, rust-analyzer-scip). ts_const_facts_from is PORTED
 //!              (see (const)).
+//!   (4d-i)   COMMIT 4d-i (rust): type_edge ASSERTED for rust - the ts arm's
+//!             4b-iii shape ported per-lang (v5-is-correct consequence (c)).
+//!             lang/rust.rs: `edge_candidates` rides the ONE syn parse into
+//!             TypeFAux.candidates (owner span, to-name as written, kind),
+//!             porting v5 `edges_from` (src/graph/typegraph/rust/mod.rs:88-183):
+//!             struct/union field, enum variant (to = v5's synthetic
+//!             `Owner::Member` text - text dsts STAY text), struct/enum/union/
+//!             trait generic bounds + where-clauses, trait supertraits, impl
+//!             generic bounds + the trait impl edge. PER-LANG DIVERGENCE FROM
+//!             TS (toward v5, not toward v6-internal unification): v5 rust
+//!             emits NO param/returns type_edges (its edges_from never walks a
+//!             fn signature - the ts arm's Function-only sig filter has no
+//!             rust analogue) and NO uses (ts-only). UNREPRESENTABLE v5 rows
+//!             (the candidate owner is a Span; v5's from is free text),
+//!             SKIPPED with a loud section comment + this note and exercised
+//!             by NO fixture/oracle row (the honest fix is a candidate-shape
+//!             evolution = an adjudicated increment, not a silent skip):
+//!             enum-variant FIELD edges (v5's from is the synthetic
+//!             Owner::Variant text) and impl-owned edges on an EXTERNAL
+//!             self-type. An impl on an IN-FILE self-type IS minted: owner =
+//!             the entity's span, found AFTER the full entity walk so item
+//!             order cannot matter. Resolve<TypeF> for RustSource mirrors the
+//!             ts arm (dedup on (owner,to,kind) = v5's BTreeSet shaping; the
+//!             same-file blob leg via the DefIndex span-join; unique corpus
+//!             site else the zero leg; `resolve_type_dst` duplicated per the
+//!             deferred-dedup ruling - the post-4d sweep owns unification).
+//!             golden_parity `type_edge_resolve_parity_rust` (the zip
+//!             discipline, same as ts): sample 3 / docs 3 rows compared, ZERO
+//!             divergence - rust's 3+3 leave the deferred set (go keeps its
+//!             3+3 until 4d-go). v6-only resolved legs: 0 both cases (`String`
+//!             + `Owner::Member` name no corpus node). Snapshots
+//!             byte-identical (candidates flatten nowhere, proven by the
+//!             byte-diff snapshot tests); dep rails unchanged (no dep changes
+//!             this increment). NEXT: 4d-ii rust Resolve<CallF> + the rust
+//!             scip ratchet (rust-analyzer scip; argv ported from v5
+//!             scip_setup.rs INDEXERS).
+//!   (4d-ii)  COMMIT 4d-ii (rust): Resolve<CallF> for RustSource + the rust
+//!             scip RATCHET. scip.rs gains `ScipRust` on the same ScipSource
+//!             seam: `build` shells out `rust-analyzer scip . --output {out}`
+//!             (v5 scip_setup.rs INDEXERS rust row VERBATIM; PATH only - the
+//!             indexer ships with the toolchain, `rustup component add
+//!             rust-analyzer`; no npx fallback), ALWAYS staged (cargo
+//!             metadata writes `target/` under the project root
+//!             UNCONDITIONALLY - a stronger hermetic than the ts conditional;
+//!             the staged copy is sources + Cargo.tomls only, so crate-
+//!             relative document paths match the root layout); `load` shares
+//!             the one prost decode (the wire is indexer-agnostic;
+//!             ScipTypescript::load now delegates to the same fn - behavior
+//!             identical). rust-analyzer's model vs scip-typescript's:
+//!             symbols are qualified (`rust-analyzer cargo <crate> <version>
+//!             <path>`), locals are `local N` DOCUMENT-scoped (the shared
+//!             `definition_of` convention already covers them), position
+//!             encoding is UTF-8, and indexing resolves through cargo
+//!             metadata (a Cargo project + crate-reachable files only - no
+//!             ts-style whole-dir sweep). lang/rust.rs arm: the 4c-ii ts arm
+//!             mirrored (caller = covering_def; NameResolve same-file-wins /
+//!             unique corpus blob / ambiguous-or-absent -> no row;
+//!             ScipOverride displaces on disagreement; own_blob +
+//!             join_documents identity; per-site, no dedup) with ONE honest
+//!             rust adaptation, mirrored by the ratchet + logged here: a
+//!             `local ` symbol at a call site is a LOCAL BINDING (`let func =
+//!             |x| ..; func(..)`) - df-owned, not a call-graph def
+//!             (rust-analyzer names no closure symbol, so scip's answer is
+//!             the binding and the 4c containing_def_site join would
+//!             misroute it to the ENCLOSING fn = a false self-edge).
+//!             Local-symbol sites read as scip-EXTERNAL: NO v6 edge (leg 6's
+//!             rust extension). Method resolution stays NAME-ONLY (the 4a
+//!             ADDENDUM; receiver typing out of scope); `callee_path` rides
+//!             phase 1 as collected (rust fills it) with the trailing segment
+//!             as the resolution key - NO path-qualified matching is invented
+//!             (unexercised by the fixtures and unratchetable where scip
+//!             already arbitrates). `call_name_match`/`scip_call_target`
+//!             mirror the ts fns (the post-4d dedup sweep owns unification).
+//!             THE RATCHET (golden_parity `call_resolve_scip_ratchet_rust`;
+//!             the 4c six legs unweakened, the local extension counted under
+//!             leg 6): ScipRust over tests/fixtures/rust - now a Cargo
+//!             project (new fixture Cargo.toml with `[lib] path = "lib.rs"` +
+//!             an empty `[workspace]` table so cargo never walks up into
+//!             sprefa-extract's workspace; lib.rs declares the modules so
+//!             EVERY fixture file is crate-reachable = one scip document per
+//!             file; scip/{alpha,beta,gamma}.rs = the ts trio's mirror,
+//!             scip-ratchet only, NOT in CASES, no v5 oracle). MEASURED
+//!             (rust-analyzer 1.97.0-nightly (9eb3be26 2026-05-18), 7 sites
+//!             over 7 files): NameResolve 2 (sample.rs:20 trim, docs.rs:25
+//!             trim - same-file wins), ScipOverride 3 (LISTED: sample.rs:21
+//!             Engine + docs.rs:32 Engine - name-match ambiguous
+//!             (sample.Engine vs docs.Engine) -> none, scip binds the
+//!             same-file struct; scip/gamma.rs:7 helper - name-match
+//!             ambiguous (alpha.helper vs beta.helper) -> none, scip binds
+//!             alpha.helper through the use), external-no-edge 2 (the `func`
+//!             local-closure calls, the rust leg-6 extension), 0 missing /
+//!             0 disagreements / 0 misses / 0 overbound. The arm's edge
+//!             multiset == the twin's per-site outcomes per file (asserted);
+//!             a missing/failed rust-analyzer is a loud failure, never a
+//!             skipped green. Snapshots byte-identical (no UPDATE_SNAP); the
+//!             fixture dir is never written (staging proven: no target/, no
+//!             Cargo.lock); dep rails unchanged (no dep changes). The ledger
+//!             test reports the v6-only rust call-edge counts per case
+//!             (CASES corpus, no scip loaded = pure name-match: sample 1,
+//!             docs 1).
+//!   PENDING:   TS type EDGES are now ASSERTED (see (4b): phase-1 candidates +
+//!              Resolve<TypeF>; field/variant/impl/generic/uses/param/returns);
+//!              RUST type edges are now ASSERTED (see (4d-i): field/variant/
+//!              generic/impl - v5 rust has no param/returns/uses).
+//!              TS resolved caller -> callee is now RATCHETED vs scip (see (4c));
+//!              RUST resolved caller -> callee is now RATCHETED vs rust-analyzer
+//!              scip (see (4d-ii)). Still pending: go type_edge arm (4d), go
+//!              Resolve<CallF> arm (4d). ts_const_facts_from is PORTED (see
+//!              (const)).
 //!   ORACLE:     scip-typescript 0.4.0 was run on the fixture (throwaway /tmp). The
 //!              real correctness gate is occurrence/resolution parity (the commit 4
 //!              ratchet), NOT a raw symbol diff (scip is a flat exhaustive symbol
