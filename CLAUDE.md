@@ -165,6 +165,19 @@ lock, rusqlite-coupling Layer 5 call_def fix, _source_stage_owner batch.)
   The prefix is what lets the interface and its implementing object hold the same root word
   without an alias. `lower/types.ts` (`RelTable`, `Graph`, `Stratum`, `IDatalog`) is inconsistent
   and is the rename target, not the other way round.
+- **Exactly ONE manual `.subscribe()` in the whole app, ever** (user-set 2026-07-25): React does
+  not ask you to call `ReactDOM.render` three times. One terminal subscription at the bottom of
+  `main.ts`; everything above it is cold and composed with `merge`/`concatMap`. A second
+  `.subscribe()` anywhere is a design failure, not a style preference, because it means that
+  branch of the graph is started imperatively and its lifetime is tracked by hand.
+  Corollary: no `Subscription` field held on a class, and no `Subject` used as a request/response
+  bridge (a method that pushes into one Subject and awaits a matching id on another is RPC wearing
+  a stream costume, and it forces every caller back into `await`).
+  Ratchet, 2026-07-25 baseline = 3, target 1, never rises:
+  `1_hosts.ts:402` (host effects), `6_http.ts:281` (per-client SSE), `3_runtime.ts:793`
+  (`keepAlive`). Blockers to collapsing them: 7 `new Promise` wrappers around Node callbacks
+  (`server.listen`/`server.close`/`readBody`, 3 `spawn` sites, `extractFile`'s exit code) and the
+  `commits$`/`reportsSubject` Subject pair at `3_runtime.ts:768`/`:95`.
 - **A type name must say what the thing is on first reading** (user-set 2026-07-25): no
   library-flavoured or abbreviation names that carry no content. `Rx` is the rejected example.
   If one interface needs a vague name it is usually two interfaces glued together; split it and
