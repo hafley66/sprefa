@@ -1,23 +1,20 @@
 /**
- * 2_schema.ts - decl -> SQLite DDL: rel_* current tables, delta log, effect_cache,
- * store_meta.
+ * decl -> SQLite DDL: rel_* current tables, delta log, effect_cache, store_meta.
  *
- * Contract (plan M2, tasks.d.ts): `ddl(decls, retention) -> string[]`.
- *   rel_<name>(cols..., PRIMARY KEY(all cols))     -- set semantics
- *   delta(rel, row_digest, tick, weight)           -- tick shape (b), pinned in DECISIONS
+ * `ddl(decls, retention) -> string[]`.
+ *   rel_<name>(cols..., PRIMARY KEY(all cols))  -- set semantics
+ *   delta(rel, row_digest, tick, weight)
  *   effect_cache(full_digest PK, identity_digest, host, state, requested_tick)
- *     + an index on identity_digest -- M8-beta reshape (IdentityWitnessLaw, tasks.d.ts):
- *     full_digest is the fire-once key (host + identity cols + witness/salt cols);
- *     identity_digest (host + identity cols only) groups every witness of one identity,
- *     the supersession group HostRunner reads by. No migration path: every db in this
- *     slice is a fresh temp file (tests/curl-session boot a new sqlite each run), so the
- *     old single-`digest`-column shape is simply replaced, not migrated.
- *   store_meta(key PK, value)                      -- the monotone 'tick' counter row
- * Row identity = full column tuple; row_digest = oracle.mix XOR law (ingest.ts note 6),
- * folded via 0_digest.ts's foldRowDigest (the one shared fold; do not re-implement it).
+ *     + an index on identity_digest: full_digest is the fire-once key (host +
+ *     identity cols + witness/salt cols); identity_digest (host + identity cols
+ *     only) groups every witness of one identity, the supersession group
+ *     HostRunner reads by.
+ *   store_meta(key PK, value)  -- the monotone 'tick' counter row
+ * Row identity = full column tuple; row_digest is folded via 0_digest.ts's
+ * foldRowDigest (the one shared fold; do not re-implement it).
  *
- * `retention` is accepted per the contract but does not change table SHAPE (every rel_*
- * table is the same untyped set-semantics table regardless of 0/1/all): retention is a
+ * `retention` is accepted but does not change table SHAPE (every rel_* table is
+ * the same untyped set-semantics table regardless of 0/1/all): retention is a
  * RUNTIME purge/replace policy enforced by 3_runtime.ts, not a schema difference.
  */
 import type { RelDecl } from "sprefa-store-engine/src/lower/ast.ts";
@@ -92,11 +89,8 @@ export function ddl(
   return statements;
 }
 
-/** A named Value, folded via the one hash law every plane agrees on (content_digest),
- *  then narrowed to a 53-bit-safe JS number: asUintN(64) makes the signed fold unsigned,
- *  asUintN(53) narrows to what a JS number holds exactly, per the pinned contract.
- *  The fold itself is shared with 1_hosts.ts's effectDigest — see 0_digest.ts (M7
- *  consolidation; this function used to duplicate the fold in miniature). */
+/** A row's digest, via the shared fold in 0_digest.ts (also used by 1_hosts.ts's
+ *  effectDigest). */
 export function rowDigest(row: Row, columns: readonly string[]): number {
   return foldRowDigest(row, columns);
 }

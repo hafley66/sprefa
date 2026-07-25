@@ -1,52 +1,51 @@
 /**
- * 0_ast_bridge.ts — .dl text -> ast.ts Program + HostDecl[] + minted stage rels.
+ * .dl text -> ast.ts Program + HostDecl[] + minted stage rels.
  *
- * Contract (plan M1, tasks.d.ts): `bridge(dlText, builtinRels) -> BridgeOk | BridgeErr`.
- * Langium parses; this file maps the Langium AST onto the store's ast.ts constructors,
- * mints the probe timecut (`h?(inputs.., outputs..)` -> __req_h rule + __resp_h EDB ref,
- * Lloyd-Topor free-variable law), rewrites literal-binding equalities (`"warn" = severity`
- * with severity otherwise unbound) into minted single-row constant rels `__lit_<n>`, and
+ * `bridge(dlText, builtinRels) -> BridgeOk | BridgeErr`. Langium parses; this file
+ * maps the Langium AST onto the store's ast.ts constructors, mints the probe
+ * timecut (`h?(inputs.., outputs..)` -> __req_h rule + __resp_h EDB ref, Lloyd-Topor
+ * free-variable law), rewrites literal-binding equalities (`"warn" = severity` with
+ * severity otherwise unbound) into minted single-row constant rels `__lit_<n>`, and
  * applies the diag head-default law (end_line:=line, end_col:=col, hint:=null,
- * severity:="warn", code:=null when unbound). Pure: LangiumDocument per call, discarded.
+ * severity:="warn", code:=null when unbound). Pure: a fresh LangiumDocument per
+ * call, discarded after.
  *
- * Parser services (module-level, built once): Langium's default CORE modules
- * (createDefaultCoreModule/createDefaultSharedCoreModule) + the generated grammar
- * module, wired with EmptyFileSystem — no LSP services, no cross-reference/scope
- * services (the grammar has no [Type] references; every name is a plain string the
- * bridge resolves itself against the decl tables built below).
+ * Parser services (module-level, built once): Langium's default core modules
+ * (createDefaultCoreModule/createDefaultSharedCoreModule) plus the generated
+ * grammar module, wired with EmptyFileSystem: no LSP services, no cross-reference/
+ * scope services, since the grammar has no [Type] references and every name is a
+ * plain string the bridge resolves itself against the decl tables built below.
  *
- * The four rewrites (heart of this file, in processRuleBody / buildHeadTerms):
+ * The four rewrites (processRuleBody / buildHeadTerms):
  *   1. literal-binding: a bare literal in a head/probe-input position, or an `eq`
  *      comparison (either textual order) whose var operand is not otherwise bound,
  *      mints a single-row constant rel `__lit_<n>(value)` and a body atom referencing
  *      it, in place of an ast.ts Compare or a literal HeadTerm (neither of which
- *      exists — HeadTerm is Var|Agg only, and Compare always filters a BOUND var).
+ *      exists: HeadTerm is Var|Agg only, and Compare always filters a bound var).
  *   2. probe minting: `h?(in.., out..)` splits into a minted `__req_h` rule (head =
  *      the input columns; body = every non-probe atom already assembled for this rule
- *      PLUS the literal-binding atoms for any literal probe input) and a minted EDB
- *      `__resp_h` rel referenced in place of the probe. Salt-arg law (M8-alpha,
- *      IdentityWitnessLaw, tasks.d.ts): a probe may pass MORE args than `h`'s
- *      declared columns: the first k (k = |inputCols|) bind inputs, the last m
- *      (m = |columns| - k) bind outputs, anything in between is a positional-only
- *      witness salt (`salt_0`..`salt_<s-1>`). Salts join the __req_h demand key
- *      alongside the inputs (`__req_h` columns = `[...inputCols, salts..]`) and are
- *      echoed back through `__resp_h` (`[...inputCols, salts.., ...outputCols]`), so
- *      a response self-describes the witness it was minted against: the "witness
- *      must EXIST and FLOW" half of the identity-vs-witness escalation; supersession
- *      (retracting a stale response when the salt changes) is a follow-up package.
+ *      plus the literal-binding atoms for any literal probe input) and a minted EDB
+ *      `__resp_h` rel referenced in place of the probe. A probe may pass more args
+ *      than `h`'s declared columns: the first k (k = |inputCols|) bind inputs, the
+ *      last m (m = |columns| - k) bind outputs, anything in between is a
+ *      positional-only witness salt (`salt_0`..`salt_<s-1>`). Salts join the
+ *      __req_h demand key alongside the inputs (`__req_h` columns =
+ *      `[...inputCols, salts..]`) and are echoed back through `__resp_h`
+ *      (`[...inputCols, salts.., ...outputCols]`), so a response self-describes
+ *      the witness it was minted against.
  *   3. diag head-default law: an unbound diag head var at end_line/end_col/severity/
  *      code/hint gets a default (reuse line/col, or a minted literal for the rest);
  *      an unbound path/line/col/msg stays a load error.
- *   4. named-arg resolution (NamedArgLaw, tasks.d.ts, owner scope change 2026-07-24):
- *      `rel(col: term, ...)` resolves to POSITIONAL slots against the rel's declared
- *      column order before any of the three rewrites above run — `resolveNamedArgs`
- *      is the one shared function every named-arg call site (positive body atoms,
- *      negation, probes against the HOST decl's columns, query atoms, heads) funnels
- *      through. An unfilled body-atom slot becomes `wild()` (this subsumes trailing
- *      elision: a short arg list is now "the positional prefix filled, everything
- *      else unfilled", the SAME representation named args produce). An unfilled head
- *      slot re-enters rewrite 3 (diag defaults) or rewrite 1 (nothing to bind ->
- *      load error) exactly as an unbound head var already did.
+ *   4. named-arg resolution: `rel(col: term, ...)` resolves to positional slots
+ *      against the rel's declared column order before any of the three rewrites
+ *      above run. `resolveNamedArgs` is the one shared function every named-arg
+ *      call site (positive body atoms, negation, probes against the host decl's
+ *      columns, query atoms, heads) funnels through. An unfilled body-atom slot
+ *      becomes `wild()` (subsuming trailing elision: a short arg list is now "the
+ *      positional prefix filled, everything else unfilled", the same representation
+ *      named args produce). An unfilled head slot re-enters rewrite 3 (diag
+ *      defaults) or rewrite 1 (nothing to bind -> load error) exactly as an
+ *      unbound head var already did.
  *
  * Numbering for every minted name is deterministic first-appearance order (one
  * `__req_<host>`/`__resp_<host>` per distinct host name; one `__lit_<n>` per distinct
@@ -90,7 +89,7 @@ import { buildRuleGraph, scc, stratify, NonStratifiableError } from "sprefa-stor
 import type { AssertTrue, Bridge, BridgeResult, HostDecl, LoadDiag, Retention, Value } from "./0_types.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Parser services — module scope, built once. EmptyFileSystem: the bridge never
+// Parser services, module scope, built once. EmptyFileSystem: the bridge never
 // reads from disk; the caller hands us the full .dl text as a string.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -106,8 +105,8 @@ sharedServices.ServiceRegistry.register(dlServices);
 
 let documentCounter = 0;
 
-/** Parse `dlText` into a fresh, throwaway LangiumDocument (per bridge() call, per
- *  the instance timeline pinned in the plan — no incremental doc services here). */
+/** Parse `dlText` into a fresh, throwaway LangiumDocument per bridge() call; no
+ *  incremental doc services here. */
 function parseDlDocument(dlText: string): { program: Gen.Program; diags: LoadDiag[] } {
   const uri = URI.parse(`memory://dl-bridge/${documentCounter++}.dl`);
   const langiumDocument = sharedServices.workspace.LangiumDocumentFactory.fromString<Gen.Program>(dlText, uri);
@@ -128,7 +127,7 @@ function parseDlDocument(dlText: string): { program: Gen.Program; diags: LoadDia
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Source position helper: every generated AST node has a $cstNode holding the
-// exact text range it came from — real positions for diags cost nothing extra.
+// exact text range it came from, so real positions for diags cost nothing extra.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface Positioned {
@@ -160,19 +159,18 @@ interface ColumnTypeInfo {
 
 /** `prim` parses as a plain ID (grammar note: making "text"/"int" global keywords
  *  would forbid ever naming a column `text`), so validate it here; anything other
- *  than the two known primitives falls back to "text" (permissive — not a listed
- *  LoadDiag code this slice, and no fixture exercises a bogus type name). */
+ *  than the two known primitives falls back to "text". */
 function readColumnType(type: Gen.ColumnType): ColumnTypeInfo {
   const prim = type.prim === "int" ? "int" : "text";
   if (type.$type === "WrapperType") return { prim, wrapper: type.wrapper };
   return { prim, wrapper: undefined };
 }
 
-/** A resolved column affinity (BridgeOk.columnTypes, M9 columnType flow). */
+/** A resolved column affinity. */
 type ColumnPrim = "text" | "int";
 
 /** Base-case column affinities for the builtin rels (spine + diag). These rels arrive
- *  as `edbRel(name, columns)` with NO declared types (5_diag.ts), so their affinity is
+ *  as `edbRel(name, columns)` with no declared types (5_diag.ts), so their affinity is
  *  known here from the ExtractRecord shapes (4_ingest.ts) / the v5 diag schema, not
  *  inferred. Orders match 5_diag.ts's column lists exactly. `text` columns intern to a
  *  `strings` id at storage; `int` columns store raw. */
@@ -187,10 +185,10 @@ const SPINE_COLUMN_TYPES: Readonly<Record<string, readonly ColumnPrim[]>> = {
   diag: ["text", "int", "int", "int", "int", "text", "text", "text", "text"],
 };
 
-/** A literal value's column affinity (tie-break, M9): string -> text, number/boolean
- *  -> int, null -> text (a null literal seed binds a nullable text column in this
- *  slice; if it ever binds a numeric position that position's own resolved type wins,
- *  handled by declared/base types taking precedence over a __lit fallback). */
+/** A literal value's column affinity: string -> text, number/boolean -> int, null ->
+ *  text (a null literal seed binds a nullable text column; if it ever binds a numeric
+ *  position, that position's own resolved type wins, since declared/base types take
+ *  precedence over a __lit fallback). */
 function primOfValue(value: Value): ColumnPrim {
   if (typeof value === "string") return "text";
   if (typeof value === "number" || typeof value === "boolean") return "int";
@@ -214,19 +212,14 @@ function literalValue(node: Gen.Literal): Value {
   }
 }
 
-/** Maps an ArgTerm (Var | Literal | Wildcard) into a positive body/head position:
- *  `Arg` today is Var|Lit only — a positive `_` needs the `Arg = Var | Lit | Wild`
- *  extension landing in a parallel package (see the worktree instructions this
- *  package was launched with). Emitting `wild()` here is deliberate; typecheck fails
- *  at exactly this seam until that merge lands, and nowhere else. */
+/** Maps an ArgTerm (Var | Literal | Wildcard) into a positive body/head position. */
 function toPositiveArg(node: Gen.ArgTerm): Arg {
   if (node.$type === "Var") return variable(node.name);
   if (node.$type === "Wildcard") return wild();
   return literal(literalValue(node));
 }
 
-/** Maps an ArgTerm into a negated-ref position: `NegArg` already includes `Wild`
- *  (legal there today — no cross-branch dependency for negation). */
+/** Maps an ArgTerm into a negated-ref position. */
 function toNegArg(node: Gen.ArgTerm): NegArg {
   if (node.$type === "Var") return variable(node.name);
   if (node.$type === "Wildcard") return wild();
@@ -234,31 +227,30 @@ function toNegArg(node: Gen.ArgTerm): NegArg {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Named-arg resolution (NamedArgLaw, tasks.d.ts). One shared function: every
-// named-arg call site (positive body atoms, negation, probes against the HOST
-// decl's columns, query atoms, heads) resolves its raw arg list through this
-// before doing anything kind-specific with the result.
+// Named-arg resolution. One shared function: every named-arg call site
+// (positive body atoms, negation, probes against the host decl's columns,
+// query atoms, heads) resolves its raw arg list through this before doing
+// anything kind-specific with the result.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Resolves a mixed positional/named argument list against an ordered slot list
- *  into one slot per position (unfilled slots are `undefined`). Mixing law
- *  (python law, owner-set): positional args fill left-to-right; once a named
- *  arg appears, no further positional arg is legal. Collects EVERY violation as
- *  a "named-arg" LoadDiag instead of stopping at the first: positional-after-
- *  named, duplicate name, name+position slot collision, unknown column name.
- *  `args` is typed at the widest call-site shape (HeadArg = Member|ArgTerm|
- *  AggCall); body/negation/probe/query call sites pass the narrower AtomArg
- *  (Member|ArgTerm) list, which is structurally a subtype and never actually
- *  contains an AggCall at runtime.
+ *  into one slot per position (unfilled slots are `undefined`). Mixing law:
+ *  positional args fill left-to-right; once a named arg appears, no further
+ *  positional arg is legal. Collects every violation as a "named-arg" LoadDiag
+ *  instead of stopping at the first: positional-after-named, duplicate name,
+ *  name+position slot collision, unknown column name. `args` is typed at the
+ *  widest call-site shape (HeadArg = Member|ArgTerm|AggCall); body/negation/
+ *  probe/query call sites pass the narrower AtomArg (Member|ArgTerm) list,
+ *  which is structurally a subtype and never actually contains an AggCall at
+ *  runtime.
  *
- *  `columns` entries may be `undefined` (salt-arg law, IdentityWitnessLaw,
- *  tasks.d.ts): a probe with more args than its host's declared columns
- *  splices synthetic, UNNAMED salt slots into the middle of the order. An
- *  `undefined` entry can only ever be filled positionally: it has no name a
- *  `Member` arg could target, so a named arg aimed at a salt position falls
- *  straight into the same "not a declared column" diag as any other unknown
- *  name (see the probe branch in processRuleBody for how `columns` gets
- *  built with salts spliced in). */
+ *  `columns` entries may be `undefined`: a probe with more args than its
+ *  host's declared columns splices synthetic, unnamed salt slots into the
+ *  middle of the order. An `undefined` entry can only ever be filled
+ *  positionally: it has no name a `Member` arg could target, so a named arg
+ *  aimed at a salt position falls straight into the same "not a declared
+ *  column" diag as any other unknown name (see the probe branch in
+ *  processRuleBody for how `columns` gets built with salts spliced in). */
 function resolveNamedArgs(
   context: BridgeContext,
   columns: readonly (string | undefined)[],
@@ -303,7 +295,7 @@ function resolveNamedArgs(
 
 /** A resolved slot (undefined = unfilled) in a positive body/probe/query position:
  *  unfilled -> `wild()` (subsumes trailing elision, see file header note 4). The
- *  AggCall case can't occur here (grammar-guaranteed: only HeadArg allows it) —
+ *  AggCall case can't occur here (grammar-guaranteed: only HeadArg allows it);
  *  the cast is structural, not a runtime check. */
 function slotToPositiveArg(slot: Gen.ArgTerm | Gen.AggCall | undefined): Arg {
   return slot === undefined ? wild() : toPositiveArg(slot as Gen.ArgTerm);
@@ -325,7 +317,7 @@ const CMP_OP_BY_SYMBOL: Record<string, CmpOp> = {
 
 /** `fn` parses as a plain ID (same identifier-collision reasoning as PlainType.prim);
  *  validate it here against the four supported aggregates. An unrecognized name
- *  falls back to "count" (permissive — not a listed LoadDiag code this slice). */
+ *  falls back to "count". */
 const AGG_FN_NAMES = new Set(["count", "sum", "min", "max"]);
 function aggFnOf(name: string): "count" | "sum" | "min" | "max" {
   return AGG_FN_NAMES.has(name) ? (name as "count" | "sum" | "min" | "max") : "count";
@@ -339,19 +331,18 @@ function aggFnOf(name: string): "count" | "sum" | "min" | "max" {
 interface BridgeContext {
   readonly diags: LoadDiag[];
   readonly knownRelColumns: Map<string, DeclInfo>; // user decls + builtin decls (arity/unknown-rel universe)
-  /** M9 columnType flow: a rel's DECLARED column affinities, positional. Populated for
-   *  user `rel`/`sh` decls (the grammar's `col: text|int`); builtin rels arrive
-   *  type-less and resolve from SPINE_COLUMN_TYPES instead. Declared types win over
-   *  every inference (peer ruling: they are declared, not inferred). */
+  /** A rel's declared column affinities, positional. Populated for user `rel`/`sh`
+   *  decls (the grammar's `col: text|int`); builtin rels arrive type-less and
+   *  resolve from SPINE_COLUMN_TYPES instead. Declared types take precedence
+   *  over every inferred one. */
   readonly declaredColumnTypes: Map<string, readonly ColumnPrim[]>;
   readonly headedRelNames: Set<string>; // rel names that appear as SOME user rule's head (-> IDB)
   readonly hostsByName: Map<string, HostDecl>;
-  /** Salt-arg law (IdentityWitnessLaw, tasks.d.ts): the number of witness-salt args
-   *  a host's probe(s) actually used, keyed by host name; absent/0 means "no salts,
-   *  __req_h/__resp_h keep the pre-M8 declared-column shape" (regression: "zero-salt
-   *  probes unchanged"). One value per host this slice: multiple probes of the SAME
-   *  host with DIFFERING salt counts within one program are unchecked; the last
-   *  probe processed wins. */
+  /** The number of witness-salt args a host's probe(s) actually used, keyed by
+   *  host name; absent/0 means no salts, so __req_h/__resp_h keep the plain
+   *  declared-column shape (zero-salt probes stay unchanged). One value per
+   *  host: multiple probes of the same host with differing salt counts within
+   *  one program are unchecked; the last probe processed wins. */
   readonly hostSaltCount: Map<string, number>;
   readonly retention: Map<string, Retention>;
   readonly literalSeeds: Map<string, Value>;
@@ -434,7 +425,7 @@ function checkColumnsForFrontierWrappers(context: BridgeContext, columns: readon
 }
 
 /** `retention` parses as the INT terminal (grammar note: '0'/'1' as keywords would
- *  break every ordinary integer literal `0`/`1` elsewhere in the language) — reduce
+ *  break every ordinary integer literal `0`/`1` elsewhere in the language); reduce
  *  it to the Retention union here: 0 -> 0, 1 -> 1, anything else (including no
  *  paren group at all) -> "all". */
 function readRetention(retention: number | undefined): Retention {
@@ -466,7 +457,7 @@ function processShDecl(context: BridgeContext, decl: Gen.ShDecl): void {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pass 2: body items. `collectBoundVars` is the static, order-independent scan
-// (the "comma unordered" ruling) — a var is bound if SOME positive RelRef/probe
+// (the "comma unordered" ruling): a var is bound if some positive RelRef/probe
 // atom anywhere in the body names it, regardless of textual position relative to a
 // comparison that reads it. Probe minting's "atoms textually before" clause is a
 // separate, genuinely-ordered mechanism handled inline in the forward pass below.
@@ -477,7 +468,7 @@ function collectBoundVars(body: readonly Gen.BodyItem[]): Set<string> {
   for (const item of body) {
     if (item.$type === "RelRefItem" || item.$type === "ProbeItem") {
       for (const arg of item.args) {
-        // A named arg's Var lives one level down, at `arg.value` — the arg node
+        // A named arg's Var lives one level down, at `arg.value`: the arg node
         // itself is a Member, not a Var (`console_hit(path: p)` binds `p`, not
         // `path`, the column name).
         if (arg.$type === "Var") bound.add(arg.name);
@@ -488,7 +479,7 @@ function collectBoundVars(body: readonly Gen.BodyItem[]): Set<string> {
   return bound;
 }
 
-/** Which of a CompareItem's two operands is the Var and which is the Literal — the
+/** Which of a CompareItem's two operands is the Var and which is the Literal: the
  *  grammar's two alternatives guarantee exactly one of each per parse. */
 function splitCompare(item: Gen.CompareItem): { varNode: Gen.Var; litNode: Gen.Literal } {
   if (item.lhs.$type === "Var") return { varNode: item.lhs, litNode: item.rhs as Gen.Literal };
@@ -545,13 +536,12 @@ function processRuleBody(context: BridgeContext, body: readonly Gen.BodyItem[]):
         const inputColSet = new Set(host.inputCols);
         const outputColumnNames = hostColumnNames.filter((name) => !inputColSet.has(name));
 
-        // Salt-arg law (IdentityWitnessLaw, tasks.d.ts): a probe may pass MORE args
-        // than the host's declared columns. The excess (saltCount) are positional-
-        // only witness salts, spliced between the input args and the output args:
-        // more args than columns is now legal (arity-mismatch for probes fires only
-        // when there aren't enough to fill the inputs, caught below per-input-column
-        // exactly as before). len <= declared columns (saltCount 0) keeps the pre-M8
-        // declared-column order untouched (regression: "zero-salt probes unchanged").
+        // A probe may pass more args than the host's declared columns. The excess
+        // (saltCount) are positional-only witness salts, spliced between the input
+        // args and the output args: more args than columns is legal (arity-mismatch
+        // for probes fires only when there aren't enough to fill the inputs, caught
+        // below per-input-column). len <= declared columns (saltCount 0) keeps the
+        // plain declared-column order untouched.
         const saltCount = Math.max(0, item.args.length - hostColumnNames.length);
         const saltSlotNames: readonly string[] = Array.from({ length: saltCount }, (_, index) => `salt_${index}`);
         const slotOrder: readonly (string | undefined)[] =
@@ -643,14 +633,14 @@ function processRuleBody(context: BridgeContext, body: readonly Gen.BodyItem[]):
         recordMinted(context, reqRelName);
         recordMinted(context, respRelName);
 
-        // The literal-binding atoms land in THIS rule's own body too (same as any
-        // other literal-binding mint) — not only in the minted request rule's body.
+        // The literal-binding atoms land in this rule's own body too (same as any
+        // other literal-binding mint), not only in the minted request rule's body.
         outBody.push(...mintedInputAtoms);
 
-        // Request rule: head = the input columns + salt columns (IdentityWitnessLaw:
-        // "__req_h columns = [...inputCols, salts...]"); body = every non-probe atom
-        // already assembled for THIS rule (textually before this probe, now
-        // including the literal-binding atoms just pushed above).
+        // Request rule: head = the input columns + salt columns (__req_h columns =
+        // [...inputCols, salts...]); body = every non-probe atom already assembled
+        // for this rule (textually before this probe, now including the
+        // literal-binding atoms just pushed above).
         const reqHeadArgs: readonly Arg[] = [...inputArgs, ...saltArgs];
         const reqHeadTerms: HeadTerm[] = reqHeadArgs.map((arg) => headVar(arg.kind === "var" ? arg.name : "_probe_input_error"));
         context.mintedRules.push({ head: reqRelName, headTerms: reqHeadTerms, body: [...outBody] });
@@ -672,14 +662,10 @@ function processRuleBody(context: BridgeContext, body: readonly Gen.BodyItem[]):
   return { body: outBody, boundVars };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Head terms + the diag head-default law.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** `slots` has one entry per DECLARED column of `headRel` (resolveNamedArgs already
- *  folded positional + named head args into this shape) — `undefined` means the
- *  slot was never filled at all (named-arg omission subsumes the old "unbound
- *  head var" case; a Wildcard or an unbound Var reaches the same fallback below).
+/** `slots` has one entry per declared column of `headRel` (resolveNamedArgs already
+ *  folded positional + named head args into this shape); `undefined` means the
+ *  slot was never filled at all (a Wildcard or an unbound Var reaches the same
+ *  fallback below).
  *  `headNode` is only a position fallback for an omitted slot (there is no textual
  *  arg node to read a line/col off of). */
 function buildHeadTerms(
@@ -701,14 +687,12 @@ function buildHeadTerms(
     const columnName = columns[position];
 
     // A bare literal in head position (the "fact" shape, a literal mixed into an
-    // otherwise-var head, or a named literal head arg like `severity: "warn"`):
-    // always literal-bind, regardless of which rel this is — the general form of
-    // the orchestrator-pinned rewrite, not diag-specific. The freshly-bound var
-    // reuses the DECLARED COLUMN name at this position (same reuse-the-declared-
-    // name law the probe literal-input rewrite uses below) — a literal has no
-    // user-written var name of its own to reuse, and reusing the column name is
-    // what keeps a re-pinned golden reading `severity`/`code`/`msg`, not a raw
-    // minted rel name.
+    // otherwise-var head, or a named literal head arg like `severity: "warn"`)
+    // always literal-binds, regardless of which rel this is: the general form of
+    // rewrite 1, not diag-specific. The freshly-bound var reuses the declared
+    // column name at this position (same reuse-the-declared-name rule the probe
+    // literal-input rewrite uses below), since a literal has no user-written var
+    // name of its own to reuse.
     if (slot !== undefined && isLiteralNode(slot)) {
       const mintedName = mintLiteral(context, literalValue(slot));
       const boundName = columnName ?? mintedName;
@@ -716,7 +700,7 @@ function buildHeadTerms(
       return headVar(boundName);
     }
 
-    // From here: `slot` is undefined (the arg was omitted entirely — a named-arg
+    // From here: `slot` is undefined (the arg was omitted entirely, a named-arg
     // partial head), a Wildcard, or a Var never bound in the body. diag gets the
     // position-based default law; everything else is a binding-arity load error.
     if (isDiag) {
@@ -744,7 +728,7 @@ function buildHeadTerms(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Pass 3: rules (facts included — a fact is a DlRule with an empty body).
+// Pass 3: rules (facts included: a fact is a DlRule with an empty body).
 // ─────────────────────────────────────────────────────────────────────────────
 
 function processDlRule(context: BridgeContext, dlRule: Gen.DlRule): AstRule {
@@ -770,19 +754,17 @@ function processQueryStmt(context: BridgeContext, queryStmt: Gen.QueryStmt): Ast
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Column-type resolution (M9 columnType flow, tasks.d.ts EngineStorageLaw). Every
-// rel in the built program gets one affinity per column. Precedence (peer ruling):
-//   1. DECLARED types (user `rel`/`sh` decls `col: text|int`) — declared, not inferred.
+// Column-type resolution. Every rel in the built program gets one affinity per
+// column. Precedence:
+//   1. Declared types (user `rel`/`sh` decls `col: text|int`).
 //   2. Builtin base types (SPINE_COLUMN_TYPES) for the spine/diag rels.
 //   3. Host rels __resp_<h>/__req_<h>: each column is the host's declared column type
-//      by name; a synthetic `salt_<n>` witness column is `text` (the witness in this
-//      slice is a content hash — a text value; a numeric salt would need its source
-//      column's type, a follow-up if one ever appears).
+//      by name; a synthetic `salt_<n>` witness column is `text` (the witness is a
+//      content hash, a text value).
 //   4. __lit_<n>: primOfValue of its one seeded literal.
-//   5. Derived (headed) rels with no declared/base type: TRACE each head var to the
-//      body-atom source column that binds it. Tie-breaks (peer ruling): a head var
-//      bound by multiple body sources must AGREE (disagreement keeps the first
-//      resolved and would surface as a conflict in a stricter slice); count/sum -> int;
+//   5. Derived (headed) rels with no declared/base type: trace each head var to the
+//      body-atom source column that binds it. A head var bound by multiple body
+//      sources must agree (disagreement keeps the first resolved); count/sum -> int;
 //      min/max -> the arg's source type; unresolved position -> text.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -893,7 +875,7 @@ function hostNameOfMinted(relName: string): string | undefined {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// bridge() — the public entry point.
+// bridge(): the public entry point.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function bridge(dlText: string, builtinRels: readonly AstRelDecl[]): BridgeResult {
@@ -938,11 +920,10 @@ export function bridge(dlText: string, builtinRels: readonly AstRelDecl[]): Brid
     rels.push(context.headedRelNames.has(builtin.name) ? derivedRel(builtin.name, [...builtin.columns]) : builtin);
   }
   for (const host of context.hostsByName.values()) {
-    // Salt-arg law (IdentityWitnessLaw, tasks.d.ts): __resp_h/__req_h's column shape
-    // depends on whether any probe of this host actually used salts this program
-    // (context.hostSaltCount, set in the ProbeItem branch above). Zero salts keeps the
-    // pre-M8 shape byte-for-byte (declared-column order for __resp_h, plain
-    // inputCols for __req_h): the "zero-salt probes unchanged" regression.
+    // __resp_h/__req_h's column shape depends on whether any probe of this host
+    // actually used salts (context.hostSaltCount, set in the ProbeItem branch
+    // above). Zero salts keeps the plain shape (declared-column order for
+    // __resp_h, plain inputCols for __req_h) unchanged.
     const saltCount = context.hostSaltCount.get(host.name) ?? 0;
     const hostColumnNames = host.columns.map((column) => column.name);
     if (saltCount === 0) {

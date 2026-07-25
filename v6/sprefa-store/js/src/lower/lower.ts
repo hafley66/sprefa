@@ -1,51 +1,44 @@
 /**
- * lower.ts — lower a stratified dl program to rxjs Observables, stratum by stratum,
- * in stratification order. Pure + deterministic; no SQLite, no IO. Fact sources are
- * INJECTED as plain Observables (tests use ReplaySubject/Subject).
+ * Lowers a stratified dl program to rxjs Observables, stratum by stratum, in
+ * stratification order. Pure and deterministic; no SQLite, no IO. Fact sources
+ * are injected as plain Observables (tests use ReplaySubject/Subject).
  *
- * Pipeline shape (pinned rxjs ops, one honest divergence — see NOTES below):
+ * Pipeline shape:
  *   combineLatest(body rel Observables)            // the join: one Row[] per body rel
  *     |> map(equi-join + selection + projection)   // set-valued: the full Row[] per emission
  *     |> map(group-aggregate, when a head has Agg) // max/min/sum/count, group-by non-agg vars
  *
- * Recursive strata (SCC > 1 or a self-loop) lower when the in-memory backend can run
- * them: every member lazy IDB, no aggregates (non-monotone under recursion). The stratum
- * becomes ONE fixpoint pipe — combineLatest(external body rels) |> map(bottom-up naive
- * fixpoint over the stratum's rules) — and each member rel projects its set out of it.
- * A stratum the backend declines (a materialized member = the heavy/cascade-delegate
- * path, which needs the SQLite engine; or an aggregate head) is collected as a
- * `RecursiveStratumDeferred` marker, so the deferral stays explicit.
+ * Recursive strata (SCC > 1 or a self-loop) lower when the in-memory backend
+ * can run them: every member lazy IDB, no aggregates (non-monotone under
+ * recursion). The stratum becomes one fixpoint pipe, combineLatest(external
+ * body rels) |> map(bottom-up naive fixpoint over the stratum's rules), and
+ * each member rel projects its set out of it. A stratum the backend declines
+ * (a materialized member needs the SQLite engine, or an aggregate head) is
+ * collected as a `RecursiveStratumDeferred` marker instead of thrown, so a
+ * program mixing lowerable and declined strata still lowers everything else.
  *
- * RelKind: every lowered derived rel is a cold Observable (cold-derived trinity row in
- * tasks.d.ts). EDB rels resolve to whatever the injected source Observable is.
+ * Every lowered derived rel is a cold Observable; EDB rels resolve to
+ * whatever the injected source Observable is.
  *
- * Stratified negation: a `!rel(args)` body predicate is an ANTI-join — `equiJoin`
- * drops a binding when the negated rel's CURRENT row set has any row consistent with
- * it, introducing no new bindings. `stratify` (rulegraph.ts) already refused any
- * program where the negated rel shares an SCC with the reader, so both lowering paths
- * below (the acyclic `lowerDerivedRule` map, and the in-stratum `stratumFixpoint`) can
- * resolve a negated ref's rows exactly like a positive one (lowered map, else
- * external/member row set) — the safety check already ran.
+ * Stratified negation: a `!rel(args)` body predicate is an anti-join.
+ * `equiJoin` drops a binding when the negated rel's current row set has any
+ * row consistent with it, introducing no new bindings. `stratify`
+ * (rulegraph.ts) already refused any program where the negated rel shares an
+ * SCC with the reader, so both lowering paths here resolve a negated ref's
+ * rows exactly like a positive one.
  *
- * ── NOTES on the pinned ops ──────────────────────────────────────────────────────
- * combineLatest is used literally for joins. `map` holds equi-join + selection +
- * projection (and aggregation) because a rel emission is the FULL current row set
- * (set semantics): rxjs `filter`/`reduce`/`scan` operate at EMISSION granularity, but
- * selection and group-aggregation are ELEMENT-level transforms over the row set, so
- * they live inside `map`. The recursive fixpoint is a plain `while` INSIDE `map`, per
- * the labs verdict (src/labs/fixpoint.ts): over a sync hop `expand` is a fancy `while`;
- * it earns its keep only across an async hop (the cascade-delegate backend, when the
- * engine wiring lands).
+ * combineLatest is used literally for joins. `map` holds equi-join, selection,
+ * projection, and aggregation, because a rel emission is the full current row
+ * set (set semantics): rxjs `filter`/`reduce`/`scan` operate at emission
+ * granularity, but selection and group-aggregation are element-level
+ * transforms over the row set. The recursive fixpoint is a plain `while`
+ * inside `map`: over a sync hop, an `expand`-based fixpoint earns nothing extra.
  */
 
 import { combineLatest, of, map, type Observable } from "rxjs";
 import type { Program, Rule, RelRef, NegRelRef, Compare, HeadTerm, RelDecl, AggFn, NegArg } from "./ast.ts";
 import { buildRuleGraph, scc, stratify } from "./rulegraph.ts";
 import type { Stratum } from "./types.ts";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Public types.
-// ─────────────────────────────────────────────────────────────────────────────
 
 /** A row is a tuple of column values (JSON-representable primitives). */
 export type Row = readonly unknown[];
@@ -54,11 +47,11 @@ export type Row = readonly unknown[];
 export type Sources = Map<string, Observable<Row[]>>;
 
 /**
- * Marker that a recursive stratum was encountered and NOT lowered — the in-memory
- * fixpoint backend declined it (a non-lazy/EDB member, or an aggregate head inside the
- * cycle). Collected (not thrown) by `lowerProgram` into `LoweredProgram.deferred`, so a
- * program mixing lowerable and declined strata still lowers everything else. The
- * declined shapes are the cascade-delegate arc (engine wiring).
+ * Marker that a recursive stratum was encountered and not lowered: the
+ * in-memory fixpoint backend declined it (a non-lazy/EDB member, or an
+ * aggregate head inside the cycle). Collected, not thrown, by `lowerProgram`
+ * into `LoweredProgram.deferred`, so a program mixing lowerable and declined
+ * strata still lowers everything else.
  */
 export class RecursiveStratumDeferred extends Error {
   readonly stratum: Stratum;
@@ -79,23 +72,18 @@ export interface LoweredProgram {
   readonly deferred: readonly RecursiveStratumDeferred[];
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// A binding: variable name -> value, produced by the equi-join. Keeps every bound
-// variable so selection (Compare) and aggregation can read vars NOT projected to the head.
-// ─────────────────────────────────────────────────────────────────────────────
+/** A binding: variable name -> value, produced by the equi-join. Keeps every
+ *  bound variable so selection (Compare) and aggregation can read vars not
+ *  projected to the head. */
 type Binding = Map<string, unknown>;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// lowerProgram — the entry point.
-// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Lower a program stratum by stratum, in stratification (topological) order.
  * EDB rels (origin EDB, or no rule) resolve to their injected source (empty if none).
  * Acyclic IDB rels lower to a cold Observable pipe. Recursive strata are deferred.
  *
- * Throws `NonStratifiableError` (rulegraph.ts) if `prog` has a negated rel inside its
- * own SCC — surfaced before any Observable is constructed.
+ * Throws `NonStratifiableError` (rulegraph.ts) if `prog` has a negated rel
+ * inside its own SCC, surfaced before any Observable is constructed.
  */
 export function lowerProgram(prog: Program, sources: Sources): LoweredProgram {
   const graph = buildRuleGraph(prog);
@@ -158,10 +146,9 @@ function lowerRelRules(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Recursive strata. Backend split (the Epic 2 seam): RelKind.materialization selects.
-//   lazy IDB members, no aggregates  → the in-memory fixpoint below (this file).
-//   anything else                     → defer (the cascade-delegate path needs the
-//                                       SQLite engine; aggregates are non-monotone).
+// Recursive strata. Backend split on RelKind.materialization:
+//   lazy IDB members, no aggregates -> the in-memory fixpoint below.
+//   anything else -> defer (needs the SQLite engine; aggregates are non-monotone).
 // ─────────────────────────────────────────────────────────────────────────────
 
 function recursiveBackend(
@@ -197,8 +184,8 @@ function lowerRecursiveStratum(
   const stratumRules: Rule[] = stratum.rels.flatMap((relName) => rulesByHead.get(relName) ?? []);
 
   // External inputs: body rels outside the stratum, deduped, first-seen order. A
-  // negated ref counts too — `stratify` already refused a negated ref whose
-  // target shares this stratum's SCC, so any `notrel` seen here is guaranteed external.
+  // negated ref counts too: `stratify` already refused a negated ref whose target
+  // shares this stratum's SCC, so any `notrel` seen here is guaranteed external.
   const externalNames: string[] = [];
   for (const rule of stratumRules) {
     for (const pred of rule.body) {
@@ -240,10 +227,10 @@ function lowerRecursiveStratum(
 }
 
 /**
- * Bottom-up naive fixpoint with dedup: re-evaluate every stratum rule against the
- * current sets until no rule admits a new row. Terminates — the constants all come from
- * the (finite) input rows, so the derivable row space is finite. Plain `while`, per the
- * labs verdict: the hop is sync, `expand` would be a fancy `while` here.
+ * Bottom-up naive fixpoint with dedup: re-evaluate every stratum rule against
+ * the current sets until no rule admits a new row. Terminates: the constants
+ * all come from the (finite) input rows, so the derivable row space is finite.
+ * A plain `while` suffices since the hop is synchronous.
  */
 function stratumFixpoint(
   rules: readonly Rule[],
@@ -288,10 +275,11 @@ function stratumFixpoint(
 }
 
 /**
- * Lower one derived rule: combineLatest(body rel Observables) |> map(join+select+project+agg).
- * A negated (`notrel`) body predicate still needs its target rel's current row
- * set to filter against, so it counts as a body source here exactly like a positive ref
- * — the anti-join happens inside `equiJoin`, not at this resolution layer.
+ * Lower one derived rule: combineLatest(body rel Observables) |> map(join +
+ * select + project + agg). A negated (`notrel`) body predicate still needs
+ * its target rel's current row set to filter against, so it counts as a body
+ * source here exactly like a positive ref; the anti-join happens inside
+ * `equiJoin`, not at this resolution layer.
  */
 function lowerDerivedRule(
   rule: Rule,
@@ -314,9 +302,9 @@ function lowerDerivedRule(
   );
 }
 
-/** Distinct rel names read by a rule's body — `RelRef` and `NegRelRef` both count
- *  (a negated ref still needs its target's current rows); `Compare` does not. First-
- *  seen order, deduped, so repeated refs to the same rel share one subscription. */
+/** Distinct rel names read by a rule's body: `RelRef` and `NegRelRef` both count
+ *  (a negated ref still needs its target's current rows); `Compare` does not.
+ *  First-seen order, deduped, so repeated refs to the same rel share one subscription. */
 function distinctBodyRelNames(body: readonly (RelRef | Compare | NegRelRef)[]): string[] {
   const names: string[] = [];
   for (const pred of body) {
@@ -352,12 +340,11 @@ function bodyObsFor(
 // ─────────────────────────────────────────────────────────────────────────────
 // Equi-join: nested-loop over body predicates in body order. A Lit arg selects
 // (row[col] === value); a Var arg binds (first occurrence) or joins (shared-var
-// consistency); a Wild arg (positive or negated ref) always matches, binds nothing —
-// two wildcards never compare to each other, since neither ever binds. A
-// `notrel` predicate is an ANTI-join: it drops any binding for which the negated
-// rel's CURRENT row set has a compatible row, and otherwise leaves the binding
-// untouched — no new columns, no new bindings (negation introduces no information,
-// only rules it out).
+// consistency); a Wild arg (positive or negated ref) always matches, binds
+// nothing, so two wildcards never compare to each other. A `notrel` predicate
+// is an anti-join: it drops any binding for which the negated rel's current
+// row set has a compatible row, and otherwise leaves the binding untouched;
+// negation introduces no new bindings, only rules them out.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function equiJoin(rule: Rule, relRows: ReadonlyMap<string, Row[]>): Binding[] {
@@ -382,18 +369,16 @@ function equiJoin(rule: Rule, relRows: ReadonlyMap<string, Row[]>): Binding[] {
   return accumulator;
 }
 
-/** Extend `prev` with row's columns per the ref's args. Null if a Lit or shared-var
- *  check fails. Structural over `{args}` so both `RelRef` and `NegRelRef` reuse it
- *  (`Arg`/`NegArg` are the same Var|Lit|Wild set as of ast.ts's positive-wildcard
- *  landing). A `Wild` never binds and never selects — "don't project, don't
- *  consistency-check" — so two wildcards in the same rule are independently
- *  existential and never compare to each other. In a negated ref specifically, an
- *  unbound Var (or a Wild) is existentially quantified over the negated rel's rows
- *  (negation-as-failure); the anti-join filter above only checks the return value
- *  (compatible or not), discarding the extended map either way. `ref.args.length` may
- *  be shorter than the row's width (trailing-arg elision, ast.ts's `RelRef` doc): the
- *  loop below only reads `args[col]` for `col < ref.args.length`, so missing trailing
- *  columns are never consulted — same effect as an explicit trailing `Wild`. */
+/** Extend `prev` with row's columns per the ref's args. Null if a Lit or
+ *  shared-var check fails. Structural over `{args}` so both `RelRef` and
+ *  `NegRelRef` reuse it. A `Wild` never binds and never selects, so two
+ *  wildcards in the same rule are independently existential and never
+ *  compare to each other. In a negated ref, an unbound Var (or a Wild) is
+ *  existentially quantified over the negated rel's rows (negation-as-failure);
+ *  the anti-join filter above only checks the return value, discarding the
+ *  extended map either way. `ref.args.length` may be shorter than the row's
+ *  width (trailing-arg elision): the loop below only reads `args[col]` for
+ *  `col < ref.args.length`, so missing trailing columns are never consulted. */
 function tryBind(ref: { readonly args: readonly NegArg[] }, row: Row, prev: Binding): Binding | null {
   const next = new Map(prev);
   for (let columnIndex = 0; columnIndex < ref.args.length; columnIndex++) {
@@ -413,10 +398,6 @@ function tryBind(ref: { readonly args: readonly NegArg[] }, row: Row, prev: Bind
   }
   return next;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Selection: drop bindings failing any Compare predicate.
-// ─────────────────────────────────────────────────────────────────────────────
 
 function applySelection(rule: Rule, bindings: readonly Binding[]): Binding[] {
   const comparisons = rule.body.filter((predicate): predicate is Compare => predicate.kind === "cmp");

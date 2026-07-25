@@ -1,37 +1,28 @@
 /**
- * ast.ts — the typed program input. THE SHARED CONTRACT a future parser produces.
+ * The typed program input: the shared contract a future parser produces. Hand-
+ * constructed typed data; no parser, no SQLite, no rxjs, no IO.
  *
- * Scope (this arc): rel decl, EDB/IDB origin, derived rules `head <- body`, body =
- * rel predicates sharing variables (the join), literal selection in a rel arg,
- * wildcard `_` in ANY rel-ref position (positive or negated), comparison selection,
- * head aggregation (`max`/`min`/`sum`/`count`), and stratified negation (`!rel(args)`,
- * v5 surface spelling — src/ast.rs:370's `BodyItem::Neg`, no `not` keyword). No parser
- * here — the AST is hand-constructed typed data. No SQLite, no rxjs, no IO.
+ * Scope: rel decl, EDB/IDB origin, derived rules `head <- body`, body = rel
+ * predicates sharing variables (the join), literal selection in a rel arg,
+ * wildcard `_` in any rel-ref position (positive or negated), comparison
+ * selection, head aggregation (max/min/sum/count), and stratified negation
+ * (`!rel(args)`, v5 surface spelling, src/ast.rs:370's BodyItem::Neg, no `not`
+ * keyword). Extraction ops (scan/match/ast/sg/json/cmd) and closure/scc/node2vec
+ * operators are out of scope here.
  *
- * Positive wildcard `_` (landed): `Arg` includes `Wild` — a rel position that neither
- * binds nor selects, "don't project, don't consistency-check" (lower.ts's `tryBind` is
- * structural over `{args}` and already treats `kind === "wild"` as "matches any value,
- * binds nothing" for both a positive `RelRef` and a negated `NegRelRef`). Trailing-arg
- * elision rides the same mechanism at the AST level: `RelRef.args`/`NegRelRef.args` is
- * a plain array with no length tie to the rel's declared column count, so a body ref
- * with FEWER args than the rel's arity already has its missing trailing positions
- * unconstrained — the join only ever reads `args[col]` for `col < args.length`. No
- * separate "elision" representation is needed; a short `args` list already means
- * "the rest are wildcards" with zero extra plumbing.
+ * Wildcard `_` (`Arg`'s `Wild` variant) matches any value in that position and
+ * binds nothing, for both a positive `RelRef` and a negated `NegRelRef`.
+ * Trailing-arg elision rides the same mechanism: `args` has no length tie to
+ * the rel's declared column count, and the join only ever reads `args[col]`
+ * for `col < args.length`, so a short `args` list already means "the rest are
+ * wildcards" with no separate representation needed.
  *
- * Deferrals (explicit, next arcs): extraction ops (scan/match/ast/sg/json/cmd), and
- * closure/scc/node2vec operators.
- *
- * Origin note: `RelKind.origin` (tasks.d.ts) IS the origin. `RelDecl.origin` mirrors
- * it as a top-level field so the lowerer reads origin without digging into the kind
- * cross-product. The two must agree; `buildRuleGraph`/`lowerProgram` read `decl.origin`.
+ * `RelDecl.origin` mirrors `RelKind.origin` as a top-level field so the
+ * lowerer reads origin without digging into the kind cross-product; the two
+ * must agree.
  */
 
 import type { RelKind, Origin } from "../../tasks.d.ts";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Body + head positions.
-// ─────────────────────────────────────────────────────────────────────────────
 
 /** A literal constant. JSON-representable so it crosses the rx boundary by value. */
 export type LitValue = string | number | boolean | null;
@@ -48,7 +39,7 @@ export interface Lit {
 }
 
 /** One argument to a body rel reference. `Var` binds/joins; `Lit` selects
- *  (row[col] === value); `Wild` (`_`) matches any value and binds nothing —
+ *  (row[col] === value); `Wild` (`_`) matches any value and binds nothing,
  *  legal in both a positive `RelRef` and a negated `NegRelRef`. Two wildcards
  *  in the same rule are independently existential: they never bind, so they
  *  never compare to each other or to anything else (no accidental equi-join). */
@@ -59,29 +50,20 @@ export interface Wild {
   readonly kind: "wild";
 }
 
-/** An argument to a negated rel reference. Same shape as a positive ref's `Arg`
- *  (`Var`|`Lit`|`Wild`) — kept as its own exported alias (rather than folded away)
- *  because callers already import `NegArg` for `NegRelRef.args`. A `Var` here reuses
- *  whatever binding rules `Arg` already has (checks equality if bound elsewhere in the
- *  body, otherwise is existentially quantified over the negated rel's rows); `Wild` is
- *  ALWAYS existentially quantified and never binds, even if the same rule uses `_` in
- *  more than one negated-arg position. */
+/** An argument to a negated rel reference: same shape as a positive ref's `Arg`
+ *  (`Var`|`Lit`|`Wild`), kept as its own alias because callers already import
+ *  `NegArg` for `NegRelRef.args`. A `Var` here checks equality if bound
+ *  elsewhere in the body, otherwise is existentially quantified over the
+ *  negated rel's rows; `Wild` is always existentially quantified and never
+ *  binds, even if the same rule uses `_` in more than one negated-arg position. */
 export type NegArg = Arg;
 
 /** Comparison operators for a selection predicate. */
 export type CmpOp = "eq" | "ne" | "lt" | "le" | "gt" | "ge";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Body predicates: a rel reference (join source) or a comparison (selection).
-// ─────────────────────────────────────────────────────────────────────────────
-
 /** A rel reference as a body predicate. `rel` names an EDB/IDB rel; `args` are
- *  positional, AT MOST one per declared column. A `Var` binds/joins; a `Lit` selects;
- *  a `Wild` (`_`) matches any value and binds nothing ("don't project, don't
- *  consistency-check" — see ast.ts's header note). `args` may hold FEWER entries than
- *  the rel's declared column count: trailing-arg elision — the missing trailing
- *  positions behave exactly as if they were `Wild`, since the join (lower.ts's
- *  `tryBind`) only ever reads `args[col]` for `col < args.length`. */
+ *  positional, at most one per declared column. `args` may hold fewer entries
+ *  than the rel's declared column count (trailing-arg elision, see header). */
 export interface RelRef {
   readonly kind: "rel";
   readonly rel: string;
@@ -98,13 +80,13 @@ export interface Compare {
 }
 
 /** A negated rel reference: `!rel(args)` (v5 surface spelling, src/ast.rs:370
- *  `BodyItem::Neg`; stratified negation). Filters bindings whose projection matches ANY
- *  row currently in `rel`'s set — an existence check that introduces no new bindings
- *  (unlike `RelRef`). `rel` must be outside this rule's own SCC: a negation edge whose
- *  endpoints share a cycle is a `NonStratifiableError` (rulegraph.ts `stratify`) — v5's
- *  "forcing edge" check, src/typecheck.rs:1195. `args` are `NegArg` (`Var`|`Lit`|`Wild`,
- *  same set a positive ref's `Arg` now allows) and, like `RelRef.args`, may be shorter
- *  than the rel's declared arity (trailing-arg elision applies here too). */
+ *  BodyItem::Neg; stratified negation). Filters bindings whose projection
+ *  matches any row currently in `rel`'s set, an existence check that
+ *  introduces no new bindings. `rel` must be outside this rule's own SCC: a
+ *  negation edge whose endpoints share a cycle is a `NonStratifiableError`
+ *  (rulegraph.ts `stratify`), v5's "forcing edge" check, src/typecheck.rs:1195.
+ *  `args` are `NegArg` and may be shorter than the rel's declared arity
+ *  (trailing-arg elision, see header). */
 export interface NegRelRef {
   readonly kind: "notrel";
   readonly rel: string;
@@ -114,10 +96,6 @@ export interface NegRelRef {
 /** One body predicate: a rel reference (the join source), a comparison (selection),
  *  or a negated rel reference (an anti-join filter). */
 export type BodyPred = RelRef | Compare | NegRelRef;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Head terms: a plain Var (group-by / projection) or an aggregate of a Var.
-// ─────────────────────────────────────────────────────────────────────────────
 
 /** Aggregate functions supported in a rule head. */
 export type AggFn = "max" | "min" | "sum" | "count";
@@ -137,12 +115,8 @@ export interface HeadAgg {
 
 export type HeadTerm = HeadVar | HeadAgg;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Declared rels, rules, programs.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** A declared rel. Its `kind` fixes its rx primitive via ResolveRel (tasks.d.ts);
- *  `origin` mirrors `kind.origin` and is what the lowerer reads. */
+/** A declared rel. Its `kind` fixes its rx primitive via ResolveRel; `origin`
+ *  mirrors `kind.origin` and is what the lowerer reads. */
 export interface RelDecl {
   readonly name: string;
   readonly columns: readonly string[];
@@ -162,18 +136,18 @@ export interface Rule {
 }
 
 /** A program: declared rels + derived rules. Facts arrive as injected sources,
- *  not as AST nodes (no SQLite / RelStore / IO in this arc). */
+ *  not as AST nodes. */
 export interface Program {
   readonly rels: readonly RelDecl[];
   readonly rules: readonly Rule[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Constructor helpers — keep hand-built programs in tests (and a future parser)
-// terse and typo-resistant. Discriminants are filled in for exhaustiveness.
+// Constructor helpers: keep hand-built programs (tests, a future parser) terse
+// and typo-resistant. Discriminants are filled in for exhaustiveness.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** A body/head variable reference. (`variable` — `var` is reserved.) */
+/** A body/head variable reference (`variable`, not `var`: `var` is reserved). */
 export function variable(name: string): Var {
   return { kind: "var", name };
 }
@@ -191,16 +165,16 @@ export function relRef(rel: string, ...args: readonly Arg[]): RelRef {
 export function notRel(rel: string, ...args: readonly NegArg[]): NegRelRef {
   return { kind: "notrel", rel, args };
 }
-/** A Var arg (binding/join position) — shorthand so relRef reads positionally. */
+/** A Var arg (binding/join position); shorthand so relRef reads positionally. */
 export function v(name: string): Arg {
   return variable(name);
 }
-/** A Lit arg (selection position) — shorthand so relRef reads positionally. */
+/** A Lit arg (selection position); shorthand so relRef reads positionally. */
 export function lit(value: LitValue): Arg {
   return literal(value);
 }
-/** A wildcard `_` arg — legal in both `relRef`'s and `notRel`'s args: matches any
- *  value, binds nothing. */
+/** A wildcard `_` arg, legal in both `relRef`'s and `notRel`'s args: matches
+ *  any value, binds nothing. */
 export function wild(): Wild {
   return { kind: "wild" };
 }
@@ -218,10 +192,9 @@ export function headAgg(fn: AggFn, argName: string): HeadAgg {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RelKind presets. The kind cross-product is large; these are the shapes this arc
-// lowers. A cold-derived (IDB) rel resolves to a cold Observable; an EDB source
-// resolves to whatever the injected source Observable is (the trinity is advisory
-// here — the lowerer treats the source as opaque).
+// RelKind presets. The kind cross-product is large; these are the shapes that
+// lower. A cold-derived (IDB) rel resolves to a cold Observable; an EDB source
+// resolves to whatever the injected source Observable is, treated as opaque.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A cold/lazy derived rel (IDB). Lowers to a cold Observable (re-subscribe re-runs). */

@@ -1,42 +1,39 @@
 /**
- * rulegraph.ts — the static rule dependency graph + stratification.
+ * The static rule dependency graph and stratification. Pure functions over a
+ * named-node adjacency list; no rxjs, no SQLite, no engine types. The three
+ * exports are `buildRuleGraph` -> `scc` (Tarjan) -> `stratify` (condense +
+ * topo-sort).
  *
- * Pure functions over a named-node adjacency list. NO rxjs, NO SQLite, NO engine
- * types — a generic, reusable graph layer (part of the json-rx spec). The three
- * exports are `buildRuleGraph` → `scc` (Tarjan) → `stratify` (condense + topo-sort).
+ * Mirrors v5's approach (src/engine/strata.rs + src/graph/scc.rs): recursive
+ * rules are stratified by SCC before any fixpoint. Here the fixpoint is
+ * deferred (lower.ts's `RecursiveStratumDeferred`), so stratify only needs to
+ * order the acyclic strata and mark the recursive ones. The Tarjan is the
+ * iterative form proven in tests/golden.test.ts `ref_oracle.tarjan` (ported
+ * from src/graph/scc.rs).
  *
- * Mirrors v5's approach (src/engine/strata.rs + src/graph/scc.rs): recursive rules
- * are stratified by SCC before any fixpoint. Here the fixpoint is deferred (see
- * lower.ts `RecursiveStratumDeferred`), so stratify only needs to ORDER the acyclic
- * strata and MARK the recursive ones. The Tarjan is the iterative form proven in
- * tests/golden.test.ts `ref_oracle.tarjan` (itself ported from src/graph/scc.rs).
- *
- * Stratified negation adds polarity: a `!rel(args)` body predicate (v5 surface
- * spelling; src/ast.rs:370 `BodyItem::Neg`) is STILL a dependency edge (the negated
- * rel must be evaluated first) but marked negative in `Graph.negAdj` — v5's "forcing
- * edge" (src/typecheck.rs:1185). `stratify` refuses a program where a negative edge's
- * two endpoints share an SCC — the negated rel could never be "already complete"
- * relative to its own cycle — by throwing `NonStratifiableError`, matching v5's
- * diagnostic wording (src/typecheck.rs:1201).
+ * Stratified negation adds polarity: a `!rel(args)` body predicate
+ * (src/ast.rs:370 `BodyItem::Neg`) is still a dependency edge (the negated
+ * rel must be evaluated first) but marked negative in `Graph.negAdj`, v5's
+ * "forcing edge" (src/typecheck.rs:1185). `stratify` refuses a program where a
+ * negative edge's two endpoints share an SCC, since the negated rel could
+ * never be "already complete" relative to its own cycle, by throwing
+ * `NonStratifiableError`, matching v5's diagnostic wording (src/typecheck.rs:1201).
  */
 
 import type { Program } from "./ast.ts";
 import type { Stratum, Graph } from "./types.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The graph: dense-indexed named nodes + deduped, sorted out-edges.
-// ─────────────────────────────────────────────────────────────────────────────
 // Edge direction = DEPENDENCY: an edge head -> body-read means "head depends on
 // body" (head's rule reads body in its body). Evaluation needs body first.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Build the rule dependency graph from a program: edge `head_rel -> each rel read
- * in its body`. Works for higher-order maps — a rel reading a derived rel is just
- * another edge. Node indexing: declared rels in declaration order, then any body-
- * referenced-but-undeclared rel in first-seen order. A `!rel(args)` body predicate
- * still contributes the dependency edge (evaluation order needs it first) AND marks
- * it negative in `negAdj` for the stratifiability check below.
+ * Build the rule dependency graph from a program: edge `head_rel -> each rel
+ * read in its body`. Node indexing: declared rels in declaration order, then
+ * any body-referenced-but-undeclared rel in first-seen order. A `!rel(args)`
+ * body predicate still contributes the dependency edge and marks it negative
+ * in `negAdj` for the stratifiability check below.
  */
 export function buildRuleGraph(prog: Program): Graph {
   const nameToIndex = new Map<string, number>();
@@ -67,7 +64,7 @@ export function buildRuleGraph(prog: Program): Graph {
       } else if (predicate.kind === "notrel") {
         const negRelIndex = ensure(predicate.rel);
         adjSets[headIndex]!.add(negRelIndex); // the dependency exists regardless of polarity
-        negAdjSets[headIndex]!.add(negRelIndex); // ... but this one is negative
+        negAdjSets[headIndex]!.add(negRelIndex); // but this one is negative
       }
     }
   }
@@ -77,7 +74,7 @@ export function buildRuleGraph(prog: Program): Graph {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tarjan SCC — iterative, byte-for-byte the golden.test.ts `ref_oracle.tarjan`
+// Tarjan SCC, iterative, byte-for-byte the golden.test.ts `ref_oracle.tarjan`
 // reference (ported from src/graph/scc.rs). Returns (comp per node, #components).
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -142,11 +139,12 @@ export function scc(graph: Graph): { comp: number[]; ncomp: number } {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * A program is not stratifiable: a `!rel(args)` body predicate's target rel shares an
- * SCC with the rule reading it. Message wording matches v5's diagnostic exactly
- * (src/typecheck.rs:1201, `not-stratified`): "relation `{rel}` is aggregated or negated
- * inside a recursive cycle with `{cycleWith}`" — `rel` is the negated (body-side) rel,
- * `cycleWith` is the head rel whose rule reads it.
+ * A program is not stratifiable: a `!rel(args)` body predicate's target rel
+ * shares an SCC with the rule reading it. Message wording matches v5's
+ * diagnostic exactly (src/typecheck.rs:1201, `not-stratified`): "relation
+ * `{rel}` is aggregated or negated inside a recursive cycle with
+ * `{cycleWith}`"; `rel` is the negated (body-side) rel, `cycleWith` is the
+ * head rel whose rule reads it.
  */
 export class NonStratifiableError extends Error {
   /** The negated rel (v5's `b` / body side of the forcing edge). */
@@ -164,12 +162,12 @@ export class NonStratifiableError extends Error {
 /**
  * Condense the SCCs and topo-sort the condensation so dependencies come first.
  * Deterministic: among ready components (all deps emitted), picks the one whose
- * member set has the smallest min index — stable under reordering of equal-rank
+ * member set has the smallest min index, stable under reordering of equal-rank
  * components. Returns one `Stratum` per SCC, in evaluation order.
  *
- * Throws `NonStratifiableError` if any `negAdj` edge's two endpoints share an SCC —
- * checked before the condensation/topo-sort work below, since an illegal program has
- * no valid evaluation order to compute.
+ * Throws `NonStratifiableError` if any `negAdj` edge's two endpoints share an
+ * SCC, checked before the condensation/topo-sort work below, since an illegal
+ * program has no valid evaluation order to compute.
  */
 export function stratify(
   graph: Graph,
