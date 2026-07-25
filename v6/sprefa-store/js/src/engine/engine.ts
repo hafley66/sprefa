@@ -126,8 +126,8 @@ export function key(tag: number, id: number): number {
 
 /** Per-statement wall-time trace, opt-in via DL_CASCADE_TRACE=1. Off by default. */
 function traced(): boolean {
-  const v = process.env.DL_CASCADE_TRACE;
-  return v !== undefined && v !== "0" && v.length > 0;
+  const traceSetting = process.env.DL_CASCADE_TRACE;
+  return traceSetting !== undefined && traceSetting !== "0" && traceSetting.length > 0;
 }
 
 /** Top-level statement split. Safe here: cascade SQL inlines only integers, never text
@@ -135,18 +135,18 @@ function traced(): boolean {
 function split_statements(sql: string): string[] {
   return sql
     .split(";")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+    .map((stmt) => stmt.trim())
+    .filter((stmt) => stmt.length > 0);
 }
 
 async function exec(db: Db, sql: string): Promise<void> {
   stmt_counter.incr();
   if (traced()) {
-    const t = process.hrtime.bigint();
+    const startedAt = process.hrtime.bigint();
     for (const stmt of split_statements(sql)) await db.execute(stmt);
-    const ms = Number(process.hrtime.bigint() - t) / 1e6;
+    const elapsedMilliseconds = Number(process.hrtime.bigint() - startedAt) / 1e6;
     const head = sql.slice(0, 50).replace(/\n/g, " ");
-    console.error(`[cascade] ${ms.toFixed(2)} ms  ${head}`);
+    console.error(`[cascade] ${elapsedMilliseconds.toFixed(2)} ms  ${head}`);
     return;
   }
   for (const stmt of split_statements(sql)) await db.execute(stmt);
@@ -179,8 +179,8 @@ export async function with_txn<T>(db: Db, body: () => Promise<T>): Promise<T> {
 async function scalar(db: Db, sql: string): Promise<number> {
   stmt_counter.incr();
   const res = await db.execute(sql);
-  const v = res.rows[0]?.[0];
-  return v === undefined ? 0 : Number(v);
+  const value = res.rows[0]?.[0];
+  return value === undefined ? 0 : Number(value);
 }
 
 /** Run a fixed, upfront-known list of write statements as one atomic batch. */
@@ -227,9 +227,9 @@ export async function insert_rows(
   rows: ReadonlyArray<readonly [number, number, number]>,
 ): Promise<void> {
   const stmts: string[] = [];
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    const chunk = rows.slice(i, i + CHUNK);
-    const vals = chunk.map(([t, id, w]) => `(${key(t, id)},${w})`).join(",");
+  for (let chunkStart = 0; chunkStart < rows.length; chunkStart += CHUNK) {
+    const chunk = rows.slice(chunkStart, chunkStart + CHUNK);
+    const vals = chunk.map(([tag, id, weight]) => `(${key(tag, id)},${weight})`).join(",");
     stmts.push(`INSERT INTO ${ns.row}(key,weight) VALUES ${vals}`);
   }
   await execBatch(db, stmts);
@@ -242,9 +242,9 @@ export async function insert_deps(
   edges: ReadonlyArray<readonly [number, number, number, number]>,
 ): Promise<void> {
   const stmts: string[] = [];
-  for (let i = 0; i < edges.length; i += CHUNK) {
-    const chunk = edges.slice(i, i + CHUNK);
-    const vals = chunk.map(([pt, pi, ct, ci]) => `(${key(pt, pi)},${key(ct, ci)})`).join(",");
+  for (let chunkStart = 0; chunkStart < edges.length; chunkStart += CHUNK) {
+    const chunk = edges.slice(chunkStart, chunkStart + CHUNK);
+    const vals = chunk.map(([parentTag, parentId, childTag, childId]) => `(${key(parentTag, parentId)},${key(childTag, childId)})`).join(",");
     stmts.push(`INSERT INTO ${ns.dep}(parent_key,child_key) VALUES ${vals}`);
   }
   await execBatch(db, stmts);
@@ -271,7 +271,7 @@ async function retract_body(
   await exec(db, `DELETE FROM ${ns.next}`);
 
   // Apply the -1 to each seed, then the frontier is the seeds that hit <= 0.
-  const seed_vals = seeds.map(([t, id]) => key(t, id).toString()).join(",");
+  const seed_vals = seeds.map(([tag, id]) => key(tag, id).toString()).join(",");
   const seed_in = `(${seed_vals})`;
   await exec(db, `UPDATE ${ns.row} SET weight = weight - 1 WHERE key IN ${seed_in}`);
   await exec(
@@ -344,7 +344,7 @@ async function retract_scc_two_pass_body(
   ns: IGraphNs,
   seeds: ReadonlyArray<readonly [number, number]>,
 ): Promise<number> {
-  const seed_vals = seeds.map(([t, id]) => key(t, id).toString()).join(",");
+  const seed_vals = seeds.map(([tag, id]) => key(tag, id).toString()).join(",");
   const seed_in = `(${seed_vals})`;
   await exec(
     db,
@@ -433,7 +433,7 @@ async function assert_body(
 ): Promise<number> {
   await exec(db, `DELETE FROM ${ns.frontier}`);
   await exec(db, `DELETE FROM ${ns.next}`);
-  const seed_in = `(${seeds.map(([t, id]) => key(t, id).toString()).join(",")})`;
+  const seed_in = `(${seeds.map(([tag, id]) => key(tag, id).toString()).join(",")})`;
   await exec(db, `INSERT INTO ${ns.frontier} SELECT key FROM ${ns.row} WHERE key IN ${seed_in}`);
   await exec(db, `UPDATE ${ns.row} SET weight=1 WHERE key IN ${seed_in}`);
   let rounds = 0;
@@ -479,7 +479,7 @@ async function retract_dred_body(
   await exec(db, `DELETE FROM ${ns.next}`);
   await exec(db, `DELETE FROM ${ns.cone}`);
 
-  const seed_in = `(${seeds.map(([t, id]) => key(t, id).toString()).join(",")})`;
+  const seed_in = `(${seeds.map(([tag, id]) => key(tag, id).toString()).join(",")})`;
   await exec(db, `INSERT INTO ${ns.frontier} SELECT key FROM ${ns.row} WHERE key IN ${seed_in} AND weight>0`);
   await exec(db, `UPDATE ${ns.row} SET weight=0 WHERE key IN (SELECT key FROM ${ns.frontier})`);
   await exec(db, `INSERT INTO ${ns.cone} SELECT key FROM ${ns.frontier}`);
@@ -548,7 +548,7 @@ export async function retract_dred_cte(
   ns: IGraphNs,
   seeds: ReadonlyArray<readonly [number, number]>,
 ): Promise<number> {
-  const seed_in = `(${seeds.map(([t, id]) => key(t, id).toString()).join(",")})`;
+  const seed_in = `(${seeds.map(([tag, id]) => key(tag, id).toString()).join(",")})`;
   const stmts: string[] = [
     `DELETE FROM ${ns.cone}`,
     // Phase 1 — over-delete.
@@ -615,7 +615,7 @@ export async function reaches_from(db: Db, ns: IGraphNs, start: number): Promise
         ) SELECT key FROM reach ORDER BY key`;
   stmt_counter.incr();
   const res = await db.execute(sql);
-  return res.rows.map((r) => Number(r[0]));
+  return res.rows.map((row) => Number(row[0]));
 }
 
 /** Reverse transitive closure into `target` (rides ix_*_dep_child). */
@@ -627,7 +627,7 @@ export async function reached_by(db: Db, ns: IGraphNs, target: number): Promise<
         ) SELECT key FROM reach ORDER BY key`;
   stmt_counter.incr();
   const res = await db.execute(sql);
-  return res.rows.map((r) => Number(r[0]));
+  return res.rows.map((row) => Number(row[0]));
 }
 
 let walkTableId = 0;
@@ -658,7 +658,7 @@ export async function multi_source_walk(
     }
   }
 
-  const ordered = starts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+  const ordered = starts.slice().sort((startA, startB) => startA[0] - startB[0] || startA[1] - startB[1] || startA[2] - startB[2]);
   for (const [tag, node, depth] of ordered) {
     await db.executeMultiple(
       `INSERT OR IGNORE INTO ${reached_table}(tag,node,depth,round) VALUES (${tag},${node},${depth},0)`,
@@ -683,7 +683,7 @@ export async function multi_source_walk(
 
   const rowsRes = await db.execute(`SELECT tag,node,depth FROM ${reached_table} ORDER BY tag,node`);
   await db.executeMultiple(`DROP TABLE ${reached_table}; DROP TABLE ${halt_table}`);
-  return rowsRes.rows.map((r) => [Number(r.tag), Number(r.node), Number(r.depth)] as [number, number, number]);
+  return rowsRes.rows.map((row) => [Number(row.tag), Number(row.node), Number(row.depth)] as [number, number, number]);
 }
 
 /** halt-only, depth-agnostic special case of `multi_source_walk`. */
@@ -693,8 +693,8 @@ export async function multi_source_halt_bfs(
   starts: ReadonlyArray<readonly [number, number]>,
   halt: ReadonlyArray<number>,
 ): Promise<[number, number][]> {
-  const starts3: [number, number, number][] = starts.map(([t, n]) => [t, n, 0]);
-  return (await multi_source_walk(db, ns, starts3, halt, null)).map(([t, n]) => [t, n]);
+  const starts3: [number, number, number][] = starts.map(([tag, node]) => [tag, node, 0]);
+  return (await multi_source_walk(db, ns, starts3, halt, null)).map(([tag, node]) => [tag, node]);
 }
 
 /**
@@ -713,7 +713,7 @@ export async function scc_labels(db: Db, ns: IGraphNs): Promise<[number, number]
          GROUP BY node.key ORDER BY node.key`;
   stmt_counter.incr();
   const res = await db.execute(sql);
-  return res.rows.map((r) => [Number(r.key), Number(r.repr)] as [number, number]);
+  return res.rows.map((row) => [Number(row.key), Number(row.repr)] as [number, number]);
 }
 
 /** Condensation derived from `scc_labels` + cx_dep group-bys. */
@@ -743,16 +743,16 @@ export async function build_condensed(db: Db, ns: IGraphNs): Promise<Condensed> 
       }
     }
   }
-  cadj.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  cadj.sort((edgeA, edgeB) => edgeA[0] - edgeB[0] || edgeA[1] - edgeB[1]);
 
   const size: [number, number][] = [];
   for (const [repr, count] of member_counts) size.push([repr, count]);
-  size.sort((a, b) => a[0] - b[0]);
+  size.sort((itemA, itemB) => itemA[0] - itemB[0]);
   const cyclic: [number, boolean][] = [];
   for (const [repr, count] of member_counts) {
     cyclic.push([repr, count > 1 || self_loops.has(repr)]);
   }
-  cyclic.sort((a, b) => a[0] - b[0]);
+  cyclic.sort((itemA, itemB) => itemA[0] - itemB[0]);
 
   return { comp_of, size, cyclic, cadj };
 }
@@ -768,9 +768,9 @@ export async function count_pairs(db: Db, ns: IGraphNs): Promise<bigint> {
 
   const reprs = new Set<number>();
   for (const [repr] of cond.size) reprs.add(repr);
-  const reprSorted = [...reprs].sort((a, b) => a - b);
+  const reprSorted = [...reprs].sort((itemA, itemB) => itemA - itemB);
   const idx = new Map<number, number>();
-  reprSorted.forEach((r, i) => idx.set(r, i));
+  reprSorted.forEach((repr, index) => idx.set(repr, index));
   const ncomp = reprSorted.length;
   if (ncomp === 0) return 0n;
 
@@ -783,42 +783,42 @@ export async function count_pairs(db: Db, ns: IGraphNs): Promise<bigint> {
 
   // topo order, bitset-propagate reach; total = Σ cyclic·size² + Σ size·(reachable sizes)
   const indeg = new Array<number>(ncomp).fill(0);
-  for (let cc = 0; cc < ncomp; cc++) for (const s of cadj[cc]!) indeg[s]! += 1;
+  for (let componentIndex = 0; componentIndex < ncomp; componentIndex++) for (const successor of cadj[componentIndex]!) indeg[successor]! += 1;
   const topo: number[] = [];
-  for (let x = 0; x < ncomp; x++) if (indeg[x] === 0) topo.push(x);
-  let qi = 0;
-  while (qi < topo.length) {
-    const x = topo[qi]!;
-    qi++;
-    for (const s of cadj[x]!) {
-      indeg[s]! -= 1;
-      if (indeg[s] === 0) topo.push(s);
+  for (let node = 0; node < ncomp; node++) if (indeg[node] === 0) topo.push(node);
+  let queueCursor = 0;
+  while (queueCursor < topo.length) {
+    const node = topo[queueCursor]!;
+    queueCursor++;
+    for (const successor of cadj[node]!) {
+      indeg[successor]! -= 1;
+      if (indeg[successor] === 0) topo.push(successor);
     }
   }
   const words = (ncomp + 63) >> 6;
   const reach = new Array<bigint>(ncomp * words).fill(0n);
-  for (let ti = topo.length - 1; ti >= 0; ti--) {
-    const cc = topo[ti]!;
-    for (const s of cadj[cc]!) {
-      reach[cc * words + (s >> 6)]! |= 1n << BigInt(s & 63);
-      for (let w = 0; w < words; w++) {
-        reach[cc * words + w]! |= reach[s * words + w]!;
+  for (let topoIndex = topo.length - 1; topoIndex >= 0; topoIndex--) {
+    const componentIndex = topo[topoIndex]!;
+    for (const successor of cadj[componentIndex]!) {
+      reach[componentIndex * words + (successor >> 6)]! |= 1n << BigInt(successor & 63);
+      for (let wordIndex = 0; wordIndex < words; wordIndex++) {
+        reach[componentIndex * words + wordIndex]! |= reach[successor * words + wordIndex]!;
       }
     }
   }
   let total = 0n;
-  for (let cc = 0; cc < ncomp; cc++) {
-    if (cyclic[cc]) total += size[cc]! * size[cc]!;
+  for (let componentIndex = 0; componentIndex < ncomp; componentIndex++) {
+    if (cyclic[componentIndex]) total += size[componentIndex]! * size[componentIndex]!;
     let wsum = 0n;
-    for (let w = 0; w < words; w++) {
-      let bits = reach[cc * words + w]!;
+    for (let wordIndex = 0; wordIndex < words; wordIndex++) {
+      let bits = reach[componentIndex * words + wordIndex]!;
       while (bits !== 0n) {
-        const b = w * 64 + trailing_zeros(bits);
-        wsum += size[b]!;
+        const bitPosition = wordIndex * 64 + trailing_zeros(bits);
+        wsum += size[bitPosition]!;
         bits &= bits - 1n;
       }
     }
-    total += size[cc]! * wsum;
+    total += size[componentIndex]! * wsum;
   }
   return total;
 }
@@ -873,7 +873,7 @@ async function exec(db: Db, sql: string): Promise<void> {
 async function query_ids(db: Db, sql: string): Promise<number[]> {
   stmt_counter.incr();
   const res = await db.execute(sql);
-  return res.rows.map((r) => Number(r[0]));
+  return res.rows.map((row) => Number(row[0]));
 }
 
 /** Query bigint ids/digests (full 64-bit fidelity, the client's global intMode). */
@@ -913,8 +913,8 @@ export async function seed(
   const stmts: string[] = [
     `INSERT INTO ${ns.memo}(id,digest,changed_at,verified_at) VALUES (${id},${digest},${rev},${rev})`,
   ];
-  for (const d of deps) {
-    stmts.push(`INSERT OR IGNORE INTO ${ns.rdep}(reader,read) VALUES (${id},${d})`);
+  for (const dep of deps) {
+    stmts.push(`INSERT OR IGNORE INTO ${ns.rdep}(reader,read) VALUES (${id},${dep})`);
   }
   await execBatch(db, stmts);
 }
@@ -928,7 +928,7 @@ async function execBatch(db: Db, stmts: ReadonlyArray<string>): Promise<void> {
 
 /** An input's digest moved at `rev`: bump its changed_at so the CTE sees it stale. */
 export async function mark_changed(db: Db, ns: IGraphNs, ids: ReadonlyArray<number>, rev: number): Promise<void> {
-  const in_list = ids.map((i) => i.toString()).join(",");
+  const in_list = ids.map((id) => id.toString()).join(",");
   await exec(db, `UPDATE ${ns.memo} SET changed_at=${rev} WHERE id IN (${in_list})`);
 }
 
@@ -982,7 +982,7 @@ class AscendingIdQueue {
   private readonly members = new Set<number>();
 
   constructor(seeds: ReadonlyArray<number>) {
-    for (const s of seeds) this.add(s);
+    for (const seed of seeds) this.add(seed);
   }
 
   get size(): number {
@@ -993,12 +993,12 @@ class AscendingIdQueue {
     if (this.members.has(id)) return;
     this.members.add(id);
     this.heap.push(id);
-    let i = this.heap.length - 1;
-    while (i > 0) {
-      const parent = (i - 1) >> 1;
-      if (this.heap[parent]! <= this.heap[i]!) break;
-      [this.heap[parent], this.heap[i]] = [this.heap[i]!, this.heap[parent]!];
-      i = parent;
+    let heapIndex = this.heap.length - 1;
+    while (heapIndex > 0) {
+      const parent = (heapIndex - 1) >> 1;
+      if (this.heap[parent]! <= this.heap[heapIndex]!) break;
+      [this.heap[parent], this.heap[heapIndex]] = [this.heap[heapIndex]!, this.heap[parent]!];
+      heapIndex = parent;
     }
   }
 
@@ -1007,16 +1007,16 @@ class AscendingIdQueue {
     const last = this.heap.pop()!;
     if (this.heap.length > 0) {
       this.heap[0] = last;
-      let i = 0;
+      let heapIndex = 0;
       for (;;) {
-        const left = 2 * i + 1;
+        const left = 2 * heapIndex + 1;
         const right = left + 1;
-        let smallest = i;
+        let smallest = heapIndex;
         if (left < this.heap.length && this.heap[left]! < this.heap[smallest]!) smallest = left;
         if (right < this.heap.length && this.heap[right]! < this.heap[smallest]!) smallest = right;
-        if (smallest === i) break;
-        [this.heap[i], this.heap[smallest]] = [this.heap[smallest]!, this.heap[i]!];
-        i = smallest;
+        if (smallest === heapIndex) break;
+        [this.heap[heapIndex], this.heap[smallest]] = [this.heap[smallest]!, this.heap[heapIndex]!];
+        heapIndex = smallest;
       }
     }
     this.members.delete(min);
@@ -1056,7 +1056,7 @@ export async function propagate(
 export async function answer(db: Db, ns: IGraphNs): Promise<bigint> {
   const digests = await query_bigints(db, `SELECT digest FROM ${ns.memo}`);
   let acc = 0n;
-  for (const d of digests) acc = BigInt.asUintN(64, acc ^ BigInt.asUintN(64, d));
+  for (const digest of digests) acc = BigInt.asUintN(64, acc ^ BigInt.asUintN(64, digest));
   return BigInt.asIntN(64, acc);
 }
 }

@@ -110,12 +110,12 @@ let documentCounter = 0;
  *  the instance timeline pinned in the plan — no incremental doc services here). */
 function parseDlDocument(dlText: string): { program: Gen.Program; diags: LoadDiag[] } {
   const uri = URI.parse(`memory://dl-bridge/${documentCounter++}.dl`);
-  const doc = sharedServices.workspace.LangiumDocumentFactory.fromString<Gen.Program>(dlText, uri);
+  const langiumDocument = sharedServices.workspace.LangiumDocumentFactory.fromString<Gen.Program>(dlText, uri);
   const diags: LoadDiag[] = [];
-  for (const lexErr of doc.parseResult.lexerErrors) {
+  for (const lexErr of langiumDocument.parseResult.lexerErrors) {
     diags.push({ code: "parse", message: lexErr.message, line: lexErr.line ?? 0, col: lexErr.column ?? 0 });
   }
-  for (const parseErr of doc.parseResult.parserErrors) {
+  for (const parseErr of langiumDocument.parseResult.parserErrors) {
     diags.push({
       code: "parse",
       message: parseErr.message,
@@ -123,7 +123,7 @@ function parseDlDocument(dlText: string): { program: Gen.Program; diags: LoadDia
       col: parseErr.token.startColumn ?? 0,
     });
   }
-  return { program: doc.parseResult.value, diags };
+  return { program: langiumDocument.parseResult.value, diags };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -260,7 +260,7 @@ function toNegArg(node: Gen.ArgTerm): NegArg {
  *  name (see the probe branch in processRuleBody for how `columns` gets
  *  built with salts spliced in). */
 function resolveNamedArgs(
-  ctx: BridgeContext,
+  context: BridgeContext,
   columns: readonly (string | undefined)[],
   args: readonly Gen.HeadArg[],
 ): (Gen.ArgTerm | Gen.AggCall | undefined)[] {
@@ -277,11 +277,11 @@ function resolveNamedArgs(
       sawNamed = true;
       const slotIndex = columnIndex.get(arg.key);
       if (slotIndex === undefined) {
-        ctx.diags.push({ code: "named-arg", message: `\`${arg.key}\` is not a declared column`, ...nodePosition(arg) });
+        context.diags.push({ code: "named-arg", message: `\`${arg.key}\` is not a declared column`, ...nodePosition(arg) });
         continue;
       }
       if (slots[slotIndex] !== undefined) {
-        ctx.diags.push({
+        context.diags.push({
           code: "named-arg",
           message: `\`${arg.key}\`: slot already filled (duplicate name, or the name collides with a positional arg)`,
           ...nodePosition(arg),
@@ -292,7 +292,7 @@ function resolveNamedArgs(
       continue;
     }
     if (sawNamed) {
-      ctx.diags.push({ code: "named-arg", message: "positional argument follows a named argument", ...nodePosition(arg) });
+      context.diags.push({ code: "named-arg", message: "positional argument follows a named argument", ...nodePosition(arg) });
       continue;
     }
     if (positionalIndex < slots.length) slots[positionalIndex] = arg;
@@ -380,29 +380,29 @@ function newContext(): BridgeContext {
   };
 }
 
-function recordMinted(ctx: BridgeContext, name: string): void {
-  if (ctx.mintedNames.has(name)) return;
-  ctx.mintedNames.add(name);
-  ctx.minted.push(name);
+function recordMinted(context: BridgeContext, name: string): void {
+  if (context.mintedNames.has(name)) return;
+  context.mintedNames.add(name);
+  context.minted.push(name);
 }
 
 /** Mint (or reuse, deduped by value) a single-row constant rel `__lit_<n>(value)`. */
-function mintLiteral(ctx: BridgeContext, value: Value): string {
+function mintLiteral(context: BridgeContext, value: Value): string {
   const key = JSON.stringify(value);
-  const existing = ctx.literalNameByValueKey.get(key);
+  const existing = context.literalNameByValueKey.get(key);
   if (existing !== undefined) return existing;
-  const name = `__lit_${ctx.literalMintCounter++}`;
-  ctx.literalNameByValueKey.set(key, name);
-  ctx.literalSeeds.set(name, value);
-  ctx.retention.set(name, "all");
-  recordMinted(ctx, name);
+  const name = `__lit_${context.literalMintCounter++}`;
+  context.literalNameByValueKey.set(key, name);
+  context.literalSeeds.set(name, value);
+  context.retention.set(name, "all");
+  recordMinted(context, name);
   return name;
 }
 
-function checkArity(ctx: BridgeContext, rel: string, argCount: number, pos: { line: number; col: number }): void {
-  const decl = ctx.knownRelColumns.get(rel);
+function checkArity(context: BridgeContext, rel: string, argCount: number, pos: { line: number; col: number }): void {
+  const decl = context.knownRelColumns.get(rel);
   if (decl && argCount > decl.columns.length) {
-    ctx.diags.push({
+    context.diags.push({
       code: "arity-mismatch",
       message: `\`${rel}\` is declared with ${decl.columns.length} column(s), but this reference passes ${argCount}`,
       ...pos,
@@ -410,9 +410,9 @@ function checkArity(ctx: BridgeContext, rel: string, argCount: number, pos: { li
   }
 }
 
-function checkKnownRel(ctx: BridgeContext, rel: string, pos: { line: number; col: number }): void {
-  if (!ctx.knownRelColumns.has(rel)) {
-    ctx.diags.push({ code: "unknown-rel", message: `\`${rel}\` is not declared (not a user rel, builtin, or minted rel)`, ...pos });
+function checkKnownRel(context: BridgeContext, rel: string, pos: { line: number; col: number }): void {
+  if (!context.knownRelColumns.has(rel)) {
+    context.diags.push({ code: "unknown-rel", message: `\`${rel}\` is not declared (not a user rel, builtin, or minted rel)`, ...pos });
   }
 }
 
@@ -420,14 +420,14 @@ function checkKnownRel(ctx: BridgeContext, rel: string, pos: { line: number; col
 // Pass 1: rel decls, host decls, retention.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function checkColumnsForFrontierWrappers(ctx: BridgeContext, columns: readonly Gen.ColumnDecl[]): void {
-  for (const col of columns) {
-    const type = readColumnType(col.type);
+function checkColumnsForFrontierWrappers(context: BridgeContext, columns: readonly Gen.ColumnDecl[]): void {
+  for (const columnDecl of columns) {
+    const type = readColumnType(columnDecl.type);
     if (type.wrapper === "Min" || type.wrapper === "Max") {
-      ctx.diags.push({
+      context.diags.push({
         code: "minmax-frontier",
-        message: `column \`${col.name}\`: \`${type.wrapper}(...)\` parses but its lattice/lowering semantics are a frontier — not this slice`,
-        ...nodePosition(col),
+        message: `column \`${columnDecl.name}\`: \`${type.wrapper}(...)\` parses but its lattice/lowering semantics are a frontier — not this slice`,
+        ...nodePosition(columnDecl),
       });
     }
   }
@@ -443,25 +443,25 @@ function readRetention(retention: number | undefined): Retention {
   return "all";
 }
 
-function processRelDecl(ctx: BridgeContext, decl: Gen.RelDecl): void {
+function processRelDecl(context: BridgeContext, decl: Gen.RelDecl): void {
   const columnNames = decl.columns.map((column) => column.name);
-  ctx.knownRelColumns.set(decl.name, { columns: columnNames });
-  ctx.declaredColumnTypes.set(decl.name, decl.columns.map((column) => readColumnType(column.type).prim));
-  ctx.retention.set(decl.name, readRetention(decl.retention));
-  checkColumnsForFrontierWrappers(ctx, decl.columns);
+  context.knownRelColumns.set(decl.name, { columns: columnNames });
+  context.declaredColumnTypes.set(decl.name, decl.columns.map((column) => readColumnType(column.type).prim));
+  context.retention.set(decl.name, readRetention(decl.retention));
+  checkColumnsForFrontierWrappers(context, decl.columns);
 }
 
-function processShDecl(ctx: BridgeContext, decl: Gen.ShDecl): void {
-  checkColumnsForFrontierWrappers(ctx, decl.columns);
+function processShDecl(context: BridgeContext, decl: Gen.ShDecl): void {
+  checkColumnsForFrontierWrappers(context, decl.columns);
   const columns = decl.columns.map((column) => ({ name: column.name, ty: readColumnType(column.type).prim }));
   const template = decl.template.slice(1, -1); // strip the backtick delimiters
   const inputCols = columns
     .map((column) => column.name)
     .filter((name) => template.includes(`{${name}}`) || template.includes(`$${name}`));
   const hostDecl: HostDecl = { name: decl.name, columns, template, inputCols };
-  ctx.hostsByName.set(decl.name, hostDecl);
-  ctx.retention.set(`__req_${decl.name}`, "all");
-  ctx.retention.set(`__resp_${decl.name}`, "all");
+  context.hostsByName.set(decl.name, hostDecl);
+  context.retention.set(`__req_${decl.name}`, "all");
+  context.retention.set(`__resp_${decl.name}`, "all");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -500,45 +500,45 @@ interface RuleBodyResult {
   readonly boundVars: Set<string>;
 }
 
-function processRuleBody(ctx: BridgeContext, body: readonly Gen.BodyItem[]): RuleBodyResult {
+function processRuleBody(context: BridgeContext, body: readonly Gen.BodyItem[]): RuleBodyResult {
   const boundVars = collectBoundVars(body);
   const outBody: BodyPred[] = [];
 
   for (const item of body) {
     switch (item.$type) {
       case "RelRefItem": {
-        checkKnownRel(ctx, item.rel, nodePosition(item));
-        checkArity(ctx, item.rel, item.args.length, nodePosition(item));
-        const columns = ctx.knownRelColumns.get(item.rel)?.columns ?? [];
-        const slots = resolveNamedArgs(ctx, columns, item.args);
+        checkKnownRel(context, item.rel, nodePosition(item));
+        checkArity(context, item.rel, item.args.length, nodePosition(item));
+        const columns = context.knownRelColumns.get(item.rel)?.columns ?? [];
+        const slots = resolveNamedArgs(context, columns, item.args);
         outBody.push(relRef(item.rel, ...slots.map(slotToPositiveArg)));
         break;
       }
       case "NegItem": {
-        checkKnownRel(ctx, item.rel, nodePosition(item));
-        checkArity(ctx, item.rel, item.args.length, nodePosition(item));
-        const columns = ctx.knownRelColumns.get(item.rel)?.columns ?? [];
-        const slots = resolveNamedArgs(ctx, columns, item.args);
+        checkKnownRel(context, item.rel, nodePosition(item));
+        checkArity(context, item.rel, item.args.length, nodePosition(item));
+        const columns = context.knownRelColumns.get(item.rel)?.columns ?? [];
+        const slots = resolveNamedArgs(context, columns, item.args);
         outBody.push(notRel(item.rel, ...slots.map(slotToNegArg)));
         break;
       }
       case "CompareItem": {
         const { varNode, litNode } = splitCompare(item);
-        const op = CMP_OP_BY_SYMBOL[item.op]!;
+        const comparisonOperator = CMP_OP_BY_SYMBOL[item.op]!;
         const value = literalValue(litNode);
-        if (op === "eq" && !boundVars.has(varNode.name)) {
-          const mintedName = mintLiteral(ctx, value);
+        if (comparisonOperator === "eq" && !boundVars.has(varNode.name)) {
+          const mintedName = mintLiteral(context, value);
           outBody.push(relRef(mintedName, variable(varNode.name)));
           boundVars.add(varNode.name);
         } else {
-          outBody.push(compare(op, varNode.name, value));
+          outBody.push(compare(comparisonOperator, varNode.name, value));
         }
         break;
       }
       case "ProbeItem": {
-        const host = ctx.hostsByName.get(item.rel);
+        const host = context.hostsByName.get(item.rel);
         if (!host) {
-          ctx.diags.push({ code: "unknown-rel", message: `\`${item.rel}\` is not a declared host (\`sh\` decl)`, ...nodePosition(item) });
+          context.diags.push({ code: "unknown-rel", message: `\`${item.rel}\` is not a declared host (\`sh\` decl)`, ...nodePosition(item) });
           break;
         }
         const hostColumnNames = host.columns.map((column) => column.name);
@@ -556,13 +556,13 @@ function processRuleBody(ctx: BridgeContext, body: readonly Gen.BodyItem[]): Rul
         const saltSlotNames: readonly string[] = Array.from({ length: saltCount }, (_, index) => `salt_${index}`);
         const slotOrder: readonly (string | undefined)[] =
           saltCount > 0 ? [...host.inputCols, ...saltSlotNames.map(() => undefined), ...outputColumnNames] : hostColumnNames;
-        if (saltCount > 0) ctx.hostSaltCount.set(host.name, saltCount);
+        if (saltCount > 0) context.hostSaltCount.set(host.name, saltCount);
 
         // Resolve the FULL mixed positional/named arg list against slotOrder (named
         // args resolve against the HOST decl's REAL columns only: a salt slot has
         // no name in slotOrder, so it can never be targeted by a Member arg; it
         // falls into the ordinary "not a declared column" named-arg diag instead).
-        const slots = resolveNamedArgs(ctx, slotOrder, item.args);
+        const slots = resolveNamedArgs(context, slotOrder, item.args);
         const slotIndexByName = new Map<string, number>();
         slotOrder.forEach((name, index) => {
           if (name !== undefined) slotIndexByName.set(name, index);
@@ -581,7 +581,7 @@ function processRuleBody(ctx: BridgeContext, body: readonly Gen.BodyItem[]): Rul
         host.inputCols.forEach((columnName) => {
           const slot = slots[slotIndexByName.get(columnName)!];
           if (slot === undefined) {
-            ctx.diags.push({
+            context.diags.push({
               code: "arity-mismatch",
               message: `\`${item.rel}?\` needs input column \`${columnName}\` bound; it was not provided`,
               ...nodePosition(item),
@@ -590,7 +590,7 @@ function processRuleBody(ctx: BridgeContext, body: readonly Gen.BodyItem[]): Rul
             return;
           }
           if (slot.$type === "Wildcard") {
-            ctx.diags.push({
+            context.diags.push({
               code: "arity-mismatch",
               message: `\`${item.rel}?\` input position cannot be a wildcard (the demand key needs a concrete or bound value)`,
               ...nodePosition(slot),
@@ -602,7 +602,7 @@ function processRuleBody(ctx: BridgeContext, body: readonly Gen.BodyItem[]): Rul
             inputArgs.push(variable(slot.name));
             return;
           }
-          const mintedName = mintLiteral(ctx, literalValue(slot as Gen.Literal));
+          const mintedName = mintLiteral(context, literalValue(slot as Gen.Literal));
           mintedInputAtoms.push(relRef(mintedName, variable(columnName)));
           inputArgs.push(variable(columnName));
         });
@@ -613,7 +613,7 @@ function processRuleBody(ctx: BridgeContext, body: readonly Gen.BodyItem[]): Rul
         saltSlotNames.forEach((saltName, index) => {
           const slot = slots[host.inputCols.length + index];
           if (slot === undefined || slot.$type === "Wildcard") {
-            ctx.diags.push({
+            context.diags.push({
               code: "named-arg",
               message: `\`${item.rel}?\` salt argument \`${saltName}\` must be a Var or a literal, not a wildcard`,
               ...(slot !== undefined ? nodePosition(slot) : nodePosition(item)),
@@ -625,7 +625,7 @@ function processRuleBody(ctx: BridgeContext, body: readonly Gen.BodyItem[]): Rul
             saltArgs.push(variable(slot.name));
             return;
           }
-          const mintedName = mintLiteral(ctx, literalValue(slot as Gen.Literal));
+          const mintedName = mintLiteral(context, literalValue(slot as Gen.Literal));
           mintedInputAtoms.push(relRef(mintedName, variable(saltName)));
           saltArgs.push(variable(saltName));
         });
@@ -640,8 +640,8 @@ function processRuleBody(ctx: BridgeContext, body: readonly Gen.BodyItem[]): Rul
 
         const reqRelName = `__req_${host.name}`;
         const respRelName = `__resp_${host.name}`;
-        recordMinted(ctx, reqRelName);
-        recordMinted(ctx, respRelName);
+        recordMinted(context, reqRelName);
+        recordMinted(context, respRelName);
 
         // The literal-binding atoms land in THIS rule's own body too (same as any
         // other literal-binding mint) — not only in the minted request rule's body.
@@ -653,13 +653,13 @@ function processRuleBody(ctx: BridgeContext, body: readonly Gen.BodyItem[]): Rul
         // including the literal-binding atoms just pushed above).
         const reqHeadArgs: readonly Arg[] = [...inputArgs, ...saltArgs];
         const reqHeadTerms: HeadTerm[] = reqHeadArgs.map((arg) => headVar(arg.kind === "var" ? arg.name : "_probe_input_error"));
-        ctx.mintedRules.push({ head: reqRelName, headTerms: reqHeadTerms, body: [...outBody] });
+        context.mintedRules.push({ head: reqRelName, headTerms: reqHeadTerms, body: [...outBody] });
 
         outBody.push(relRef(respRelName, ...inputArgs, ...saltArgs, ...outputArgs));
         break;
       }
       case "MutationItem": {
-        ctx.diags.push({
+        context.diags.push({
           code: "mutation-frontier",
           message: `\`${item.rel}!(...)\` parses but mutations land with a later slice`,
           ...nodePosition(item),
@@ -683,7 +683,7 @@ function processRuleBody(ctx: BridgeContext, body: readonly Gen.BodyItem[]): Rul
  *  `headNode` is only a position fallback for an omitted slot (there is no textual
  *  arg node to read a line/col off of). */
 function buildHeadTerms(
-  ctx: BridgeContext,
+  context: BridgeContext,
   headRel: string,
   headNode: Gen.HeadAtom,
   columns: readonly string[],
@@ -710,7 +710,7 @@ function buildHeadTerms(
     // what keeps a re-pinned golden reading `severity`/`code`/`msg`, not a raw
     // minted rel name.
     if (slot !== undefined && isLiteralNode(slot)) {
-      const mintedName = mintLiteral(ctx, literalValue(slot));
+      const mintedName = mintLiteral(context, literalValue(slot));
       const boundName = columnName ?? mintedName;
       outBody.push(relRef(mintedName, variable(boundName)));
       return headVar(boundName);
@@ -724,7 +724,7 @@ function buildHeadTerms(
       if (columnName === "end_col") return headVar("col");
       if (columnName === "severity" || columnName === "code" || columnName === "hint") {
         const defaultValue: Value = columnName === "severity" ? "warn" : null;
-        const mintedName = mintLiteral(ctx, defaultValue);
+        const mintedName = mintLiteral(context, defaultValue);
         // A textually-present-but-unbound Var keeps ITS OWN name; an omitted slot
         // (no Var at all) reuses the declared column name (== columnName here).
         const boundName = slot?.$type === "Var" ? slot.name : columnName;
@@ -734,7 +734,7 @@ function buildHeadTerms(
     }
     // path/line/col/msg (or any non-diag head): unbound/omitted is a load error.
     const label = slot?.$type === "Var" ? `\`${slot.name}\`` : "this position";
-    ctx.diags.push({
+    context.diags.push({
       code: "arity-mismatch",
       message: `head of \`${headRel}\`: ${label} is not bound by the rule's body`,
       ...(slot !== undefined ? nodePosition(slot) : nodePosition(headNode)),
@@ -747,25 +747,25 @@ function buildHeadTerms(
 // Pass 3: rules (facts included — a fact is a DlRule with an empty body).
 // ─────────────────────────────────────────────────────────────────────────────
 
-function processDlRule(ctx: BridgeContext, dlRule: Gen.DlRule): AstRule {
+function processDlRule(context: BridgeContext, dlRule: Gen.DlRule): AstRule {
   const headRel = dlRule.head.rel;
-  ctx.headedRelNames.add(headRel);
-  checkKnownRel(ctx, headRel, nodePosition(dlRule.head));
-  checkArity(ctx, headRel, dlRule.head.args.length, nodePosition(dlRule.head));
+  context.headedRelNames.add(headRel);
+  checkKnownRel(context, headRel, nodePosition(dlRule.head));
+  checkArity(context, headRel, dlRule.head.args.length, nodePosition(dlRule.head));
 
-  const { body: outBody, boundVars } = processRuleBody(ctx, dlRule.body);
-  const headColumns = ctx.knownRelColumns.get(headRel)?.columns ?? [];
-  const headSlots = resolveNamedArgs(ctx, headColumns, dlRule.head.args);
-  const headTerms = buildHeadTerms(ctx, headRel, dlRule.head, headColumns, headSlots, boundVars, outBody);
+  const { body: outBody, boundVars } = processRuleBody(context, dlRule.body);
+  const headColumns = context.knownRelColumns.get(headRel)?.columns ?? [];
+  const headSlots = resolveNamedArgs(context, headColumns, dlRule.head.args);
+  const headTerms = buildHeadTerms(context, headRel, dlRule.head, headColumns, headSlots, boundVars, outBody);
 
   return { head: headRel, headTerms, body: outBody };
 }
 
-function processQueryStmt(ctx: BridgeContext, queryStmt: Gen.QueryStmt): AstRelRef {
-  checkKnownRel(ctx, queryStmt.rel, nodePosition(queryStmt));
-  checkArity(ctx, queryStmt.rel, queryStmt.args.length, nodePosition(queryStmt));
-  const columns = ctx.knownRelColumns.get(queryStmt.rel)?.columns ?? [];
-  const slots = resolveNamedArgs(ctx, columns, queryStmt.args);
+function processQueryStmt(context: BridgeContext, queryStmt: Gen.QueryStmt): AstRelRef {
+  checkKnownRel(context, queryStmt.rel, nodePosition(queryStmt));
+  checkArity(context, queryStmt.rel, queryStmt.args.length, nodePosition(queryStmt));
+  const columns = context.knownRelColumns.get(queryStmt.rel)?.columns ?? [];
+  const slots = resolveNamedArgs(context, columns, queryStmt.args);
   return relRef(queryStmt.rel, ...slots.map(slotToPositiveArg));
 }
 
@@ -810,14 +810,14 @@ function traceVarType(
 function buildColumnTypes(
   rels: readonly AstRelDecl[],
   rules: readonly AstRule[],
-  ctx: BridgeContext,
+  context: BridgeContext,
 ): Map<string, readonly ColumnPrim[]> {
   const resolved = new Map<string, readonly ColumnPrim[]>();
   const derivedPending: AstRelDecl[] = [];
 
   // Passes 1-4: everything resolvable without tracing a rule body.
   for (const decl of rels) {
-    const declared = ctx.declaredColumnTypes.get(decl.name);
+    const declared = context.declaredColumnTypes.get(decl.name);
     if (declared) {
       resolved.set(decl.name, declared);
       continue;
@@ -828,11 +828,11 @@ function buildColumnTypes(
       continue;
     }
     if (decl.name.startsWith("__lit_")) {
-      resolved.set(decl.name, [primOfValue(ctx.literalSeeds.get(decl.name) ?? null)]);
+      resolved.set(decl.name, [primOfValue(context.literalSeeds.get(decl.name) ?? null)]);
       continue;
     }
     const hostName = hostNameOfMinted(decl.name);
-    const host = hostName ? ctx.hostsByName.get(hostName) : undefined;
+    const host = hostName ? context.hostsByName.get(hostName) : undefined;
     if (host) {
       const byName = new Map(host.columns.map((column) => [column.name, column.ty] as const));
       resolved.set(
@@ -900,10 +900,10 @@ export function bridge(dlText: string, builtinRels: readonly AstRelDecl[]): Brid
   const { program: parsedProgram, diags: parseDiags } = parseDlDocument(dlText);
   if (parseDiags.length > 0) return { kind: "err", diags: parseDiags };
 
-  const ctx = newContext();
+  const context = newContext();
   for (const builtin of builtinRels) {
-    ctx.knownRelColumns.set(builtin.name, { columns: [...builtin.columns] });
-    ctx.retention.set(builtin.name, "all");
+    context.knownRelColumns.set(builtin.name, { columns: [...builtin.columns] });
+    context.retention.set(builtin.name, "all");
   }
 
   const relDecls: Gen.RelDecl[] = [];
@@ -917,33 +917,33 @@ export function bridge(dlText: string, builtinRels: readonly AstRelDecl[]): Brid
     else queryStmts.push(statement);
   }
 
-  for (const decl of relDecls) processRelDecl(ctx, decl);
-  for (const decl of shDecls) processShDecl(ctx, decl);
+  for (const decl of relDecls) processRelDecl(context, decl);
+  for (const decl of shDecls) processShDecl(context, decl);
 
-  const userRules = dlRules.map((dlRule) => processDlRule(ctx, dlRule));
-  const queries = queryStmts.map((queryStmt) => processQueryStmt(ctx, queryStmt));
+  const userRules = dlRules.map((dlRule) => processDlRule(context, dlRule));
+  const queries = queryStmts.map((queryStmt) => processQueryStmt(context, queryStmt));
 
-  const rules: AstRule[] = [...userRules, ...ctx.mintedRules];
+  const rules: AstRule[] = [...userRules, ...context.mintedRules];
 
-  if (ctx.diags.length > 0) return { kind: "err", diags: ctx.diags };
+  if (context.diags.length > 0) return { kind: "err", diags: context.diags };
 
   // Origin: headed (by a USER rule) -> IDB; everything else stays EDB. Minted
   // __req_<host> rules always head their own rel, so those are always IDB too.
   const rels: AstRelDecl[] = [];
   for (const decl of relDecls) {
-    const info = ctx.knownRelColumns.get(decl.name)!;
-    rels.push(ctx.headedRelNames.has(decl.name) ? derivedRel(decl.name, info.columns) : edbRel(decl.name, info.columns));
+    const info = context.knownRelColumns.get(decl.name)!;
+    rels.push(context.headedRelNames.has(decl.name) ? derivedRel(decl.name, info.columns) : edbRel(decl.name, info.columns));
   }
   for (const builtin of builtinRels) {
-    rels.push(ctx.headedRelNames.has(builtin.name) ? derivedRel(builtin.name, [...builtin.columns]) : builtin);
+    rels.push(context.headedRelNames.has(builtin.name) ? derivedRel(builtin.name, [...builtin.columns]) : builtin);
   }
-  for (const host of ctx.hostsByName.values()) {
+  for (const host of context.hostsByName.values()) {
     // Salt-arg law (IdentityWitnessLaw, tasks.d.ts): __resp_h/__req_h's column shape
     // depends on whether any probe of this host actually used salts this program
-    // (ctx.hostSaltCount, set in the ProbeItem branch above). Zero salts keeps the
+    // (context.hostSaltCount, set in the ProbeItem branch above). Zero salts keeps the
     // pre-M8 shape byte-for-byte (declared-column order for __resp_h, plain
     // inputCols for __req_h): the "zero-salt probes unchanged" regression.
-    const saltCount = ctx.hostSaltCount.get(host.name) ?? 0;
+    const saltCount = context.hostSaltCount.get(host.name) ?? 0;
     const hostColumnNames = host.columns.map((column) => column.name);
     if (saltCount === 0) {
       rels.push(edbRel(`__resp_${host.name}`, hostColumnNames));
@@ -956,7 +956,7 @@ export function bridge(dlText: string, builtinRels: readonly AstRelDecl[]): Brid
     rels.push(edbRel(`__resp_${host.name}`, [...host.inputCols, ...saltColumns, ...outputColumnNames]));
     rels.push(derivedRel(`__req_${host.name}`, [...host.inputCols, ...saltColumns]));
   }
-  for (const name of ctx.literalSeeds.keys()) {
+  for (const name of context.literalSeeds.keys()) {
     rels.push(edbRel(name, ["value"]));
   }
 
@@ -965,22 +965,22 @@ export function bridge(dlText: string, builtinRels: readonly AstRelDecl[]): Brid
   try {
     const graph = buildRuleGraph(builtProgram);
     stratify(graph, scc(graph));
-  } catch (err) {
-    if (err instanceof NonStratifiableError) {
-      return { kind: "err", diags: [{ code: "non-stratifiable", message: err.message, line: 0, col: 0 }] };
+  } catch (failure) {
+    if (failure instanceof NonStratifiableError) {
+      return { kind: "err", diags: [{ code: "non-stratifiable", message: failure.message, line: 0, col: 0 }] };
     }
-    throw err;
+    throw failure;
   }
 
   return {
     kind: "ok",
     program: builtProgram,
-    hosts: [...ctx.hostsByName.values()],
-    retention: ctx.retention,
+    hosts: [...context.hostsByName.values()],
+    retention: context.retention,
     queries,
-    minted: ctx.minted,
-    literalSeeds: ctx.literalSeeds,
-    columnTypes: buildColumnTypes(rels, rules, ctx),
+    minted: context.minted,
+    literalSeeds: context.literalSeeds,
+    columnTypes: buildColumnTypes(rels, rules, context),
   };
 }
 

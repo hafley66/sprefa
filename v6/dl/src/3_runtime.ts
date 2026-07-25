@@ -216,20 +216,20 @@ export function internProgramForStorage(
     for (const pred of rule.body) {
       if (pred.kind !== "rel") continue;
       const types = typesOf(pred.rel);
-      pred.args.forEach((arg, col) => {
+      pred.args.forEach((arg, columnIndex) => {
         if (arg.kind !== "var" || varType.has(arg.name)) return;
-        varType.set(arg.name, types[col] ?? "text");
+        varType.set(arg.name, types[columnIndex] ?? "text");
       });
     }
 
     const body: BodyPred[] = rule.body.map((pred) => {
       if (pred.kind === "rel" || pred.kind === "notrel") {
         const types = typesOf(pred.rel);
-        const args: Arg[] = pred.args.map((arg, col) =>
+        const args: Arg[] = pred.args.map((arg, columnIndex) =>
           arg.kind === "lit"
             ? {
                 kind: "lit",
-                value: encodeLiteral(store, types[col] ?? "text", arg.value, `rel '${pred.rel}' arg ${col}`),
+                value: encodeLiteral(store, types[columnIndex] ?? "text", arg.value, `rel '${pred.rel}' arg ${columnIndex}`),
               }
             : arg,
         );
@@ -791,18 +791,18 @@ export class DlRuntime implements IDlRuntime {
     // re-run applyEdbTxn/applyDerivedTxn itself (a double-write bug) since share()
     // only multicasts an ALREADY-active source.
     this.keepAlive = this.deltas$.subscribe({
-      error: (err: unknown) => {
-        throw err;
+      error: (failure: unknown) => {
+        throw failure;
       },
     });
   }
 
-  static async boot(cfg: { dbPath: string; bridge: BridgeOk; extraDdl?: readonly string[] }): Promise<DlRuntime> {
-    const db = open_db(`file:${cfg.dbPath}`);
+  static async boot(config: { dbPath: string; bridge: BridgeOk; extraDdl?: readonly string[] }): Promise<DlRuntime> {
+    const db = open_db(`file:${config.dbPath}`);
     const store = await Store.open(db);
 
     const relDecls = new Map<string, RelDecl>();
-    for (const decl of cfg.bridge.program.rels) relDecls.set(decl.name, decl);
+    for (const decl of config.bridge.program.rels) relDecls.set(decl.name, decl);
 
     // Rel identity is a DENSE TAG, 0..n-1 in declaration order, not the rel name's
     // string-dictionary id. The dictionary id is sparse (it shares one id space with
@@ -811,23 +811,23 @@ export class DlRuntime implements IDlRuntime {
     // dense for the i64 to hold anything. `rel_tag` persists tag -> name_id so a reader
     // can still resolve a tag back to a name without the tag itself carrying text.
     const relTags = new Map<string, number>();
-    cfg.bridge.program.rels.forEach((decl, tag) => relTags.set(decl.name, tag));
-    const tagRows = cfg.bridge.program.rels.map((decl, tag) => `(${tag},${store.intern(decl.name)})`);
+    config.bridge.program.rels.forEach((decl, tag) => relTags.set(decl.name, tag));
+    const tagRows = config.bridge.program.rels.map((decl, tag) => `(${tag},${store.intern(decl.name)})`);
     await store.flush_strings();
 
-    for (const decl of cfg.bridge.program.rels) {
+    for (const decl of config.bridge.program.rels) {
       await rel_tables.create_rel_table(
         db,
         `relbase_${decl.name}`,
-        relBaseColumns(decl, cfg.bridge.columnTypes),
+        relBaseColumns(decl, config.bridge.columnTypes),
         decl.columns,
         ROW_SURROGATE,
       );
     }
 
     const ddlStatements = [
-      ...ddl(cfg.bridge.program.rels, cfg.bridge.retention, cfg.bridge.columnTypes),
-      ...(cfg.extraDdl ?? []),
+      ...ddl(config.bridge.program.rels, config.bridge.retention, config.bridge.columnTypes),
+      ...(config.extraDdl ?? []),
     ];
     await db.batch(ddlStatements, "write");
 
@@ -836,7 +836,7 @@ export class DlRuntime implements IDlRuntime {
       await db.execute(`INSERT INTO rel_tag(tag,name_id) VALUES ${tagRows.join(",")} ON CONFLICT DO NOTHING`);
     }
 
-    const seedRows = literalSeedRows(store, cfg.bridge.columnTypes, cfg.bridge.literalSeeds, relDecls);
+    const seedRows = literalSeedRows(store, config.bridge.columnTypes, config.bridge.literalSeeds, relDecls);
     await store.flush_strings();
     for (const [relName, rows] of seedRows) {
       const decl = relDecls.get(relName)!;
@@ -846,11 +846,11 @@ export class DlRuntime implements IDlRuntime {
     // The program the SQL fixpoint compiles: same rules, every body literal rewritten
     // to its interned id. Interning here may mint new dictionary strings, so flush
     // before the first evaluation reads them back.
-    const storageProgram = internProgramForStorage(cfg.bridge.program, cfg.bridge.columnTypes, store);
+    const storageProgram = internProgramForStorage(config.bridge.program, config.bridge.columnTypes, store);
     await store.flush_strings();
 
     const relTables = new Map<string, RelTable>();
-    for (const decl of cfg.bridge.program.rels) {
+    for (const decl of config.bridge.program.rels) {
       relTables.set(decl.name, { table: `relbase_${decl.name}`, columns: decl.columns });
     }
 
@@ -868,7 +868,7 @@ export class DlRuntime implements IDlRuntime {
     // are not retractable through the graph.
     const { rulesWithoutSupport } = await firstValueFrom(evalProgramSql(db, storageProgram, relTables, supportEdges));
 
-    const derivedRelNames = cfg.bridge.program.rels.filter((decl) => decl.origin === "IDB").map((decl) => decl.name);
+    const derivedRelNames = config.bridge.program.rels.filter((decl) => decl.origin === "IDB").map((decl) => decl.name);
     const derivedTableMirror = new Map<string, Row[]>();
     for (const relName of derivedRelNames) {
       const decl = relDecls.get(relName)!;
@@ -879,9 +879,9 @@ export class DlRuntime implements IDlRuntime {
       db,
       store,
       relTags,
-      columnTypes: cfg.bridge.columnTypes,
+      columnTypes: config.bridge.columnTypes,
       relDecls,
-      retention: cfg.bridge.retention,
+      retention: config.bridge.retention,
       derivedRelNames,
       storageProgram,
       relTables,

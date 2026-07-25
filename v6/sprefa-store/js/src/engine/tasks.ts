@@ -223,7 +223,7 @@ export class Tasks implements Reach, Cascade, Reconcile, GraphStore {
   // ---- Reconcile ----
   /** Seed a rel's memo (id is a dense key; deps are (rel,row) pairs, keyed here). */
   async seed(id: number, digest: bigint, deps: ReadonlyArray<readonly [number, number]>, rev: number): Promise<void> {
-    const dep_keys = deps.map(([r, w]) => cascade.key(r, w));
+    const dep_keys = deps.map(([relId, rowIndex]) => cascade.key(relId, rowIndex));
     await reconcile.seed(this.store.conn(), this.store.ns(), id, digest, dep_keys, rev);
   }
   async mark_changed(ids: ReadonlyArray<number>, rev: number): Promise<void> {
@@ -251,7 +251,7 @@ export class Tasks implements Reach, Cascade, Reconcile, GraphStore {
   }
   async upsert_edges(edges: ReadonlyArray<readonly [number, number]>): Promise<void> {
     if (edges.length === 0) return;
-    const vals = edges.map(([p, c]) => `(${p},${c})`).join(",");
+    const vals = edges.map(([parentKey, childKey]) => `(${parentKey},${childKey})`).join(",");
     await this.store
       .conn()
       .executeMultiple(`INSERT OR IGNORE INTO ${this.store.ns().dep}(parent_key,child_key) VALUES ${vals}`);
@@ -260,12 +260,12 @@ export class Tasks implements Reach, Cascade, Reconcile, GraphStore {
     const res = await this.store
       .conn()
       .execute(`SELECT child_key FROM ${this.store.ns().dep} WHERE parent_key = ${key} ORDER BY child_key`);
-    return res.rows.map((r) => Number(r[0]));
+    return res.rows.map((row) => Number(row[0]));
   }
   async parents(key: number): Promise<number[]> {
     const res = await this.store
       .conn()
       .execute(`SELECT parent_key FROM ${this.store.ns().dep} WHERE child_key = ${key} ORDER BY parent_key`);
-    return res.rows.map((r) => Number(r[0]));
+    return res.rows.map((row) => Number(row[0]));
   }
 }

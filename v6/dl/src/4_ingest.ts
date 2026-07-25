@@ -110,8 +110,8 @@ export async function* extractFile(filePath: string): AsyncIterable<ExtractRecor
     child.on("close", (code) => resolve(code ?? 0));
   });
 
-  const rl = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
-  for await (const line of rl) {
+  const readlineInterface = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
+  for await (const line of readlineInterface) {
     if (line.trim().length === 0) continue;
     yield JSON.parse(line) as ExtractRecord;
   }
@@ -129,22 +129,22 @@ export async function* extractFile(filePath: string): AsyncIterable<ExtractRecor
 
 function buildLineStarts(buffer: Buffer): readonly number[] {
   const starts = [0];
-  for (let i = 0; i < buffer.length; i++) {
-    if (buffer[i] === 0x0a) starts.push(i + 1);
+  for (let byteIndex = 0; byteIndex < buffer.length; byteIndex++) {
+    if (buffer[byteIndex] === 0x0a) starts.push(byteIndex + 1);
   }
   return starts;
 }
 
 /** Largest lineStarts[i] <= offset, via binary search (lineStarts is sorted ascending). */
 function offsetToLineCol(lineStarts: readonly number[], offset: number): { readonly line: number; readonly col: number } {
-  let lo = 0;
-  let hi = lineStarts.length - 1;
-  while (lo < hi) {
-    const mid = Math.ceil((lo + hi) / 2);
-    if (lineStarts[mid]! <= offset) lo = mid;
-    else hi = mid - 1;
+  let low = 0;
+  let high = lineStarts.length - 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (lineStarts[middle]! <= offset) low = middle;
+    else high = middle - 1;
   }
-  return { line: lo, col: offset - lineStarts[lo]! };
+  return { line: low, col: offset - lineStarts[low]! };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -215,7 +215,7 @@ export function toFactLines(records: readonly ExtractRecord[], filePath: string)
   }
 
   const spanLineLines: FactLine[] = [...offsets]
-    .sort((a, b) => a - b)
+    .sort((aOffset, bOffset) => aOffset - bOffset)
     .map((offset) => {
       const { line, col } = offsetToLineCol(lineStarts, offset);
       return relLine("span_line", [relPath, offset, line, col]);
@@ -234,8 +234,8 @@ function namedRowFromFactLine(factLine: Extract<FactLine, { t: "rel" }>): Row {
   const columns = SPINE_COLUMNS_BY_NAME.get(factLine.name);
   if (!columns) throw new Error(`toFactLines: unknown spine rel '${factLine.name}'`);
   const row: Record<string, Value> = {};
-  columns.forEach((column, i) => {
-    row[column] = (factLine.row[i] ?? null) as Value;
+  columns.forEach((column, index) => {
+    row[column] = (factLine.row[index] ?? null) as Value;
   });
   return row as Row;
 }
