@@ -32,7 +32,7 @@
 | [plans/2026-07-21-spine-orm.md](plans/2026-07-21-spine-orm.md) | 200 | V6 spine — the 6 tables, one ORM, hard boundaries |
 | [plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md](plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md) | 184 | v6 core: the lab arc — oracles, why, efficiency, measured Big-O + empirical ratios |
 | [plans/2026-07-23-sprefa-extract-golden-plan.md](plans/2026-07-23-sprefa-extract-golden-plan.md) | 537 | sprefa-extract - the golden plan (distill v5, normalize for v6) |
-| [plans/2026-07-24-extract-go-closeout-and-resolve4.md](plans/2026-07-24-extract-go-closeout-and-resolve4.md) | 822 | sprefa-extract: Go closeout → Resolve<\*> (commit 4) → fixture broadening |
+| [plans/2026-07-24-extract-go-closeout-and-resolve4.md](plans/2026-07-24-extract-go-closeout-and-resolve4.md) | 823 | sprefa-extract: Go closeout → Resolve<\*> (commit 4) → fixture broadening |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
@@ -404,26 +404,26 @@
 387:### Landed (branch `plan/extract-golden-plan`, worktree `.claude/worktrees/extract-golden-plan`)
 417:### In flight — RESOLVED 2026-07-24: both landed + merged. THE RESOLVE PASS IS COMPLETE.
 431:### NEXT — queued 2026-07-25 (user: "write briefs so we can resume"): launch
-436:### Parked (do NOT start without the user's explicit word)
-455:### Operating machine (conventions for any agent/orchestrator)
-476:## Next-arc seed: new-language traits + codegen (2026-07-24, user ask)
-494:### Traits/generics to build (lands with the parked dedup sweep, in this order)
-516:### The generator (after 1–4 stabilize the skeleton)
-526:## Increment briefs (queued 2026-07-25 — launch in order, ONE agent each)
-547:### I1 — df aux port (df_args / df_fields / df_lits / df_param_pos)
-582:### I2 — docs facet port (`doc` rows)
-598:### I3 — oddity fix, ADDITIVE LANE ONLY (evidence-first)
-615:### I4 — dedup sweep → traits (FOUR increments, strict order; ALL pure
-643:### I5 — micro-batch (ONE agent session, TWO commits)
-653:### I6 — codegen (launch only after I4a–d merged)
-667:### I7 — python port (first consumer of I6; proves the generator)
-679:### I8 — Epic 3 general ratchet — STUB ONLY
-685:### Decision block — ModuleF/specifiers (HUMAN GATE; no increment until ruled)
-699:## Dogfood findings (2026-07-25 — CLI used as a ts/rs/kotlin user, break-in-spirit battery)
-714:### CLI-1..8 (user-visible, ordered by cost/benefit; micros can batch into ONE agent session)
-743:### Survival log (no action needed)
-750:### I0a — CLI micros batch (ONE agent session, ONE commit; launch before I1)
-803:### I0b — stdin + --ext (ONE agent; launch after I0a merges)
+437:### Parked (do NOT start without the user's explicit word)
+456:### Operating machine (conventions for any agent/orchestrator)
+477:## Next-arc seed: new-language traits + codegen (2026-07-24, user ask)
+495:### Traits/generics to build (lands with the parked dedup sweep, in this order)
+517:### The generator (after 1–4 stabilize the skeleton)
+527:## Increment briefs (queued 2026-07-25 — launch in order, ONE agent each)
+548:### I1 — df aux port (df_args / df_fields / df_lits / df_param_pos)
+583:### I2 — docs facet port (`doc` rows)
+599:### I3 — oddity fix, ADDITIVE LANE ONLY (evidence-first)
+616:### I4 — dedup sweep → traits (FOUR increments, strict order; ALL pure
+644:### I5 — micro-batch (ONE agent session, TWO commits)
+654:### I6 — codegen (launch only after I4a–d merged)
+668:### I7 — python port (first consumer of I6; proves the generator)
+680:### I8 — Epic 3 general ratchet — STUB ONLY
+686:### Decision block — ModuleF/specifiers (HUMAN GATE; no increment until ruled)
+700:## Dogfood findings (2026-07-25 — CLI used as a ts/rs/kotlin user, break-in-spirit battery)
+715:### CLI-1..8 (user-visible, ordered by cost/benefit; micros can batch into ONE agent session)
+744:### Survival log (no action needed)
+751:### I0a — CLI micros batch (ONE agent session, ONE commit; launch before I1)
+804:### I0b — stdin + --ext (ONE agent; launch after I0a merges)
 ```
 
 ### skills/mermaid-living-map.md

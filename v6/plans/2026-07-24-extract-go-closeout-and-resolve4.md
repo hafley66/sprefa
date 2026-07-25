@@ -429,9 +429,10 @@ re-derive decisions.
   three REAL indexers run in-test), snapshot 2/2. Both worktrees retired.
 
 ### NEXT — queued 2026-07-25 (user: "write briefs so we can resume"): launch
-order I1 → I2 → I3 → I4a–d → I5 → I6 → I7, STRICTLY SEQUENTIAL (shared lang
-files; parallel weak agents = merge collisions). Full briefs in "Increment
-briefs" below. I8 + ModuleF/specifiers stay human-gated.
+order I0a → I0b → I1 → I2 → I3 → I4a–d → I5 → I6 → I7, STRICTLY SEQUENTIAL
+(shared files; parallel weak agents = merge collisions). Full briefs in
+"Increment briefs" below. CLI-8 (project mode), I8, and ModuleF/specifiers
+stay human-gated.
 
 ### Parked (do NOT start without the user's explicit word)
 
