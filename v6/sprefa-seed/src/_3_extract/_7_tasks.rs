@@ -89,12 +89,15 @@
 //! lambda/docs parity fixtures + the closure-name waiverkill (v5-is-correct consequence (a):
 //! lam_sym ported, golden_parity asserts with ZERO waivers) + commit 4b COMPLETE (ts type_edge
 //! asserted) + commit 4c COMPLETE (the ScipSource seam + Resolve<CallF> for TsSource + the
-//! scip ratchet: 5 NameResolve / 1 ScipOverride / 0 misses)) LANDED in v6/sprefa-extract/.
+//! scip ratchet: 5 NameResolve / 1 ScipOverride / 0 misses) + commit 4d-i-go (go
+//! type_edge ASSERTED: go_edges_from candidates ported + Resolve<TypeF>, the new
+//! edges.go case, 7 rows, zero divergence)) LANDED in v6/sprefa-extract/.
 //! The TS + Rust + Go phase-1
 //! families - Cst / Type(+sigs) / Call / Df (+const) - all project + stream + snapshot through
 //! ONE uniform surface, AND each ported set matches a captured v5 oracle (see the (parity) /
-//! (rust) / (go) entries). NEXT: 4d rust + go resolve arms (rust-analyzer-scip
-//! / scip-go reuse the 4c shape; 4c landed COMPLETE) - 4b
+//! (rust) / (go) entries). NEXT: 4d-ii-go (the ScipGo build side + Resolve<CallF>
+//! for GoSource + the scip-go ratchet, reusing the 4c shape), then 4d-rust
+//! (rust-analyzer-scip) - 4b
 //! landed COMPLETE: machinery (4b-i) + specifiers (4b-ii) + the type_edge arm
 //! (4b-iii, ts type_edge asserted, zero divergence; the (4b-i) STOP was ruled
 //! option (a) by the human):
@@ -588,11 +591,55 @@
 //!             byte-identical (no UPDATE_SNAP); the ledger test reports the
 //!             v6-only call-edge counts per case (CASES corpus, no scip
 //!             loaded = the pure name-match leg: sample 4, docs 1).
+//!   (4d-i-go) COMMIT 4d-i-go: type_edge ASSERTED for go - the go half of 4d's
+//!             TypeF arm. RECON (the brief's STEP 0a ruling point): v5 go DOES
+//!             emit type_edge - `go_edges_from` (src/graph/typegraph/go.rs:299):
+//!             struct fields of named types (field), struct embeds incl. via
+//!             pointer (impl - a field_declaration with no name field),
+//!             interface type_elem embeds (impl; method_elem skipped: no
+//!             type_sig-equivalent exists for an interface's own method specs),
+//!             declared type-parameter constraints (generic). Method/fn
+//!             SIGNATURES are NOT edge sources (entity-level type_sig covers
+//!             callables; v5 go's type_edge is shape-only, matching Kotlin/TS),
+//!             so go candidates are NEVER sig-sourced (unlike ts's param/
+//!             returns). The committed go oracles carried ZERO rows because the
+//!             fixtures (Engine{name string}, Sizer{Size() int}, Mode int)
+//!             exercise none of it - unproven, not proven absent (the docsfix
+//!             lesson). lang/go.rs: `go_edge_candidates` ports
+//!             `go_type_spec_edges` VERBATIM (incl. the left-to-right type-param
+//!             accumulation filtering each constraint against the names seen so
+//!             far), riding the ONE walk_go_entities pass (its recursion visits
+//!             exactly the type_specs v5's walk_go_types visits) into
+//!             TypeFAux.candidates (the 4b-iii option-(a) pattern; owner = the
+//!             type_spec entity span). Resolve<TypeF> for GoSource is the exact
+//!             TsSource-arm twin (BTreeSet dedup = v5's shaping; same-file blob
+//!             via the DefIndex span-join; unique corpus site; else the zero
+//!             leg - text dsts STAY text); the type_edge_candidates /
+//!             resolve_type_dst triplication with ts.rs is DELIBERATE (the
+//!             audit's SEQUENCING RULING: ONE dedup sweep after 4a-4d lands).
+//!             NEW FIXTURE edges.go (v5's own go_fields_embeds_and_generic_
+//!             constraints input shape + an interface embed + a qualified
+//!             `time.Time` field - exercises the qualified_type ref arm and the
+//!             zero dst leg); oracle captured via v5_normalize (19 lines, 7
+//!             type_edge rows). golden_parity: the go_edges Case + the
+//!             type_edge_resolve_parity_go twin test; is_asserted flips go
+//!             type_edge DEFERRED->PORTED (rust keeps its 3+3 until 4d-rust).
+//!             MEASURED: go_edges 7 rows compared (Repo->Entity generic;
+//!             Repo->{Store,Pricing} impl; Repo->{Cache,Item,time.Time} field;
+//!             Pricing->Entity impl), go_sample/go_docs 0 rows (asserted
+//!             empty), ZERO divergence; the ledger reports 6 v6-only resolved
+//!             same-file legs (time.Time names no corpus node -> the zero
+//!             leg). Snapshots byte-identical (snapshot.rs's list is the fixed
+//!             ts quartet; candidates flatten nowhere); dep rails unchanged
+//!             (no dep changes this increment).
 //!   PENDING:   TS type EDGES are now ASSERTED (see (4b): phase-1 candidates +
-//!              Resolve<TypeF>; field/variant/impl/generic/uses/param/returns).
+//!              Resolve<TypeF>; field/variant/impl/generic/uses/param/returns),
+//!              and GO type EDGES are now ASSERTED (see (4d-i-go): field/impl/
+//!              generic - v5 go's type_edge is shape-only, no sig-sourced rows).
 //!              TS resolved caller -> callee is now RATCHETED vs scip (see (4c)).
-//!              Still pending: rust/go type_edge arms (4d), rust/go Resolve<CallF>
-//!              arms (4d). ts_const_facts_from is PORTED (see (const)).
+//!              Still pending: rust type_edge arm (4d-rust), rust/go
+//!              Resolve<CallF> arms (4d-ii-go here, then 4d-rust).
+//!              ts_const_facts_from is PORTED (see (const)).
 //!   ORACLE:     scip-typescript 0.4.0 was run on the fixture (throwaway /tmp). The
 //!              real correctness gate is occurrence/resolution parity (the commit 4
 //!              ratchet), NOT a raw symbol diff (scip is a flat exhaustive symbol

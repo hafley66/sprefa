@@ -1,0 +1,19 @@
+call_def	method	Label	45
+df_edge	1107	1107
+df_node	lit		1107
+df_node	ret		1107
+type_edge	Pricing	Entity	impl
+type_edge	Repo	Cache	field
+type_edge	Repo	Entity	generic
+type_edge	Repo	Item	field
+type_edge	Repo	Pricing	impl
+type_edge	Repo	Store	impl
+type_edge	Repo	time.Time	field
+type_node	alias	Color	43
+type_node	interface	Entity	16
+type_node	interface	Pricing	20
+type_node	method	Label	45
+type_node	struct	Cache	25
+type_node	struct	Item	29
+type_node	struct	Repo	35
+type_node	struct	Store	33

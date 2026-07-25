@@ -12,11 +12,12 @@
 //!           const_value} — v6 emits these; the test ASSERTS their set equals
 //!           v5's (empty diff = gold). Const entities flow as `type_node` kind=
 //!           const; `const_value` is the resolved-string rows.
-//!   PORTED for ts only {type_edge} — phase-2 rows: `Resolve<TypeF>` over the
-//!           fixture corpus, twin-normalized to the oracle's text shape (its
-//!           own test below, 4b-iii). rust/go type_edge stays DEFERRED (4d).
+//!   PORTED for ts + go {type_edge} — phase-2 rows: `Resolve<TypeF>` over the
+//!           fixture corpus, twin-normalized to the oracle's text shape (per-
+//!           lang tests below: 4b-iii ts, 4d-i-go go). rust type_edge stays
+//!           DEFERRED (4d-rust).
 //!   DEFERRED v5-only {doc, df_param_pos/args/fields/lits/loop/nest, type_edge
-//!           (rust/go only)} — reported, not asserted. df-aux is labels-not-
+//!           (rust only)} — reported, not asserted. df-aux is labels-not-
 //!           graph; docs are a follow-up.
 //!   v6-only {cst, specifier} — cst: v5 has NO TS tree-sitter grammar;
 //!           incomparable. specifier: module import/export-from rows (4b-ii);
@@ -28,9 +29,9 @@
 use std::collections::BTreeSet;
 
 use sprefa_extract::{
-    BlobHash, CallEdgeKind, ExtractOutput, FamilyMask, FamilyTag, FileSet, FlatFact, IndexBag,
-    ManifestMap, ProjectCx, ProjectDigest, Resolve, ScipSource, ScipTypescript, Span, TsSource,
-    TypeF, build_def_index, byte_range, containing_def_site, covering_def, definition_of,
+    BlobHash, CallEdgeKind, ExtractOutput, FamilyMask, FamilyTag, FileSet, FlatFact, GoSource,
+    IndexBag, ManifestMap, ProjectCx, ProjectDigest, Resolve, ScipSource, ScipTypescript, Span,
+    TsSource, TypeF, build_def_index, byte_range, containing_def_site, covering_def, definition_of,
     dispatch, flatten, join_documents, site_occurrence,
 };
 
@@ -102,6 +103,13 @@ const CASES: &[Case] = &[
         path: "v6/sprefa-extract/tests/fixtures/go/docs.go",
         fixture: include_bytes!("fixtures/go/docs.go"),
         baseline: include_str!("fixtures/go/docs.v5.jsonl"),
+        fixture_dir: "go",
+    },
+    Case {
+        name: "go_edges",
+        path: "v6/sprefa-extract/tests/fixtures/go/edges.go",
+        fixture: include_bytes!("fixtures/go/edges.go"),
+        baseline: include_str!("fixtures/go/edges.v5.jsonl"),
         fixture_dir: "go",
     },
 ];
@@ -267,8 +275,8 @@ fn owner_name(out: &ExtractOutput, span: Span) -> String {
 /// target (text dsts stay text); the resolve output pairs 1:1, in order, with
 /// `TsSource::type_edge_candidates` (the zip discipline: edge i resolves
 /// candidate i, so the candidate supplies the asserted text and the edge
-/// proves the arm ran + carries the v6-only resolved leg). rust/go type_edge
-/// stays DEFERRED until 4d.
+/// proves the arm ran + carries the v6-only resolved leg). go has its own
+/// twin below (4d-i-go); rust type_edge stays DEFERRED until 4d-rust.
 #[test]
 fn type_edge_resolve_parity_ts() {
     with_resolve_cx(|cx, corpus| {
@@ -315,10 +323,64 @@ fn type_edge_resolve_parity_ts() {
     });
 }
 
+/// GO type_edge PARITY (4d-i-go): the exact twin of the ts test above, over
+/// `GoSource`. go's v5 type_edge is shape-only (struct field / struct embed /
+/// interface embed / generic constraint — NO sig-sourced param/returns), so
+/// every candidate comes from `go_edge_candidates` on the type_spec walk.
+/// sample/docs carry zero rows (asserted empty sets); go_edges carries the 7.
+/// rust type_edge stays DEFERRED until 4d-rust.
+#[test]
+fn type_edge_resolve_parity_go() {
+    with_resolve_cx(|cx, corpus| {
+        for (_blob, out, case) in corpus {
+            if case.fixture_dir != "go" {
+                continue;
+            }
+            let edges = Resolve::<TypeF>::resolve(&GoSource, out, cx);
+            let candidates = GoSource::type_edge_candidates(out);
+            let mut v6: BTreeSet<String> = edges
+                .iter()
+                .zip(candidates.iter())
+                .map(|(_edge, cand)| {
+                    format!(
+                        "type_edge\t{}\t{}\t{}",
+                        owner_name(out, cand.owner),
+                        out.strings.lookup(cand.to),
+                        cand.kind.as_str()
+                    )
+                })
+                .collect();
+            if edges.len() != candidates.len() {
+                v6.insert(format!("ZIP_MISMATCH edges={} candidates={}", edges.len(), candidates.len()));
+            }
+            let v5: BTreeSet<String> = case
+                .baseline
+                .lines()
+                .filter(|line| facet_of(line) == "type_edge")
+                .map(str::to_owned)
+                .collect();
+            let only_v5: Vec<&String> = v5.difference(&v6).collect();
+            let only_v6: Vec<&String> = v6.difference(&v5).collect();
+            assert!(
+                only_v5.is_empty() && only_v6.is_empty(),
+                "[{}] type_edge parity diff vs v5 oracle:\n  missing from v6 ({}):\n{}\n  only in v6 ({}):\n{}",
+                case.name,
+                only_v5.len(),
+                only_v5.iter().map(|s| format!("    {s}")).collect::<Vec<_>>().join("\n"),
+                only_v6.len(),
+                only_v6.iter().map(|s| format!("    {s}")).collect::<Vec<_>>().join("\n"),
+            );
+            eprintln!("[{}] type_edge parity: {} rows compared, 0 divergence", case.name, v5.len());
+        }
+    });
+}
+
 /// Whether a facet is asserted for a case: the phase-1 PORTED set everywhere,
-/// plus type_edge for ts (phase-2, 4b-iii). rust/go type_edge stays deferred.
+/// plus type_edge for ts (phase-2, 4b-iii) and go (phase-2, 4d-i-go). rust
+/// type_edge stays deferred.
 fn is_asserted(case: &Case, facet: &str) -> bool {
-    PORTED.contains(&facet) || (case.fixture_dir == "ts" && facet == "type_edge")
+    PORTED.contains(&facet)
+        || (matches!(case.fixture_dir, "ts" | "go") && facet == "type_edge")
 }
 
 /// The migration ledger: the measured v5-only deferred set + the v6-only CST /
@@ -347,13 +409,16 @@ fn deferred_and_v6_only_ledger() {
                 facts.iter().filter(|f| matches!(f, FlatFact::Specifier { .. })).count();
             // The genuinely-resolved span->blob type_edge legs: v6-only, never
             // asserted (the candidate row is the parity target).
-            let resolved_legs = if case.fixture_dir == "ts" {
-                Resolve::<TypeF>::resolve(&TsSource, out, cx)
+            let resolved_legs = match case.fixture_dir {
+                "ts" => Resolve::<TypeF>::resolve(&TsSource, out, cx)
                     .iter()
                     .filter(|edge| edge.dst_blob != BlobHash::default())
-                    .count()
-            } else {
-                0
+                    .count(),
+                "go" => Resolve::<TypeF>::resolve(&GoSource, out, cx)
+                    .iter()
+                    .filter(|edge| edge.dst_blob != BlobHash::default())
+                    .count(),
+                _ => 0,
             };
             // The resolved call edges (4c-ii): v6-only — v5's captured oracle
             // has no call_edge facet, so scip is their only ground truth (the
