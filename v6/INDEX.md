@@ -32,7 +32,7 @@
 | [plans/2026-07-21-spine-orm.md](plans/2026-07-21-spine-orm.md) | 200 | V6 spine — the 6 tables, one ORM, hard boundaries |
 | [plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md](plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md) | 184 | v6 core: the lab arc — oracles, why, efficiency, measured Big-O + empirical ratios |
 | [plans/2026-07-23-sprefa-extract-golden-plan.md](plans/2026-07-23-sprefa-extract-golden-plan.md) | 537 | sprefa-extract - the golden plan (distill v5, normalize for v6) |
-| [plans/2026-07-24-extract-go-closeout-and-resolve4.md](plans/2026-07-24-extract-go-closeout-and-resolve4.md) | 853 | sprefa-extract: Go closeout → Resolve<\*> (commit 4) → fixture broadening |
+| [plans/2026-07-24-extract-go-closeout-and-resolve4.md](plans/2026-07-24-extract-go-closeout-and-resolve4.md) | 914 | sprefa-extract: Go closeout → Resolve<\*> (commit 4) → fixture broadening |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
@@ -425,6 +425,10 @@
 751:### I0a — CLI micros batch (ONE agent session, ONE commit; launch before I1)
 804:### I0b — stdin + --ext (ONE agent; launch after I0a merges)
 825:## Dogfood analysis #2 (2026-07-25 — v6/dl + v6/sprefa-store measured with the CLI)
+855:## Design seeds (2026-07-25, user-approved for later; PARKED — no briefs yet)
+857:### S1 — Similarity: α-normalized anti-unification over df subgraphs
+879:### S2 — Three layers + the doc lane (JSON/YAML path rows; RTKQ golden)
+899:### S3 — Derived inter-procedural flow (NOT extracted)
 ```
 
 ### skills/mermaid-living-map.md

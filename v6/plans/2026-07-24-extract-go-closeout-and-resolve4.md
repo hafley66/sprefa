@@ -851,3 +851,64 @@ analysis needs receiver identity on member nodes -> design input beyond I1
 CLI-8 project mode should absorb; cross-blob dead-def needed consumer name
 pools -> resolve-layer territory. Raw artifacts: /tmp/extract-dogfood/
 (v6-*.jsonl + analyze.py), ephemeral.
+
+## Design seeds (2026-07-25, user-approved for later; PARKED — no briefs yet)
+
+### S1 — Similarity: α-normalized anti-unification over df subgraphs
+
+The user's thought, named: clone detection where names don't matter
+(α-equivalence via de Bruijn slots — df use-def edges make renaming SOUND,
+not textual), literals widen to primitive tags (lit/template -> str/num/bool),
+LHS bind-names erased, types + reference ORDER kept (sig rows + edge
+topology). Score = anti-unification retention (least general generalization:
+exact dup = whole skeleton; near-miss = skeleton with holes; score + PRINTED
+SKELETON WITNESS = fact with evidence, not an opinion). Substrate advantage
+over token tools: df kinds are language-neutral, so ts<->rust mirror code
+collides naturally — the built-in ratchet corpus is tasks.rs vs tasks.ts
+(nearest-neighbor assertion) + determinism gate (same fixture -> byte-exact
+scores, normalization_version field). Build: Stage 0 = canonicalize df
+subgraph per fn, blake3, cluster identical hashes -> `dup_of` rows (few
+hundred lines). Stage 1 = kind n-gram buckets -> anti-unify candidate pairs
+only -> `similar_to(a,b,score,skeleton,version)`. Stage 2 (probably never):
+VF2 edit distance on top candidates. Speed comes from BUCKETING (O(n) hash,
+pairwise only on collision), not rust. Home: sibling bin in the extract crate
+consuming the same bundles (facts in, facts out; no watchers/daemon;
+deterministically testable = inside the boundary). v6-only rows: no v5
+parity, determinism + mirror ratchet is the gate.
+
+### S2 — Three layers + the doc lane (JSON/YAML path rows; RTKQ golden)
+
+The articulation: (1) INDEX "what is written" (extract), (2) DERIVE "what
+follows" (store+dl), (3) PROGRAMS "what it means for your framework" (.dl
+scripts). Boundary law proven by v5's examples/rtkq-op-recovery.dl: the
+useGetUserQuery string surgery lives in DATALOG, never in the extractor.
+Acceptance criterion: every family/facet earns its place via a program that
+needs it. FACTS: .json/.yaml ALREADY emit cst rows via the ast-grep floor
+(measured 22/39 nodes); .toml has NO grammar in-tree. But cst is the wrong
+doc shape — v5's jsonp builtin proves programs want KEY-PATH -> VALUE rows
+(paths.*.*.operationId). So: doc-lane facet (walk the floor, emit
+path/value/primitive-type rows) for json/yaml — zero new deps, sibling to
+I2, queued as I2.5. TOML waits for its program (Cargo.toml dep queries;
+tree-sitter-toml = dep-rails decision then). Golden-test ladder: code lane
+PROVEN (all 5 RTKQ hook sites stream from components.tsx today); doc lane =
+the missing piece; end-to-end = rtkq-op-recovery.dl on the v6 pipeline
+(openapi-sim corpus: openapi.json + components.tsx + client.ts + hooks.ts +
+server.rs). JSX/hooks program needs df through props + dependency arrays =
+I1's fields/lits is its fact-sufficiency step.
+
+### S3 — Derived inter-procedural flow (NOT extracted)
+
+Intra = within one fn (phase-1, per-file pure, parallel, cacheable — KEEP).
+Inter (arg->param, ret->call-res) is DERIVED in the engine, three rules:
+flow(arg,param) <- site resolves to D, arg pos i, D param pos i;
+flow(ret,call_res) <- resolved def, ret in body; value_path = df_edge o
+flow (fixpoint). Join keys = I1's df_args/df_param_pos + commit-4 resolve
+edges. Seed vocabulary ALREADY reserved: FlowEdgeKind{ArgToParam,
+RetToCallRes, LambdaElem, LambdaRet}; v5 precedent: flow_edge was a dl union
+(std/flow.dl:89). Data honesty: new edges are O(call sites); blowup only if
+you materialize all-pairs — so evaluate ON DEMAND (labs/prolog.ts SLG/
+tabling experiment = the demand-evaluation prototype; not dead weight).
+Precision is a program-level dial: context-insensitive first, k-limited
+later, summaries after. Eager whole-repo context-sensitive extraction = the
+IFDS trap, correctly feared, never queued. Lambdas (LambdaElem/LambdaRet) =
+cheapest first win, hooks/JSX is full of them.
