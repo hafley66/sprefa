@@ -11,16 +11,28 @@
  *  encodeSurfaceRowByColumns for a ROW. */
 
 import {
+  EMPTY,
   Subject,
   Subscription,
+  catchError,
+  concat,
   concatMap,
+  count,
+  defer,
   filter,
   firstValueFrom,
+  forkJoin,
   from,
+  groupBy,
   map,
   mergeMap,
+  of,
+  range,
+  reduce,
   share,
   tap,
+  throwError,
+  toArray,
   type Observable,
 } from "rxjs";
 import { differenceWith, isEqual } from "lodash-es";
@@ -264,196 +276,296 @@ function relMaxColumnWidth(relDecls: ReadonlyMap<string, RelDecl>): number {
   return max;
 }
 
-/** Clears the shared temp table (creating it on first use, sized to the widest rel
- *  this runtime declares) and loads `rows` into its generic c0..c<n-1> columns,
- *  chunked so no single INSERT's VALUES list trips the compound-select cap. A no-op
- *  (leaves the temp table empty) when `rows` is empty. */
-async function loadRowMatchCandidates(
+type QueryResult = Awaited<ReturnType<Db["execute"]>>;
+
+const execute$ = (db: Db, sql: string): Observable<QueryResult> => defer(() => from(db.execute(sql)));
+const run$ = (db: Db, sql: string): Observable<void> => execute$(db, sql).pipe(map(() => undefined));
+
+/** Run every step in order, emit once at the end. */
+const inOrder = (steps: readonly Observable<unknown>[]): Observable<void> =>
+  steps.length === 0 ? of(undefined) : concat(...steps).pipe(count(), map(() => undefined));
+
+/** BEGIN IMMEDIATE / COMMIT / ROLLBACK as an observable bracket. Single statements on the
+ *  one pinned connection: `executeMultiple` would trip the adapter's rollback guard. */
+function inTransaction<Value>(db: Db, body: () => Observable<Value>): Observable<Value> {
+  return run$(db, "BEGIN IMMEDIATE").pipe(
+    concatMap(body),
+    concatMap((value) => run$(db, "COMMIT").pipe(map(() => value))),
+    catchError((failure: unknown) =>
+      run$(db, "ROLLBACK").pipe(
+        catchError(() => of(undefined)),
+        concatMap(() => throwError(() => failure)),
+      ),
+    ),
+  );
+}
+
+/** Clears the shared temp table (creating it on first use, sized to the widest rel this
+ *  runtime declares) and loads `rows` into its generic c0..c<n-1> columns, chunked so no
+ *  single INSERT's VALUES list trips the compound-select cap. */
+function loadRowMatchCandidates(
   db: Db,
   relDecls: ReadonlyMap<string, RelDecl>,
   rows: readonly StoredRow[],
   rowWidth: number,
-): Promise<void> {
-  const width = relMaxColumnWidth(relDecls);
-  const allColumns = Array.from({ length: width }, (_, i) => `c${i}`).join(", ");
-  await db.execute(`CREATE TEMP TABLE IF NOT EXISTS ${ROW_MATCH_TEMP_TABLE} (${allColumns})`);
-  await db.execute(`DELETE FROM ${ROW_MATCH_TEMP_TABLE}`);
-  if (rows.length === 0) return;
-  const usedColumns = Array.from({ length: rowWidth }, (_, i) => `c${i}`).join(", ");
-  for (let start = 0; start < rows.length; start += ROW_MATCH_INSERT_CHUNK) {
-    const chunk = rows.slice(start, start + ROW_MATCH_INSERT_CHUNK);
-    const values = chunk.map((row) => sqlTuple(row)).join(",");
-    await db.execute(`INSERT INTO ${ROW_MATCH_TEMP_TABLE}(${usedColumns}) VALUES ${values}`);
-  }
+): Observable<void> {
+  return defer(() => {
+    const allColumns = Array.from({ length: relMaxColumnWidth(relDecls) }, (_, index) => `c${index}`).join(", ");
+    const usedColumns = Array.from({ length: rowWidth }, (_, index) => `c${index}`).join(", ");
+    const chunkStarts = range(0, Math.ceil(rows.length / ROW_MATCH_INSERT_CHUNK));
+    return inOrder([
+      run$(db, `CREATE TEMP TABLE IF NOT EXISTS ${ROW_MATCH_TEMP_TABLE} (${allColumns})`),
+      run$(db, `DELETE FROM ${ROW_MATCH_TEMP_TABLE}`),
+    ]).pipe(
+      concatMap(() =>
+        chunkStarts.pipe(
+          map((chunkIndex) => rows.slice(chunkIndex * ROW_MATCH_INSERT_CHUNK, (chunkIndex + 1) * ROW_MATCH_INSERT_CHUNK)),
+          concatMap((chunk) =>
+            run$(db, `INSERT INTO ${ROW_MATCH_TEMP_TABLE}(${usedColumns}) VALUES ${chunk.map(sqlTuple).join(",")}`),
+          ),
+          count(),
+          map(() => undefined),
+        ),
+      ),
+    );
+  });
 }
 
-/** NULL-safe AND-join condition between `relAlias`'s named columns and the temp
- *  table's positional c0..c<n-1> columns, referenced through `tempAlias` (same `IS`
- *  semantics the old OR-of-row-predicates form used, just an O(columns) join
- *  predicate instead of an O(rows) OR chain). */
+/** NULL-safe AND-join between `relAlias`'s named columns and the temp table's positional
+ *  c0..c<n-1> columns: O(columns) predicate depth, independent of row count. */
 function rowMatchJoinCondition(columns: readonly string[], relAlias: string, tempAlias: string): string {
-  return columns.map((column, i) => `${relAlias}.${column} IS ${tempAlias}.c${i}`).join(" AND ");
+  return columns.map((column, index) => `${relAlias}.${column} IS ${tempAlias}.c${index}`).join(" AND ");
 }
 
-async function selectAll(db: Db, relName: string, columns: readonly string[]): Promise<Row[]> {
-  const res = await db.execute(`SELECT ${columns.join(",")} FROM rel_${relName}`);
-  return res.rows.map((rawRow: unknown) => rowFromRaw(rawRow, columns));
+function selectAll(db: Db, relName: string, columns: readonly string[]): Observable<Row[]> {
+  return execute$(db, `SELECT ${columns.join(",")} FROM rel_${relName}`).pipe(
+    concatMap((result) => from(result.rows)),
+    map((rawRow) => rowFromRaw(rawRow, columns)),
+    toArray(),
+  );
 }
 
-/** The batched pre-check SELECT law (ingest.ts note 3): one SELECT over the candidate
- *  tuples, never a per-row existence check. Matches via the shared temp-table JOIN
- *  (see the row-set-matching block above), not an OR-of-row-predicates blob. */
-async function preCheckExistingKeys(
+/** One SELECT over the candidate tuples, never a per-row existence check. */
+function preCheckExistingKeys(
   db: Db,
   relDecls: ReadonlyMap<string, RelDecl>,
   relName: string,
   columns: readonly string[],
   candidates: readonly StoredRow[],
-): Promise<Set<string>> {
-  if (candidates.length === 0) return new Set();
-  await loadRowMatchCandidates(db, relDecls, candidates, columns.length);
+): Observable<ReadonlySet<string>> {
+  if (candidates.length === 0) return of(new Set<string>());
   const selectColumns = columns.map((column) => `t.${column}`).join(",");
-  const res = await db.execute(
-    `SELECT ${selectColumns} FROM relbase_${relName} t JOIN ${ROW_MATCH_TEMP_TABLE} c ON ${rowMatchJoinCondition(columns, "t", "c")}`,
+  return loadRowMatchCandidates(db, relDecls, candidates, columns.length).pipe(
+    concatMap(() =>
+      execute$(
+        db,
+        `SELECT ${selectColumns} FROM relbase_${relName} t JOIN ${ROW_MATCH_TEMP_TABLE} c ON ${rowMatchJoinCondition(columns, "t", "c")}`,
+      ),
+    ),
+    concatMap((result) => from(result.rows)),
+    map((rawRow) => storedRowKey(columns.map((column) => Number((rawRow as Record<string, unknown>)[column])))),
+    reduce((keys: Set<string>, key: string) => keys.add(key), new Set<string>()),
   );
-  const keys = new Set<string>();
-  for (const rawRow of res.rows) {
-    const raw = rawRow as Record<string, unknown>;
-    keys.add(storedRowKey(columns.map((column) => Number(raw[column]))));
-  }
-  return keys;
 }
 
-async function insertRows(db: Db, relName: string, columns: readonly string[], rows: readonly StoredRow[]): Promise<void> {
-  if (rows.length === 0) return;
-  const values = rows.map((row) => sqlTuple(row)).join(",");
-  await db.execute(`INSERT INTO relbase_${relName}(${columns.join(",")}) VALUES ${values} ON CONFLICT DO NOTHING`);
+function insertRows(db: Db, relName: string, columns: readonly string[], rows: readonly StoredRow[]): Observable<void> {
+  if (rows.length === 0) return of(undefined);
+  return run$(
+    db,
+    `INSERT INTO relbase_${relName}(${columns.join(",")}) VALUES ${rows.map(sqlTuple).join(",")} ON CONFLICT DO NOTHING`,
+  );
 }
 
-async function deleteRows(
+function deleteRows(
   db: Db,
   relDecls: ReadonlyMap<string, RelDecl>,
   relName: string,
   columns: readonly string[],
   rows: readonly StoredRow[],
-): Promise<void> {
-  if (rows.length === 0) return;
-  await loadRowMatchCandidates(db, relDecls, rows, columns.length);
+): Observable<void> {
+  if (rows.length === 0) return of(undefined);
   const tableRef = `relbase_${relName}`;
-  await db.execute(
-    `DELETE FROM ${tableRef} WHERE EXISTS (SELECT 1 FROM ${ROW_MATCH_TEMP_TABLE} c WHERE ${rowMatchJoinCondition(columns, tableRef, "c")})`,
+  return loadRowMatchCandidates(db, relDecls, rows, columns.length).pipe(
+    concatMap(() =>
+      run$(
+        db,
+        `DELETE FROM ${tableRef} WHERE EXISTS (SELECT 1 FROM ${ROW_MATCH_TEMP_TABLE} c WHERE ${rowMatchJoinCondition(columns, tableRef, "c")})`,
+      ),
+    ),
   );
 }
 
-async function insertDeltaRows(db: Db, rows: readonly DeltaRow[]): Promise<void> {
-  if (rows.length === 0) return;
-  const values = rows
-    .map((row) => `(${row.rel_tag},${row.row_digest},${row.tick},${row.weight})`)
-    .join(",");
-  await db.execute(`INSERT INTO delta(rel_tag,row_digest,tick,weight) VALUES ${values}`);
+function insertDeltaRows(db: Db, rows: readonly DeltaRow[]): Observable<void> {
+  if (rows.length === 0) return of(undefined);
+  const values = rows.map((row) => `(${row.rel_tag},${row.row_digest},${row.tick},${row.weight})`).join(",");
+  return run$(db, `INSERT INTO delta(rel_tag,row_digest,tick,weight) VALUES ${values}`);
 }
 
+/** What one rel's EDB write resolved to, before any of it is applied. */
+interface RelWriteOutcome {
+  readonly relName: string;
+  readonly columns: readonly string[];
+  readonly inserted: readonly Row[];
+  readonly retracted: readonly Row[];
+}
 
-export async function applyEdbTxn(state: RuntimeState, request: CommitRequest): Promise<EdbTickOutcome> {
-  const { db } = state;
-  const encodedInsert = new Map<string, readonly StoredRow[]>();
-  const encodedRetract = new Map<string, readonly StoredRow[]>();
-  for (const [relName, rows] of request.batch.insert) {
-    const decl = state.relDecls.get(relName);
-    if (!decl) throw new Error(`commit: unknown rel '${relName}'`);
-    encodedInsert.set(
-      relName,
-      rows.map((row) => encodeSurfaceRowByColumns(state.store, state.columnTypes, relName, decl.columns, row)),
-    );
-  }
-  for (const [relName, rows] of request.batch.retract) {
-    const decl = state.relDecls.get(relName);
-    if (!decl) throw new Error(`commit: unknown rel '${relName}'`);
-    encodedRetract.set(
-      relName,
-      rows.map((row) => encodeSurfaceRowByColumns(state.store, state.columnTypes, relName, decl.columns, row)),
-    );
-  }
-  // flush_strings uses executeMultiple, which rolls back an open BEGIN in the store
-  // adapter. Its monotonic dictionary makes this pre-transaction flush safe.
-  await state.store.flush_strings();
-
-  return with_txn(db, async () => {
-    const tickRes = await db.execute("UPDATE store_meta SET value = value + 1 WHERE key='tick' RETURNING value");
-    const tick = Number(tickRes.rows[0]?.[0] ?? 0);
-
-    const relNames = new Set<string>([...request.batch.insert.keys(), ...request.batch.retract.keys()]);
-    const changedPairs: [string, number][] = [];
-    const events: DeltaEvent[] = [];
-    const changedRelNames: string[] = [];
-    const deltaRows: DeltaRow[] = [];
-
-    for (const relName of relNames) {
+/** Encode a batch side to stored rows, per rel. Throws on an unknown rel. */
+function encodeBatchSide(
+  state: RuntimeState,
+  side: ReadonlyMap<string, readonly Row[]>,
+): ReadonlyMap<string, readonly StoredRow[]> {
+  return new Map(
+    [...side].map(([relName, rows]) => {
       const decl = state.relDecls.get(relName);
       if (!decl) throw new Error(`commit: unknown rel '${relName}'`);
-      const columns = decl.columns;
-      const insertCandidates = request.batch.insert.get(relName) ?? [];
-      const retractCandidates = request.batch.retract.get(relName) ?? [];
-      const insertIds = encodedInsert.get(relName) ?? [];
-      const retractIds = encodedRetract.get(relName) ?? [];
+      return [
+        relName,
+        rows.map((row) => encodeSurfaceRowByColumns(state.store, state.columnTypes, relName, decl.columns, row)),
+      ] as const;
+    }),
+  );
+}
 
-      const existingForInsert = await preCheckExistingKeys(db, state.relDecls, relName, columns, insertIds);
-      const genuinelyNewIndexes = insertIds.flatMap((row, index) =>
-        existingForInsert.has(storedRowKey(row)) ? [] : [index],
-      );
-      const genuinelyNew = genuinelyNewIndexes.map((index) => insertCandidates[index]!);
-      const genuinelyNewIds = genuinelyNewIndexes.map((index) => insertIds[index]!);
+/** Resolve and apply one rel's writes: pre-check both sides, add the retention-1 sweep,
+ *  then insert and delete. Emits what actually moved. */
+function applyRelWrite(
+  state: RuntimeState,
+  request: CommitRequest,
+  encodedInsert: ReadonlyMap<string, readonly StoredRow[]>,
+  encodedRetract: ReadonlyMap<string, readonly StoredRow[]>,
+  relName: string,
+): Observable<RelWriteOutcome> {
+  return defer(() => {
+    const { db } = state;
+    const decl = state.relDecls.get(relName);
+    if (!decl) throw new Error(`commit: unknown rel '${relName}'`);
+    const columns = decl.columns;
+    const insertCandidates = request.batch.insert.get(relName) ?? [];
+    const retractCandidates = request.batch.retract.get(relName) ?? [];
+    const insertIds = encodedInsert.get(relName) ?? [];
+    const retractIds = encodedRetract.get(relName) ?? [];
+    const keepNewestOnly = (state.retention.get(relName) ?? "all") === 1;
 
-      const existingForRetract = await preCheckExistingKeys(db, state.relDecls, relName, columns, retractIds);
-      const genuinelyRetractedIndexes = retractIds.flatMap((row, index) =>
-        existingForRetract.has(storedRowKey(row)) ? [index] : [],
-      );
-      const genuinelyRetracted = genuinelyRetractedIndexes.map((index) => retractCandidates[index]!);
-      const genuinelyRetractedIds = genuinelyRetractedIndexes.map((index) => retractIds[index]!);
+    const pickAbsent = (ids: readonly StoredRow[], existing: ReadonlySet<string>): number[] =>
+      ids.flatMap((row, index) => (existing.has(storedRowKey(row)) ? [] : [index]));
+    const pickPresent = (ids: readonly StoredRow[], existing: ReadonlySet<string>): number[] =>
+      ids.flatMap((row, index) => (existing.has(storedRowKey(row)) ? [index] : []));
 
-      let additionalRetracts: Row[] = [];
-      let additionalRetractIds: StoredRow[] = [];
-      const isLatestOnly = (state.retention.get(relName) ?? "all") === 1;
-      if (isLatestOnly && insertCandidates.length > 0) {
-        const fullBefore = await selectAll(db, relName, columns);
-        const installedKeys = new Set(insertCandidates.map((row) => surfaceRowKey(row, columns)));
-        const alreadyRetractedKeys = new Set(genuinelyRetracted.map((row) => surfaceRowKey(row, columns)));
-        additionalRetracts = fullBefore.filter(
-          (row) => !installedKeys.has(surfaceRowKey(row, columns)) && !alreadyRetractedKeys.has(surfaceRowKey(row, columns)),
+    return forkJoin({
+      existingForInsert: preCheckExistingKeys(db, state.relDecls, relName, columns, insertIds),
+      existingForRetract: preCheckExistingKeys(db, state.relDecls, relName, columns, retractIds),
+    }).pipe(
+      concatMap(({ existingForInsert, existingForRetract }) => {
+        const newIndexes = pickAbsent(insertIds, existingForInsert);
+        const retractedIndexes = pickPresent(retractIds, existingForRetract);
+        const inserted = newIndexes.map((index) => insertCandidates[index]!);
+        const insertedIds = newIndexes.map((index) => insertIds[index]!);
+        const retracted = retractedIndexes.map((index) => retractCandidates[index]!);
+        const retractedIds = retractedIndexes.map((index) => retractIds[index]!);
+
+        const supersededByRetention =
+          keepNewestOnly && insertCandidates.length > 0
+            ? selectAll(db, relName, columns).pipe(
+                map((fullBefore) => {
+                  const installed = new Set(insertCandidates.map((row) => surfaceRowKey(row, columns)));
+                  const alreadyGoing = new Set(retracted.map((row) => surfaceRowKey(row, columns)));
+                  return fullBefore.filter((row) => {
+                    const key = surfaceRowKey(row, columns);
+                    return !installed.has(key) && !alreadyGoing.has(key);
+                  });
+                }),
+              )
+            : of([] as Row[]);
+
+        return supersededByRetention.pipe(
+          concatMap((superseded) => {
+            const allRetracted = [...retracted, ...superseded];
+            const allRetractedIds = [
+              ...retractedIds,
+              ...superseded.map((row) => encodeSurfaceRowByColumns(state.store, state.columnTypes, relName, columns, row)),
+            ];
+            return inOrder([
+              insertRows(db, relName, columns, insertedIds),
+              deleteRows(db, state.relDecls, relName, columns, allRetractedIds),
+            ]).pipe(map(() => ({ relName, columns, inserted, retracted: allRetracted })));
+          }),
         );
-        additionalRetractIds = additionalRetracts.map((row) =>
-          encodeSurfaceRowByColumns(state.store, state.columnTypes, relName, columns, row),
-        );
-      }
-
-      if (genuinelyNewIds.length > 0) await insertRows(db, relName, columns, genuinelyNewIds);
-      const allRetracted = [...genuinelyRetracted, ...additionalRetracts];
-      const allRetractedIds = [...genuinelyRetractedIds, ...additionalRetractIds];
-      if (allRetractedIds.length > 0) await deleteRows(db, state.relDecls, relName, columns, allRetractedIds);
-
-      const relTag = state.relTags.get(relName)!;
-      for (const row of genuinelyNew) {
-        deltaRows.push({ rel_tag: relTag, row_digest: rowDigest(row, columns), tick, weight: 1 });
-      }
-      for (const row of allRetracted) {
-        deltaRows.push({ rel_tag: relTag, row_digest: rowDigest(row, columns), tick, weight: -1 });
-      }
-
-      const net = genuinelyNew.length - allRetracted.length;
-      if (net !== 0) changedPairs.push([relName, net]);
-
-      if (genuinelyNew.length > 0 || allRetracted.length > 0) {
-        changedRelNames.push(relName);
-        events.push({ tick, rel: relName, inserts: genuinelyNew, retracts: allRetracted });
-      }
-    }
-
-    await insertDeltaRows(db, deltaRows);
-
-    return { id: request.id, tick, changedPairs, events, changedRelNames };
+      }),
+    );
   });
 }
 
+/** tick++, then every rel's write, then the delta log. One transaction. */
+export function applyEdbTxn(state: RuntimeState, request: CommitRequest): Observable<EdbTickOutcome> {
+  const { db } = state;
+  const relNames = [...new Set([...request.batch.insert.keys(), ...request.batch.retract.keys()])];
+  // Encode BEFORE the flush and before the transaction. Encoding interns new strings, and
+  // flush_strings uses executeMultiple, which would roll back an open BEGIN. Interning
+  // inside the transaction leaves the new ids unflushed, so the rel_* decode views read
+  // them back as NULL.
+  const encodedInsert = encodeBatchSide(state, request.batch.insert);
+  const encodedRetract = encodeBatchSide(state, request.batch.retract);
+  return defer(() => from(state.store.flush_strings())).pipe(
+    concatMap(() =>
+      inTransaction(db, () =>
+        execute$(db, "UPDATE store_meta SET value = value + 1 WHERE key='tick' RETURNING value").pipe(
+          map((result) => Number(result.rows[0]?.[0] ?? 0)),
+          concatMap((tick) =>
+            from(relNames).pipe(
+              concatMap((relName) => applyRelWrite(state, request, encodedInsert, encodedRetract, relName)),
+              toArray(),
+              concatMap((written) => {
+                const moved = written.filter((write) => write.inserted.length > 0 || write.retracted.length > 0);
+                const deltaRows = moved.flatMap((write) => {
+                  const relTag = state.relTags.get(write.relName)!;
+                  return [
+                    ...write.inserted.map((row) => deltaRowOf(relTag, row, write.columns, tick, 1)),
+                    ...write.retracted.map((row) => deltaRowOf(relTag, row, write.columns, tick, -1)),
+                  ];
+                });
+                const changedPairs = written
+                  .map((write) => [write.relName, write.inserted.length - write.retracted.length] as [string, number])
+                  .filter(([, net]) => net !== 0);
+                return insertDeltaRows(db, deltaRows).pipe(
+                  map(() => ({
+                    id: request.id,
+                    tick,
+                    changedPairs,
+                    events: moved.map((write) => ({
+                      tick,
+                      rel: write.relName,
+                      inserts: write.inserted,
+                      retracts: write.retracted,
+                    })),
+                    changedRelNames: moved.map((write) => write.relName),
+                  })),
+                );
+              }),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/** Synchronous tap. The retention-0 DELETE already ran inside applyDerivedTxn; this only
+ *  resets the mirror for the rels it emptied, then unblocks commit()'s promise. */
+export function clearScratchRels(state: RuntimeState, outcome: SettledOutcome): void {
+  for (const relName of outcome.scratchRelNames) {
+    const decl = state.relDecls.get(relName);
+    if (!decl || decl.origin === "EDB") continue;
+    state.derivedTableMirror.set(relName, []);
+  }
+  state.reportsSubject.next({ id: outcome.id, report: outcome.report });
+}
+
+const deltaRowOf = (relTag: number, row: Row, columns: readonly string[], tick: number, weight: 1 | -1): DeltaRow => ({
+  rel_tag: relTag,
+  row_digest: rowDigest(row, columns),
+  tick,
+  weight,
+});
 
 export function diffDerivedRel(
   oldRows: readonly Row[],
@@ -465,22 +577,22 @@ export function diffDerivedRel(
   };
 }
 
-
-export async function diffAgainstTables(state: RuntimeState): Promise<ReadonlyMap<string, PerRelDiff>> {
-  const perRel = new Map<string, PerRelDiff>();
-  for (const relName of state.derivedRelNames) {
-    const decl = state.relDecls.get(relName);
-    if (!decl) throw new Error(`diffAgainstTables: unknown derived rel '${relName}'`);
-    const newRows = await selectAll(state.db, relName, decl.columns);
-    const oldRows = state.derivedTableMirror.get(relName) ?? [];
-    const diff = diffDerivedRel(oldRows, newRows);
-    if (diff.insert.length > 0 || diff.retract.length > 0) {
-      perRel.set(relName, { insert: diff.insert, retract: diff.retract, newRows });
-    }
-  }
-  return perRel;
+export function diffAgainstTables(state: RuntimeState): Observable<ReadonlyMap<string, PerRelDiff>> {
+  return from(state.derivedRelNames).pipe(
+    concatMap((relName) => {
+      const decl = state.relDecls.get(relName);
+      if (!decl) throw new Error(`diffAgainstTables: unknown derived rel '${relName}'`);
+      return selectAll(state.db, relName, decl.columns).pipe(
+        map((newRows) => {
+          const diff = diffDerivedRel(state.derivedTableMirror.get(relName) ?? [], newRows);
+          return [relName, { insert: diff.insert, retract: diff.retract, newRows }] as const;
+        }),
+      );
+    }),
+    filter(([, diff]) => diff.insert.length > 0 || diff.retract.length > 0),
+    reduce((perRel: Map<string, PerRelDiff>, [relName, diff]) => perRel.set(relName, diff), new Map<string, PerRelDiff>()),
+  );
 }
-
 
 /** One fact that died, resolved from its packed key back to a named rel and a surface row. */
 export interface DeadFact {
@@ -488,135 +600,146 @@ export interface DeadFact {
   readonly row: Row;
 }
 
-/** The dense surrogates of `rows` in `relName`'s table, via the shared temp-table join
- *  (one SELECT for the whole candidate set, never a per-row lookup). A row that is not
- *  present yields nothing. */
-async function selectSurrogates(
+/** The dense surrogates of `rows` in `relName`'s table, one SELECT for the whole set. */
+function selectSurrogates(
   db: Db,
   relDecls: ReadonlyMap<string, RelDecl>,
   relName: string,
   columns: readonly string[],
   rows: readonly StoredRow[],
-): Promise<number[]> {
-  if (rows.length === 0) return [];
-  await loadRowMatchCandidates(db, relDecls, rows, columns.length);
-  const tableRef = `relbase_${relName}`;
-  const res = await db.execute(
-    `SELECT t.${ROW_SURROGATE} FROM ${tableRef} t JOIN ${ROW_MATCH_TEMP_TABLE} c ON ${rowMatchJoinCondition(columns, "t", "c")}`,
+): Observable<number[]> {
+  if (rows.length === 0) return of([]);
+  return loadRowMatchCandidates(db, relDecls, rows, columns.length).pipe(
+    concatMap(() =>
+      execute$(
+        db,
+        `SELECT t.${ROW_SURROGATE} FROM relbase_${relName} t JOIN ${ROW_MATCH_TEMP_TABLE} c ON ${rowMatchJoinCondition(columns, "t", "c")}`,
+      ),
+    ),
+    concatMap((result) => from(result.rows)),
+    map((rawRow) => Number((rawRow as Record<string, unknown>)[ROW_SURROGATE])),
+    toArray(),
   );
-  return res.rows.map((raw) => Number((raw as Record<string, unknown>)[ROW_SURROGATE]));
 }
 
-/** Unpack `key = rel_tag * KEY_STRIDE + row_id` and read each row back through its
- *  `rel_*` decode view, grouped so there is one SELECT per rel rather than per key. */
-async function resolveFactKeys(state: RuntimeState, keys: readonly number[]): Promise<DeadFact[]> {
-  const byTag = new Map<number, number[]>();
-  for (const key of keys) {
-    const tag = Math.trunc(key / KEY_STRIDE);
-    const rowId = key % KEY_STRIDE;
-    const bucket = byTag.get(tag);
-    if (bucket) bucket.push(rowId);
-    else byTag.set(tag, [rowId]);
-  }
-  const nameOfTag = new Map<number, string>();
-  for (const [relName, tag] of state.relTags) nameOfTag.set(tag, relName);
-
-  const facts: DeadFact[] = [];
-  for (const [tag, rowIds] of byTag) {
-    const relName = nameOfTag.get(tag);
-    if (relName === undefined) continue;
-    const decl = state.relDecls.get(relName);
-    if (!decl) continue;
-    const res = await state.db.execute(
-      `SELECT ${decl.columns.join(",")} FROM rel_${relName} WHERE ${ROW_SURROGATE} IN (${rowIds.join(",")})`,
-    );
-    for (const raw of res.rows) facts.push({ rel: relName, row: rowFromRaw(raw, decl.columns) });
-  }
-  return facts;
+/** Unpack `key = rel_tag * KEY_STRIDE + row_id`, group by rel, one SELECT per rel. */
+function resolveFactKeys(state: RuntimeState, keys: readonly number[]): Observable<DeadFact[]> {
+  const nameOfTag = new Map([...state.relTags].map(([relName, tag]) => [tag, relName] as const));
+  return from(keys).pipe(
+    groupBy((key) => Math.trunc(key / KEY_STRIDE)),
+    mergeMap((group) =>
+      group.pipe(
+        map((key) => key % KEY_STRIDE),
+        toArray(),
+        concatMap((rowIds) => {
+          const relName = nameOfTag.get(group.key);
+          const decl = relName === undefined ? undefined : state.relDecls.get(relName);
+          if (relName === undefined || !decl) return EMPTY;
+          return execute$(
+            state.db,
+            `SELECT ${decl.columns.join(",")} FROM rel_${relName} WHERE ${ROW_SURROGATE} IN (${rowIds.join(",")})`,
+          ).pipe(
+            concatMap((result) => from(result.rows)),
+            map((rawRow) => ({ rel: relName, row: rowFromRaw(rawRow, decl.columns) })),
+          );
+        }),
+      ),
+    ),
+    toArray(),
+  );
 }
 
-
-async function refreshFactPlane(state: RuntimeState): Promise<void> {
-  const { db, relStore } = state;
-  const ns = relStore.ns();
+/** Mirror the settled model into the store's Z-set fact plane, SQL-to-SQL, one statement
+ *  per rel. `key = rel_tag * KEY_STRIDE + row_id`, computed from two dense integer
+ *  columns, so no row ever enters the JS heap here. */
+function refreshFactPlane(state: RuntimeState): Observable<void> {
+  const rowTable = state.relStore.ns().row;
   const stride = state.supportEdges.stride;
-  for (const [relName, table] of state.relTables) {
-    const tag = state.relTags.get(relName);
-    if (tag === undefined) continue;
-    await db.execute(
-      `INSERT INTO ${ns.row}(key, weight) SELECT ${tag} * ${stride} + ${ROW_SURROGATE}, 1 FROM ${table.table} ` +
-        `WHERE true ON CONFLICT(key) DO UPDATE SET weight = 1`,
-    );
-  }
+  return from(state.relTables).pipe(
+    concatMap(([relName, table]) => {
+      const tag = state.relTags.get(relName);
+      if (tag === undefined) return EMPTY;
+      return run$(
+        state.db,
+        `INSERT INTO ${rowTable}(key, weight) SELECT ${tag} * ${stride} + ${ROW_SURROGATE}, 1 FROM ${table.table} ` +
+          `WHERE true ON CONFLICT(key) DO UPDATE SET weight = 1`,
+      );
+    }),
+    count(),
+    map(() => undefined),
+  );
 }
 
 /** The fixpoint stage. One transaction: evalProgramSql, mirror into cx_row, diff the
  *  settled tables against derivedTableMirror, write delta rows, then the retention-0
- *  DELETE (awaited here because a tap cannot await before commit() resolves).
- *  Skipped whole when no EDB row moved and no scratch row was cleared. */
-
-export async function applyDerivedTxn(state: RuntimeState, outcome: EdbTickOutcome): Promise<SettledOutcome> {
+ *  DELETE (here rather than in the later tap, which cannot await before commit()
+ *  resolves). Skipped whole when no EDB row moved and no scratch row was cleared. */
+export function applyDerivedTxn(state: RuntimeState, outcome: EdbTickOutcome): Observable<SettledOutcome> {
   const { db, relDecls } = state;
   const edbMoved = outcome.changedRelNames.length > 0 || state.scratchClearedRows > 0;
   state.scratchClearedRows = 0;
 
-  return with_txn(db, async () => {
-    if (edbMoved && state.derivedRelNames.length > 0) {
-      await firstValueFrom(evalProgramSql(db, state.storageProgram, state.relTables, state.supportEdges));
-      await refreshFactPlane(state);
-    }
-    const perRel = edbMoved ? await diffAgainstTables(state) : new Map<string, PerRelDiff>();
+  const scratchRelNames = [...state.retention]
+    .filter(([relName, retention]) => retention === 0 && relDecls.has(relName))
+    .map(([relName]) => relName);
 
-    const derivedEvents: DeltaEvent[] = [];
-    const derivedPairs: [string, number][] = [];
-    const deltaRows: DeltaRow[] = [];
+  return inTransaction(db, () => {
+    const fixpoint =
+      edbMoved && state.derivedRelNames.length > 0
+        ? evalProgramSql(db, state.storageProgram, state.relTables, state.supportEdges).pipe(
+            concatMap(() => refreshFactPlane(state)),
+          )
+        : of(undefined);
 
-    for (const [relName, { insert, retract, newRows }] of perRel) {
-      const columns = relDecls.get(relName)!.columns;
-      const relTag = state.relTags.get(relName)!;
-      for (const row of insert) {
-        deltaRows.push({ rel_tag: relTag, row_digest: rowDigest(row, columns), tick: outcome.tick, weight: 1 });
-      }
-      for (const row of retract) {
-        deltaRows.push({ rel_tag: relTag, row_digest: rowDigest(row, columns), tick: outcome.tick, weight: -1 });
-      }
-      const net = insert.length - retract.length;
-      if (net !== 0) derivedPairs.push([relName, net]);
-      derivedEvents.push({ tick: outcome.tick, rel: relName, inserts: insert, retracts: retract });
-      state.derivedTableMirror.set(relName, newRows.slice());
-    }
+    return fixpoint.pipe(
+      concatMap(() => (edbMoved ? diffAgainstTables(state) : of(new Map<string, PerRelDiff>()))),
+      concatMap((perRel) => {
+        const entries = [...perRel];
+        const deltaRows = entries.flatMap(([relName, diff]) => {
+          const columns = relDecls.get(relName)!.columns;
+          const relTag = state.relTags.get(relName)!;
+          return [
+            ...diff.insert.map((row) => deltaRowOf(relTag, row, columns, outcome.tick, 1)),
+            ...diff.retract.map((row) => deltaRowOf(relTag, row, columns, outcome.tick, -1)),
+          ];
+        });
+        const derivedPairs = entries
+          .map(([relName, diff]) => [relName, diff.insert.length - diff.retract.length] as [string, number])
+          .filter(([, net]) => net !== 0);
+        const derivedEvents = entries.map(([relName, diff]) => ({
+          tick: outcome.tick,
+          rel: relName,
+          inserts: diff.insert,
+          retracts: diff.retract,
+        }));
+        for (const [relName, diff] of entries) state.derivedTableMirror.set(relName, diff.newRows.slice());
 
-    if (deltaRows.length > 0) await insertDeltaRows(db, deltaRows);
-
-    const scratchRelNames: string[] = [];
-    for (const [relName, retention] of state.retention) {
-      if (retention === 0 && relDecls.has(relName)) scratchRelNames.push(relName);
-    }
-    let clearedRows = 0;
-    for (const relName of scratchRelNames) {
-      const res = await db.execute(`DELETE FROM relbase_${relName}`);
-      clearedRows += Number(res.rowsAffected ?? 0);
-    }
-    state.scratchClearedRows = clearedRows;
-
-    const changed = [...outcome.changedPairs, ...derivedPairs].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-    const events = [...outcome.events, ...derivedEvents].sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
-
-    return { id: outcome.id, report: { tick: outcome.tick, changed }, events, scratchRelNames };
+        return insertDeltaRows(db, deltaRows).pipe(
+          concatMap(() =>
+            from(scratchRelNames).pipe(
+              concatMap((relName) => execute$(db, `DELETE FROM relbase_${relName}`)),
+              reduce((cleared: number, result) => cleared + Number(result.rowsAffected ?? 0), 0),
+            ),
+          ),
+          map((clearedRows) => {
+            state.scratchClearedRows = clearedRows;
+            const byRelName = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0);
+            return {
+              id: outcome.id,
+              report: {
+                tick: outcome.tick,
+                changed: [...outcome.changedPairs, ...derivedPairs].sort((a, b) => byRelName(a[0], b[0])),
+              },
+              events: [...outcome.events, ...derivedEvents].sort((a, b) => byRelName(a.rel, b.rel)),
+              scratchRelNames,
+            };
+          }),
+        );
+      }),
+    );
   });
 }
 
-
-export function clearScratchRels(state: RuntimeState, outcome: SettledOutcome): void {
-  for (const relName of outcome.scratchRelNames) {
-    const decl = state.relDecls.get(relName);
-    if (!decl || decl.origin === "EDB") continue;
-    // A derived rel(0) rel's table was just emptied; the mirror must agree, or the next
-    // tick's diff would see the recomputed rows as unchanged and publish no delta.
-    state.derivedTableMirror.set(relName, []);
-  }
-  state.reportsSubject.next({ id: outcome.id, report: outcome.report });
-}
 
 
 function literalSeedRows(
@@ -717,7 +840,7 @@ export class DlRuntime implements IDlRuntime {
     await store.flush_strings();
     for (const [relName, rows] of seedRows) {
       const decl = relDecls.get(relName)!;
-      await insertRows(db, relName, decl.columns, rows);
+      await firstValueFrom(insertRows(db, relName, decl.columns, rows));
     }
 
     // The program the SQL fixpoint compiles: same rules, every body literal rewritten
@@ -749,7 +872,7 @@ export class DlRuntime implements IDlRuntime {
     const derivedTableMirror = new Map<string, Row[]>();
     for (const relName of derivedRelNames) {
       const decl = relDecls.get(relName)!;
-      derivedTableMirror.set(relName, await selectAll(db, relName, decl.columns));
+      derivedTableMirror.set(relName, await firstValueFrom(selectAll(db, relName, decl.columns)));
     }
 
     const state: RuntimeState = {
@@ -816,7 +939,7 @@ export class DlRuntime implements IDlRuntime {
       encodeSurfaceRowByColumns(state.store, state.columnTypes, rel, decl.columns, row),
     );
     await state.store.flush_strings();
-    const rowIds = await selectSurrogates(state.db, state.relDecls, rel, decl.columns, encoded);
+    const rowIds = await firstValueFrom(selectSurrogates(state.db, state.relDecls, rel, decl.columns, encoded));
     if (rowIds.length === 0) return { rounds: 0, dead: [] };
 
     const before = new Set(await state.relStore.alive_keys());
@@ -824,7 +947,7 @@ export class DlRuntime implements IDlRuntime {
     const after = new Set(await state.relStore.alive_keys());
 
     const deadKeys = [...before].filter((key) => !after.has(key));
-    return { rounds, dead: await resolveFactKeys(state, deadKeys) };
+    return { rounds, dead: await firstValueFrom(resolveFactKeys(state, deadKeys)) };
   }
 
   /** Rules whose heads carry no support edges, so they are not retractable through the
@@ -834,6 +957,11 @@ export class DlRuntime implements IDlRuntime {
   }
 
   async rows(rel: string): Promise<Row[]> {
+    return firstValueFrom(this.rows$(rel));
+  }
+
+  /** The observable read. `rows()` is the promise adapter IDlRuntime's contract declares. */
+  rows$(rel: string): Observable<Row[]> {
     const decl = this.state.relDecls.get(rel);
     if (!decl) throw new Error(`DlRuntime.rows: unknown rel '${rel}'`);
     return selectAll(this.state.db, rel, decl.columns);
