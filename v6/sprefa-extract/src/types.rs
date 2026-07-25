@@ -1258,7 +1258,7 @@ pub enum FlatFact {
 //   lam_sym) is ported - minted in the df walks from span/containment data.
 //
 // DEFERRED (per-lang gates noted; the rest lands with Resolve<F>/follow-ups):
-//   type_edge (field/impl/variant/uses/generic)   -> TS ASSERTED (4b-iii); rust/go = 4d
+//   type_edge (field/impl/variant/uses/generic)   -> TS ASSERTED (4b-iii), rust ASSERTED (4d-i); go = 4d
 //   resolved caller -> callee                     -> TS RATCHETED vs scip (4c-ii); rust/go = 4d
 //   docs facet                                    -> follow-up
 //   df aux (args/fields/lits/param_pos)           -> labels, follow-up
