@@ -1,0 +1,18 @@
+# The fixture crate manifest: rust-analyzer scip resolves through cargo
+# metadata, so the ratchet corpus must be a Cargo project. `[lib] path` keeps
+# the fixtures flat (sample.rs/docs.rs stay at their committed paths — the
+# parity oracle's closure lam_sym strings embed them). The empty `[workspace]`
+# table makes this dir its own workspace root so cargo never walks up into
+# sprefa-extract's workspace. NEVER built by v6's test suite — the scip
+# ratchet stages-copies it to a temp dir (ScipRust::build).
+[package]
+name = "fixtures"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "fixtures"
+path = "lib.rs"
+
+[workspace]

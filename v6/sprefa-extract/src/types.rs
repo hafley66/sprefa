@@ -983,7 +983,7 @@ pub trait Resolve<F: Family>: Source {
     /// one blob (spec: `_2_traits.rs`:88-96).
     fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<F>> {
         let _ = (output, cx);
-        todo!("4b-iii landed Resolve<TypeF> + 4c-ii Resolve<CallF> for TsSource; next: 4d rust/go arms")
+        todo!("4b-iii landed Resolve<TypeF> + 4c-ii Resolve<CallF> for TsSource; 4d landed both arms for RustSource; next: 4d go arms")
     }
 }
 
@@ -1259,7 +1259,7 @@ pub enum FlatFact {
 //
 // DEFERRED (per-lang gates noted; the rest lands with Resolve<F>/follow-ups):
 //   type_edge (field/impl/variant/uses/generic)   -> TS ASSERTED (4b-iii), rust ASSERTED (4d-i); go = 4d
-//   resolved caller -> callee                     -> TS RATCHETED vs scip (4c-ii); rust/go = 4d
+//   resolved caller -> callee                     -> TS RATCHETED vs scip (4c-ii), rust RATCHETED (4d-ii); go = 4d
 //   docs facet                                    -> follow-up
 //   df aux (args/fields/lits/param_pos)           -> labels, follow-up
 //

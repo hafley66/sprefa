@@ -12,6 +12,13 @@
 //!   `src/scip_import.rs::load`, re-runtimed: rust-protobuf -> prost, see the
 //!   Cargo.toml dep note).
 //!
+//! Commit 4d-ii adds `ScipRust`: `rust-analyzer scip` (v5's rust INDEXERS
+//! row), PATH-only, ALWAYS staged (cargo metadata writes `target/` under the
+//! project root unconditionally). The indexer's symbol model differs from
+//! scip-typescript's: symbols are qualified (`rust-analyzer cargo <crate>
+//! <version> <path>`), locals are `local N` DOCUMENT-scoped, and position
+//! encoding is UTF-8. `load` is shared — the wire is indexer-agnostic.
+//!
 //! The generated bindings are committed at `scip/scip_proto.rs` (from the
 //! vendored `proto/scip.proto`); they stay private — only the diet types in
 //! `crate::types` cross the seam.
@@ -39,9 +46,21 @@ mod proto;
 /// the same indexer release.
 pub struct ScipTypescript;
 
+/// rust-analyzer's `scip` subcommand (v5's rust INDEXERS row,
+/// src/scip_setup.rs:52-58). PATH ONLY: the indexer ships with the toolchain
+/// (`rustup component add rust-analyzer`); there is no npx fallback. The
+/// indexer resolves through cargo metadata, so `root` must be a Cargo project
+/// and every indexed file must be crate-reachable.
+pub struct ScipRust;
+
 /// The source extensions scip-typescript (and `TsSource`) covers; the staging
 /// copy preserves these, directory structure included.
 const TS_EXTS: &[&str] = &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
+
+/// The rust staging set: the sources + every Cargo.toml (workspace member
+/// manifests carry the crate graph the indexer resolves through).
+const RUST_EXTS: &[&str] = &["rs"];
+const RUST_EXTRA_NAMES: &[&str] = &["Cargo.toml"];
 
 impl ScipSource for ScipTypescript {
     fn indexer(&self) -> &'static str {
@@ -60,7 +79,7 @@ impl ScipSource for ScipTypescript {
             root.to_path_buf()
         } else {
             let work = stage.join("work");
-            copy_sources(root, &work)?;
+            copy_sources(root, &work, TS_EXTS, &[])?;
             work
         };
         let out_str = out.to_string_lossy().into_owned();
@@ -93,11 +112,44 @@ impl ScipSource for ScipTypescript {
     }
 
     fn load(&self, index_path: &Path) -> Result<ScipIndex, ScipError> {
-        let bytes = std::fs::read(index_path)
-            .map_err(|e| ScipError::Parse(format!("read {}: {e}", index_path.display())))?;
-        let index = proto::Index::decode(bytes.as_slice())
-            .map_err(|e| ScipError::Parse(format!("protobuf decode: {e}")))?;
-        Ok(diet(&index))
+        load_index(index_path)
+    }
+}
+
+impl ScipSource for ScipRust {
+    fn indexer(&self) -> &'static str {
+        "rust-analyzer"
+    }
+
+    fn build(&self, root: &Path) -> Result<PathBuf, ScipError> {
+        let stage = fresh_temp_dir("sprefa-scip-rust")?;
+        let out = stage.join("index.scip");
+        // ALWAYS staged, never in place (a stronger hermetic than the ts
+        // conditional): cargo metadata writes `target/` (and can write
+        // Cargo.lock) under the project root UNCONDITIONALLY, and the seam's
+        // law is that the source dir is never written. The staged copy is
+        // sources + manifests only, so crate-relative document paths match
+        // the root's layout exactly.
+        let work = stage.join("work");
+        copy_sources(root, &work, RUST_EXTS, RUST_EXTRA_NAMES)?;
+        let out_str = out.to_string_lossy().into_owned();
+        // v5's argv verbatim (src/scip_setup.rs INDEXERS rust row), cwd = the
+        // staged root. PATH only: rust-analyzer ships with the toolchain; a
+        // spawn miss is IndexerMissing, a run failure is reported as-is.
+        let done = std::process::Command::new("rust-analyzer")
+            .args(["scip", ".", "--output", out_str.as_str()])
+            .current_dir(&work)
+            .output()
+            .map_err(|_| ScipError::IndexerMissing("rust-analyzer"))?;
+        if done.status.success() {
+            Ok(out)
+        } else {
+            Err(ScipError::IndexerFailed(tail(&done.stderr)))
+        }
+    }
+
+    fn load(&self, index_path: &Path) -> Result<ScipIndex, ScipError> {
+        load_index(index_path)
     }
 }
 
@@ -105,6 +157,16 @@ impl ScipSource for ScipTypescript {
 fn tail(stderr: &[u8]) -> String {
     let text = String::from_utf8_lossy(stderr);
     text.lines().filter(|l| !l.trim().is_empty()).last().unwrap_or("").trim().to_string()
+}
+
+/// The shared `load` body (one prost decode serves every indexer — the wire is
+/// indexer-agnostic by construction).
+fn load_index(index_path: &Path) -> Result<ScipIndex, ScipError> {
+    let bytes = std::fs::read(index_path)
+        .map_err(|e| ScipError::Parse(format!("read {}: {e}", index_path.display())))?;
+    let index = proto::Index::decode(bytes.as_slice())
+        .map_err(|e| ScipError::Parse(format!("protobuf decode: {e}")))?;
+    Ok(diet(&index))
 }
 
 /// A fresh uniquely-named temp dir (no tempfile dep): base + pid + nanos.
@@ -119,10 +181,17 @@ fn fresh_temp_dir(prefix: &str) -> Result<PathBuf, ScipError> {
     Ok(dir)
 }
 
-/// Copy the TS/JS sources under `src_root` to `dst_root`, preserving relative
-/// structure; node_modules/.git and friends are not sources. Used only when
-/// the root has no tsconfig (see `build`).
-fn copy_sources(src_root: &Path, dst_root: &Path) -> Result<(), ScipError> {
+/// Copy the sources under `src_root` to `dst_root`, preserving relative
+/// structure: files whose extension is in `exts` plus files whose bare name is
+/// in `extra_names` (rust's Cargo.toml manifests). node_modules/.git/dist/out/
+/// target and friends are not sources. Used only when the build stages (see
+/// each impl's `build`).
+fn copy_sources(
+    src_root: &Path,
+    dst_root: &Path,
+    exts: &[&str],
+    extra_names: &[&str],
+) -> Result<(), ScipError> {
     let mut stack = vec![src_root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let entries = std::fs::read_dir(&dir)
@@ -132,13 +201,13 @@ fn copy_sources(src_root: &Path, dst_root: &Path) -> Result<(), ScipError> {
             let name = entry.file_name();
             let name = name.to_string_lossy();
             if path.is_dir() {
-                if !matches!(name.as_ref(), "node_modules" | ".git" | "dist" | "out") {
+                if !matches!(name.as_ref(), "node_modules" | ".git" | "dist" | "out" | "target") {
                     stack.push(path);
                 }
                 continue;
             }
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if !TS_EXTS.contains(&ext) {
+            if !exts.contains(&ext) && !extra_names.contains(&name.as_ref()) {
                 continue;
             }
             let rel = path.strip_prefix(src_root).unwrap_or(&path);

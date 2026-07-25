@@ -16,9 +16,12 @@
 //! Commit 4d-i lands the type EDGES: unresolved candidates ride `TypeFAux` out
 //! of the one parse (port of v5 `edges_from`: field/variant/generic/impl — v5
 //! rust emits NO param/returns and NO uses), and `Resolve<TypeF>` binds them
-//! (the 4b-iii discipline, mirrored from the ts arm). Deferred follow-ups: the
-//! docs facet (`rust_docs_from`); the df enrichment aux (args/fields/lits/
-//! param_pos/loops/nests).
+//! (the 4b-iii discipline, mirrored from the ts arm). Commit 4d-ii lands
+//! `Resolve<CallF>` (the 4c-ii ts arm mirrored: NameResolve primary,
+//! ScipOverride on scip disagreement; the rust-analyzer `local `-symbol
+//! adaptation documented on the arm) + the scip ratchet. Deferred follow-ups:
+//! the docs facet (`rust_docs_from`); the df enrichment aux (args/fields/
+//! lits/param_pos/loops/nests).
 
 use std::collections::BTreeSet;
 
@@ -28,11 +31,13 @@ use syn::{
     ReturnType, Type, TypeParamBound, WherePredicate,
 };
 
-use crate::family::{CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfEdgeKind, DfF, DfNodeKind, ProjectEdge, SigSlot, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig};
+use crate::family::{CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfEdgeKind, DfF, DfNodeKind, ProjectEdge, SigSlot, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig};
 use crate::rows::{Edge, FamilyBundle, Node};
-use crate::seams::{DefIndex, Parser, Project, Resolve, corpus_defs};
-use crate::shape::{BlobHash, NodeRef, Span, Strings};
+use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
+use crate::seams::{DefIndex, Parser, Project, Resolve, containing_def_site, corpus_defs, covering_def, def_named, own_blob};
+use crate::shape::{BlobHash, FamilyTag, NodeRef, Span, Strings};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
+use crate::types::ScipIndex;
 use super::astgrep::{AstGrepParser, CstProjector};
 
 // ── span bridge: proc_macro2 line/col -> v6 byte Span ───────────────────────
@@ -621,6 +626,136 @@ impl Resolve<TypeF> for RustSource {
                 resolve_type_dst(types, &output.strings, index, output.strings.lookup(candidate.to))
                     .unwrap_or_default();
             edges.push(ProjectEdge::new(NodeRef(src_ix as u32), dst_blob, dst_span, candidate.kind));
+        }
+        edges
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Resolve<CallF> for RustSource (commit 4d-ii). The 4c-ii ts arm mirrored, two
+// legs per the user rulings (scip-override ALLOWED; the v5-shaped name-match
+// stays primary):
+//   NameResolve — callee name -> unique def. Same-file WINS via the span-join
+//     (def_named in THIS CallF bundle -> its span -> the DefIndex gives the
+//     blob); cross-file a UNIQUE corpus blob (CallF facet preferred);
+//     ambiguous/absent -> NO ROW (the 4b-iii discipline).
+//   ScipOverride — scip's occurrence resolution for the site disagrees with
+//     the name-match outcome: scip's corpus target WINS the edge, the
+//     name-match is displaced. Needs the corpus scip index
+//     (cx.indexes.scip_index) AND the rev-correct reader (cx.reader); either
+//     absent -> pure name-match. scip-EXTERNAL never displaces and never
+//     mints.
+// RUST-ANALYZER ADAPTATION (the honest per-indexer difference, mirrored by
+// the ratchet and logged in the ledger): a `local ` symbol at a call site is
+// a LOCAL BINDING (`let func = |x| ..; func(..)`) — df-owned, not a call-
+// graph def (rust-analyzer names no closure symbol; scip's answer is the
+// binding, and the 4c containing_def_site join would misroute it to the
+// ENCLOSING fn, minting a false self-edge). Local-symbol sites are treated
+// as scip-external: NO v6 edge. Method resolution stays NAME-ONLY per the 4a
+// ADDENDUM (receiver typing out of scope). `callee_path` rides phase 1 as
+// collected (rust fills it); the resolution key stays the trailing segment —
+// no path-qualified matching is invented (unexercised by the fixtures and
+// unratchetable where scip already arbitrates).
+// The arm learns its own blob by the DefIndex span-join (`own_blob`) and its
+// scip document by content hash (`join_documents`). Per-site edges, no dedup.
+// A site outside every CallF def (module level) emits no row.
+// ════════════════════════════════════════════════════════════════════════════
+
+impl RustSource {
+    /// The name-match target of one callee (the NameResolve leg). Pub so the
+    /// scip ratchet re-runs it to classify overrides — same discipline as
+    /// `type_edge_candidates` in 4d-i. Mirror of `TsSource::call_name_match`
+    /// (the post-4d dedup sweep owns unifying the per-lang copies).
+    pub fn call_name_match(
+        output: &ExtractOutput,
+        index: &DefIndex,
+        callee: &str,
+    ) -> Option<(BlobHash, Span)> {
+        let call = output.call.as_ref()?;
+        if let Some(r) = def_named(call, &output.strings, callee) {
+            let span = call.node(r).span;
+            if let Some(site) = corpus_defs(index, callee).iter().find(|site| site.span == span) {
+                return Some((site.blob, site.span));
+            }
+        }
+        let sites = corpus_defs(index, callee);
+        let mut blobs: Vec<BlobHash> = Vec::new();
+        for site in sites {
+            if !blobs.contains(&site.blob) {
+                blobs.push(site.blob);
+            }
+        }
+        let [blob] = blobs.as_slice() else { return None };
+        let site = sites.iter().find(|s| s.family == FamilyTag::Call).unwrap_or(&sites[0]);
+        Some((*blob, site.span))
+    }
+}
+
+/// The scip-resolved corpus target of one call site: the site's occurrence
+/// (the shared `site_occurrence` convention) -> its symbol's definition
+/// occurrence -> the containing DefSite. None = scip has no corpus CALL
+/// target: an external library symbol, an unresolved reference, no occurrence
+/// at the site, the target document outside the corpus — OR a `local `
+/// symbol, the rust-analyzer adaptation documented on the arm above (a local
+/// binding is df-owned; the enclosing fn is NOT the callee).
+fn scip_call_target<'a>(
+    index: &ScipIndex,
+    joined: &[Option<(BlobHash, Vec<u8>)>],
+    doc_ix: usize,
+    site: &CallSite,
+    callee: &str,
+    def_index: &'a DefIndex,
+) -> Option<(BlobHash, Span, &'a str)> {
+    let doc = &index.documents[doc_ix];
+    let (_, content) = joined[doc_ix].as_ref()?;
+    let occ = site_occurrence(doc, content, site.span, callee)?;
+    if occ.symbol.starts_with("local ") {
+        return None;
+    }
+    let (def_doc_ix, def_occ) = definition_of(index, doc_ix, &occ.symbol)?;
+    let def_doc = &index.documents[def_doc_ix];
+    let (def_blob, def_content) = joined[def_doc_ix].as_ref()?;
+    let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
+    let (name, def_site) = containing_def_site(def_index, *def_blob, ident)?;
+    Some((*def_blob, def_site.span, name))
+}
+
+impl Resolve<CallF> for RustSource {
+    fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<CallF>> {
+        let Some(call) = &output.call else { return Vec::new() };
+        let Some(def_index) = cx.indexes.def_index.get() else { return Vec::new() };
+        // The scip leg: the corpus index + the rev-correct reader + this
+        // file's own document (found by content hash). Any missing piece ->
+        // pure name-match (v5-shaped).
+        let scip = cx.indexes.scip_index.get().zip(cx.reader).and_then(|(index, reader)| {
+            let joined = join_documents(index, reader);
+            let blob = own_blob(output, def_index)?;
+            let doc_ix =
+                joined.iter().position(|j| j.as_ref().map_or(false, |(b, _)| *b == blob))?;
+            Some((index, joined, doc_ix))
+        });
+        let mut edges = Vec::new();
+        for site in &call.aux.sites {
+            // The caller is the innermost covering CallF def (the 4a
+            // caller-binding discipline); a module-level site has no caller
+            // node and emits no row.
+            let Some(caller) = covering_def(call, site.span) else { continue };
+            let callee = output.strings.lookup(site.callee);
+            let name_t = RustSource::call_name_match(output, def_index, callee);
+            let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
+                scip_call_target(index, joined, *doc_ix, site, callee, def_index)
+            });
+            // Agreement is judged at (blob, name): the name-match binds the
+            // call FACET while scip can name the type facet — one definition,
+            // two facet coordinates (the ORACLE entry's "the models differ by
+            // construction").
+            let ((dst_blob, dst_span), kind) = match (name_t, scip_t) {
+                (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => (n, CallEdgeKind::NameResolve),
+                (_, Some(s)) => ((s.0, s.1), CallEdgeKind::ScipOverride),
+                (Some(n), None) => (n, CallEdgeKind::NameResolve),
+                (None, None) => continue,
+            };
+            edges.push(ProjectEdge::new(caller, dst_blob, dst_span, kind));
         }
         edges
     }
