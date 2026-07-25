@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dl effect marbles: ? vs !</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --ink:#e6edf3; --dim:#8b949e; --line:#30363d;
+    --next:#3fb950; --err:#f85149; --done:#58a6ff; --fin:#8b949e; --unsub:#d29922;
+    --hit:#484f58; --fire:#bc8cff; --seal:#6e7681; --chip:#21262d;
+    --grid:#1b2027;
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --bg:#f6f8fa; --panel:#fff; --ink:#1f2328; --dim:#57606a; --line:#d0d7de;
+      --next:#1a7f37; --err:#cf222e; --done:#0969da; --fin:#6e7781; --unsub:#9a6700;
+      --hit:#afb8c1; --fire:#8250df; --seal:#8c959f; --chip:#eef1f4; --grid:#eaeef2;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    padding:32px 40px 80px;max-width:1200px;margin:0 auto}
+  h1{font-size:22px;margin:0 0 4px} h2{font-size:16px;margin:36px 0 4px}
+  .sub{color:var(--dim);margin:0 0 18px}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    padding:18px 20px;margin:12px 0;overflow-x:auto}
+  .cap{color:var(--dim);font-size:12.5px;margin:2px 0 14px}
+  /* timeline grid: 1 label col + 12 time cols */
+  .tl{display:grid;grid-template-columns:118px repeat(12,1fr);
+    gap:7px 6px;align-items:center;min-width:760px;
+    background:repeating-linear-gradient(90deg,transparent 0 118px,
+      var(--grid) 118px 119px,transparent 119px);}
+  .lbl{grid-column:1;color:var(--dim);font-size:12px;text-align:right;
+    padding-right:10px;font-family:ui-monospace,monospace}
+  .tick{color:var(--dim);font-size:10px;text-align:center;font-family:ui-monospace,monospace}
+  /* marble chip */
+  .m{display:flex;align-items:center;justify-content:center;
+    height:30px;border-radius:8px;font-size:12px;font-weight:600;
+    font-family:ui-monospace,monospace;color:#0b0e13;position:relative;
+    border:1px solid rgba(0,0,0,.25)}
+  @media (prefers-color-scheme:light){ .m{color:#fff;border-color:rgba(0,0,0,.12)} }
+  .m small{position:absolute;top:-15px;left:50%;transform:translateX(-50%);
+    font-size:9.5px;color:var(--dim);white-space:nowrap;font-weight:500}
+  .next{background:var(--next)} .err{background:var(--err);color:#fff}
+  .done{background:var(--done)} .fin{background:var(--fin)}
+  .unsub{background:var(--unsub)} .fire{background:var(--fire)}
+  .hit{background:var(--hit);color:var(--ink);border-style:dashed;opacity:.9}
+  .seal{background:transparent;border:1px dashed var(--seal);color:var(--seal)}
+  .state{background:var(--chip);color:var(--ink);border:1px solid var(--line);
+    height:26px;border-radius:6px;font-size:11px}
+  .none{background:transparent;border:1px dotted var(--seal);color:var(--seal);
+    height:26px;border-radius:6px;font-size:10px;opacity:.6}
+  /* legend + tables */
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:10px 0}
+  .legend div{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--dim)}
+  .swatch{width:26px;height:18px;border-radius:5px;flex:none}
+  table{border-collapse:collapse;width:100%;font-size:13px;margin-top:8px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{color:var(--dim);font-weight:600;font-size:12px}
+  td.q{color:var(--done)} td.b{color:var(--fire)}
+  code{font-family:ui-monospace,monospace;background:var(--chip);padding:1px 5px;
+    border-radius:4px;font-size:12.5px}
+  .key{color:var(--dim);font-size:12px;margin-top:6px}
+</style>
+</head>
+<body>
+
+<h1>dl effect marbles &mdash; <span class="mono">?</span> vs <span class="mono">!</span></h1>
+<p class="sub">The lifecycle stream of each sigil, aligned by CSS grid. Same tap protocol per invocation; the divergence is the cache lane: <b>memo</b> (replayable) vs <b>ledger</b> (append-only).</p>
+
+<div class="legend">
+  <div><span class="swatch next"></span> Next&lt;A&gt; (value)</div>
+  <div><span class="swatch done"></span> Complete</div>
+  <div><span class="swatch err"></span> Error&lt;E&gt;</div>
+  <div><span class="swatch fin"></span> Finalize</div>
+  <div><span class="swatch unsub"></span> Unsub</div>
+  <div><span class="swatch fire"></span> run fires</div>
+  <div><span class="swatch hit"></span> memo replay</div>
+  <div><span class="swatch" style="border:1px dashed var(--seal)"></span> sealed (no fire)</div>
+</div>
+
+<h2>0 &middot; one invocation &mdash; the tap protocol (identical for both)</h2>
+<div class="panel"><div class="tl">
+  <div class="lbl" style="grid-row:1">t</div>
+  <div class="tick" style="grid-row:1;grid-column:2">1</div>
+  <div class="tick" style="grid-row:1;grid-column:3">2</div>
+  <div class="tick" style="grid-row:1;grid-column:4">3</div>
+  <div class="tick" style="grid-row:1;grid-column:5">4</div>
+  <div class="tick" style="grid-row:1;grid-column:6">5</div>
+  <div class="tick" style="grid-row:1;grid-column:7">6</div>
+
+  <div class="lbl" style="grid-row:2">__resp&lt;h&gt;</div>
+  <div class="m next" style="grid-row:2;grid-column:2"><small>Next&lt;A&gt;</small>v</div>
+  <div class="m next" style="grid-row:2;grid-column:3">v</div>
+  <div class="m next" style="grid-row:2;grid-column:4">v</div>
+  <div class="m done" style="grid-row:2;grid-column:5"><small>Complete</small>|</div>
+  <div class="m fin"  style="grid-row:2;grid-column:6"><small>Finalize</small>f</div>
+</div>
+<p class="key mono">subscribe &rarr; next* &rarr; (complete | error | unsub) &rarr; finalize &nbsp;&middot;&nbsp; terminal is exclusive, finalize always closes.</p>
+</div>
+
+<h2>0.5 &middot; two clocks &mdash; the tick vs the fixpoint rounds underneath</h2>
+<div class="panel">
+<p class="cap">Every marble on this page shows only what crosses the <b>tick</b> boundary. Underneath, each tick drives the semi-naive fixpoint to quiescence: an inner loop the outside world never sees. Two nested clocks &mdash; outer <b>tick</b> = EDB commit (a macrotask, the C++/libuv world); inner <b>round</b> = one semi-naive iteration (a microtask, run-to-completion).</p>
+
+<div class="tl" style="grid-template-columns:132px repeat(9,1fr)">
+  <div class="lbl" style="grid-row:1">tick (EDB)</div>
+  <div class="m done" style="grid-row:1;grid-column:2"><small>macrotask</small>t1</div>
+  <div class="m done" style="grid-row:1;grid-column:5"><small>expand &darr;</small>t2</div>
+  <div class="m done" style="grid-row:1;grid-column:8">t3</div>
+</div>
+
+<p class="cap" style="margin:18px 0 8px">inside tick <b>t2</b> &mdash; the fixpoint drain (microtasks, invisible from outside):</p>
+<div class="tl" style="grid-template-columns:162px repeat(6,1fr)">
+  <div class="lbl" style="grid-row:1">EDB &Delta; in</div>
+  <div class="m next" style="grid-row:1;grid-column:2"><small>seed</small>edge ab</div>
+  <div class="m next" style="grid-row:1;grid-column:3">edge bc</div>
+
+  <div class="lbl" style="grid-row:2">round 0 = F(seed)</div>
+  <div class="m fire" style="grid-row:2;grid-column:2">path ab</div>
+  <div class="m fire" style="grid-row:2;grid-column:3">path bc</div>
+
+  <div class="lbl" style="grid-row:3">round 1 = F(&Delta;&#8320;)</div>
+  <div class="m fire" style="grid-row:3;grid-column:2">path ac</div>
+
+  <div class="lbl" style="grid-row:4">round 2 = F(&Delta;&#8321;)</div>
+  <div class="none" style="grid-row:4;grid-column:2;grid-column-end:4">&empty; &mdash; quiescent (fixpoint reached)</div>
+
+  <div class="lbl" style="grid-row:5">net &Delta; out</div>
+  <div class="m done" style="grid-row:5;grid-column:2;grid-column-end:5">deltas$ emits the tick's net, once</div>
+</div>
+<p class="cap" style="margin-top:12px">Round <span class="mono">n</span> = <code>map(state, n)</code> indexed by the fixpoint iteration; the recurrence is <code>IDB(n+1) = IDB(n) &cup; F(&Delta;(n))</code> until <code>&Delta; = &empty;</code>. Only the net crosses the boundary, so the clean per-tick marble is the drain's <i>result</i>, never its rounds.</p>
+
+<table>
+<tr><th>layer</th><th>JS event loop</th><th>rxjs</th><th>dl</th></tr>
+<tr><td>outside pushes</td><td>macrotask (libuv / C++)</td><td>source / Subject.next</td><td>EDB commit (file change, host resp)</td></tr>
+<tr><td>run-to-completion</td><td>microtask drain</td><td>expand + queueScheduler (sync)</td><td>semi-naive rounds</td></tr>
+<tr><td>done signal</td><td>queue empty</td><td>expand completes</td><td>&Delta; = &empty; (fixpoint)</td></tr>
+<tr><td>yield outward</td><td>return to loop</td><td>asyncScheduler</td><td>deltas$ emits, next tick</td></tr>
+</table>
+<p class="cap" style="margin-top:12px"><b>Prior art you just re-derived:</b> Timely Dataflow timestamps are literally <code>(outer-epoch, inner-iteration)</code> lexicographic pairs &mdash; the two clocks as one product order. Progress tracking = detecting a <code>(tick, round)</code> is complete = quiescence.</p>
+</div>
+
+<h2>1 &middot; <span class="mono">?</span> idempotent &mdash; cache is a <b>memo</b> (replay + re-fire on change)</h2>
+<div class="panel"><div class="tl">
+  <div class="lbl" style="grid-row:1">t</div>
+  <div class="tick" style="grid-row:1;grid-column:2">1</div><div class="tick" style="grid-row:1;grid-column:3">2</div>
+  <div class="tick" style="grid-row:1;grid-column:4">3</div><div class="tick" style="grid-row:1;grid-column:5">4</div>
+  <div class="tick" style="grid-row:1;grid-column:6">5</div><div class="tick" style="grid-row:1;grid-column:7">6</div>
+  <div class="tick" style="grid-row:1;grid-column:8">7</div><div class="tick" style="grid-row:1;grid-column:9">8</div>
+  <div class="tick" style="grid-row:1;grid-column:10">9</div><div class="tick" style="grid-row:1;grid-column:11">10</div>
+  <div class="tick" style="grid-row:1;grid-column:12">11</div><div class="tick" style="grid-row:1;grid-column:13">12</div>
+
+  <div class="lbl" style="grid-row:2">demand __req</div>
+  <div class="m done" style="grid-row:2;grid-column:2"><small>req A</small>A</div>
+  <div class="m done" style="grid-row:2;grid-column:5"><small>req A</small>A</div>
+  <div class="m done" style="grid-row:2;grid-column:8"><small>req B</small>B</div>
+  <div class="m done" style="grid-row:2;grid-column:11"><small>req A</small>A</div>
+
+  <div class="lbl" style="grid-row:3">run</div>
+  <div class="m fire" style="grid-row:3;grid-column:2">fire</div>
+  <div class="m hit"  style="grid-row:3;grid-column:5">hit</div>
+  <div class="m fire" style="grid-row:3;grid-column:8">fire</div>
+  <div class="m fire" style="grid-row:3;grid-column:11">fire</div>
+
+  <div class="lbl" style="grid-row:4">__resp</div>
+  <div class="m next" style="grid-row:4;grid-column:2"><small>Next&lt;A&gt;</small>vA</div>
+  <div class="m done" style="grid-row:4;grid-column:3">|</div>
+  <div class="m fin"  style="grid-row:4;grid-column:4">f</div>
+  <div class="m next" style="grid-row:4;grid-column:5"><small>replay</small>vA</div>
+  <div class="m done" style="grid-row:4;grid-column:6">|</div>
+  <div class="m fin"  style="grid-row:4;grid-column:7">f</div>
+  <div class="m next" style="grid-row:4;grid-column:8"><small>Next&lt;B&gt;</small>vB</div>
+  <div class="m done" style="grid-row:4;grid-column:9">|</div>
+  <div class="m fin"  style="grid-row:4;grid-column:10">f</div>
+  <div class="m next" style="grid-row:4;grid-column:11"><small>Next&lt;A&gt;</small>vA</div>
+  <div class="m done" style="grid-row:4;grid-column:12">|</div>
+  <div class="m fin"  style="grid-row:4;grid-column:13">f</div>
+
+  <div class="lbl" style="grid-row:5">memo</div>
+  <div class="m state" style="grid-row:5;grid-column:4">[A]</div>
+  <div class="m state" style="grid-row:5;grid-column:7">[A]</div>
+  <div class="m state" style="grid-row:5;grid-column:10">[B]</div>
+  <div class="m state" style="grid-row:5;grid-column:13">[A]</div>
+</div>
+<p class="cap">Round 2 (req A repeated) is a memo replay &mdash; no run. Round 3 (req B) supersedes; the memo swaps and the old row is deleted, so round 4 (req A again) <b>re-fires</b>. The memo holds the latest answer; re-running is safe because the answer is a function of the input.</p>
+</div>
+
+<h2>2 &middot; <span class="mono">!</span> fire-once &mdash; cache is a <b>ledger</b> (append-only, sealed)</h2>
+<div class="panel"><div class="tl">
+  <div class="lbl" style="grid-row:1">t</div>
+  <div class="tick" style="grid-row:1;grid-column:2">1</div><div class="tick" style="grid-row:1;grid-column:3">2</div>
+  <div class="tick" style="grid-row:1;grid-column:4">3</div><div class="tick" style="grid-row:1;grid-column:5">4</div>
+  <div class="tick" style="grid-row:1;grid-column:6">5</div><div class="tick" style="grid-row:1;grid-column:7">6</div>
+  <div class="tick" style="grid-row:1;grid-column:8">7</div><div class="tick" style="grid-row:1;grid-column:9">8</div>
+  <div class="tick" style="grid-row:1;grid-column:10">9</div><div class="tick" style="grid-row:1;grid-column:11">10</div>
+  <div class="tick" style="grid-row:1;grid-column:12">11</div><div class="tick" style="grid-row:1;grid-column:13">12</div>
+
+  <div class="lbl" style="grid-row:2">demand __req</div>
+  <div class="m done" style="grid-row:2;grid-column:2"><small>req A</small>A</div>
+  <div class="m done" style="grid-row:2;grid-column:5"><small>req A</small>A</div>
+  <div class="m done" style="grid-row:2;grid-column:8"><small>req B</small>B</div>
+  <div class="m done" style="grid-row:2;grid-column:11"><small>req A</small>A</div>
+
+  <div class="lbl" style="grid-row:3">run</div>
+  <div class="m fire" style="grid-row:3;grid-column:2">fire</div>
+  <div class="m seal" style="grid-row:3;grid-column:5">sealed</div>
+  <div class="m fire" style="grid-row:3;grid-column:8">fire</div>
+  <div class="m seal" style="grid-row:3;grid-column:11">sealed</div>
+
+  <div class="lbl" style="grid-row:4">__resp</div>
+  <div class="m next" style="grid-row:4;grid-column:2"><small>Next&lt;A&gt;</small>vA</div>
+  <div class="m done" style="grid-row:4;grid-column:3">|</div>
+  <div class="m fin"  style="grid-row:4;grid-column:4">f</div>
+  <div class="none" style="grid-row:4;grid-column:5;grid-column-end:8">no emission (already fired)</div>
+  <div class="m next" style="grid-row:4;grid-column:8"><small>Next&lt;B&gt;</small>vB</div>
+  <div class="m done" style="grid-row:4;grid-column:9">|</div>
+  <div class="m fin"  style="grid-row:4;grid-column:10">f</div>
+  <div class="none" style="grid-row:4;grid-column:11;grid-column-end:14">no emission (already fired)</div>
+
+  <div class="lbl" style="grid-row:5">ledger</div>
+  <div class="m state" style="grid-row:5;grid-column:4">[A]</div>
+  <div class="m state" style="grid-row:5;grid-column:7">[A]</div>
+  <div class="m state" style="grid-row:5;grid-column:10">[A,B]</div>
+  <div class="m state" style="grid-row:5;grid-column:13">[A,B]</div>
+</div>
+<p class="cap">Each distinct content fires exactly once, ever. A repeat (round 2, round 4) is <b>sealed</b> against the append-only ledger &mdash; no run, no emission. B is new content, so it fires (round 3). <span class="mono">A&rarr;B&rarr;A</span> does not re-fire A because <code>[A]</code> never leaves the ledger.</p>
+</div>
+
+<h2>3 &middot; error / retry &mdash; the one open ruling for <span class="mono">!</span></h2>
+<div class="panel"><div class="tl">
+  <div class="lbl" style="grid-row:1">t</div>
+  <div class="tick" style="grid-row:1;grid-column:2">1</div><div class="tick" style="grid-row:1;grid-column:3">2</div>
+  <div class="tick" style="grid-row:1;grid-column:4">3</div><div class="tick" style="grid-row:1;grid-column:5">4</div>
+  <div class="tick" style="grid-row:1;grid-column:6">5</div><div class="tick" style="grid-row:1;grid-column:7">6</div>
+
+  <div class="lbl" style="grid-row:2" >? demand</div>
+  <div class="m done" style="grid-row:2;grid-column:2">A</div>
+  <div class="m done" style="grid-row:2;grid-column:5"><small>retry</small>A</div>
+  <div class="lbl" style="grid-row:3">? resp</div>
+  <div class="m err" style="grid-row:3;grid-column:2"><small>Error&lt;E&gt;</small>X</div>
+  <div class="m fin" style="grid-row:3;grid-column:3">f</div>
+  <div class="m next" style="grid-row:3;grid-column:5"><small>retry ok</small>vA</div>
+  <div class="m done" style="grid-row:3;grid-column:6">|</div>
+
+  <div class="lbl" style="grid-row:4">! demand</div>
+  <div class="m done" style="grid-row:4;grid-column:2">A</div>
+  <div class="m done" style="grid-row:4;grid-column:5"><small>retry</small>A</div>
+  <div class="lbl" style="grid-row:5">! resp</div>
+  <div class="m err" style="grid-row:5;grid-column:2"><small>Error&lt;E&gt;</small>X</div>
+  <div class="m fin" style="grid-row:5;grid-column:3">f</div>
+  <div class="m seal" style="grid-row:5;grid-column:5">seal? or fire?</div>
+</div>
+<p class="cap"><span class="mono">?</span> retries freely (idempotent). <span class="mono">!</span> is unresolved: does an errored fire <b>seal</b> (attempt-once, error is terminal) or stay <b>open</b> (success-once, retry until it lands)? <code>effect_cache.state = "error"</code> is distinct from <code>"done"</code>, so the schema allows either. Needs a ruling.</p>
+</div>
+
+<h2>4 &middot; the fight-back &mdash; <span class="mono">?</span>/<span class="mono">!</span> are presets, not primitives</h2>
+<div class="panel">
+<p>The marble lanes show the sigils are <b>property bundles</b>. Every property collapses onto one axis: <b>read</b> (query / coeffect) vs <b>write</b> (command / effect). The bundle is derived, so the sigil should be shorthand for a type-level effect classification, and the <code>{ }</code> arms are an algebraic-effect handler matching a <code class="mono">Notification&lt;A&gt;</code> sum type.</p>
+<table>
+<tr><th>axis</th><th class="q">? = read / query / coeffect</th><th class="b">! = write / command / effect</th></tr>
+<tr><td>cache</td><td class="q">memo (replayable answer)</td><td class="b">ledger (append-only record)</td></tr>
+<tr><td>cardinality</td><td class="q">0..N (stream)</td><td class="b">0..1 (command ack)</td></tr>
+<tr><td>re-demand</td><td class="q">replay / re-fire on change</td><td class="b">sealed once fired</td></tr>
+<tr><td>retraction</td><td class="q">harmless (may invalidate)</td><td class="b">ignored (permanent)</td></tr>
+<tr><td>retry</td><td class="q">safe</td><td class="b">violation unless declared</td></tr>
+<tr><td>switchMap</td><td class="q">coherent (re-issue free)</td><td class="b">incoherent (can't cancel a fired effect)</td></tr>
+<tr><td>reads as</td><td class="q">referentially transparent</td><td class="b">world-changing</td></tr>
+</table>
+<p class="cap" style="margin-top:14px">Proposal shape (theory, not to build): both desugar to <code>effect&lt;Mode, Card&gt;</code> where <code>Mode &isin; {read, write}</code> and <code>Card &isin; {0, 0..1, 0..N}</code>; flatten / reversibility / replay are <i>functions of Mode</i>, so illegal combinations (switchMap over write, retry over write) are type errors. Prior art: algebraic effects &amp; handlers (Plotkin&ndash;Pretnar, Koka/Eff), quantitative / linear multiplicity for <code>Card</code>, comonad vs monad for read vs write, CQRS for the command/query split. rxjs core = pattern matching over the <code class="mono">Notification</code> ADT (materialize) with carried state (scan); the <code>{ }</code> block IS that match.</p>
+</div>
+
+</body>
+</html>

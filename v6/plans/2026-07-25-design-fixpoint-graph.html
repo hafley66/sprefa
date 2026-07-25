@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>design = fixpoint on a reduction graph</title>
+<style>
+  :root{
+    --bg:#0e1116;--panel:#161b22;--ink:#e6edf3;--dim:#8b949e;--line:#30363d;
+    --prim:#58a6ff;--derived:#3fb950;--parked:#bc8cff;--blocked:#f0883e;--edge:#484f58;
+  }
+  @media (prefers-color-scheme:light){
+    :root{--bg:#f6f8fa;--panel:#fff;--ink:#1f2328;--dim:#57606a;--line:#d0d7de;
+      --prim:#0969da;--derived:#1a7f37;--parked:#8250df;--blocked:#bc4c00;--edge:#afb8c1;}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    padding:24px 32px}
+  h1{font-size:21px;margin:0 0 4px} .sub{color:var(--dim);margin:0 0 14px;max-width:900px}
+  .mono{font-family:ui-monospace,Menlo,monospace}
+  .wrap{display:grid;grid-template-columns:1fr 300px;gap:16px;align-items:start}
+  #cy{height:640px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+  .side{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  .legend div{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:12.5px;color:var(--dim)}
+  .dot{width:14px;height:14px;border-radius:50%;flex:none}
+  .verdict{margin-top:14px;padding:10px;border-radius:8px;font-size:13px;min-height:60px;
+    background:var(--bg);border:1px solid var(--line)}
+  .ok{color:var(--derived)} .no{color:var(--blocked)} .hint{color:var(--dim);font-size:12px}
+  button{background:var(--bg);color:var(--ink);border:1px solid var(--line);
+    border-radius:7px;padding:6px 11px;font-size:12.5px;cursor:pointer;margin:2px 4px 2px 0}
+  button:hover{border-color:var(--prim)}
+  code{font-family:ui-monospace,monospace;background:var(--bg);padding:1px 5px;border-radius:4px;font-size:12px}
+  @media (max-width:820px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<h1>language design as a fixpoint on a reduction graph</h1>
+<p class="sub">Nodes = ideas. An edge <b>A &rarr; B</b> means &ldquo;A <b>enables</b> B&rdquo; (B is expressible using A). Roots with no in-edge are <b>primitives</b>. The question we keep asking &mdash; <i>can we express X with none of the previous ideas?</i> &mdash; is just: does X&rsquo;s dependency closure bottom out only in <b>accepted</b> primitives? Click any node to crawl its closure and get the verdict.</p>
+
+<div class="wrap">
+  <div id="cy"></div>
+  <div class="side">
+    <div style="margin-bottom:10px">
+      <button onclick="showMinset()">show minset (primitives)</button>
+      <button onclick="reset()">reset</button>
+    </div>
+    <div class="legend">
+      <div><span class="dot" style="background:var(--prim)"></span> primitive (accepted seed)</div>
+      <div><span class="dot" style="background:var(--derived)"></span> derived &mdash; expressible now</div>
+      <div><span class="dot" style="background:var(--parked)"></span> parked primitive (would be NEW)</div>
+      <div><span class="dot" style="background:var(--blocked)"></span> blocked &mdash; needs a parked primitive</div>
+    </div>
+    <div class="verdict" id="verdict"><span class="hint">click a node&hellip;</span></div>
+    <p class="hint" style="margin-top:12px">Layout is <code>breadthfirst</code> rooted at the primitives, so each downward layer is one derivation stratum &mdash; the same stratification <code>rulegraph.ts</code> computes for the engine, here run on the design itself.</p>
+  </div>
+</div>
+
+<script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+<script>
+const N = (id,label,type)=>({data:{id,label,type},classes:type});
+const E = (s,t)=>({data:{id:s+'_'+t,source:s,target:t}});
+
+const nodes = [
+  // primitives (accepted seeds)
+  N('rel','rel\n(row set)','prim'),
+  N('delta','delta plane\n(±weight)','prim'),
+  N('tick','tick\n(mono clock)','prim'),
+  N('neg','stratified\nnegation','prim'),
+  N('agg','aggregation\nmin/max/count','prim'),
+  N('ret','retention\n0/1/all','prim'),
+  N('edge','effect edge\n(host run)','prim'),
+  // derived (expressible now)
+  N('seq','seq stamp','derived'),
+  N('mat','materialize\n(Notification rows)','derived'),
+  N('match','{ } arm match','derived'),
+  N('tap','tap protocol\nlifecycle','derived'),
+  N('await','error = await\n(bubble up)','derived'),
+  N('memo','memo cache','derived'),
+  N('ledger','ledger cache\n(append-only)','derived'),
+  N('probe','?  idempotent','derived'),
+  N('mut','!  fire-once','derived'),
+  N('concat','flatten concatMap','derived'),
+  N('exhaust','flatten exhaustMap','derived'),
+  N('merge','flatten mergeMap','derived'),
+  N('replayN','rel(N) replay\n(ReplaySubject)','derived'),
+  // parked primitives (genuinely new)
+  N('tneg','temporal negation\n(Dedalus @next)','parked'),
+  N('consume','consuming read\n(CHR take)','parked'),
+  // switchMap comes home: mount/unmount/render = keyed upsert + teardown-on-retract
+  N('switch','switchMap =\nmount/unmount/render','derived'),
+  // blocked (need a parked primitive)
+  N('retry','retry / timeout\nstate machine','blocked'),
+  N('gate','backpressure\n(occupancy gate)','blocked'),
+  N('chan','blocking channel','blocked'),
+];
+const edges = [
+  E('tick','seq'),
+  E('rel','mat'), E('delta','mat'),
+  E('mat','match'), E('neg','match'),
+  E('match','tap'), E('seq','tap'),
+  E('tap','await'),
+  E('edge','memo'), E('rel','memo'),
+  E('edge','ledger'), E('ret','ledger'),
+  E('tap','probe'), E('memo','probe'),
+  E('tap','mut'), E('ledger','mut'),
+  E('delta','concat'), E('neg','concat'), E('seq','concat'),
+  E('concat','exhaust'), E('ret','exhaust'),
+  E('edge','merge'),
+  E('ret','replayN'),
+  // switchMap = keyed upsert (retention-1, latest wins) + effect-edge teardown + unsub event
+  E('ret','switch'), E('edge','switch'), E('mat','switch'),
+  // blocked chains
+  E('tneg','retry'), E('tap','retry'),
+  E('consume','gate'), E('neg','gate'), E('agg','gate'),
+  E('consume','chan'), E('gate','chan'), E('ret','chan'),
+];
+
+const cy = cytoscape({
+  container: document.getElementById('cy'),
+  elements: [...nodes, ...edges],
+  style: [
+    {selector:'node',style:{
+      'label':'data(label)','text-wrap':'wrap','text-valign':'center','text-halign':'center',
+      'font-size':'10px','font-family':'ui-monospace,monospace','color':'#0b0e13',
+      'width':'96px','height':'42px','shape':'round-rectangle','text-max-width':'90px',
+      'border-width':1,'border-color':'rgba(0,0,0,.3)'}},
+    {selector:'.prim',style:{'background-color':'var(--prim)'}},
+    {selector:'.derived',style:{'background-color':'var(--derived)'}},
+    {selector:'.parked',style:{'background-color':'var(--parked)','color':'#fff'}},
+    {selector:'.blocked',style:{'background-color':'var(--blocked)','color':'#fff'}},
+    {selector:'edge',style:{'width':1.4,'line-color':'var(--edge)','target-arrow-color':'var(--edge)',
+      'target-arrow-shape':'triangle','curve-style':'bezier','arrow-scale':.8}},
+    {selector:'.dim',style:{'opacity':.12}},
+    {selector:'.hi',style:{'border-width':3,'border-color':'#e6edf3'}},
+    {selector:'.hiedge',style:{'line-color':'#e6edf3','target-arrow-color':'#e6edf3','width':2.4,'opacity':1}},
+  ],
+  layout:{name:'breadthfirst',directed:true,roots:'.prim, .parked',
+    spacingFactor:.95,padding:24,grid:true},
+});
+
+const V = document.getElementById('verdict');
+function reset(){ cy.elements().removeClass('dim hi hiedge'); V.innerHTML='<span class="hint">click a node&hellip;</span>'; }
+function showMinset(){
+  cy.elements().addClass('dim'); cy.elements().removeClass('hi hiedge');
+  cy.nodes('.prim').removeClass('dim').addClass('hi');
+  V.innerHTML='<b>minset</b> = the 7 blue roots.<br><span class="hint">Every green node is in their closure. The purple nodes are the only two NEW primitives the parked ideas would cost.</span>';
+}
+cy.on('tap','node',ev=>{
+  const n = ev.target;
+  const clo = n.predecessors().union(n);            // dependency closure (crawl back to roots)
+  cy.elements().addClass('dim').removeClass('hi hiedge');
+  clo.removeClass('dim'); n.addClass('hi');
+  clo.edges().addClass('hiedge');
+  const needsParked = clo.nodes('.parked');
+  const deps = clo.nodes().not(n).map(d=>d.data('label').replace(/\n/g,' ')).join(', ') || '(none — it is a primitive)';
+  if(n.hasClass('prim')){
+    V.innerHTML = `<b>${n.data('label').replace(/\n/g,' ')}</b><br><span class="ok">primitive</span> — a seed, expressed by nothing prior.`;
+  } else if(needsParked.length){
+    V.innerHTML = `<b>${n.data('label').replace(/\n/g,' ')}</b><br><span class="no">BLOCKED</span> — its closure needs a parked primitive: <b>${needsParked.map(p=>p.data('label').replace(/\n/g,' ')).join(', ')}</b>.<br><span class="hint">deps: ${deps}</span>`;
+  } else {
+    V.innerHTML = `<b>${n.data('label').replace(/\n/g,' ')}</b><br><span class="ok">expressible now</span> — closure bottoms out only in accepted primitives.<br><span class="hint">deps: ${deps}</span>`;
+  }
+});
+</script>
+</body>
+</html>

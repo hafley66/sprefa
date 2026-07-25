@@ -198,6 +198,67 @@ export interface CacheDb {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Timecut arm protocol (FRONTIER · forward contract, not this slice). A probe/
+// mutation with a match block — `h?(in){ next(out) -> .., error(e) -> .., .. }`,
+// same block on `h!(..)` — materializes the host's `HostDef.run` lifecycle as
+// rows on `__resp_<h>` (a `kind` discriminant), and the `{ }` arms pattern-match
+// them. The arm set IS an rxjs 7.8.2 `tap` observer, mimicked VERBATIM
+// (dist/cjs/internal/operators/tap.js): same forward grammar, same order, same
+// terminal rules. Unidirectional (source -> downstream), so a datalog forward
+// grammar expresses it; nothing here is bespoke JS control flow.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The Observable Contract as a discriminant, materialized onto `__resp_<h>`.
+ *  Grammar (tap.js:16-38):  subscribe -> next* -> (complete | error | unsub) -> finalize
+ *  - subscribe: sync at demand, before any value (tap.js:16) = `__req_<h>` appears.
+ *  - next:      per value, peek-then-forward (tap.js:20-21). No block = implicit
+ *               single `next(out)` arm binding the host's output cols ("assume next").
+ *  - complete:  terminal, sets isUnsub=false (tap.js:24-26). = normal return.
+ *  - error:     terminal, sets isUnsub=false (tap.js:29-31). Propagates like await/
+ *               yield (Subscriber.js:82-89): an unmatched `error` bubbles up the
+ *               timecut chain and faults at the top (ConsumerObserver.error rethrow,
+ *               :120-133,188). A matched `error(e)` arm is a `catch`.
+ *  - unsub:     teardown with NO terminal, isUnsub stayed true (tap.js:34-35). The
+ *               switchMap-cancel case: demand withdrawn before a terminal.
+ *  - finalize:  ALWAYS, exactly once, after the terminal (tap.js:37) = `finally`. */
+export type NotifyKind = "subscribe" | "next" | "complete" | "error" | "unsub" | "finalize";
+
+/** The three mutually-exclusive terminals. A terminal sets isStopped (Subscriber.js:
+ *  59,68); any later notification for the same req_id is a stopped-notification and
+ *  dropped (:48,55,64). complete XOR error XOR unsub; finalize is the shared epilogue. */
+export type TerminalKind = Extract<NotifyKind, "complete" | "error" | "unsub">;
+
+/** A materialized notification row on `__resp_<h>`: the host's output cols plus the
+ *  discriminant, the per-invocation id, and `seq` (orders notifications WITHIN a
+ *  req_id — the total order rxjs has for free; a tick alone does not order intra-tick
+ *  events). `err` is set only for kind="error"; complete/unsub/finalize carry neither
+ *  output nor err. */
+export interface NotifyRow extends Row {
+  readonly req_id: number;
+  readonly kind: NotifyKind;
+  readonly seq: number;
+  readonly err: string | null;
+}
+
+/** One `{ }` arm: the kind it listens for, and the rule head it rewrites to (minted
+ *  Lloyd-Topor, same as a probe body). Which kinds are matched declares what the
+ *  author listens for; unmatched next binds outputs, unmatched error bubbles,
+ *  unmatched complete/unsub end quietly (the await-parity defaults above). This
+ *  supersedes `takeUntil` for the self-terminal case: match the terminal arm.
+ *  (Cross-terminal "take until ANOTHER stream fires" is unspecified this slice.) */
+export interface TimecutArm {
+  readonly on: NotifyKind;
+  readonly head: RelRef;
+}
+
+// PARKED (revisit, not this slice): retention `rel(N)` splits into two modes — replay/
+// multicast (ReplaySubject(N), non-consuming, push, glitch-free via the tick) vs
+// channel (consuming, unicast, pull, backpressure as an occupancy gate). Blocking
+// channels bring deadlock + fairness + unicast constraints. Flatten-operator selection
+// (concatMap default / exhaustMap / mergeMap; switchMap rejected for `!` as it cancels
+// an irreversible effect) rides the host decl. None of it lands here yet.
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Diag (M5 · src/5_diag.ts) — v5 schema verbatim (src/engine/decls.rs:263)
 // ─────────────────────────────────────────────────────────────────────────────
 
