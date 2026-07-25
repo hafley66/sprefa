@@ -1259,7 +1259,7 @@ pub enum FlatFact {
 //
 // DEFERRED (per-lang gates noted; the rest lands with Resolve<F>/follow-ups):
 //   type_edge (field/impl/variant/uses/generic)   -> TS ASSERTED (4b-iii); GO ASSERTED (4d-i-go, v5 go shape-only: field/impl/generic); rust = 4d-rust
-//   resolved caller -> callee                     -> TS RATCHETED vs scip (4c-ii); rust/go = 4d
+//   resolved caller -> callee                     -> TS RATCHETED vs scip (4c-ii); GO RATCHETED vs scip-go (4d-ii-go); rust = 4d-rust
 //   docs facet                                    -> follow-up
 //   df aux (args/fields/lits/param_pos)           -> labels, follow-up
 //

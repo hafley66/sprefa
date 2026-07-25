@@ -91,13 +91,14 @@
 //! asserted) + commit 4c COMPLETE (the ScipSource seam + Resolve<CallF> for TsSource + the
 //! scip ratchet: 5 NameResolve / 1 ScipOverride / 0 misses) + commit 4d-i-go (go
 //! type_edge ASSERTED: go_edges_from candidates ported + Resolve<TypeF>, the new
-//! edges.go case, 7 rows, zero divergence)) LANDED in v6/sprefa-extract/.
+//! edges.go case, 7 rows, zero divergence) + commit 4d-ii-go (Resolve<CallF> for
+//! GoSource + the scip-go ratchet over the scip/ module: 1 NameResolve / 1
+//! ScipOverride / 0 misses)) LANDED in v6/sprefa-extract/.
 //! The TS + Rust + Go phase-1
 //! families - Cst / Type(+sigs) / Call / Df (+const) - all project + stream + snapshot through
 //! ONE uniform surface, AND each ported set matches a captured v5 oracle (see the (parity) /
-//! (rust) / (go) entries). NEXT: 4d-ii-go (the ScipGo build side + Resolve<CallF>
-//! for GoSource + the scip-go ratchet, reusing the 4c shape), then 4d-rust
-//! (rust-analyzer-scip) - 4b
+//! (rust) / (go) entries). NEXT: 4d-rust (the rust type_edge + Resolve<CallF>
+//! arms, rust-analyzer-scip reusing the proven 4c/4d shape) - 4b
 //! landed COMPLETE: machinery (4b-i) + specifiers (4b-ii) + the type_edge arm
 //! (4b-iii, ts type_edge asserted, zero divergence; the (4b-i) STOP was ruled
 //! option (a) by the human):
@@ -632,14 +633,67 @@
 //!             leg). Snapshots byte-identical (snapshot.rs's list is the fixed
 //!             ts quartet; candidates flatten nowhere); dep rails unchanged
 //!             (no dep changes this increment).
+//!   (4d-ii-go) COMMIT 4d-ii-go: Resolve<CallF> for GoSource + the scip-go
+//!             RATCHET. scip.rs: `ScipGo` impls the ScipSource seam (the 4c-i
+//!             shape) - build shells out v5's go argv VERBATIM (`scip-go
+//!             --output {out}`, src/scip_setup.rs INDEXERS; scip-go 0.2.7's
+//!             kong CLI routes bare flags to the default `index` command,
+//!             verified against a scratch module), writing index.scip to a
+//!             HERMETIC temp dir (scip-go writes ONLY the redirected output:
+//!             no tsconfig-infer analog exists, a missing go.mod is an honest
+//!             IndexerFailed, and its go-list loads land in the go caches,
+//!             never the source dir - the fixture module is byte-identical
+//!             after a run, verified). PATH binary first; a spawn miss falls
+//!             back to the version-pinned `go run github.com/scip-code/
+//!             scip-go/cmd/scip-go@v0.2.7` (the go analog of the ts npx
+//!             fallback; BOTH legs exercised green by the ratchet test - the
+//!             installed binary at ~/go/bin/scip-go, and the fallback on a
+//!             bare PATH). load is the same language-agnostic prost decode
+//!             (the 7-line dup is the audit's deferred dedup). lang/go.rs
+//!             arm: the exact TsSource twin (4c-ii) - per CallFAux site,
+//!             caller = covering_def (package-level sites emit no row);
+//!             NameResolve (same-file wins via the span-join, else unique
+//!             corpus blob, CallF facet preferred; ambiguous/absent -> no
+//!             row); ScipOverride (scip's corpus target disagrees with the
+//!             name-match outcome -> scip wins). scip-EXTERNAL (scip-go's
+//!             stdlib symbols, `gomod github.com/golang/go/src ...`) never
+//!             displaces and never mints. `callee_path` stays None: v5 go
+//!             collects no path (go_callee = name+line only, so V5-IS-CORRECT
+//!             keeps it empty), the name-only + scip resolution needs no
+//!             path, and filling it is the same declared-snapshot-increment
+//!             catch-up ts deferred in 4c-ii. THE RATCHET
+//!             (call_resolve_scip_ratchet_go; scip-go is the ONLY ground
+//!             truth - v5's captured oracle has no call-edge facet) adapts
+//!             4c's 6 legs to scip-go's model: scip-go indexes PACKAGES (one
+//!             dir per package), and the legacy top-level fixtures carry
+//!             THREE package clauses in one dir (sample/docs/edges.go) - not
+//!             a go-indexable layout by construction (`go list` rejects it) -
+//!             so the ratchet universe is the self-contained module at
+//!             tests/fixtures/go/scip (go.mod `module example.com/fixture`,
+//!             go 1.23; alpha + beta each export `func Helper`; gamma imports
+//!             alpha and calls local(), alpha.Helper(), strings.TrimSpace;
+//!             stdlib-only externals, zero network; the module's git-derived
+//!             version segment rides scip symbol strings only, never a
+//!             join key). MEASURED (scip-go 0.2.7, 3 sites over 3 files):
+//!             NameResolve 1 (gamma local), ScipOverride 1 (LISTED:
+//!             gamma/gamma.go:15 Helper - name-match ambiguous (alpha.Helper
+//!             vs beta.Helper) -> none, scip binds alpha.Helper through the
+//!             import), external-no-edge 1 (TrimSpace), 0 missing / 0
+//!             disagreements / 0 misses / 0 overbound; the arm edge multiset
+//!             == the twin's per-site outcomes per file. Snapshots
+//!             byte-identical (no UPDATE_SNAP); dep rails unchanged (no dep
+//!             changes this increment).
 //!   PENDING:   TS type EDGES are now ASSERTED (see (4b): phase-1 candidates +
 //!              Resolve<TypeF>; field/variant/impl/generic/uses/param/returns),
 //!              and GO type EDGES are now ASSERTED (see (4d-i-go): field/impl/
 //!              generic - v5 go's type_edge is shape-only, no sig-sourced rows).
-//!              TS resolved caller -> callee is now RATCHETED vs scip (see (4c)).
-//!              Still pending: rust type_edge arm (4d-rust), rust/go
-//!              Resolve<CallF> arms (4d-ii-go here, then 4d-rust).
-//!              ts_const_facts_from is PORTED (see (const)).
+//!              TS + GO resolved caller -> callee are now RATCHETED vs scip
+//!              (see (4c) / (4d-ii-go); go's ratchet universe is the scip/
+//!              module - the legacy go trio is multi-package one-dir,
+//!              unindexable by construction, name-match-ledger-covered only).
+//!              Still pending: the rust type_edge + Resolve<CallF> arms
+//!              (4d-rust, rust-analyzer-scip). ts_const_facts_from is PORTED
+//!              (see (const)).
 //!   ORACLE:     scip-typescript 0.4.0 was run on the fixture (throwaway /tmp). The
 //!              real correctness gate is occurrence/resolution parity (the commit 4
 //!              ratchet), NOT a raw symbol diff (scip is a flat exhaustive symbol

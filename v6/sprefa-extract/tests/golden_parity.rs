@@ -30,9 +30,9 @@ use std::collections::BTreeSet;
 
 use sprefa_extract::{
     BlobHash, CallEdgeKind, ExtractOutput, FamilyMask, FamilyTag, FileSet, FlatFact, GoSource,
-    IndexBag, ManifestMap, ProjectCx, ProjectDigest, Resolve, ScipSource, ScipTypescript, Span,
-    TsSource, TypeF, build_def_index, byte_range, containing_def_site, covering_def, definition_of,
-    dispatch, flatten, join_documents, site_occurrence,
+    IndexBag, ManifestMap, ProjectCx, ProjectDigest, Resolve, ScipGo, ScipSource, ScipTypescript,
+    Span, TsSource, TypeF, build_def_index, byte_range, containing_def_site, covering_def,
+    definition_of, dispatch, flatten, join_documents, site_occurrence,
 };
 
 struct Case {
@@ -420,18 +420,32 @@ fn deferred_and_v6_only_ledger() {
                     .count(),
                 _ => 0,
             };
-            // The resolved call edges (4c-ii): v6-only — v5's captured oracle
-            // has no call_edge facet, so scip is their only ground truth (the
-            // ratchet below). This corpus has NO scip index loaded, so the
-            // counts are the pure name-match leg (ScipOverride always 0 here).
+            // The resolved call edges (4c-ii ts, 4d-ii-go go): v6-only — v5's
+            // captured oracle has no call_edge facet, so scip is their only
+            // ground truth (the ratchets below). This corpus has NO scip index
+            // loaded, so the counts are the pure name-match leg (ScipOverride
+            // always 0 here). The legacy go fixtures are covered HERE only:
+            // three package clauses in one dir is not a go-indexable layout,
+            // so the go ratchet's universe is the scip/ module (see below).
             let (mut name_resolve, mut scip_override) = (0, 0);
-            if case.fixture_dir == "ts" {
-                for edge in Resolve::<sprefa_extract::CallF>::resolve(&TsSource, out, cx) {
-                    match edge.kind {
-                        CallEdgeKind::NameResolve => name_resolve += 1,
-                        CallEdgeKind::ScipOverride => scip_override += 1,
+            match case.fixture_dir {
+                "ts" => {
+                    for edge in Resolve::<sprefa_extract::CallF>::resolve(&TsSource, out, cx) {
+                        match edge.kind {
+                            CallEdgeKind::NameResolve => name_resolve += 1,
+                            CallEdgeKind::ScipOverride => scip_override += 1,
+                        }
                     }
                 }
+                "go" => {
+                    for edge in Resolve::<sprefa_extract::CallF>::resolve(&GoSource, out, cx) {
+                        match edge.kind {
+                            CallEdgeKind::NameResolve => name_resolve += 1,
+                            CallEdgeKind::ScipOverride => scip_override += 1,
+                        }
+                    }
+                }
+                _ => {}
             }
             eprintln!(
                 "[{}] migration ledger: v5-only deferred {deferred:?}; v6-only cst facts {cst_only}; v6-only specifier facts {specifier_only}; v6-only resolved type_edge legs {resolved_legs}; v6-only call edges name_resolve {name_resolve} scip_override {scip_override} (no scip loaded)",
@@ -665,6 +679,255 @@ fn call_resolve_scip_ratchet_ts() {
     }
     eprintln!(
         "[ts-total] scip ratchet ({}) over {} sites: name_resolve {} scip_override {} external-no-edge {} | missing-occurrence {} disagreements {} misses {} overbound {}",
+        scip_index.tool, total_sites, counts.name_resolve, counts.scip_override,
+        counts.external_no_edge, counts.missing_occurrence, counts.disagreements,
+        counts.misses, counts.overbound
+    );
+    for line in &lines {
+        eprintln!("  {line}");
+    }
+    assert_eq!(counts.missing_occurrence, 0, "occurrence parity: every v6 site has a scip occurrence\n{}", lines.join("\n"));
+    assert_eq!(counts.disagreements, 0, "every NameResolve agrees with scip's corpus target\n{}", lines.join("\n"));
+    assert_eq!(counts.misses, 0, "no silent misses: every scip-corpus-resolved site has a v6 edge\n{}", lines.join("\n"));
+    assert_eq!(counts.overbound, 0, "no overbinding: every NameResolve is scip-corpus-resolved\n{}", lines.join("\n"));
+}
+
+/// GO Resolve<CallF> RATCHET vs scip-go (4d-ii-go): the 4c-ii ts ratchet's
+/// exact shape, adapted honestly to scip-go's model. scip-go indexes GO
+/// PACKAGES, and a package is one directory: the legacy top-level fixtures
+/// (sample/docs/edges.go) carry THREE package clauses in one dir, which is
+/// not a go-indexable layout by construction (`go list` rejects it) — so the
+/// ratchet's universe is the self-contained module at tests/fixtures/go/scip
+/// (go.mod `module example.com/fixture`, go 1.23; packages alpha + beta +
+/// gamma; stdlib-only external refs, zero network). The legacy trio's sites
+/// stay covered by the pure name-match leg (the ledger test above, no scip
+/// loaded). THE FIXTURE (the override is honestly constructible):
+///   alpha/alpha.go, beta/beta.go — two packages each exporting `func Helper`
+///   gamma/gamma.go — imports alpha; `Run` calls `local()` (same-package),
+///   `alpha.Helper()` (cross-package through the import), `strings.TrimSpace`
+///   (stdlib, external).
+/// Expected outcomes: NameResolve 1 (local), ScipOverride 1 (Helper: the
+/// name-match sees alpha+beta and abstains; scip-go binds alpha.Helper
+/// through the import), external-no-edge 1 (TrimSpace: scip's
+/// `gomod github.com/golang/go/src` symbol has no definition in the corpus).
+///
+/// THE EXACT ASSERTION (per file, per site s with callee name c) — the same
+/// six legs as ts:
+///  1. OCCURRENCE PARITY (the subset leg): scip's document for the file
+///     contains an occurrence inside s's span whose source text == c (for a
+///     selector callee `pkg.F` the field occurrence inside the whole-selector
+///     site span). Asserted: 0 missing.
+///  2. RESOLUTION PARITY: every v6 NameResolve edge whose site scip also
+///     resolves to a corpus target T AGREES with T at (blob, def-name).
+///     Asserted: 0 disagreements.
+///  3. Every ScipOverride is a COUNTED, LISTED divergence: scip's corpus
+///     target exists, the edge carries exactly it, and the name-match outcome
+///     differs from it (else it would be no override). Asserted per edge.
+///  4. NO SILENT MISS: a site scip resolves to a corpus target always has a
+///     v6 edge. Asserted: 0 misses.
+///  5. NO OVERBINDING: a NameResolve edge whose site scip resolves to an
+///     external/none target is a v6 false binding. Asserted: 0 overbound.
+///  6. Sites scip resolves externally (stdlib symbols) get NO v6 edge — v6
+///     models corpus call edges only. Counted, not a divergence.
+/// The arm's emitted edge multiset is additionally asserted equal to the
+/// twin's per-site expected outcomes (orchestration check). The ratchet runs
+/// the real indexer (PATH scip-go, else the version-pinned `go run`
+/// fallback): a missing/failed scip-go is a loud failure here, never a
+/// skipped green.
+#[test]
+fn call_resolve_scip_ratchet_go() {
+    let fixture_root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/go/scip");
+    // Every .go under the module root, recursively (alpha/beta/gamma).
+    let mut rels: Vec<String> = Vec::new();
+    let mut stack = vec![fixture_root.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) == Some("go") {
+                rels.push(
+                    path.strip_prefix(&fixture_root).unwrap().to_string_lossy().replace('\\', "/"),
+                );
+            }
+        }
+    }
+    rels.sort();
+    let reader = |p: &str| std::fs::read(fixture_root.join(p)).ok();
+    let index_path = ScipGo
+        .build(&fixture_root)
+        .expect("scip-go build failed (the ratchet never fakes green)");
+    let scip_index = ScipGo.load(&index_path).expect("scip load");
+    let joined = join_documents(&scip_index, &reader);
+    assert!(
+        joined.iter().all(Option::is_some),
+        "every scip document is reader-readable: the corpus and the index cover the same universe"
+    );
+    // The corpus: every module file dispatched + the DefIndex over all.
+    let corpus: Vec<(String, BlobHash, ExtractOutput)> = rels
+        .iter()
+        .map(|rel| {
+            let bytes = reader(rel).unwrap();
+            (
+                rel.clone(),
+                BlobHash::of(&bytes),
+                dispatch(rel, &bytes, FamilyMask::ALL).expect("a Source matches the fixture"),
+            )
+        })
+        .collect();
+    let pairs: Vec<(BlobHash, &ExtractOutput)> =
+        corpus.iter().map(|(_, hash, out)| (*hash, out)).collect();
+    let file_set = FileSet;
+    let manifest_map = ManifestMap;
+    let cx = ProjectCx {
+        files: &file_set,
+        manifests: &manifest_map,
+        reader: Some(&reader),
+        digest: ProjectDigest::default(),
+        indexes: IndexBag::default(),
+    };
+    cx.indexes.def_index.set(build_def_index(&pairs)).expect("fresh OnceLock");
+    cx.indexes.scip_index.set(scip_index).expect("fresh OnceLock");
+    let scip_index = cx.indexes.scip_index.get().unwrap();
+    let def_index = cx.indexes.def_index.get().unwrap();
+
+    let mut total_sites = 0usize;
+    let mut counts = RatchetCounts::default();
+    let mut lines: Vec<String> = Vec::new();
+    for (rel, _blob, out) in &corpus {
+        let doc_ix = scip_index
+            .documents
+            .iter()
+            .position(|d| &d.relative_path == rel)
+            .expect("one scip document per module file");
+        let doc = &scip_index.documents[doc_ix];
+        let content = reader(rel).unwrap();
+        let Some(call) = &out.call else { continue };
+        let edges = Resolve::<sprefa_extract::CallF>::resolve(&GoSource, out, &cx);
+        let mut actual: Vec<(u32, u32, u32, &'static str, BlobHash)> = edges
+            .iter()
+            .map(|edge| {
+                let from = call.node(edge.src).span;
+                (
+                    from.start,
+                    edge.dst_span.start,
+                    edge.dst_span.end(),
+                    edge.kind.as_str(),
+                    edge.dst_blob,
+                )
+            })
+            .collect();
+        actual.sort_by_key(|t| (t.0, t.1, t.2, t.3));
+        let mut expected: Vec<(u32, u32, u32, &'static str, BlobHash)> = Vec::new();
+        for site in &call.aux.sites {
+            total_sites += 1;
+            let callee = out.strings.lookup(site.callee);
+            let line = line_of(&content, site.span.start);
+            // scip's independent word on this site.
+            let occ = site_occurrence(doc, &content, site.span, callee);
+            if occ.is_none() {
+                counts.missing_occurrence += 1;
+                lines.push(format!("MISSING-OCCURRENCE {rel}:{line} {callee}"));
+            }
+            let scip_t = occ
+                .and_then(|o| definition_of(scip_index, doc_ix, &o.symbol))
+                .and_then(|(def_doc_ix, def_occ)| {
+                    let def_doc = &scip_index.documents[def_doc_ix];
+                    let (def_blob, def_content) = joined[def_doc_ix].as_ref().unwrap();
+                    let ident =
+                        byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
+                    containing_def_site(def_index, *def_blob, ident)
+                        .map(|(name, s)| (*def_blob, s.span, name))
+                });
+            let name_t = GoSource::call_name_match(out, def_index, callee);
+            // The twin outcome (the same legs the arm runs; the multiset
+            // comparison below is the orchestration check).
+            let twin = covering_def(call, site.span).and_then(|caller| {
+                let (dst, kind) = match (name_t, scip_t) {
+                    (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => {
+                        (n, CallEdgeKind::NameResolve)
+                    }
+                    (_, Some(s)) => ((s.0, s.1), CallEdgeKind::ScipOverride),
+                    (Some(n), None) => (n, CallEdgeKind::NameResolve),
+                    (None, None) => return None,
+                };
+                Some((caller, dst, kind))
+            });
+            if let Some((caller, dst, kind)) = twin {
+                let from = call.node(caller).span;
+                expected.push((from.start, dst.1.start, dst.1.end(), kind.as_str(), dst.0));
+            }
+            // The scip-side classification (assertions 2-6).
+            match (twin, scip_t) {
+                (Some((_, dst, CallEdgeKind::NameResolve)), Some(s)) => {
+                    if !(dst.0 == s.0 && callee == s.2) {
+                        counts.disagreements += 1;
+                        lines.push(format!(
+                            "DISAGREE {rel}:{line} {callee}: v6 NameResolve -> ({:?}, {callee}), scip -> ({:?}, {})",
+                            short(dst.0), short(s.0), s.2
+                        ));
+                    } else {
+                        counts.name_resolve += 1;
+                    }
+                }
+                (Some((_, dst, CallEdgeKind::NameResolve)), None) => {
+                    counts.overbound += 1;
+                    lines.push(format!(
+                        "OVERBOUND {rel}:{line} {callee}: v6 NameResolve -> ({:?}) but scip has no corpus target",
+                        short(dst.0)
+                    ));
+                }
+                (Some((_, dst, CallEdgeKind::ScipOverride)), Some(s)) => {
+                    assert_eq!(
+                        (dst.0, dst.1),
+                        (s.0, s.1),
+                        "override edge carries scip's target at {rel}:{line} {callee}"
+                    );
+                    assert!(
+                        !(name_t == Some((s.0, s.1)) && callee == s.2),
+                        "override with a matching name-match is no override at {rel}:{line} {callee}"
+                    );
+                    counts.scip_override += 1;
+                    lines.push(format!(
+                        "OVERRIDE {rel}:{line} {callee}: name-match {} displaced; scip -> ({:?}, {})",
+                        match name_t {
+                            Some((b, _)) => format!("({:?}, {callee})", short(b)),
+                            None => "<none: ambiguous/absent>".to_string(),
+                        },
+                        short(s.0),
+                        s.2
+                    ));
+                }
+                (Some((_, _, CallEdgeKind::ScipOverride)), None) => {
+                    panic!("override without a scip corpus target at {rel}:{line} {callee}");
+                }
+                (None, Some(s)) => {
+                    counts.misses += 1;
+                    lines.push(format!(
+                        "MISS {rel}:{line} {callee}: scip resolves to corpus ({:?}, {}) but v6 emitted no edge",
+                        short(s.0), s.2
+                    ));
+                }
+                (None, None) => {
+                    if occ.is_some() {
+                        counts.external_no_edge += 1;
+                    }
+                }
+            }
+        }
+        expected.sort_by_key(|t| (t.0, t.1, t.2, t.3));
+        assert_eq!(actual, expected, "[{rel}] arm edges != twin expected outcomes");
+        eprintln!(
+            "[{rel}] scip ratchet: sites {} | name_resolve {} scip_override {} external-no-edge {}",
+            call.aux.sites.len(),
+            counts.name_resolve, counts.scip_override, counts.external_no_edge
+        );
+    }
+    eprintln!(
+        "[go-total] scip ratchet ({}) over {} sites: name_resolve {} scip_override {} external-no-edge {} | missing-occurrence {} disagreements {} misses {} overbound {}",
         scip_index.tool, total_sites, counts.name_resolve, counts.scip_override,
         counts.external_no_edge, counts.missing_occurrence, counts.disagreements,
         counts.misses, counts.overbound

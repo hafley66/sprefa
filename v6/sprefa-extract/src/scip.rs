@@ -12,6 +12,11 @@
 //!   `src/scip_import.rs::load`, re-runtimed: rust-protobuf -> prost, see the
 //!   Cargo.toml dep note).
 //!
+//! Commit 4d-ii-go lands `ScipGo`: same seam, v5's go argv (`scip-go --output
+//! {out}`, verbatim on scip-go 0.2.7), PATH-first with a version-pinned `go
+//! run` fallback. scip-go needs a go.mod at the root and writes nothing but
+//! the redirected output, so no staging copy exists on the go side.
+//!
 //! The generated bindings are committed at `scip/scip_proto.rs` (from the
 //! vendored `proto/scip.proto`); they stay private — only the diet types in
 //! `crate::types` cross the seam.
@@ -93,6 +98,69 @@ impl ScipSource for ScipTypescript {
     }
 
     fn load(&self, index_path: &Path) -> Result<ScipIndex, ScipError> {
+        let bytes = std::fs::read(index_path)
+            .map_err(|e| ScipError::Parse(format!("read {}: {e}", index_path.display())))?;
+        let index = proto::Index::decode(bytes.as_slice())
+            .map_err(|e| ScipError::Parse(format!("protobuf decode: {e}")))?;
+        Ok(diet(&index))
+    }
+}
+
+/// scip-go 0.2.7 (the go row of v5's `src/scip_setup.rs` INDEXERS: bin
+/// `scip-go`, argv `scip-go --output {out}` — the argv runs VERBATIM on 0.2.7,
+/// the kong CLI routing bare flags to the default `index` command; verified
+/// against a scratch module). `build` probes PATH first (v5's `dl index`
+/// convention), then falls back to the version-pinned `go run` form (the
+/// go-toolchain analog of the ts npx fallback) so a machine without the
+/// install still runs the same indexer release.
+pub struct ScipGo;
+
+impl ScipSource for ScipGo {
+    fn indexer(&self) -> &'static str {
+        "scip-go"
+    }
+
+    fn build(&self, root: &Path) -> Result<PathBuf, ScipError> {
+        let stage = fresh_temp_dir("sprefa-scip-go")?;
+        let out = stage.join("index.scip");
+        let out_str = out.to_string_lossy().into_owned();
+        // HERMETIC: scip-go writes ONLY the (redirected) output — there is no
+        // --infer-tsconfig analog (a missing go.mod is an honest IndexerFailed,
+        // never staged around), and its `go list` loads land in the go build/
+        // module caches, never in the source dir (verified: the fixture module
+        // is byte-identical after a run). The root is used in place.
+        let argv: [&str; 2] = ["--output", out_str.as_str()];
+        // PATH first (v5's `dl index` convention); a spawn miss falls back to
+        // the version-pinned `go run` form. A PATH binary that runs and fails
+        // is reported, not retried.
+        if let Ok(done) = std::process::Command::new("scip-go")
+            .args(argv)
+            .current_dir(root)
+            .output()
+        {
+            return if done.status.success() {
+                Ok(out)
+            } else {
+                Err(ScipError::IndexerFailed(tail(&done.stderr)))
+            };
+        }
+        let done = std::process::Command::new("go")
+            .args(["run", "github.com/scip-code/scip-go/cmd/scip-go@v0.2.7"])
+            .args(argv)
+            .current_dir(root)
+            .output()
+            .map_err(|_| ScipError::IndexerMissing("scip-go"))?;
+        if done.status.success() {
+            Ok(out)
+        } else {
+            Err(ScipError::IndexerFailed(tail(&done.stderr)))
+        }
+    }
+
+    fn load(&self, index_path: &Path) -> Result<ScipIndex, ScipError> {
+        // The proto is language-agnostic; this is the same decode as
+        // ScipTypescript::load (the 7-line duplication is the audit's deferred
+        // dedup, not new machinery).
         let bytes = std::fs::read(index_path)
             .map_err(|e| ScipError::Parse(format!("read {}: {e}", index_path.display())))?;
         let index = proto::Index::decode(bytes.as_slice())
