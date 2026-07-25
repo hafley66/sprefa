@@ -29,10 +29,10 @@
  * fold in miniature, documented rather than imported -- now imported instead).
  */
 
-import { spawn } from "node:child_process";
+import { spawn, type SpawnOptions } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { EMPTY, Subscription, concatMap, filter, from, mergeMap, type Observable } from "rxjs";
+import { EMPTY, Observable, Subscription, concatMap, filter, firstValueFrom, from, mergeMap } from "rxjs";
 
 import { foldRowDigest } from "./0_digest.ts";
 import { RowCodec } from "./0_row.ts";
@@ -195,12 +195,15 @@ function envForRow(row: Row, columns: readonly string[]): Record<string, string>
   return variables;
 }
 
-function runShellLine(commandLine: string, envOverrides: Record<string, string>): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(commandLine, {
-      shell: true,
-      env: { ...process.env, ...envOverrides, PATH: `${binDirectory()}:${process.env.PATH ?? ""}` },
-    });
+/** Collect a child process's stdout. Rejects with stderr on a nonzero exit. */
+function spawnCollect(
+  label: string,
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions,
+): Observable<string> {
+  return new Observable<string>((subscriber) => {
+    const child = spawn(command, [...args], options);
     let stdout = "";
     let stderr = "";
     child.stdout?.on("data", (chunk: Buffer) => {
@@ -209,11 +212,23 @@ function runShellLine(commandLine: string, envOverrides: Record<string, string>)
     child.stderr?.on("data", (chunk: Buffer) => {
       stderr += chunk.toString();
     });
-    child.on("error", reject);
+    child.on("error", (failure) => subscriber.error(failure));
     child.on("close", (code) => {
-      if (code !== 0) reject(new Error(`sh host exited ${code}: ${stderr.trim()}`));
-      else resolve(stdout);
+      if (code !== 0) {
+        subscriber.error(new Error(`${label} exited ${code}: ${stderr.trim()}`));
+        return;
+      }
+      subscriber.next(stdout);
+      subscriber.complete();
     });
+    return () => child.kill();
+  });
+}
+
+function runShellLine(commandLine: string, envOverrides: Record<string, string>): Observable<string> {
+  return spawnCollect("sh host", commandLine, [], {
+    shell: true,
+    env: { ...process.env, ...envOverrides, PATH: `${binDirectory()}:${process.env.PATH ?? ""}` },
   });
 }
 
@@ -237,7 +252,7 @@ export function shHost(decl: HostDecl): HostDef {
     async *run(request: Row): AsyncIterable<Row> {
       const filledTemplate = fillTemplateSplice(decl.template, request, decl.inputCols);
       const envOverrides = envForRow(request, decl.inputCols);
-      const stdout = await runShellLine(filledTemplate, envOverrides);
+      const stdout = await firstValueFrom(runShellLine(filledTemplate, envOverrides));
       for (const parsedRow of parseHostOutput(stdout, outputOnlyCols)) {
         const row: Record<string, Value> = {};
         for (const column of responseCols) {
@@ -266,23 +281,8 @@ function sgBinaryPath(): string {
   return fileURLToPath(new URL("../node_modules/.bin/sg", import.meta.url));
 }
 
-function runSgProcess(pattern: string, path: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(sgBinaryPath(), ["run", "--pattern", pattern, "--json", path], { shell: false });
-    let stdout = "";
-    let stderr = "";
-    child.stdout?.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code !== 0) reject(new Error(`sg exited ${code}: ${stderr.trim()}`));
-      else resolve(stdout);
-    });
-  });
+function runSgProcess(pattern: string, path: string): Observable<string> {
+  return spawnCollect("sg", sgBinaryPath(), ["run", "--pattern", pattern, "--json", path], { shell: false });
 }
 
 export const builtinSg: HostDef = {
@@ -292,7 +292,7 @@ export const builtinSg: HostDef = {
   async *run(request: Row): AsyncIterable<Row> {
     const pattern = String(request.pattern ?? "");
     const path = String(request.path ?? "");
-    const stdout = await runSgProcess(pattern, path);
+    const stdout = await firstValueFrom(runSgProcess(pattern, path));
     const matches = JSON.parse(stdout) as SgMatch[];
     for (const match of matches) {
       yield {
@@ -320,23 +320,8 @@ function extractBinaryPath(): string {
   return process.env.DL_EXTRACT_BIN ?? DEFAULT_EXTRACT_BIN;
 }
 
-function runExtractProcess(path: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(extractBinaryPath(), [path], { shell: false });
-    let stdout = "";
-    let stderr = "";
-    child.stdout?.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code !== 0) reject(new Error(`extract exited ${code}: ${stderr.trim()}`));
-      else resolve(stdout);
-    });
-  });
+function runExtractProcess(path: string): Observable<string> {
+  return spawnCollect("extract", extractBinaryPath(), [path], { shell: false });
 }
 
 export const builtinExtract: HostDef = {
@@ -345,7 +330,7 @@ export const builtinExtract: HostDef = {
   responseCols: ["path", "record_json"],
   async *run(request: Row): AsyncIterable<Row> {
     const path = String(request.path ?? "");
-    const stdout = await runExtractProcess(path);
+    const stdout = await firstValueFrom(runExtractProcess(path));
     const lines = stdout.split("\n").filter((line) => line.trim().length > 0);
     for (const line of lines) yield { path, record_json: line };
   },
