@@ -50,7 +50,8 @@ import {
   type RelRef,
 } from "../lower/ast.ts";
 import { lowerProgram, RecursiveStratumDeferred, type Row, type Sources } from "../lower/lower.ts";
-import { buildRuleGraph, scc, stratify, type Stratum } from "../lower/rulegraph.ts";
+import { buildRuleGraph, scc, stratify } from "../lower/rulegraph.ts";
+import type { Stratum } from "../lower/types.ts";
 
 import { RelStore, GraphNs } from "../engine/lib.ts";
 import type { SqliteDb as Db } from "../engine/types.ts";

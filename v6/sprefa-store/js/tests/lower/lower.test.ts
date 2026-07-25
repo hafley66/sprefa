@@ -41,7 +41,8 @@ import {
   type Program,
   type RelDecl,
 } from "../../src/lower/ast.ts";
-import { buildRuleGraph, scc, stratify, NonStratifiableError, type Graph } from "../../src/lower/rulegraph.ts";
+import { buildRuleGraph, scc, stratify, NonStratifiableError } from "../../src/lower/rulegraph.ts";
+import type { Graph } from "../../src/lower/types.ts";
 import { lowerProgram, RecursiveStratumDeferred, type Row, type Sources } from "../../src/lower/lower.ts";
 
 // =============================================================================

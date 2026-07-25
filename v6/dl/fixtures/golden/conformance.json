@@ -1,0 +1,96 @@
+{
+  "const": [],
+  "diag": [],
+  "edge": [],
+  "file": [],
+  "link": [
+    "{\"source\":\"alice\",\"target\":\"bob\"}",
+    "{\"source\":\"bob\",\"target\":\"carol\"}",
+    "{\"source\":\"carol\",\"target\":\"dana\"}"
+  ],
+  "node": [],
+  "number": [
+    "{\"label\":\"large\",\"value\":20}",
+    "{\"label\":\"mid\",\"value\":10}",
+    "{\"label\":\"small\",\"value\":5}"
+  ],
+  "proves_compare_eq": [
+    "{\"label\":\"mid\"}"
+  ],
+  "proves_compare_ge": [
+    "{\"label\":\"large\"}",
+    "{\"label\":\"mid\"}"
+  ],
+  "proves_compare_gt": [
+    "{\"label\":\"large\"}"
+  ],
+  "proves_compare_le": [
+    "{\"label\":\"mid\"}",
+    "{\"label\":\"small\"}"
+  ],
+  "proves_compare_lt": [
+    "{\"label\":\"small\"}"
+  ],
+  "proves_compare_ne": [
+    "{\"label\":\"large\"}",
+    "{\"label\":\"small\"}"
+  ],
+  "proves_count": [
+    "{\"total\":3}"
+  ],
+  "proves_elision": [
+    "{\"source\":\"alice\"}",
+    "{\"source\":\"bob\"}",
+    "{\"source\":\"carol\"}"
+  ],
+  "proves_empty_aggregate": [],
+  "proves_fact": [
+    "{\"source\":\"alice\",\"target\":\"bob\"}",
+    "{\"source\":\"bob\",\"target\":\"carol\"}",
+    "{\"source\":\"carol\",\"target\":\"dana\"}"
+  ],
+  "proves_group_count": [
+    "{\"source\":\"alice\",\"fanout\":1}",
+    "{\"source\":\"bob\",\"fanout\":1}",
+    "{\"source\":\"carol\",\"fanout\":1}"
+  ],
+  "proves_join": [
+    "{\"source\":\"alice\",\"target\":\"carol\"}",
+    "{\"source\":\"bob\",\"target\":\"dana\"}"
+  ],
+  "proves_literal_select": [
+    "{\"target\":\"bob\"}"
+  ],
+  "proves_max": [
+    "{\"highest\":20}"
+  ],
+  "proves_min": [
+    "{\"lowest\":5}"
+  ],
+  "proves_named_args": [
+    "{\"target\":\"carol\"}"
+  ],
+  "proves_negation": [
+    "{\"node\":\"dana\"}"
+  ],
+  "proves_never_derived": [],
+  "proves_recursion": [
+    "{\"source\":\"alice\",\"target\":\"bob\"}",
+    "{\"source\":\"alice\",\"target\":\"carol\"}",
+    "{\"source\":\"alice\",\"target\":\"dana\"}",
+    "{\"source\":\"bob\",\"target\":\"carol\"}",
+    "{\"source\":\"bob\",\"target\":\"dana\"}",
+    "{\"source\":\"carol\",\"target\":\"dana\"}"
+  ],
+  "proves_sum": [
+    "{\"total\":35}"
+  ],
+  "proves_wildcard": [
+    "{\"target\":\"bob\"}",
+    "{\"target\":\"carol\"}",
+    "{\"target\":\"dana\"}"
+  ],
+  "sig": [],
+  "site": [],
+  "span_line": []
+}

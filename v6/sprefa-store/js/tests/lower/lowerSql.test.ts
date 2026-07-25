@@ -29,11 +29,8 @@ import {
   type Program,
 } from "../../src/lower/ast.ts";
 import { lowerProgram, type Row, type Sources } from "../../src/lower/lower.ts";
-import { evalProgramSql, type RelTable, type RelTables } from "../../src/lower/lowerSql.ts";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Harness.
-// ─────────────────────────────────────────────────────────────────────────────
+import { evalProgramSql } from "../../src/lower/lowerSql.ts";
+import type { RelTable, RelTables } from "../../src/lower/types.ts";
 
 function sortRows(rows: readonly Row[]): Row[] {
   return rows.map((r) => [...r]).sort((a, b) => (JSON.stringify(a) < JSON.stringify(b) ? -1 : 1));

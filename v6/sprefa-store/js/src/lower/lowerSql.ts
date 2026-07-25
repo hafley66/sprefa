@@ -1,51 +1,14 @@
-/**
- * lowerSql.ts — the datalog least-fixpoint lowered to SQL, evaluated in SQLite.
- *
- * The v5 model (the repo-root Rust engine) brought to the v6 store: a stratified
- * program compiles to INSERT ... SELECT statements over one table per rel, and a
- * recursive stratum runs a SEMI-NAIVE delta loop entirely in the C engine (row sets
- * never enter the JS heap). This is the SQL twin of lower.ts's in-memory rx fixpoint;
- * both are proven equal by tests/lower/lowerSql.test.ts (differential against the
- * in-memory evaluator, which is itself golden against the hand oracle).
- *
- * What it covers, the "basic datalog" bar:
- *   - joins (shared variables), literal selection, wildcards, trailing elision,
- *   - comparison selection (=, !=, <, <=, >, >=),
- *   - STRATIFIED NEGATION (!rel(...)) as NOT EXISTS, safe because strata are
- *     topologically ordered so a negated rel is fully materialized before its reader,
- *   - RECURSION as a semi-naive fixpoint (transitive closure, ancestor, same-generation),
- *   - AGGREGATION (max/min/sum/count) as GROUP BY, in its own stratum.
- *
- * Interning-agnostic: it compiles against table + column NAMES and joins on equality,
- * so it runs identically over the store's interned-INTEGER relbase_* tables (dl) and
- * over plain text tables (the test). sum/min/max are only meaningful on INT-typed
- * columns, where the stored id IS the number; the type system is what keeps them off
- * text columns, so the compiler needs no special case.
- *
- * Stratification and cycle detection are rulegraph.ts's job (buildRuleGraph -> scc ->
- * stratify); this file consumes the strata. A negated rel inside its own SCC is a
- * NonStratifiableError raised there, before any SQL is built; an aggregate head inside
- * a recursive SCC is an AggregateInRecursionError raised here, same timing.
- */
+/** Datalog least-fixpoint lowered to SQL. Stratified program -> INSERT..SELECT per rel;
+ *  a recursive stratum runs a semi-naive delta loop in SQLite, rows never hit the JS heap.
+ *  Compiles against table + column NAMES, so it runs over interned-INTEGER tables and over
+ *  plain text tables alike. Stratification is rulegraph.ts's job. */
 
 import type { AggFn, Compare, Program, RelDecl, Rule } from "./ast.ts";
 import { buildRuleGraph, scc, stratify } from "./rulegraph.ts";
-import type { SqliteDb } from "../engine/types.ts";
+import type { EvalProgram, RelTable, RelTables, SupportEdges, SupportReport } from "./types.ts";
+import type { AssertTrue, SqliteDb } from "../engine/types.ts";
 import { stmt_counter } from "../engine/engine.ts";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Public surface.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Where a rel's rows live: a SQL table and its column names (positional, matching
- *  the rel's declared columns). EDB tables are pre-populated by the caller; IDB tables
- *  are created (WITHOUT ROWID, PK = all columns) and filled by `evalProgramSql`. */
-export interface RelTable {
-  readonly table: string;
-  readonly columns: readonly string[];
-}
-
-export type RelTables = ReadonlyMap<string, RelTable>;
 
 /** A rel with an aggregate head inside a recursive SCC: non-monotone, not stratifiable
  *  as plain datalog. Raised before any SQL runs (mirrors NonStratifiableError's timing). */
@@ -62,7 +25,15 @@ export class AggregateInRecursionError extends Error {
  * recompute from the current EDB — the incremental/demand path is a later arc). The
  * caller owns the surrounding transaction; this issues plain statements.
  */
-export async function evalProgramSql(db: SqliteDb, prog: Program, tables: RelTables): Promise<void> {
+export async function evalProgramSql(
+  db: SqliteDb,
+  prog: Program,
+  tables: RelTables,
+  support?: SupportEdges,
+  traceStatement?: (sql: string) => void,
+): Promise<SupportReport> {
+  const exec = makeExec(db, traceStatement);
+  const count = makeCount(db);
   const graph = buildRuleGraph(prog);
   const strata = stratify(graph, scc(graph));
 
@@ -80,7 +51,7 @@ export async function evalProgramSql(db: SqliteDb, prog: Program, tables: RelTab
   // rels, so all must start empty before the topo sweep fills them in order).
   for (const decl of prog.rels) {
     if (decl.origin !== "EDB" && rulesByHead.has(decl.name)) {
-      await exec(db, `DELETE FROM ${tableOf(tables, decl.name).table}`);
+      await exec(`DELETE FROM ${tableOf(tables, decl.name).table}`);
     }
   }
 
@@ -89,36 +60,97 @@ export async function evalProgramSql(db: SqliteDb, prog: Program, tables: RelTab
       for (const relName of stratum.rels) {
         const rules = rulesByHead.get(relName);
         if (!rules || rules.length === 0) continue;
-        await evalAcyclicRel(db, relName, rules, tables);
+        await evalAcyclicRel(exec, relName, rules, tables);
       }
       continue;
     }
-    await evalRecursiveStratum(db, stratum.rels, new Set(stratum.rels), rulesByHead, tables);
+    await evalRecursiveStratum(exec, count, stratum.rels, new Set(stratum.rels), rulesByHead, tables);
   }
+
+  if (support === undefined) return { rulesWithoutSupport: [] };
+  return emitSupportEdges(exec, prog, tables, support);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Acyclic rel: one INSERT OR IGNORE per rule (multiple rules = UNION by dedup).
-// ─────────────────────────────────────────────────────────────────────────────
+/** Support edges, one final pass over the settled model. Per rule per positive body
+ *  position: INSERT the (parent_key, child_key) pairs, joining back to the head table to
+ *  find the head row's surrogate. */
 
-async function evalAcyclicRel(db: SqliteDb, relName: string, rules: readonly Rule[], tables: RelTables): Promise<void> {
+async function emitSupportEdges(
+  exec: Exec,
+  prog: Program,
+  tables: RelTables,
+  support: SupportEdges,
+): Promise<SupportReport> {
+  const rulesWithoutSupport: { head: string; reason: string }[] = [];
+  const tagOf = (relName: string): number => {
+    const tag = support.tagOf.get(relName);
+    if (tag === undefined) throw new Error(`lowerSql: no dense tag registered for rel '${relName}'`);
+    return tag;
+  };
+
+  for (const rule of prog.rules) {
+    if (rule.headTerms.some((term) => term.kind === "hagg")) {
+      rulesWithoutSupport.push({ head: rule.head, reason: "aggregate head: support is not monotone in the body" });
+      continue;
+    }
+    if (rule.body.some((pred) => pred.kind === "notrel")) {
+      rulesWithoutSupport.push({ head: rule.head, reason: "negated body predicate: a body row destroys rather than adds a derivation" });
+      continue;
+    }
+    const compiled = compileRuleJoin(rule, tables, new Map());
+    if (compiled === null) {
+      rulesWithoutSupport.push({ head: rule.head, reason: "no positive body rel" });
+      continue;
+    }
+
+    const headTable = tableOf(tables, rule.head);
+    const headAlias = "hh";
+    const headMatch: string[] = [];
+    let headBindingUnresolved = false;
+    rule.headTerms.forEach((term, index) => {
+      if (term.kind !== "hvar") return;
+      const ref = compiled.bound.get(term.name);
+      const column = headTable.columns[index];
+      if (ref === undefined || column === undefined) {
+        headBindingUnresolved = true;
+        return;
+      }
+      headMatch.push(`${headAlias}.${column} = ${ref}`);
+    });
+    if (headBindingUnresolved) {
+      rulesWithoutSupport.push({ head: rule.head, reason: "head term is not bound by a positive body rel" });
+      continue;
+    }
+
+    const childKey = `${tagOf(rule.head)} * ${support.stride} + ${headAlias}.${support.surrogate}`;
+    const from = [...compiled.fromParts, `${headTable.table} ${headAlias}`].join(", ");
+    const where = [...compiled.where, ...headMatch];
+
+    for (const source of compiled.positiveSources) {
+      const parentKey = `${tagOf(source.rel)} * ${support.stride} + ${source.alias}.${support.surrogate}`;
+      let sql = `INSERT OR IGNORE INTO ${support.table}(parent_key, child_key) SELECT ${parentKey}, ${childKey} FROM ${from}`;
+      if (where.length > 0) sql += ` WHERE ${where.join(" AND ")}`;
+      await exec(sql);
+    }
+  }
+
+  return { rulesWithoutSupport };
+}
+
+
+async function evalAcyclicRel(exec: Exec, relName: string, rules: readonly Rule[], tables: RelTables): Promise<void> {
   const head = tableOf(tables, relName);
   for (const rule of rules) {
     const select = compileRuleSelect(rule, tables, new Map());
     if (select === null) continue; // bodyless rule: produces nothing (matches lower.ts)
-    await exec(db, `INSERT OR IGNORE INTO ${head.table}(${head.columns.join(", ")}) ${select}`);
+    await exec(`INSERT OR IGNORE INTO ${head.table}(${head.columns.join(", ")}) ${select}`);
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Recursive stratum: semi-naive delta loop. Seed with each rule over the full tables,
-// keeping the rows new to each head as its delta; then each round re-runs every rule
-// with ONE recursive body atom bound to its delta (others to full), accumulating the
-// next delta, until every delta is empty.
-// ─────────────────────────────────────────────────────────────────────────────
 
 async function evalRecursiveStratum(
-  db: SqliteDb,
+  exec: Exec,
+  count: Count,
   memberRels: readonly string[],
   members: ReadonlySet<string>,
   rulesByHead: ReadonlyMap<string, Rule[]>,
@@ -133,20 +165,20 @@ async function evalRecursiveStratum(
   for (const relName of memberRels) {
     const delta = `_dl_delta_${relName}`;
     deltaOf.set(relName, delta);
-    await createLike(db, delta, tableOf(tables, relName));
+    await createLike(exec, delta, tableOf(tables, relName));
   }
 
   // Seed: every rule over the full tables; recursive members are still empty, so only
   // the exit rules produce rows. Those rows become the seed delta.
-  for (const rule of stratumRules) await insertNewRows(db, rule, tables, new Map(), deltaOf.get(rule.head)!);
-  for (const relName of memberRels) await mergeDeltaIntoFull(db, relName, tables, deltaOf.get(relName)!);
+  for (const rule of stratumRules) await insertNewRows(exec, rule, tables, new Map(), deltaOf.get(rule.head)!);
+  for (const relName of memberRels) await mergeDeltaIntoFull(exec, count, relName, tables, deltaOf.get(relName)!);
 
   for (;;) {
     const nextDeltaOf = new Map<string, string>();
     for (const relName of memberRels) {
       const next = `_dl_next_${relName}`;
       nextDeltaOf.set(relName, next);
-      await createLike(db, next, tableOf(tables, relName));
+      await createLike(exec, next, tableOf(tables, relName));
     }
 
     for (const rule of stratumRules) {
@@ -159,27 +191,27 @@ async function evalRecursiveStratum(
         const pred = rule.body[bodyIndex]!;
         if (pred.kind !== "rel") continue;
         const override = new Map<number, string>([[bodyIndex, deltaOf.get(pred.rel)!]]);
-        await insertNewRows(db, rule, tables, override, nextDeltaOf.get(rule.head)!);
+        await insertNewRows(exec, rule, tables, override, nextDeltaOf.get(rule.head)!);
       }
     }
 
     let grew = false;
     for (const relName of memberRels) {
-      const merged = await mergeDeltaIntoFull(db, relName, tables, nextDeltaOf.get(relName)!);
+      const merged = await mergeDeltaIntoFull(exec, count, relName, tables, nextDeltaOf.get(relName)!);
       if (merged > 0) grew = true;
-      await exec(db, `DROP TABLE IF EXISTS ${deltaOf.get(relName)!}`);
-      await exec(db, `ALTER TABLE ${nextDeltaOf.get(relName)!} RENAME TO ${deltaOf.get(relName)!}`);
+      await exec(`DROP TABLE IF EXISTS ${deltaOf.get(relName)!}`);
+      await exec(`ALTER TABLE ${nextDeltaOf.get(relName)!} RENAME TO ${deltaOf.get(relName)!}`);
     }
     if (!grew) break;
   }
 
-  for (const relName of memberRels) await exec(db, `DROP TABLE IF EXISTS ${deltaOf.get(relName)!}`);
+  for (const relName of memberRels) await exec(`DROP TABLE IF EXISTS ${deltaOf.get(relName)!}`);
 }
 
 /** Rows produced by `rule` (with the given body-position delta overrides) that are NOT
  *  already in the head's full table go into `intoDelta`. EXCEPT vs full = "genuinely new". */
 async function insertNewRows(
-  db: SqliteDb,
+  exec: Exec,
   rule: Rule,
   tables: RelTables,
   bodyPositionOverrides: ReadonlyMap<number, string>,
@@ -188,37 +220,49 @@ async function insertNewRows(
   const head = tableOf(tables, rule.head);
   const select = compileRuleSelect(rule, tables, bodyPositionOverrides);
   if (select === null) return;
-  await exec(
-    db,
-    `INSERT OR IGNORE INTO ${intoDelta}(${head.columns.join(", ")}) ${select} ` +
+  await exec(`INSERT OR IGNORE INTO ${intoDelta}(${head.columns.join(", ")}) ${select} ` +
       `EXCEPT SELECT ${head.columns.join(", ")} FROM ${head.table}`,
   );
 }
 
-async function mergeDeltaIntoFull(db: SqliteDb, relName: string, tables: RelTables, delta: string): Promise<number> {
+async function mergeDeltaIntoFull(exec: Exec, count: Count, relName: string, tables: RelTables, delta: string): Promise<number> {
   const full = tableOf(tables, relName);
-  const before = await count(db, full.table);
-  await exec(db, `INSERT OR IGNORE INTO ${full.table}(${full.columns.join(", ")}) SELECT ${full.columns.join(", ")} FROM ${delta}`);
-  return (await count(db, full.table)) - before;
+  const before = await count(full.table);
+  await exec(`INSERT OR IGNORE INTO ${full.table}(${full.columns.join(", ")}) SELECT ${full.columns.join(", ")} FROM ${delta}`);
+  return (await count(full.table)) - before;
 }
 
-async function createLike(db: SqliteDb, name: string, like: RelTable): Promise<void> {
-  await exec(db, `DROP TABLE IF EXISTS ${name}`);
-  await exec(db, `CREATE TEMP TABLE ${name}(${like.columns.join(", ")}, PRIMARY KEY (${like.columns.join(", ")})) WITHOUT ROWID`);
+async function createLike(exec: Exec, name: string, like: RelTable): Promise<void> {
+  await exec(`DROP TABLE IF EXISTS ${name}`);
+  await exec(`CREATE TEMP TABLE ${name}(${like.columns.join(", ")}, PRIMARY KEY (${like.columns.join(", ")})) WITHOUT ROWID`);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Rule -> SELECT. FROM has one alias per positive rel occurrence (b0, b1, ...); the
-// first occurrence of a var binds it, later occurrences and Compare/NegRelRef read the
-// binding. `bodyPositionOverrides` maps a rule.body index (a positive rel pred) to a
-// replacement source table (its delta) for semi-naive rounds. Returns null for a rule
-// with no positive body rel (degenerate).
-// ─────────────────────────────────────────────────────────────────────────────
 
-function compileRuleSelect(rule: Rule, tables: RelTables, bodyPositionOverrides: ReadonlyMap<number, string>): string | null {
+/** One positive body occurrence: its alias and the rel it reads. The support pass needs
+ *  this to name each parent row; the model SELECT does not use it. */
+interface PositiveSource {
+  readonly alias: string;
+  readonly rel: string;
+}
+
+/** The FROM / WHERE / variable-binding core of a rule, shared by the model SELECT and the
+ *  support-edge emission so the two can never drift apart on join semantics. */
+interface CompiledJoin {
+  readonly bound: ReadonlyMap<string, string>;
+  readonly fromParts: readonly string[];
+  readonly where: readonly string[];
+  readonly positiveSources: readonly PositiveSource[];
+}
+
+function compileRuleJoin(
+  rule: Rule,
+  tables: RelTables,
+  bodyPositionOverrides: ReadonlyMap<number, string>,
+): CompiledJoin | null {
   const bound = new Map<string, string>(); // var name -> "alias.column"
   const fromParts: string[] = [];
   const where: string[] = [];
+  const positiveSources: PositiveSource[] = [];
 
   let positiveIndex = 0;
   let negIndex = 0;
@@ -229,6 +273,7 @@ function compileRuleSelect(rule: Rule, tables: RelTables, bodyPositionOverrides:
     const alias = `b${positiveIndex++}`;
     const sourceTable = bodyPositionOverrides.get(bodyIndex) ?? relTable.table;
     fromParts.push(`${sourceTable} ${alias}`);
+    positiveSources.push({ alias, rel: pred.rel });
     for (let col = 0; col < pred.args.length; col++) {
       const arg = pred.args[col]!;
       if (arg.kind === "wild") continue;
@@ -271,6 +316,14 @@ function compileRuleSelect(rule: Rule, tables: RelTables, bodyPositionOverrides:
     }
   }
 
+  return { bound, fromParts, where, positiveSources };
+}
+
+function compileRuleSelect(rule: Rule, tables: RelTables, bodyPositionOverrides: ReadonlyMap<number, string>): string | null {
+  const compiled = compileRuleJoin(rule, tables, bodyPositionOverrides);
+  if (compiled === null) return null;
+  const { bound, fromParts, where } = compiled;
+
   const hasAgg = rule.headTerms.some((t) => t.kind === "hagg");
   const selectList = rule.headTerms.map((term) => {
     if (term.kind === "hvar") {
@@ -300,9 +353,6 @@ function compileRuleSelect(rule: Rule, tables: RelTables, bodyPositionOverrides:
   return sql;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SQL literal / operator helpers.
-// ─────────────────────────────────────────────────────────────────────────────
 
 function sqlLit(value: string | number | boolean | null): string {
   if (value === null) return "NULL";
@@ -353,13 +403,27 @@ function tableOf(tables: RelTables, relName: string): RelTable {
  *  guard (engine.ts header, sqlite3.js:161-172), so an `executeMultiple` inside an open
  *  `with_txn` bracket would silently kill the bracket. dl's tick runs the whole fixpoint
  *  inside one BEGIN IMMEDIATE, so this file obeys the same law cascade's `exec` does. */
-async function exec(db: SqliteDb, sql: string): Promise<void> {
-  stmt_counter.incr();
-  await db.execute(sql);
+type Exec = (sql: string) => Promise<void>;
+type Count = (table: string) => Promise<number>;
+
+/** Single statements only: `executeMultiple` trips the adapter's rollback guard, which
+ *  would kill the caller's open transaction. `traceStatement` sees exactly what runs. */
+function makeExec(db: SqliteDb, traceStatement?: (sql: string) => void): Exec {
+  return async (sql) => {
+    stmt_counter.incr();
+    traceStatement?.(sql);
+    await db.execute(sql);
+  };
 }
 
-async function count(db: SqliteDb, table: string): Promise<number> {
-  stmt_counter.incr();
-  const res = await db.execute(`SELECT count(*) FROM ${table}`);
-  return Number(res.rows[0]?.[0] ?? 0);
+function makeCount(db: SqliteDb): Count {
+  return async (table) => {
+    stmt_counter.incr();
+    const res = await db.execute(`SELECT count(*) FROM ${table}`);
+    return Number(res.rows[0]?.[0] ?? 0);
+  };
 }
+
+
+
+export type EvalProgramHolds = AssertTrue<typeof evalProgramSql extends EvalProgram ? true : false>;

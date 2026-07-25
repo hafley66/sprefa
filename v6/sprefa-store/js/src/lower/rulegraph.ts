@@ -21,6 +21,7 @@
  */
 
 import type { Program } from "./ast.ts";
+import type { Stratum, Graph } from "./types.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The graph: dense-indexed named nodes + deduped, sorted out-edges.
@@ -28,17 +29,6 @@ import type { Program } from "./ast.ts";
 // Edge direction = DEPENDENCY: an edge head -> body-read means "head depends on
 // body" (head's rule reads body in its body). Evaluation needs body first.
 // ─────────────────────────────────────────────────────────────────────────────
-
-export interface Graph {
-  /** Dense index -> node name. */
-  readonly nodes: readonly string[];
-  /** adj[i] = out-edges from node i (the rels node i depends on), deduped + sorted ascending. */
-  readonly adj: readonly (readonly number[])[];
-  /** negAdj[i] = the subset of adj[i] that came from a `!rel(args)` body predicate.
-   *  Optional so pre-negation Graph literals stay valid; `buildRuleGraph` always fills
-   *  it (with empty arrays when a program has no negation). */
-  readonly negAdj?: readonly (readonly number[])[];
-}
 
 /**
  * Build the rule dependency graph from a program: edge `head_rel -> each rel read
@@ -150,15 +140,6 @@ export function scc(graph: Graph): { comp: number[]; ncomp: number } {
 // recursive strata. A stratum is one SCC: either a single acyclic rel (size 1, no
 // self-loop) or a recursive group (size > 1, or a self-loop).
 // ─────────────────────────────────────────────────────────────────────────────
-
-export interface Stratum {
-  /** Member rel names. */
-  readonly rels: readonly string[];
-  /** True iff the SCC is recursive (size > 1, or a self-loop on a singleton). */
-  readonly recursive: boolean;
-  /** Topo position: 0 = first (no dependencies). Dependencies always precede dependents. */
-  readonly order: number;
-}
 
 /**
  * A program is not stratifiable: a `!rel(args)` body predicate's target rel shares an

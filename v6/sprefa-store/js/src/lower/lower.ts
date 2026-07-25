@@ -40,7 +40,8 @@
 
 import { combineLatest, of, map, type Observable } from "rxjs";
 import type { Program, Rule, RelRef, NegRelRef, Compare, HeadTerm, RelDecl, AggFn, NegArg } from "./ast.ts";
-import { buildRuleGraph, scc, stratify, type Stratum } from "./rulegraph.ts";
+import { buildRuleGraph, scc, stratify } from "./rulegraph.ts";
+import type { Stratum } from "./types.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public types.

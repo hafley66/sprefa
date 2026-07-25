@@ -1,0 +1,76 @@
+# Every language case in one program. The rel name is the case name.
+# Data is facts, so this file is the whole input.
+
+rel link(source: text, target: text).
+link("alice", "bob").
+link("bob", "carol").
+link("carol", "dana").
+
+rel number(label: text, value: int).
+number("small", 5).
+number("mid", 10).
+number("large", 20).
+
+rel proves_fact(source: text, target: text).
+proves_fact(source, target) <- link(source, target).
+
+rel proves_join(source: text, target: text).
+proves_join(source, target) <- link(source, middle), link(middle, target).
+
+rel proves_recursion(source: text, target: text).
+proves_recursion(source, target) <- link(source, target).
+proves_recursion(source, target) <- link(source, middle), proves_recursion(middle, target).
+
+rel proves_negation(node: text).
+proves_negation(node) <- link(_, node), !link(node, _).
+
+rel proves_wildcard(target: text).
+proves_wildcard(target) <- link(_, target).
+
+rel proves_elision(source: text).
+proves_elision(source) <- link(source).
+
+rel proves_literal_select(target: text).
+proves_literal_select(target) <- link("alice", target).
+
+rel proves_named_args(target: text).
+proves_named_args(target: target) <- link(source: "bob", target: target).
+
+rel proves_compare_gt(label: text).
+proves_compare_gt(label) <- number(label, value), value > 10.
+
+rel proves_compare_ge(label: text).
+proves_compare_ge(label) <- number(label, value), value >= 10.
+
+rel proves_compare_lt(label: text).
+proves_compare_lt(label) <- number(label, value), value < 10.
+
+rel proves_compare_le(label: text).
+proves_compare_le(label) <- number(label, value), value <= 10.
+
+rel proves_compare_eq(label: text).
+proves_compare_eq(label) <- number(label, value), value = 10.
+
+rel proves_compare_ne(label: text).
+proves_compare_ne(label) <- number(label, value), value != 10.
+
+rel proves_count(total: int).
+proves_count(total: count(label)) <- number(label, _).
+
+rel proves_sum(total: int).
+proves_sum(total: sum(value)) <- number(_, value).
+
+rel proves_max(highest: int).
+proves_max(highest: max(value)) <- number(_, value).
+
+rel proves_min(lowest: int).
+proves_min(lowest: min(value)) <- number(_, value).
+
+rel proves_group_count(source: text, fanout: int).
+proves_group_count(source, fanout: count(target)) <- link(source, target).
+
+rel proves_empty_aggregate(total: int).
+proves_empty_aggregate(total: count(node)) <- proves_never_derived(node).
+
+rel proves_never_derived(node: text).
+proves_never_derived(node) <- link(node, "nobody").

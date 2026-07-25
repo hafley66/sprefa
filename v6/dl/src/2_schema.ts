@@ -25,6 +25,15 @@ import { rels as rel_tables } from "sprefa-store-engine/src/engine/spine.ts";
 import { foldRowDigest } from "./0_digest.ts";
 import type { AssertTrue, ColumnType, Ddl, Retention, Row } from "./0_types.ts";
 
+/**
+ * The dense-integer surrogate key column every `relbase_*` table carries. It IS the
+ * table's rowid (`row_id INTEGER PRIMARY KEY`), so ids run 1..n and SQLite stores them as
+ * a min-bit varint. Nothing outside a rel table ever names a row by its column tuple or
+ * by a hash of it: `cascade.key(rel_tag, row_id)` packs the dense rel tag and this dense
+ * row id into one i64, which is the address the Z-set fact plane (`cx_row`/`cx_dep`) uses.
+ */
+export const ROW_SURROGATE = "row_id";
+
 /** The physical fact-table columns are all INTEGER; text values are dictionary ids. */
 export function relBaseColumns(
   decl: RelDecl,
@@ -49,7 +58,9 @@ export function relViewSql(decl: RelDecl, columnTypes: ReadonlyMap<string, reado
       return `CASE WHEN ${column} = -1 THEN NULL ELSE (SELECT content FROM strings WHERE string_id = ${column}) END AS ${column}`;
     })
     .join(", ");
-  return `CREATE VIEW IF NOT EXISTS rel_${decl.name} AS SELECT ${selectList} FROM relbase_${decl.name}`;
+  // The dense surrogate rides along so a reader that holds a packed fact key can resolve
+  // it back to a row without dropping to the physical table.
+  return `CREATE VIEW IF NOT EXISTS rel_${decl.name} AS SELECT ${ROW_SURROGATE}, ${selectList} FROM relbase_${decl.name}`;
 }
 
 /** decl -> [delta, effect_cache, store_meta, tick seed, read views]. */
@@ -62,8 +73,14 @@ export function ddl(
 ): string[] {
   void retention; // shape-only param this arc; runtime reads retention for tick behavior.
   const statements: string[] = [];
+  // rel_tag: the dense rel tag (0..n-1, declaration order) -> the rel name's dictionary id.
+  // Readers resolve a tag to a name through here, so no other table has to carry text or a
+  // sparse dictionary id in a key position.
   statements.push(
-    "CREATE TABLE IF NOT EXISTS delta (rel_id INTEGER NOT NULL, row_digest INTEGER NOT NULL, tick INTEGER NOT NULL, weight INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS rel_tag (tag INTEGER PRIMARY KEY, name_id INTEGER NOT NULL)",
+  );
+  statements.push(
+    "CREATE TABLE IF NOT EXISTS delta (rel_tag INTEGER NOT NULL, row_digest INTEGER NOT NULL, tick INTEGER NOT NULL, weight INTEGER NOT NULL)",
   );
   statements.push(
     "CREATE TABLE IF NOT EXISTS effect_cache (full_digest INTEGER PRIMARY KEY, identity_digest INTEGER NOT NULL, host TEXT NOT NULL, state TEXT NOT NULL, requested_tick INTEGER NOT NULL)",

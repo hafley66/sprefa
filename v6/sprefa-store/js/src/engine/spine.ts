@@ -201,18 +201,44 @@ export function rel_col_text(name: string): RelCol {
   return { kind: "text", name };
 }
 
-/** Create rel table `name` with `cols`; the PK is the named `pk` columns, WITHOUT ROWID. */
+/**
+ * Create rel table `name` with `cols`, identified by the named `pk` columns.
+ *
+ * Two key shapes, chosen by `surrogate`:
+ *
+ *  - omitted: WITHOUT ROWID, `PRIMARY KEY (pk)`. The key columns ARE the row locator, so
+ *    the table is one b-tree and there is no duplicate autoindex. Cheapest on disk, and
+ *    the right shape when nothing outside the table needs to name a row.
+ *
+ *  - given: a rowid table whose `<surrogate> INTEGER PRIMARY KEY` IS the rowid, plus
+ *    `UNIQUE (pk)` to keep set semantics. That buys a DENSE INTEGER SURROGATE per row:
+ *    ids run 1..n with no gaps in a fresh table, SQLite stores them as a min-bit varint
+ *    (one byte up to 127, two to 16383, and so on), and any other table can name a row
+ *    with that integer instead of copying its key columns. This is what the Z-set fact
+ *    plane needs: `cascade.key(tag, id)` packs a dense rel tag and a dense row id into one
+ *    i64, so `cx_row`/`cx_dep` address rows with integers and never with strings or hashes.
+ *    The cost is honest and is the reason this is opt-in: `UNIQUE (pk)` is a second b-tree
+ *    holding the key columns again.
+ */
 export async function create_rel_table(
   db: SqliteDb,
   name: string,
   cols: ReadonlyArray<RelCol>,
   pk: ReadonlyArray<string>,
+  surrogate?: string,
 ): Promise<void> {
   const col_defs = cols.map((c) => {
     const ty = c.kind === "text" ? "TEXT" : "INTEGER";
     const nn = c.kind === "int_null" ? "" : " NOT NULL";
     return `${c.name} ${ty}${nn}`;
   });
+  if (surrogate !== undefined) {
+    let sql = `CREATE TABLE IF NOT EXISTS ${name} (${surrogate} INTEGER PRIMARY KEY, ${col_defs.join(", ")}`;
+    if (pk.length > 0) sql += `, UNIQUE (${pk.join(", ")})`;
+    sql += ")";
+    await db.executeMultiple(sql);
+    return;
+  }
   let sql = `CREATE TABLE IF NOT EXISTS ${name} (${col_defs.join(", ")}`;
   if (pk.length > 0) sql += `, PRIMARY KEY (${pk.join(", ")})`;
   sql += ")";

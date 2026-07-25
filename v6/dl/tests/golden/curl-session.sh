@@ -232,7 +232,7 @@ fi
 
 # ── 11. delta log dump: the thesis line -- diag AND console_hit/__resp_sg died
 # through weights, not special-cased retraction code (M8-beta supersession) ─────
-DELTA_DUMP="$(sqlite3 "$TEMP_DB" "SELECT s.content AS rel,d.tick,d.weight FROM delta d JOIN strings s ON s.string_id=d.rel_id WHERE s.content IN ('diag','console_hit','__resp_sg') ORDER BY d.tick,s.content,d.weight")"
+DELTA_DUMP="$(sqlite3 "$TEMP_DB" "SELECT s.content AS rel,d.tick,d.weight FROM delta d JOIN rel_tag t ON t.tag=d.rel_tag JOIN strings s ON s.string_id=t.name_id WHERE s.content IN ('diag','console_hit','__resp_sg') ORDER BY d.tick,s.content,d.weight")"
 echo "$DELTA_DUMP" | append_section "sqlite3 delta WHERE rel IN ('diag','console_hit','__resp_sg') ORDER BY tick,rel,weight"
 
 # ── 12. tear down the server (subscribe curl already killed above) ─────────

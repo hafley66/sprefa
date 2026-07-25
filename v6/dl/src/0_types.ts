@@ -111,7 +111,11 @@ export type Bridge = (dlText: string, builtinRels: readonly RelDecl[]) => Bridge
 
 /** Tick shape (b), pinned in DECISIONS: flat rel_* current tables + this log. */
 export interface DeltaRow {
-  readonly rel_id: number;
+  /** The rel's DENSE TAG (0..n-1, declaration order), resolvable to a name through the
+   *  `rel_tag` table. Not the rel name's string-dictionary id: that id space is shared
+   *  with every interned string in the database, so it is sparse and cannot be packed
+   *  into `cascade.key(tag, row_id)`. */
+  readonly rel_tag: number;
   readonly row_digest: number; // oracle.mix XOR law (ingest.ts note 6)
   readonly tick: number;
   readonly weight: 1 | -1;

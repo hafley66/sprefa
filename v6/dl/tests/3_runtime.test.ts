@@ -310,3 +310,93 @@ test("stratified negation: root(name) <- parent(_, name), !parent(name, _)", asy
     cleanupDbFile(dbPath);
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The store's Z-set fact plane, wired (2026-07-25). Every fact now has an integer
+// address, `cascade.key(rel_tag, row_id)`, so `cx_row`/`cx_dep` can hold the model and
+// its support graph, and `cascade.retract_dred` can retract WITHOUT recomputing.
+//
+// These tests are the gate before the tick is allowed to stop recomputing: the graph's
+// answer is checked against the recompute answer on the same input, cyclic case included.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("support graph IS sound for a single-atom rule: the row dies with its only parent", async () => {
+  const { rt, dbPath } = await bootFixture(buildLiteralAndNegationProgram());
+  try {
+    await rt.commit(edbBatch({ parent: PARENT_ROWS }));
+    assert.deepEqual(await rowsOf(rt, "child_of_bob"), [{ child_name: "alice" }]);
+
+    // `child_of_bob(child_name) <- parent(child_name, "bob")` has ONE positive body atom,
+    // so a binary edge expresses its support exactly: that parent row alone derives the
+    // head row. Retracting it leaves the head with no live parent, and DRed's rederive
+    // phase finds nothing to bring it back.
+    const { dead } = await rt.retractThroughSupport("parent", [{ child_name: "alice", parent_name: "bob" }]);
+    assert.deepEqual(
+      dead.map((fact) => fact.rel).sort(),
+      ["child_of_bob", "parent"],
+    );
+  } finally {
+    await rt.dispose();
+    cleanupDbFile(dbPath);
+  }
+});
+
+test("KNOWN LIMIT: conjunctive (join) support is a hypergraph, cx_dep is a binary graph", async () => {
+  const { rt, dbPath } = await bootFixture(buildAncestorProgram());
+  try {
+    await rt.commit(edbBatch({ parent: PARENT_ROWS }));
+    const { dead } = await rt.retractThroughSupport("parent", [{ child_name: "bob", parent_name: "carol" }]);
+    const deadAncestors = dead
+      .filter((fact) => fact.rel === "ancestor")
+      .map((fact) => `${String(fact.row.descendant_name)}->${String(fact.row.ancestor_name)}`)
+      .sort();
+
+    // RECOMPUTE says 4 rows die here (proven by the "recursive stratum RETRACTS" test
+    // above: ["ancestor", -4]). The support graph says 1. This test pins the GAP, so the
+    // day it closes we find out from the suite instead of from a wrong answer in
+    // production.
+    //
+    // Why: `ancestor(d,a) <- parent(d,mid), ancestor(mid,a)` needs BOTH body rows. Emitted
+    // as two independent binary edges, each one reads as "this parent alone suffices". DRed
+    // kills the forward cone and then rederives anything still reachable from a survivor,
+    // so ancestor(alice,carol) comes back off the surviving parent(alice,bob) edge even
+    // though its co-body ancestor(bob,carol) is dead. cascade's own tests only ever load
+    // plain reachability graphs (tests/engine/golden.test.ts: rows + edges, R->A->B), so
+    // the binary model was never wrong for cascade; it is wrong for a JOIN.
+    //
+    // The tick therefore still recomputes. Closing this needs a decision on encoding
+    // (reify each derivation as its own node and count live derivations per head) or on
+    // scope (use the fact plane only for the disjunctive, tree-shaped cascades it fits).
+    assert.deepEqual(deadAncestors, ["bob->carol"]);
+  } finally {
+    await rt.dispose();
+    cleanupDbFile(dbPath);
+  }
+});
+
+test("support coverage is reported, not assumed: negation and aggregate heads carry no edges", async () => {
+  const covered = await bootFixture(buildAncestorProgram());
+  try {
+    // Pure positive joins: fully covered, so the graph may be trusted for every head.
+    assert.deepEqual(covered.rt.supportCoverageGaps(), []);
+  } finally {
+    await covered.rt.dispose();
+    cleanupDbFile(covered.dbPath);
+  }
+
+  const gapped = await bootFixture(buildLiteralAndNegationProgram());
+  try {
+    const gaps = gapped.rt.supportCoverageGaps();
+    // `root` has a negated body predicate: a row appearing in the negated rel DESTROYS a
+    // derivation rather than adding one, so counting/DRed over that edge is unsound and
+    // the pass refuses to emit it. `child_of_bob` is a pure positive join and is covered.
+    assert.deepEqual(
+      gaps.map((gap) => gap.head),
+      ["root"],
+    );
+    assert.match(gaps[0]!.reason, /negated body predicate/);
+  } finally {
+    await gapped.rt.dispose();
+    cleanupDbFile(gapped.dbPath);
+  }
+});

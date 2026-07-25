@@ -1,48 +1,14 @@
-/**
- * 3_runtime.ts - DlRuntime: attach db, run DDL, evaluate the program's fixpoint in
- * SQLite, apply derived diffs, publish deltas$.
+/** DlRuntime: one sqlite connection, one tick loop, one delta stream.
  *
- * Contract (plan M2, tasks.d.ts): `DlRuntime.boot({dbPath, bridge, extraDdl})`;
- * `commit(batch)` is THE single write site (one call = one tick); `rows(rel)`;
- * `deltas$`. The loop is one visible rx graph of named exported operators:
+ *    commits$ -> concatMap(applyEdbTxn) -> concatMap(applyDerivedTxn)
+ *             -> tap(clearScratchRels) -> mergeMap(events) -> share()   = deltas$
  *
- *   commits$: Subject<{id, batch}>                     the ONE .next() site
- *   tick$    = commits$.pipe(concatMap(applyEdbTxn))
- *   derived$ = tick$.pipe(concatMap(applyDerivedTxn))
- *   deltas$  = derived$.pipe(tap(clearScratchRels), mergeMap(events), share())
+ *  concatMap is the lock. share() is the only fan-out. The fixpoint (evalProgramSql) is
+ *  awaited inside applyDerivedTxn, so a settled answer is the only thing anyone observes.
  *
- * concatMap IS the lock (ticks serialize; no interleaved commits). share() is the one
- * true fan-out point (SSE + LSP + HostRunner all read the same graph), kept hot by the
- * one permanent internal subscription the constructor installs on deltas$ (never a
- * second subscription to the commits$ chain: that would double-execute every write).
- *
- * M11 (2026-07-25) — THE SQL FIXPOINT IS THE EVALUATOR. `applyDerivedTxn` now calls
- * `evalProgramSql` (sprefa-store lower/lowerSql.ts): the program's strata are evaluated
- * by SQLite over the `relbase_*` tables, with a semi-naive delta loop for a recursive
- * stratum. What this replaced: `lowerProgram` (lower.ts's in-memory rx fixpoint) driving
- * a `combineLatest` of per-rel `BehaviorSubject`s, whose full row sets crossed into the
- * JS heap on every tick, and which THREW at boot on any recursive stratum
- * ("recursive strata not in this slice"). Recursion now just runs. Three pipeline stages
- * died with it and are deliberately not kept as no-ops: `injectSources` (there are no
- * source subjects left to push into), `derivedSets$`/`DerivedSnapshot` (the current
- * derived state is the tables, not a shareReplay), and the `generation` sync-settle
- * assertion (the fixpoint is now `await`ed inside the tick's own concatMap, so a stale
- * read is not expressible). `diffDerivedRel` and `diffAgainstTables` survive unchanged in
- * meaning: the tick still publishes a Z-set diff against the previous rowset, which is
- * what makes retraction visible to deltas$ and to the `delta` log.
- *
- * The fixpoint is a FULL RECOMPUTE per tick (evalProgramSql DELETEs and refills every
- * rule-headed IDB table), skipped entirely when the tick changed no EDB row. Incremental
- * maintenance is a later arc; the tick's OUTPUT is already incremental because the diff
- * is taken against `derivedTableMirror`.
- *
- * Conversion boundary (owned here, per the package brief): the surface plane is text
- * (0_types.ts's `Row`, a named record read back through the `rel_*` decode views); the
- * storage plane is interned integers (`relbase_*`). `internProgramForStorage` below is
- * the one place a PROGRAM crosses it — every literal in a rule body is rewritten to its
- * stored id so lowerSql, which is interning-agnostic by design, compiles integer-vs-
- * integer comparisons. `encodeSurfaceRowByColumns` is the same crossing for a ROW.
- */
+ *  Surface plane is text (rel_* decode views); storage plane is interned integers
+ *  (relbase_*). internProgramForStorage crosses it for a PROGRAM,
+ *  encodeSurfaceRowByColumns for a ROW. */
 
 import {
   Subject,
@@ -60,13 +26,14 @@ import {
 import { differenceWith, isEqual } from "lodash-es";
 
 import { cascade, type Db } from "sprefa-store-engine/src/engine/engine.ts";
-const { with_txn } = cascade;
+const { with_txn, KEY_STRIDE } = cascade;
 import { rels as rel_tables } from "sprefa-store-engine/src/engine/spine.ts";
-import { Store, open_db } from "sprefa-store-engine/src/engine/lib.ts";
-import { evalProgramSql, type RelTable, type RelTables } from "sprefa-store-engine/src/lower/lowerSql.ts";
+import { RelStore, Store, open_db } from "sprefa-store-engine/src/engine/lib.ts";
+import { evalProgramSql } from "sprefa-store-engine/src/lower/lowerSql.ts";
+import type { RelTable, RelTables, SupportEdges } from "sprefa-store-engine/src/lower/types.ts";
 import type { Arg, BodyPred, LitValue, Program, RelDecl, Rule } from "sprefa-store-engine/src/lower/ast.ts";
 
-import { ddl, relBaseColumns, rowDigest } from "./2_schema.ts";
+import { ROW_SURROGATE, ddl, relBaseColumns, rowDigest } from "./2_schema.ts";
 import type {
   BridgeOk,
   ColumnType,
@@ -82,16 +49,13 @@ import type {
   Value,
 } from "./0_types.ts";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Internal state bag. One instance lives for the life of a DlRuntime; every exported
-// pipeline stage takes it explicitly (rather than a `this`), which is what makes each
-// stage a plain, independently testable function.
-// ─────────────────────────────────────────────────────────────────────────────
 
 export interface RuntimeState {
   readonly db: Db;
   readonly store: Store;
-  readonly relIds: ReadonlyMap<string, number>;
+  /** Rel name -> its DENSE TAG (0..n-1, declaration order), the tag half of
+   *  `cascade.key(tag, row_id)`. Never a string-dictionary id: those are sparse. */
+  readonly relTags: ReadonlyMap<string, number>;
   readonly columnTypes: ReadonlyMap<string, readonly ColumnType[]>;
   readonly relDecls: ReadonlyMap<string, RelDecl>;
   readonly retention: ReadonlyMap<string, Retention>;
@@ -101,6 +65,16 @@ export interface RuntimeState {
   readonly storageProgram: Program;
   /** rel name -> the physical `relbase_*` table + its columns, evalProgramSql's map. */
   readonly relTables: RelTables;
+  /** The store's Z-set fact plane: `cx_row(key, weight)` + `cx_dep(parent_key, child_key)`
+   *  under the default `cx_`/`rx_` namespace, and the cycle-safe retraction algorithms over
+   *  them (`retract_dred`, `retract_scc`, `assert`). Every address is
+   *  `cascade.key(rel_tag, row_id)`: two dense integers packed into one i64. */
+  readonly relStore: RelStore;
+  /** How evalProgramSql should emit the support graph into `relStore`'s dep table. */
+  readonly supportEdges: SupportEdges;
+  /** Rules the support pass cannot cover soundly (negated body / aggregate head), so a
+   *  reader knows which heads must not be retracted through the graph. */
+  readonly rulesWithoutSupport: readonly { readonly head: string; readonly reason: string }[];
   /** Mirrors the current content of every derived (IDB) rel as of the end of the last
    *  tick, in the TEXT surface (read back through the `rel_*` decode views). The diff
    *  the tick publishes is taken against this, which is what makes a derived row's
@@ -141,9 +115,6 @@ interface SettledOutcome {
   readonly scratchRelNames: readonly string[];
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Value / row plumbing shared by every stage below.
-// ─────────────────────────────────────────────────────────────────────────────
 
 function normalizeValue(raw: unknown): Value {
   if (raw === undefined || raw === null) return null;
@@ -197,26 +168,10 @@ function encodeSurfaceRowByColumns(
   });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// internProgramForStorage: the PROGRAM's crossing of the surface/storage boundary.
-//
-// lowerSql compiles against table + column names and joins on equality, so it runs
-// unchanged over interned-INTEGER tables — with one exception it cannot handle itself:
-// a LITERAL written in the source program is a surface value ("console.log", "warn"),
-// and comparing it to a `relbase_*` column would compare a string to a dictionary id
-// and match nothing. So every literal in a rule body is rewritten HERE, once at boot,
-// to the id that column stores. Rewriting is pure data (the AST is plain JSON), and the
-// program is static for the life of the runtime, so this runs exactly once.
-//
-// Two shapes are REFUSED rather than silently mis-answered, because interning destroys
-// the property they need. Both throw at boot, naming the rel and the column:
-//   - an ordering comparison (< <= > >=) against a TEXT column: dictionary ids are
-//     assigned in first-intern order, so id order is not string order. `=`/`!=` are
-//     safe (interning is injective) and stay.
-//   - max/min/sum over a TEXT column: same reason, plus the sum of ids is meaningless.
-//     `count` is safe on any column (the -1 NULL sentinel means no column is ever SQL
-//     NULL, so COUNT(col) and COUNT(*) agree).
-// ─────────────────────────────────────────────────────────────────────────────
+/** Rewrites every body literal to its interned id, once at boot, so lowerSql compares
+ *  integers against integer columns. Refuses two shapes because interning destroys what
+ *  they need: ordering comparisons and max/min/sum on a TEXT column (id order is intern
+ *  order). Equality and count stay. */
 
 function encodeLiteral(store: Store, type: ColumnType, value: LitValue, where: string): number {
   if (type === "int") {
@@ -297,30 +252,6 @@ export function internProgramForStorage(
   return { rels: program.rels, rules };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Row-set matching via a shared temp table (M9-before fix, 2026-07-24): the prior
-// scheme built one `(col IS lit AND ...)` group per candidate row, OR-joined into a
-// single WHERE clause. `(cols) IN (VALUES ...)` was never usable here — SQL row-value
-// comparison yields NULL (not true) when any column is NULL, so stored rows with NULL
-// columns (node.name, site.callee_path, const.field are all pinned nullable) would
-// silently never match, and the physical DELETE would skip them (M3 integration find,
-// 2026-07-24) — so `IS` (SQLite's NULL-safe equality) stayed, but the OR-of-groups
-// SHAPE scaled the SQL expression tree with candidate_rows x columns. An ordinary
-// ~11KB source file (node_modules/rxjs/src/index.ts, 1783 span_line rows) blew past
-// this build's compiled-in SQLITE_LIMIT_EXPR_DEPTH (`PRAGMA compile_options` reports
-// MAX_EXPR_DEPTH=1000) on a single commit's pre-check, crashing ingest of any file
-// whose single-rel insert batch cleared roughly 150-250 rows.
-//
-// Fix: load the candidate rows into ONE shared temp table (generic columns
-// c0..c<width-1>, positionally matching whatever `columns` a call passes) and JOIN
-// against it with the same NULL-safe `IS` per column, AND-joined — tree depth is now
-// O(columns), independent of row count. ONE temp table name is safe to reuse across
-// every rel and every call: a DlRuntime holds exactly one connection, and every
-// commit is serialized through the tick pipeline's concatMap (file header above), so
-// there is never a concurrent writer to race. Width is sized to the WIDEST rel this
-// runtime's relDecls know about; a narrower rel's call just leaves the unused higher
-// columns alone (never referenced in the join condition below).
-// ─────────────────────────────────────────────────────────────────────────────
 
 const ROW_MATCH_TEMP_TABLE = "_row_match_candidates";
 /** SQLite's compiled-in compound-select/VALUES-row cap (default 500): the ceiling on
@@ -417,15 +348,11 @@ async function deleteRows(
 async function insertDeltaRows(db: Db, rows: readonly DeltaRow[]): Promise<void> {
   if (rows.length === 0) return;
   const values = rows
-    .map((row) => `(${row.rel_id},${row.row_digest},${row.tick},${row.weight})`)
+    .map((row) => `(${row.rel_tag},${row.row_digest},${row.tick},${row.weight})`)
     .join(",");
-  await db.execute(`INSERT INTO delta(rel_id,row_digest,tick,weight) VALUES ${values}`);
+  await db.execute(`INSERT INTO delta(rel_tag,row_digest,tick,weight) VALUES ${values}`);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// applyEdbTxn: tick++, EDB pre-check + writes, delta rows, one atomic transaction.
-// rel(1) retention ("keep only the newest row") is enforced here, on the EDB write.
-// ─────────────────────────────────────────────────────────────────────────────
 
 export async function applyEdbTxn(state: RuntimeState, request: CommitRequest): Promise<EdbTickOutcome> {
   const { db } = state;
@@ -504,11 +431,12 @@ export async function applyEdbTxn(state: RuntimeState, request: CommitRequest): 
       const allRetractedIds = [...genuinelyRetractedIds, ...additionalRetractIds];
       if (allRetractedIds.length > 0) await deleteRows(db, state.relDecls, relName, columns, allRetractedIds);
 
+      const relTag = state.relTags.get(relName)!;
       for (const row of genuinelyNew) {
-        deltaRows.push({ rel_id: state.relIds.get(relName)!, row_digest: rowDigest(row, columns), tick, weight: 1 });
+        deltaRows.push({ rel_tag: relTag, row_digest: rowDigest(row, columns), tick, weight: 1 });
       }
       for (const row of allRetracted) {
-        deltaRows.push({ rel_id: state.relIds.get(relName)!, row_digest: rowDigest(row, columns), tick, weight: -1 });
+        deltaRows.push({ rel_tag: relTag, row_digest: rowDigest(row, columns), tick, weight: -1 });
       }
 
       const net = genuinelyNew.length - allRetracted.length;
@@ -526,11 +454,6 @@ export async function applyEdbTxn(state: RuntimeState, request: CommitRequest): 
   });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// diffDerivedRel: the pure, exported, unit-testable diff primitive. lodash
-// differenceWith over (old, new) per rel. The combinatorics: in-old/in-new = noop
-// (appears in neither result), in-old-only = retract, in-new-only = insert.
-// ─────────────────────────────────────────────────────────────────────────────
 
 export function diffDerivedRel(
   oldRows: readonly Row[],
@@ -542,12 +465,6 @@ export function diffDerivedRel(
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// diffAgainstTables: read every derived rel back off disk (through the rel_* decode
-// views, so the diff and the mirror both stay in the TEXT surface) and diffDerivedRel
-// it against the mirror. Called AFTER evalProgramSql has refilled the tables, inside
-// the same transaction, so "the tables" and "the fixpoint result" are the same thing.
-// ─────────────────────────────────────────────────────────────────────────────
 
 export async function diffAgainstTables(state: RuntimeState): Promise<ReadonlyMap<string, PerRelDiff>> {
   const perRel = new Map<string, PerRelDiff>();
@@ -564,28 +481,79 @@ export async function diffAgainstTables(state: RuntimeState): Promise<ReadonlyMa
   return perRel;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// applyDerivedTxn: THE FIXPOINT STAGE. One atomic transaction holding, in order:
-//   1. evalProgramSql  — the stratified least fixpoint, run by SQLite over relbase_*
-//                        (semi-naive delta loop for a recursive stratum). Rows never
-//                        enter the JS heap here.
-//   2. diffAgainstTables — read the settled tables back, diff vs the previous rowset.
-//   3. delta rows       — the Z-set log (+1 insert, -1 retract) the whole retraction
-//                        story is read from.
-//   4. retention-0 cleanup — the physical DELETE, awaited HERE rather than in the later
-//                        clearScratchRels tap (see below).
-//
-// Deviation from the plan's literal marble diagram, documented since M2 and still true:
-// a `tap` cannot safely await I/O before the downstream commit() correlation resolves
-// (test "rel(0) scratch dies with its tick" calls rows() right after `await commit(...)`
-// and requires the delete to have already happened), so the DELETE lives here and
-// `clearScratchRels` only does the synchronous JS-side bookkeeping.
-//
-// The skip: when the tick changed no EDB row AND the previous tick cleared no scratch
-// row, the EDB is bit-identical to the one the last fixpoint ran over, so the fixpoint
-// is a provable no-op and is skipped whole. That is what keeps an idempotent re-commit
-// at zero deltas without paying for a full recompute.
-// ─────────────────────────────────────────────────────────────────────────────
+
+/** One fact that died, resolved from its packed key back to a named rel and a surface row. */
+export interface DeadFact {
+  readonly rel: string;
+  readonly row: Row;
+}
+
+/** The dense surrogates of `rows` in `relName`'s table, via the shared temp-table join
+ *  (one SELECT for the whole candidate set, never a per-row lookup). A row that is not
+ *  present yields nothing. */
+async function selectSurrogates(
+  db: Db,
+  relDecls: ReadonlyMap<string, RelDecl>,
+  relName: string,
+  columns: readonly string[],
+  rows: readonly StoredRow[],
+): Promise<number[]> {
+  if (rows.length === 0) return [];
+  await loadRowMatchCandidates(db, relDecls, rows, columns.length);
+  const tableRef = `relbase_${relName}`;
+  const res = await db.execute(
+    `SELECT t.${ROW_SURROGATE} FROM ${tableRef} t JOIN ${ROW_MATCH_TEMP_TABLE} c ON ${rowMatchJoinCondition(columns, "t", "c")}`,
+  );
+  return res.rows.map((raw) => Number((raw as Record<string, unknown>)[ROW_SURROGATE]));
+}
+
+/** Unpack `key = rel_tag * KEY_STRIDE + row_id` and read each row back through its
+ *  `rel_*` decode view, grouped so there is one SELECT per rel rather than per key. */
+async function resolveFactKeys(state: RuntimeState, keys: readonly number[]): Promise<DeadFact[]> {
+  const byTag = new Map<number, number[]>();
+  for (const key of keys) {
+    const tag = Math.trunc(key / KEY_STRIDE);
+    const rowId = key % KEY_STRIDE;
+    const bucket = byTag.get(tag);
+    if (bucket) bucket.push(rowId);
+    else byTag.set(tag, [rowId]);
+  }
+  const nameOfTag = new Map<number, string>();
+  for (const [relName, tag] of state.relTags) nameOfTag.set(tag, relName);
+
+  const facts: DeadFact[] = [];
+  for (const [tag, rowIds] of byTag) {
+    const relName = nameOfTag.get(tag);
+    if (relName === undefined) continue;
+    const decl = state.relDecls.get(relName);
+    if (!decl) continue;
+    const res = await state.db.execute(
+      `SELECT ${decl.columns.join(",")} FROM rel_${relName} WHERE ${ROW_SURROGATE} IN (${rowIds.join(",")})`,
+    );
+    for (const raw of res.rows) facts.push({ rel: relName, row: rowFromRaw(raw, decl.columns) });
+  }
+  return facts;
+}
+
+
+async function refreshFactPlane(state: RuntimeState): Promise<void> {
+  const { db, relStore } = state;
+  const ns = relStore.ns();
+  const stride = state.supportEdges.stride;
+  for (const [relName, table] of state.relTables) {
+    const tag = state.relTags.get(relName);
+    if (tag === undefined) continue;
+    await db.execute(
+      `INSERT INTO ${ns.row}(key, weight) SELECT ${tag} * ${stride} + ${ROW_SURROGATE}, 1 FROM ${table.table} ` +
+        `WHERE true ON CONFLICT(key) DO UPDATE SET weight = 1`,
+    );
+  }
+}
+
+/** The fixpoint stage. One transaction: evalProgramSql, mirror into cx_row, diff the
+ *  settled tables against derivedTableMirror, write delta rows, then the retention-0
+ *  DELETE (awaited here because a tap cannot await before commit() resolves).
+ *  Skipped whole when no EDB row moved and no scratch row was cleared. */
 
 export async function applyDerivedTxn(state: RuntimeState, outcome: EdbTickOutcome): Promise<SettledOutcome> {
   const { db, relDecls } = state;
@@ -594,7 +562,8 @@ export async function applyDerivedTxn(state: RuntimeState, outcome: EdbTickOutco
 
   return with_txn(db, async () => {
     if (edbMoved && state.derivedRelNames.length > 0) {
-      await evalProgramSql(db, state.storageProgram, state.relTables);
+      await evalProgramSql(db, state.storageProgram, state.relTables, state.supportEdges);
+      await refreshFactPlane(state);
     }
     const perRel = edbMoved ? await diffAgainstTables(state) : new Map<string, PerRelDiff>();
 
@@ -604,12 +573,12 @@ export async function applyDerivedTxn(state: RuntimeState, outcome: EdbTickOutco
 
     for (const [relName, { insert, retract, newRows }] of perRel) {
       const columns = relDecls.get(relName)!.columns;
-      const relId = state.relIds.get(relName)!;
+      const relTag = state.relTags.get(relName)!;
       for (const row of insert) {
-        deltaRows.push({ rel_id: relId, row_digest: rowDigest(row, columns), tick: outcome.tick, weight: 1 });
+        deltaRows.push({ rel_tag: relTag, row_digest: rowDigest(row, columns), tick: outcome.tick, weight: 1 });
       }
       for (const row of retract) {
-        deltaRows.push({ rel_id: relId, row_digest: rowDigest(row, columns), tick: outcome.tick, weight: -1 });
+        deltaRows.push({ rel_tag: relTag, row_digest: rowDigest(row, columns), tick: outcome.tick, weight: -1 });
       }
       const net = insert.length - retract.length;
       if (net !== 0) derivedPairs.push([relName, net]);
@@ -637,13 +606,6 @@ export async function applyDerivedTxn(state: RuntimeState, outcome: EdbTickOutco
   });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// clearScratchRels: synchronous tap. The physical DELETE already happened (and was
-// awaited) inside applyDerivedTxn; this stage only resets the JS-side mirror/source for
-// the rels that were just cleared, then emits the settled report for commit()'s
-// correlation (reportsSubject.next). Ordering here is what lets commit()'s promise
-// resolve only after a rel(0) rel has truly gone empty.
-// ─────────────────────────────────────────────────────────────────────────────
 
 export function clearScratchRels(state: RuntimeState, outcome: SettledOutcome): void {
   for (const relName of outcome.scratchRelNames) {
@@ -656,9 +618,6 @@ export function clearScratchRels(state: RuntimeState, outcome: SettledOutcome): 
   state.reportsSubject.next({ id: outcome.id, report: outcome.report });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// boot() helpers.
-// ─────────────────────────────────────────────────────────────────────────────
 
 function literalSeedRows(
   store: Store,
@@ -681,11 +640,6 @@ function literalSeedRows(
   return rows;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DlRuntime: the public class. Owns exactly one RuntimeState + the commits$ Subject +
-// the one permanent subscription that keeps the whole graph hot. No module-level
-// mutable state; every field here is instance-scoped.
-// ─────────────────────────────────────────────────────────────────────────────
 
 export class DlRuntime implements IDlRuntime {
   private readonly commits$: Subject<CommitRequest>;
@@ -726,8 +680,16 @@ export class DlRuntime implements IDlRuntime {
 
     const relDecls = new Map<string, RelDecl>();
     for (const decl of cfg.bridge.program.rels) relDecls.set(decl.name, decl);
-    const relIds = new Map<string, number>();
-    for (const decl of cfg.bridge.program.rels) relIds.set(decl.name, store.intern(decl.name));
+
+    // Rel identity is a DENSE TAG, 0..n-1 in declaration order, not the rel name's
+    // string-dictionary id. The dictionary id is sparse (it shares one id space with
+    // every interned string in the database) and cannot be packed: `cascade.key(tag, id)`
+    // is `tag * KEY_STRIDE + id` with KEY_STRIDE = 1e9, so a tag has to be small and
+    // dense for the i64 to hold anything. `rel_tag` persists tag -> name_id so a reader
+    // can still resolve a tag back to a name without the tag itself carrying text.
+    const relTags = new Map<string, number>();
+    cfg.bridge.program.rels.forEach((decl, tag) => relTags.set(decl.name, tag));
+    const tagRows = cfg.bridge.program.rels.map((decl, tag) => `(${tag},${store.intern(decl.name)})`);
     await store.flush_strings();
 
     for (const decl of cfg.bridge.program.rels) {
@@ -736,6 +698,7 @@ export class DlRuntime implements IDlRuntime {
         `relbase_${decl.name}`,
         relBaseColumns(decl, cfg.bridge.columnTypes),
         decl.columns,
+        ROW_SURROGATE,
       );
     }
 
@@ -744,6 +707,11 @@ export class DlRuntime implements IDlRuntime {
       ...(cfg.extraDdl ?? []),
     ];
     await db.batch(ddlStatements, "write");
+
+    // Persist the dense tag -> name_id mapping, one batched insert (never per-rel).
+    if (tagRows.length > 0) {
+      await db.execute(`INSERT INTO rel_tag(tag,name_id) VALUES ${tagRows.join(",")} ON CONFLICT DO NOTHING`);
+    }
 
     const seedRows = literalSeedRows(store, cfg.bridge.columnTypes, cfg.bridge.literalSeeds, relDecls);
     await store.flush_strings();
@@ -763,6 +731,20 @@ export class DlRuntime implements IDlRuntime {
       relTables.set(decl.name, { table: `relbase_${decl.name}`, columns: decl.columns });
     }
 
+    // The store's Z-set fact plane. `attach` stamps cascade's cx_* and reconcile's rx_*
+    // schema under the default namespace onto the same connection dl already owns.
+    const relStore = await RelStore.attach(db);
+    const supportEdges: SupportEdges = {
+      table: relStore.ns().dep,
+      tagOf: relTags,
+      stride: KEY_STRIDE,
+      surrogate: ROW_SURROGATE,
+    };
+    // Report the coverage limit once, at boot, from the real rule set rather than from a
+    // guess: a negated body or an aggregate head has non-monotone support, so those heads
+    // are not retractable through the graph.
+    const { rulesWithoutSupport } = await evalProgramSql(db, storageProgram, relTables, supportEdges);
+
     const derivedRelNames = cfg.bridge.program.rels.filter((decl) => decl.origin === "IDB").map((decl) => decl.name);
     const derivedTableMirror = new Map<string, Row[]>();
     for (const relName of derivedRelNames) {
@@ -773,13 +755,16 @@ export class DlRuntime implements IDlRuntime {
     const state: RuntimeState = {
       db,
       store,
-      relIds,
+      relTags,
       columnTypes: cfg.bridge.columnTypes,
       relDecls,
       retention: cfg.bridge.retention,
       derivedRelNames,
       storageProgram,
       relTables,
+      relStore,
+      supportEdges,
+      rulesWithoutSupport,
       derivedTableMirror,
       reportsSubject: new Subject(),
       scratchClearedRows: 0,
@@ -798,6 +783,54 @@ export class DlRuntime implements IDlRuntime {
     );
     this.commits$.next({ id, batch });
     return pending;
+  }
+
+  /**
+   * Retract `rows` from EDB rel `rel` THROUGH THE SUPPORT GRAPH, with no recompute:
+   * resolve each row to its dense surrogate, pack `cascade.key(rel_tag, row_id)`, seed
+   * `cascade.retract_dred`, and report every fact that died.
+   *
+   * DRed (Delete-and-Rederive) is the cycle-safe variant, and that choice is not
+   * incidental. Row-level support in a least fixpoint over a CYCLIC EDB is itself cyclic
+   * (`ancestor` over a graph with a cycle supports itself round-trip), and counting
+   * retraction cannot tell a live cycle from a dead one: DRed over-deletes the forward
+   * cone, then rederives anything still reachable from a surviving row, so a dead cycle
+   * correctly stays dead because it has no surviving anchor.
+   *
+   * The dead set is measured, not inferred: `alive_keys()` before and after, differenced.
+   * That reads the store's own answer rather than reconstructing what it should have done.
+   *
+   * COVERAGE: heads listed in `rulesWithoutSupport` have non-monotone support (negated
+   * body predicate or aggregate head) and carry no edges, so they will not appear in the
+   * dead set even when they should. `supportCoverageGaps()` reports them. This is why the
+   * tick still recomputes; the graph path is proven against it before replacing it.
+   */
+  async retractThroughSupport(rel: string, rows: readonly Row[]): Promise<{ rounds: number; dead: readonly DeadFact[] }> {
+    const state = this.state;
+    const decl = state.relDecls.get(rel);
+    if (!decl) throw new Error(`retractThroughSupport: unknown rel '${rel}'`);
+    const tag = state.relTags.get(rel);
+    if (tag === undefined) throw new Error(`retractThroughSupport: no dense tag for rel '${rel}'`);
+
+    const encoded = rows.map((row) =>
+      encodeSurfaceRowByColumns(state.store, state.columnTypes, rel, decl.columns, row),
+    );
+    await state.store.flush_strings();
+    const rowIds = await selectSurrogates(state.db, state.relDecls, rel, decl.columns, encoded);
+    if (rowIds.length === 0) return { rounds: 0, dead: [] };
+
+    const before = new Set(await state.relStore.alive_keys());
+    const rounds = await state.relStore.retract_dred(rowIds.map((rowId) => [tag, rowId] as const));
+    const after = new Set(await state.relStore.alive_keys());
+
+    const deadKeys = [...before].filter((key) => !after.has(key));
+    return { rounds, dead: await resolveFactKeys(state, deadKeys) };
+  }
+
+  /** Rules whose heads carry no support edges, so they are not retractable through the
+   *  graph. Empty means the whole program is covered. */
+  supportCoverageGaps(): readonly { readonly head: string; readonly reason: string }[] {
+    return this.state.rulesWithoutSupport;
   }
 
   async rows(rel: string): Promise<Row[]> {

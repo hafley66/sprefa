@@ -228,8 +228,11 @@ export interface DeltaLogEntry {
 export async function deltaDump(dbPath: string): Promise<DeltaLogEntry[]> {
   const db = open_db(`file:${dbPath}`);
   try {
+    // delta carries the DENSE rel tag, so resolving a name is two hops: tag -> name_id
+    // (rel_tag) -> content (strings). The dump's output shape is unchanged by that.
     const res = await db.execute(
-      "SELECT s.content AS rel, d.row_digest, d.tick, d.weight FROM delta d JOIN strings s ON s.string_id = d.rel_id " +
+      "SELECT s.content AS rel, d.row_digest, d.tick, d.weight FROM delta d " +
+        "JOIN rel_tag t ON t.tag = d.rel_tag JOIN strings s ON s.string_id = t.name_id " +
         "ORDER BY d.tick, s.content, d.row_digest, d.weight",
     );
     return res.rows

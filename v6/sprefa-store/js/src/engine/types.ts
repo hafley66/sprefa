@@ -470,11 +470,15 @@ export interface IRelTableApi {
   rel_col_int(name: string): RelCol;
   rel_col_int_null(name: string): RelCol;
   rel_col_text(name: string): RelCol;
+  /** `surrogate` names a dense-integer surrogate key column; omit it for the cheaper
+   *  WITHOUT ROWID shape where the key columns are the row locator. See the
+   *  implementation's doc comment for what the surrogate buys and what it costs. */
   create_rel_table(
     db: SqliteDb,
     name: string,
     cols: ReadonlyArray<RelCol>,
     pk: ReadonlyArray<string>,
+    surrogate?: string,
   ): Promise<void>;
   drop_rel_table(db: SqliteDb, name: string): Promise<void>;
 }
