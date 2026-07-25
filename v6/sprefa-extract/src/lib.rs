@@ -33,7 +33,7 @@ pub use family::{
     Family, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind,
     TypeEntityKind, TypeFAux, TypeF, TypeSig,
 };
-pub use lang::{source_for, sources, AstgrepSource, GoSource, RustSource, TsSource};
+pub use lang::{source_for, sources, AstgrepSource, GoSource, KotlinSource, RustSource, TsSource};
 pub use rows::{Edge, FamilyBundle, Node};
 pub use scip::{ScipGo, ScipRust, ScipTypescript, byte_range, definition_of, join_documents, site_occurrence};
 pub use seams::{

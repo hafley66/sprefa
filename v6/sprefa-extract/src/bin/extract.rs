@@ -28,6 +28,7 @@ LANGUAGE COVERAGE (first-match, by extension)
   ts/tsx/mts/cts/js/jsx/mjs/cjs    full     families: cst, type, call, df, const
   rs                               full     families: cst, type, call, df, const
   go                               full     families: cst, type, call, df (no const facet)
+  kt/kts                           full     families: cst, type, call, df (no const facet)
   python/c/... (any ast-grep grammar)        cst only
   any other extension              no output, exit 0 (not an error)
 

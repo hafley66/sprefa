@@ -44,6 +44,13 @@ proc-macro2 = { version = "1", features = ["span-locations"] }
 # spans come straight off the nodes (`start_byte`/`end_byte`); no line/col bridge.
 tree-sitter = "0.25"
 tree-sitter-go = "0.23"
+# tree-sitter-kotlin-sg is the Kotlin AST front-end v5 carried
+# (src/graph/typegraph/kotlin.rs; root Cargo.toml pins the same crate, so the v6
+# parse is byte-identical to the v5 oracle's). It is ALREADY in this lock as an
+# ast-grep-language transitive (0.4.1), exports `LANGUAGE: LanguageFn` like
+# tree-sitter-go 0.23, and deps only `tree-sitter-language` + `cc` (no
+# tree-sitter core): cargo UNIFIES it, one copy, no dupes.
+tree-sitter-kotlin-sg = "0.4"
 # serde on the FLAT wire envelope only (never on the generic Node<F>). The store
 # seam + the parity-golden normalize + the stdout JSONL all read this one shape.
 serde = { version = "1", features = ["derive"] }

@@ -939,6 +939,7 @@ dependencies = [
  "syn 2.0.119",
  "tree-sitter",
  "tree-sitter-go",
+ "tree-sitter-kotlin-sg",
 ]
 
 [[package]]
