@@ -35,10 +35,13 @@
 
 use std::collections::BTreeSet;
 
-use crate::family::{CallF, CallKind, CallSite, CstF, DfF, SigSlot, TypeEntityKind, TypeF, TypeSig};
-use crate::rows::{FamilyBundle, Node};
+use crate::family::{
+    CallF, CallKind, CallSite, CstF, DfEdgeKind, DfF, DfNodeKind, SigSlot, TypeEntityKind, TypeF,
+    TypeSig,
+};
+use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{Parser, Project};
-use crate::shape::{Span, Strings};
+use crate::shape::{NodeRef, Span, Strings};
 use crate::source::{ExtractOutput, FamilyMask, Source};
 use super::astgrep::{AstGrepParser, CstProjector};
 
@@ -443,14 +446,422 @@ fn kt_callee<'a>(call: tree_sitter::Node<'a>, src: &[u8]) -> Option<(String, tre
     }
 }
 
-/// Project the DfF family. Commit D ports `kotlin_dataflow_from`.
+// ════════════════════════════════════════════════════════════════════════════
+// DfF: intra-procedural value flow (nodes + Direct edges). Commit D.
+//
+// Ports v5 `kotlin_dataflow_from` (src/graph/typegraph/kotlin.rs:73): every
+// value-bearing position in a callable's body becomes a NODE; local value flow
+// becomes a Direct EDGE. The two-rule model (same as the go/rust lifts):
+// value-bearing children flow into their parent, and a `val/var x = rhs`
+// binds rhs -> x's slot with later reads flowing slot -> read.
+//
+// BYTE PARITY: v5 mints each node at `(node.start_position().row, .column)`,
+// then bumps rows 1-based (`bump_node_lines_1based`); the oracle reconstructs
+// the byte as `line_starts[row_0based] + col`, which equals tree-sitter's
+// `node.start_byte()`. So v6 mints each node at the byte DIRECTLY (no line/col
+// bridge, no post-pass) and the (kind, var, byte) triples + (from_byte,
+// to_byte) edge pairs match v5 exactly. The lambda-tail `ret` sits at the
+// lambda's END byte (v5's `node.end_position()`).
+//
+// What is DROPPED vs v5 (each deliberate, matching the TS/Rust/Go DfF ports):
+//  - `fn_sym` ON NODES: the enclosing callable is not stored on every df node;
+//    it is threaded through the walk (v5's own mechanism) purely so the
+//    `closure` VALUE node carries v5's exact `lam_sym` name
+//    (`{file}::function::{fn}::closure::{row}_{col}`, tree-sitter's 0-based
+//    row/col of the lambda literal's start; nesting chains - EVERY fun, even a
+//    method, roots at `{file}::function::{name}` per v5's kt_flow_fn). No sym
+//    store: the name derives from the walk's containment path + span data.
+//  - the enrichment aux: `args` (incl. the receiver slot -1 and named-arg
+//    source positions), `fields` (named-arg labels), `param_pos`, `loops`,
+//    `nests`. The EDGES already carry every value flow.
+//  - `for`/`while`/`do-while` mint NO Loop node in v5 kotlin (the loop FACT is
+//    aux, dropped); they fall to the conservative recursion, and the for-loop
+//    variable is NEVER scope-bound (v5 exact).
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Transient scope: a variable name -> its binding node (param or `let`).
+/// v5 shares ONE scope through the whole fn walk (lambdas included): a capture
+/// resolves, a lambda param shadows, and an `it` binding leaks past the lambda
+/// body - all ported verbatim.
+type Scope = std::collections::HashMap<String, NodeRef>;
+
+/// Project the DfF family: each callable's body lifted to its value-flow
+/// graph. Port of v5 `kotlin_dataflow_from` (the driver half). Unlike v5, no
+/// post-pass bumps (v6 stores bytes directly, not 0-based rows), and
+/// `loops`/`nests` aux is dropped. `file` roots each fn_sym (the closure value
+/// node's name derives from it).
 fn project_df(
-    _root: tree_sitter::Node,
-    _src: &[u8],
-    _file: &str,
-    _strings: &mut Strings,
-    _sink: &mut FamilyBundle<DfF>,
+    root: tree_sitter::Node,
+    src: &[u8],
+    file: &str,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<DfF>,
 ) {
+    kt_walk_fns(root, src, file, strings, sink);
+}
+
+/// Walk every function_declaration, lifting each body. Port of v5
+/// `kt_walk_fns`. Only function_declarations lift (ctors, property
+/// initializers, and class bodies do not); nested funs are found by the
+/// recursion.
+fn kt_walk_fns(
+    node: tree_sitter::Node,
+    src: &[u8],
+    file: &str,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<DfF>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "function_declaration" {
+            kt_flow_fn(child, src, file, strings, sink);
+        }
+        kt_walk_fns(child, src, file, strings, sink);
+    }
+}
+
+/// Seed `param` nodes from the parameter list, then walk the body. Port of v5
+/// `kt_flow_fn` (the `param_pos` aux is dropped). EVERY fun - method or not -
+/// roots its fn_sym at `{file}::function::{name}` (v5's exact mint, so a
+/// lambda inside a method still joins under the bare fun sym). The body's tail
+/// value is the implicit return: it flows into a `ret` node minted at the
+/// BODY's start byte (v5's `body.start_position()` - covers both the block
+/// form and `fun f() = expr`). An explicit `return EXPR` mints its own ret in
+/// the jump_expression arm.
+fn kt_flow_fn(
+    fn_node: tree_sitter::Node,
+    src: &[u8],
+    file: &str,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<DfF>,
+) {
+    let name = kt_first_child(fn_node, "simple_identifier")
+        .map(|n| kt_text(n, src))
+        .unwrap_or("");
+    let fn_sym = format!("{file}::function::{name}");
+    let mut scope = Scope::new();
+    if let Some(params) = kt_first_child(fn_node, "function_value_parameters") {
+        let mut cursor = params.walk();
+        for p in params.children(&mut cursor).filter(|n| n.kind() == "parameter") {
+            if let Some(idn) = kt_first_child(p, "simple_identifier") {
+                let v = kt_text(idn, src).to_string();
+                let id = df_push(sink, strings, idn.start_byte() as u32, DfNodeKind::Param, Some(&v));
+                scope.insert(v, id);
+            }
+        }
+    }
+    if let Some(body) = kt_first_child(fn_node, "function_body") {
+        if let Some(tail) = flow_kt(body, src, &fn_sym, strings, &mut scope, sink) {
+            let ret = df_push(sink, strings, body.start_byte() as u32, DfNodeKind::Ret, None);
+            df_edge(sink, tail, ret);
+        }
+    }
+}
+
+/// Returns the node carrying the value of this subtree, or None when the
+/// subtree is not value-bearing (statements, wrappers, bindings handled
+/// inline). Conservative on unsupported constructs: may miss flows, never
+/// invents. Port of v5 `flow_kt`; byte-exact (each node minted at
+/// `node.start_byte()`, the lambda-tail ret at `node.end_byte()`).
+fn flow_kt(
+    node: tree_sitter::Node,
+    src: &[u8],
+    fn_sym: &str,
+    strings: &mut Strings,
+    scope: &mut Scope,
+    sink: &mut FamilyBundle<DfF>,
+) -> Option<NodeRef> {
+    let start_byte = node.start_byte() as u32;
+    match node.kind() {
+        // A name in expression position is a read; the role is decided by its
+        // parent: under variable_declaration it is a binding target, under
+        // parameter a param, under call_expression the callee - never a read.
+        "simple_identifier" => {
+            let parent_kind = node.parent().map(|p| p.kind());
+            match parent_kind.as_deref() {
+                Some("variable_declaration") | Some("parameter") | Some("call_expression") => None,
+                _ => {
+                    let v = kt_text(node, src).to_string();
+                    let id = df_push(sink, strings, start_byte, DfNodeKind::VarRead, Some(&v));
+                    if let Some(binding) = scope.get(&v) {
+                        df_edge(sink, *binding, id);
+                    }
+                    Some(id)
+                }
+            }
+        }
+        // f(args): every argument value flows into the call result. A named
+        // argument `f(x = v)` flows its VALUE (the name ident is a label, never
+        // walked); a trailing lambda is the call's last positional argument
+        // (the lambda_literal arm lifts it and returns its closure node). A
+        // navigation callee `recv.m(a)` flows the receiver in too. A
+        // capitalized callee is a constructor call (Kotlin classes are
+        // UpperCamelCase), minted as a `new` node carrying the type name. The
+        // args/fields aux (positions, named-arg labels) is dropped.
+        "call_expression" => {
+            let callee = node.child(0);
+            let mut recv: Option<NodeRef> = None;
+            let mut callee_name = String::new();
+            match callee.map(|c| c.kind()) {
+                Some("simple_identifier") => {
+                    callee_name = kt_text(callee.unwrap(), src).to_string();
+                }
+                Some("navigation_expression") => {
+                    let nav = callee.unwrap();
+                    if let Some(obj) = nav.child(0) {
+                        recv = flow_kt(obj, src, fn_sym, strings, scope, sink);
+                    }
+                    if let Some(idn) = kt_first_child(nav, "navigation_suffix")
+                        .and_then(|s| kt_first_child(s, "simple_identifier"))
+                    {
+                        callee_name = kt_text(idn, src).to_string();
+                    }
+                }
+                _ => {}
+            }
+            let mut arg_ids: Vec<NodeRef> = Vec::new();
+            if let Some(suffix) = kt_first_child(node, "call_suffix") {
+                if let Some(vargs) = kt_first_child(suffix, "value_arguments") {
+                    let mut cursor = vargs.walk();
+                    for va in vargs.children(&mut cursor).filter(|n| n.kind() == "value_argument") {
+                        // Named form: value_argument = simple_identifier '=' expr.
+                        let mut vc = va.walk();
+                        let kids: Vec<tree_sitter::Node> = va.children(&mut vc).collect();
+                        let eq_at = kids.iter().position(|k| k.kind() == "=");
+                        let val_node = match eq_at {
+                            Some(i) if i >= 1 && kids[i - 1].kind() == "simple_identifier" => {
+                                kids.get(i + 1).copied()
+                            }
+                            _ => None,
+                        };
+                        let vid = match val_node {
+                            Some(v) => flow_kt(v, src, fn_sym, strings, scope, sink),
+                            None => flow_kt(va, src, fn_sym, strings, scope, sink),
+                        };
+                        if let Some(vid) = vid {
+                            arg_ids.push(vid);
+                        }
+                    }
+                }
+                // A trailing lambda (`xs.map { it + 1 }`) is the call's last
+                // positional argument; the lambda_literal arm lifts it and
+                // returns its `closure` value node.
+                if let Some(al) = kt_first_child(suffix, "annotated_lambda") {
+                    if let Some(ll) = kt_first_child(al, "lambda_literal") {
+                        if let Some(vid) = flow_kt(ll, src, fn_sym, strings, scope, sink) {
+                            arg_ids.push(vid);
+                        }
+                    }
+                }
+            }
+            let is_ctor = callee_name.chars().next().is_some_and(|c| c.is_uppercase());
+            let (kind, name) = if is_ctor {
+                (DfNodeKind::New, Some(callee_name.as_str()))
+            } else {
+                (DfNodeKind::CallRes, None)
+            };
+            let id = df_push(sink, strings, start_byte, kind, name);
+            if let Some(r) = recv {
+                df_edge(sink, r, id);
+            }
+            for arg_id in arg_ids {
+                df_edge(sink, arg_id, id);
+            }
+            Some(id)
+        }
+        // `base.f` outside a call: a member read (the base flows into a
+        // `member` node carrying the accessed name). As a call's callee (parent
+        // == call_expression) the call arm owns it instead.
+        "navigation_expression" => {
+            if node.parent().map(|p| p.kind()) == Some("call_expression") {
+                return None;
+            }
+            let obj = node
+                .child(0)
+                .and_then(|c| flow_kt(c, src, fn_sym, strings, scope, sink));
+            let name = kt_first_child(node, "navigation_suffix")
+                .and_then(|s| kt_first_child(s, "simple_identifier"))
+                .map(|n| kt_text(n, src).to_string())
+                .unwrap_or_default();
+            let id = df_push(sink, strings, start_byte, DfNodeKind::Member, Some(&name));
+            if let Some(o) = obj {
+                df_edge(sink, o, id);
+            }
+            Some(id)
+        }
+        // val/var x = rhs: mint the binding slot, flow rhs -> slot, register.
+        "property_declaration" => {
+            let mut bind: Option<(String, NodeRef)> = None;
+            let mut rhs_id: Option<NodeRef> = None;
+            let mut cursor = node.walk();
+            for c in node.children(&mut cursor) {
+                match c.kind() {
+                    "variable_declaration" => {
+                        if let Some(si) = kt_first_child(c, "simple_identifier") {
+                            let v = kt_text(si, src).to_string();
+                            let id = df_push(
+                                sink,
+                                strings,
+                                si.start_byte() as u32,
+                                DfNodeKind::LetBind,
+                                Some(&v),
+                            );
+                            bind = Some((v, id));
+                        }
+                    }
+                    "=" | "binding_pattern_kind" | "val" | "var" => {}
+                    _ => {
+                        if let Some(id) = flow_kt(c, src, fn_sym, strings, scope, sink) {
+                            rhs_id = Some(id);
+                        }
+                    }
+                }
+            }
+            if let (Some((v, bid)), Some(rhs)) = (bind, rhs_id) {
+                df_edge(sink, rhs, bid);
+                scope.insert(v, bid);
+            }
+            None
+        }
+        // Wrappers / statements: flow the last value-bearing child through.
+        "value_argument" | "statements" | "function_body" | "source_file" => {
+            kt_recurse_children(node, src, fn_sym, strings, scope, sink)
+        }
+        // `{ x -> body }` / `{ it + 1 }`: lift the lambda as its OWN fn scope
+        // under v5's `lam_sym` (`{fn_sym}::closure::{row}_{col}`, tree-sitter's
+        // 0-based row/col of the literal's start; chains when nested), same
+        // shape as Go func literals. Declared lambda params bind by name; with
+        // no declared parameter list Kotlin's implicit `it` binds at slot 0.
+        // The enclosing `scope` is shared, so a captured outer variable's read
+        // still resolves (and the `it` binding leaks past the body - v5 exact).
+        // The tail value flows into a `ret` node at the lambda's END byte. The
+        // `closure` VALUE node stays in the enclosing fn and carries the exact
+        // sym as its name.
+        "lambda_literal" => {
+            let pos = node.start_position();
+            let lam_sym = format!("{fn_sym}::closure::{}_{}", pos.row, pos.column);
+            let mut seeded = false;
+            if let Some(lp) = kt_first_child(node, "lambda_parameters") {
+                let mut cursor = lp.walk();
+                for vd in lp.children(&mut cursor).filter(|n| n.kind() == "variable_declaration") {
+                    if let Some(idn) = kt_first_child(vd, "simple_identifier") {
+                        let v = kt_text(idn, src).to_string();
+                        let id = df_push(
+                            sink,
+                            strings,
+                            idn.start_byte() as u32,
+                            DfNodeKind::Param,
+                            Some(&v),
+                        );
+                        scope.insert(v, id);
+                        seeded = true;
+                    }
+                }
+            }
+            if !seeded {
+                let id = df_push(sink, strings, start_byte, DfNodeKind::Param, Some("it"));
+                scope.insert("it".into(), id);
+            }
+            let tail = kt_first_child(node, "statements")
+                .and_then(|s| flow_kt(s, src, &lam_sym, strings, scope, sink));
+            if let Some(t) = tail {
+                let ret = df_push(sink, strings, node.end_byte() as u32, DfNodeKind::Ret, None);
+                df_edge(sink, t, ret);
+            }
+            Some(df_push(sink, strings, start_byte, DfNodeKind::Closure, Some(&lam_sym)))
+        }
+        // return EXPR: the returned value flows into the fn's `ret` node.
+        "jump_expression" => {
+            let mut inner = None;
+            let mut cursor = node.walk();
+            for c in node.children(&mut cursor) {
+                if c.kind() != "return" {
+                    if let Some(id) = flow_kt(c, src, fn_sym, strings, scope, sink) {
+                        inner = Some(id);
+                    }
+                }
+            }
+            let id = df_push(sink, strings, start_byte, DfNodeKind::Ret, None);
+            if let Some(v) = inner {
+                df_edge(sink, v, id);
+            }
+            Some(id)
+        }
+        // a OP b: both operands taint the result (taint-vs-dataflow: `a + 1`
+        // propagates `a` into the result). Kotlin splits operators across
+        // additive/multiplicative/infix kinds (no named fields), so the first
+        // and last NAMED children are the two operands; a single-named-child
+        // form flows the same subtree twice, like v5.
+        "additive_expression" | "multiplicative_expression" | "infix_expression" => {
+            let mut cursor = node.walk();
+            let kids: Vec<tree_sitter::Node> = node.named_children(&mut cursor).collect();
+            let l = kids.first().and_then(|n| flow_kt(*n, src, fn_sym, strings, scope, sink));
+            let r = kids.last().and_then(|n| flow_kt(*n, src, fn_sym, strings, scope, sink));
+            let id = df_push(sink, strings, start_byte, DfNodeKind::Binop, None);
+            if let Some(lid) = l {
+                df_edge(sink, lid, id);
+            }
+            if let Some(rid) = r {
+                df_edge(sink, rid, id);
+            }
+            Some(id)
+        }
+        "string_literal" | "integer_literal" | "real_literal" | "boolean_literal"
+        | "character_literal" | "long_literal" => {
+            Some(df_push(sink, strings, start_byte, DfNodeKind::Lit, None))
+        }
+        // Everything else (when-arms, if/for/while statements, elvis, index/
+        // range expressions, ...): recurse conservatively, surfacing the last
+        // value-bearing child. NOTE: v5 kotlin's for/while/do-while arms mint
+        // no df node - the loop fact is dropped aux and the loop variable is
+        // never scope-bound - so they belong to this same fallback.
+        _ => kt_recurse_children(node, src, fn_sym, strings, scope, sink),
+    }
+}
+
+/// Walk all children of a node conservatively, surfacing the last
+/// value-bearing child's node. Port of v5 `kt_recurse_children`.
+fn kt_recurse_children(
+    node: tree_sitter::Node,
+    src: &[u8],
+    fn_sym: &str,
+    strings: &mut Strings,
+    scope: &mut Scope,
+    sink: &mut FamilyBundle<DfF>,
+) -> Option<NodeRef> {
+    let mut last = None;
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if let Some(id) = flow_kt(child, src, fn_sym, strings, scope, sink) {
+            last = Some(id);
+        }
+    }
+    last
+}
+
+/// Push one df node, returning its `NodeRef` (the dense index edges reference).
+/// The span is start-only (len 0): df node identity is `(span.start, kind)`,
+/// byte-exact with v5's reconstructed `line_starts[row] + col`. Port of v5
+/// `push_node` (minus fn_sym/file/aux).
+fn df_push(
+    sink: &mut FamilyBundle<DfF>,
+    strings: &mut Strings,
+    byte: u32,
+    kind: DfNodeKind,
+    name: Option<&str>,
+) -> NodeRef {
+    let node_ref = NodeRef(sink.nodes.len() as u32);
+    let mut node = Node::new(Span { start: byte, len: 0 }, kind);
+    if let Some(name) = name.filter(|candidate| !candidate.is_empty()) {
+        node = node.with_name(strings.intern(name));
+    }
+    sink.nodes.push(node);
+    node_ref
+}
+
+/// One Direct value edge: `dst` receives the value of `src`.
+fn df_edge(sink: &mut FamilyBundle<DfF>, src: NodeRef, dst: NodeRef) {
+    sink.edges.push(Edge::new(src, dst, DfEdgeKind::Direct));
 }
 
 // ════════════════════════════════════════════════════════════════════════════
