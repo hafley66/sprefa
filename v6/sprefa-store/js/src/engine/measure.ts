@@ -6,7 +6,7 @@
  *
  * DIVERGENCE (documented): Rust reads peak RSS via `getrusage` and enforces a hard address-
  * space cap via a counting `#[global_allocator]` (CappedAlloc). Node can do neither:
- * `process.memoryUsage().rss` is the analog peak sampler, and Node cannot `setrlimit` its
+ * `process.memoryUsage().residentSetSizeBytes` is the analog peak sampler, and Node cannot `setrlimit` its
  * own address space. So memcap here is a SOFT guard: it records the peak sampled RSS and
  * optionally throws when a sample exceeds the budget. The hard OS cap stays Rust-side; this
  * only confirms the TS process stays RAM-bounded (SQLite owns the data, the thesis).
@@ -24,8 +24,8 @@ export namespace benchgraph {
 
 /** `parents[node]` = the parent GLOBAL node ids. Nodes 0 and 1 are roots. */
 export function gen(layers: number, width: number): number[][] {
-  const n = 2 + layers * width;
-  const parents: number[][] = Array.from({ length: n }, () => []);
+  const totalNodeCount = 2 + layers * width;
+  const parents: number[][] = Array.from({ length: totalNodeCount }, () => []);
   for (let layerIndex = 0; layerIndex < layers; layerIndex++) {
     for (let widthIndex = 0; widthIndex < width; widthIndex++) {
       const id = 2 + layerIndex * width + widthIndex;
@@ -57,15 +57,15 @@ export interface MultiGraph {
 /** The proven layered DAG, tiered into THREE relations so `(tag, id)` is load-bearing. */
 export function gen_multi(layers: number, width: number): MultiGraph {
   const parents = gen(layers, width);
-  const n = parents.length;
+  const nodeCount = parents.length;
 
   const tier = (globalNodeId: number): number => (globalNodeId < 2 ? 0 : 1 + Math.floor((globalNodeId - 2) / width));
   const tag_of = (globalNodeId: number): number => tier(globalNodeId) % 3;
 
   // Assign a per-relation local id to every global node, in global order.
-  const local = new Array<number>(n).fill(0);
+  const local = new Array<number>(nodeCount).fill(0);
   const per_tag: number[] = [0, 0, 0];
-  for (let globalNodeId = 0; globalNodeId < n; globalNodeId++) {
+  for (let globalNodeId = 0; globalNodeId < nodeCount; globalNodeId++) {
     const tag = tag_of(globalNodeId);
     local[globalNodeId] = per_tag[tag]!;
     per_tag[tag]! += 1;
@@ -73,7 +73,7 @@ export function gen_multi(layers: number, width: number): MultiGraph {
 
   const rows: [number, number, number][] = [];
   const edges: [number, number, number, number][] = [];
-  for (let globalNodeId = 0; globalNodeId < n; globalNodeId++) {
+  for (let globalNodeId = 0; globalNodeId < nodeCount; globalNodeId++) {
     const weight = parents[globalNodeId]!.length === 0 ? 1 : parents[globalNodeId]!.length;
     rows.push([tag_of(globalNodeId), local[globalNodeId]!, weight]);
     for (const parentGlobalId of parents[globalNodeId]!) {
@@ -105,27 +105,27 @@ export function gen_multi_cyclic(layers: number, width: number, back_stride: num
   const graph = gen_multi(layers, width);
   if (back_stride === 0) return graph;
   const parents = gen(layers, width);
-  const n = parents.length;
-  const tier = (gid: number): number => (gid < 2 ? 0 : 1 + Math.floor((gid - 2) / width));
-  const tag_of = (gid: number): number => tier(gid) % 3;
-  const local = new Array<number>(n).fill(0);
+  const nodeCount = parents.length;
+  const tier = (globalNodeId: number): number => (globalNodeId < 2 ? 0 : 1 + Math.floor((globalNodeId - 2) / width));
+  const tag_of = (globalNodeId: number): number => tier(globalNodeId) % 3;
+  const local = new Array<number>(nodeCount).fill(0);
   const per_tag: number[] = [0, 0, 0];
-  for (let gid = 0; gid < n; gid++) {
-    const tag = tag_of(gid);
-    local[gid] = per_tag[tag]!;
+  for (let globalNodeId = 0; globalNodeId < nodeCount; globalNodeId++) {
+    const tag = tag_of(globalNodeId);
+    local[globalNodeId] = per_tag[tag]!;
     per_tag[tag]! += 1;
   }
   // add back-support edges child -> first-parent, and bump the parent's weight.
   const extra_weight = new Map<string, number>();
-  for (let gid = 2; gid < n; gid++) {
-    if (gid % back_stride !== 0) continue;
-    const firstParentGlobalId = parents[gid]![0];
+  for (let globalNodeId = 2; globalNodeId < nodeCount; globalNodeId++) {
+    if (globalNodeId % back_stride !== 0) continue;
+    const firstParentGlobalId = parents[globalNodeId]![0];
     if (firstParentGlobalId === undefined) continue;
     if (firstParentGlobalId < 2) continue; // never draw a back-edge INTO a root
     const parentTag = tag_of(firstParentGlobalId);
     const parentLocalId = local[firstParentGlobalId]!;
-    const childTag = tag_of(gid);
-    const childLocalId = local[gid]!;
+    const childTag = tag_of(globalNodeId);
+    const childLocalId = local[globalNodeId]!;
     graph.edges.push([childTag, childLocalId, parentTag, parentLocalId]);
     const key = `${parentTag}:${parentLocalId}`;
     extra_weight.set(key, (extra_weight.get(key) ?? 0) + 1);
@@ -230,16 +230,16 @@ export function cap_bytes(): number {
 
 /**
  * One RSS sample. Records the peak and, if a cap is set and the sample exceeds it, throws
- * (the soft-budget tripwire). Mirrors the role of Rust's `peak_rss_kb` sampling bracket:
+ * (the soft-budget tripwire). Mirrors the role of Rust's `peak_residentSetSizeBytes_kb` sampling bracket:
  * sample around heavy ops, report peak in KiB.
  */
 export function sample(): number {
-  const rss = process.memoryUsage().rss;
-  bump_peak(rss);
-  if (CAP !== 0 && rss > CAP) {
-    throw new Error(`memcap: RSS ${rss} exceeds soft cap ${CAP}`);
+  const residentSetSizeBytes = process.memoryUsage().rss;
+  bump_peak(residentSetSizeBytes);
+  if (CAP !== 0 && residentSetSizeBytes > CAP) {
+    throw new Error(`memcap: RSS ${residentSetSizeBytes} exceeds soft cap ${CAP}`);
   }
-  return rss;
+  return residentSetSizeBytes;
 }
 
 /** Peak RSS in KiB (the unit Rust's `peak_rss_kb` reports). */

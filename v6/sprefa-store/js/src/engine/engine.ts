@@ -736,9 +736,9 @@ export async function build_condensed(db: Db, ns: IGraphNs): Promise<Condensed> 
     const child_repr = repr_by_node.get(child_key)!;
     if (parent_key === child_key) self_loops.add(parent_repr);
     if (parent_repr !== child_repr) {
-      const k = `${parent_repr}:${child_repr}`;
-      if (!condensed_edges.has(k)) {
-        condensed_edges.add(k);
+      const edgeKey = `${parent_repr}:${child_repr}`;
+      if (!condensed_edges.has(edgeKey)) {
+        condensed_edges.add(edgeKey);
         cadj.push([parent_repr, child_repr]);
       }
     }
@@ -769,17 +769,17 @@ export async function count_pairs(db: Db, ns: IGraphNs): Promise<bigint> {
   const reprs = new Set<number>();
   for (const [repr] of cond.size) reprs.add(repr);
   const reprSorted = [...reprs].sort((itemA, itemB) => itemA - itemB);
-  const idx = new Map<number, number>();
-  reprSorted.forEach((repr, index) => idx.set(repr, index));
+  const reprToIndexMapping = new Map<number, number>();
+  reprSorted.forEach((repr, index) => reprToIndexMapping.set(repr, index));
   const ncomp = reprSorted.length;
   if (ncomp === 0) return 0n;
 
   const size = new Array<bigint>(ncomp).fill(0n);
-  for (const [repr, n] of cond.size) size[idx.get(repr)!] = BigInt(n);
+  for (const [repr, n] of cond.size) size[reprToIndexMapping.get(repr)!] = BigInt(n);
   const cyclic = new Array<boolean>(ncomp).fill(false);
-  for (const [repr, is_cyclic] of cond.cyclic) cyclic[idx.get(repr)!] = is_cyclic;
+  for (const [repr, is_cyclic] of cond.cyclic) cyclic[reprToIndexMapping.get(repr)!] = is_cyclic;
   const cadj: number[][] = Array.from({ length: ncomp }, () => []);
-  for (const [parent, child] of cond.cadj) cadj[idx.get(parent)!]!.push(idx.get(child)!);
+  for (const [parent, child] of cond.cadj) cadj[reprToIndexMapping.get(parent)!]!.push(reprToIndexMapping.get(child)!);
 
   // topo order, bitset-propagate reach; total = Σ cyclic·size² + Σ size·(reachable sizes)
   const indeg = new Array<number>(ncomp).fill(0);
@@ -825,30 +825,30 @@ export async function count_pairs(db: Db, ns: IGraphNs): Promise<bigint> {
 
 /** Count trailing zero bits of a non-zero bigint (mirrors u64::trailing_zeros). */
 function trailing_zeros(x: bigint): number {
-  let n = 0;
-  let v = x;
-  if ((v & 0xffffffffn) === 0n) {
-    n += 32;
-    v >>= 32n;
+  let bitCount = 0;
+  let workingValue = x;
+  if ((workingValue & 0xffffffffn) === 0n) {
+    bitCount += 32;
+    workingValue >>= 32n;
   }
-  if ((v & 0xffffn) === 0n) {
-    n += 16;
-    v >>= 16n;
+  if ((workingValue & 0xffffn) === 0n) {
+    bitCount += 16;
+    workingValue >>= 16n;
   }
-  if ((v & 0xffn) === 0n) {
-    n += 8;
-    v >>= 8n;
+  if ((workingValue & 0xffn) === 0n) {
+    bitCount += 8;
+    workingValue >>= 8n;
   }
-  if ((v & 0xfn) === 0n) {
-    n += 4;
-    v >>= 4n;
+  if ((workingValue & 0xfn) === 0n) {
+    bitCount += 4;
+    workingValue >>= 4n;
   }
-  if ((v & 0x3n) === 0n) {
-    n += 2;
-    v >>= 2n;
+  if ((workingValue & 0x3n) === 0n) {
+    bitCount += 2;
+    workingValue >>= 2n;
   }
-  if ((v & 0x1n) === 0n) n += 1;
-  return n;
+  if ((workingValue & 0x1n) === 0n) bitCount += 1;
+  return bitCount;
 }
 }
 
@@ -880,7 +880,7 @@ async function query_ids(db: Db, sql: string): Promise<number[]> {
 async function query_bigints(db: Db, sql: string): Promise<bigint[]> {
   stmt_counter.incr();
   const res = await db.execute(sql);
-  return res.rows.map((r) => r[0] as bigint);
+  return res.rows.map((row) => row[0] as bigint);
 }
 
 export async function create_schema(db: Db, ns: IGraphNs): Promise<void> {
@@ -959,8 +959,8 @@ export async function verify(db: Db, ns: IGraphNs, id: number, new_digest: bigin
   stmt_counter.incr();
   const res = await db.execute(`SELECT digest FROM ${ns.memo} WHERE id=${id}`);
   const old_row = res.rows[0] as { digest: bigint } | undefined;
-  const old = old_row !== undefined ? old_row.digest : 0n;
-  const moved = old !== new_digest;
+  const previousDigest = old_row !== undefined ? old_row.digest : 0n;
+  const moved = previousDigest !== new_digest;
   const set_changed = moved ? `, changed_at=${rev}` : "";
   await exec(
     db,
@@ -1055,9 +1055,9 @@ export async function propagate(
 /** XOR of every durable rx_memo digest — proves the on-disk memo is the truth. */
 export async function answer(db: Db, ns: IGraphNs): Promise<bigint> {
   const digests = await query_bigints(db, `SELECT digest FROM ${ns.memo}`);
-  let acc = 0n;
-  for (const digest of digests) acc = BigInt.asUintN(64, acc ^ BigInt.asUintN(64, digest));
-  return BigInt.asIntN(64, acc);
+  let digestAccumulator = 0n;
+  for (const digest of digests) digestAccumulator = BigInt.asUintN(64, digestAccumulator ^ BigInt.asUintN(64, digest));
+  return BigInt.asIntN(64, digestAccumulator);
 }
 }
 

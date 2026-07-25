@@ -194,7 +194,7 @@ function lowerRecursiveStratum(
   sources: Sources,
 ): Map<string, Observable<Row[]>> {
   const members = new Set(stratum.rels);
-  const stratumRules: Rule[] = stratum.rels.flatMap((r) => rulesByHead.get(r) ?? []);
+  const stratumRules: Rule[] = stratum.rels.flatMap((relName) => rulesByHead.get(relName) ?? []);
 
   // External inputs: body rels outside the stratum, deduped, first-seen order. A
   // negated ref counts too — `stratify` already refused a negated ref whose
@@ -212,14 +212,14 @@ function lowerRecursiveStratum(
     }
   }
   const externalObs = externalNames.map((relName) => {
-    const obs = lowered.get(relName) ?? sources.get(relName);
-    if (!obs) {
+    const relObservable = lowered.get(relName) ?? sources.get(relName);
+    if (!relObservable) {
       throw new Error(
         `lower: body rel '${relName}' of recursive stratum [${stratum.rels.join(", ")}] has no ` +
           `source and is not lowered (undeclared, or part of a deferred recursive stratum)`,
       );
     }
-    return obs;
+    return relObservable;
   });
   const inputs$: Observable<Row[][]> =
     externalObs.length > 0 ? combineLatest(externalObs) : of([] as Row[][]);
@@ -332,7 +332,7 @@ function bodyObsFor(
   sources: Sources,
   headRel: string,
 ): Observable<Row[][]> {
-  const obs = bodyRelNames.map((relName) => {
+  const bodyObservables = bodyRelNames.map((relName) => {
     const fromLowered = lowered.get(relName);
     if (fromLowered) return fromLowered;
     const fromSource = sources.get(relName);
@@ -342,11 +342,11 @@ function bodyObsFor(
         `(undeclared, or part of a deferred recursive stratum)`,
     );
   });
-  if (obs.length === 0) {
+  if (bodyObservables.length === 0) {
     // no body rel refs: a head with no join source is degenerate (EDB-fact territory); emit empty.
     return of([] as Row[][]);
   }
-  return combineLatest(obs);
+  return combineLatest(bodyObservables);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

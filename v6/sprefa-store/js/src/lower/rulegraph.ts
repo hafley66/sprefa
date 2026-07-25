@@ -71,9 +71,9 @@ export function buildRuleGraph(prog: Program): Graph {
       }
     }
   }
-  const adj = adjSets.map((indexSet) => [...indexSet].sort((a, b) => a - b));
+  const adjacencyLists = adjSets.map((indexSet) => [...indexSet].sort((a, b) => a - b));
   const negAdj = negAdjSets.map((indexSet) => [...indexSet].sort((a, b) => a - b));
-  return { nodes: names, adj, negAdj };
+  return { nodes: names, adj: adjacencyLists, negAdj };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

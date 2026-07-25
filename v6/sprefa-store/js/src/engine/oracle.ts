@@ -62,11 +62,11 @@ export namespace salsa {
    * 64-bit space; the final `as i64` matches Rust's i64 return.
    */
   export function node_digest(value: bigint, dep_digests: Iterable<bigint>): bigint {
-    let acc = asU64(mix(value));
+    let digestAccumulator = asU64(mix(value));
     for (const digest of dep_digests) {
-      acc = asU64(acc ^ asU64(mix(digest)));
+      digestAccumulator = asU64(digestAccumulator ^ asU64(mix(digest)));
     }
-    return asI64(acc);
+    return asI64(digestAccumulator);
   }
 
   /**
@@ -119,15 +119,15 @@ export namespace salsa {
     ticks: number,
     per: number,
   ): RStream {
-    const val: bigint[] = [];
-    for (let nodeIndex = 0; nodeIndex < n; nodeIndex++) val.push(cell_hash(nodeIndex, 0n));
-    const init = val.slice();
+    const cellValues: bigint[] = [];
+    for (let nodeIndex = 0; nodeIndex < n; nodeIndex++) cellValues.push(cell_hash(nodeIndex, 0n));
+    const init = cellValues.slice();
 
     // rng = seed ^ (n as u64).wrapping_mul(0x9E3779B97F4A7C15)  (mod 2^64)
-    let rng = asU64(BigInt(seed) ^ asU64(BigInt(n) * 0x9e3779b97f4a7c15n));
+    let randomState = asU64(BigInt(seed) ^ asU64(BigInt(n) * 0x9e3779b97f4a7c15n));
     const next = (): bigint => {
-      rng = asU64(rng * 6364136223846793005n + 1442695040888963407n);
-      return rng >> 16n;
+      randomState = asU64(randomState * 6364136223846793005n + 1442695040888963407n);
+      return randomState >> 16n;
     };
 
     const edits: [number, bigint][][] = [];
@@ -138,12 +138,12 @@ export namespace salsa {
         const same = next() % 4n === 0n;
         let newValue: bigint;
         if (same) {
-          newValue = val[cellIndex]!;
+          newValue = cellValues[cellIndex]!;
         } else {
           const saltValue = next();
           newValue = cell_hash(cellIndex, asI64(saltValue) | 1n);
         }
-        val[cellIndex] = newValue;
+        cellValues[cellIndex] = newValue;
         tickEdits.push([cellIndex, newValue]);
       }
       edits.push(tickEdits);
@@ -153,11 +153,11 @@ export namespace salsa {
     const memo: bigint[] = new Array(n);
     for (let nodeIndex = 0; nodeIndex < n; nodeIndex++) {
       const depDigests = deps[nodeIndex]!.map((depIndex) => memo[depIndex]!);
-      memo[nodeIndex] = node_digest(val[nodeIndex]!, depDigests);
+      memo[nodeIndex] = node_digest(cellValues[nodeIndex]!, depDigests);
     }
-    let acc = 0n;
-    for (const digest of memo) acc = asU64(acc ^ asU64(digest));
-    const oracle_answer = asI64(acc);
+    let digestAccumulator = 0n;
+    for (const digest of memo) digestAccumulator = asU64(digestAccumulator ^ asU64(digest));
+    const oracle_answer = asI64(digestAccumulator);
 
     return { init, edits, oracle_answer };
   }

@@ -453,7 +453,7 @@ function makeCountRows(db: SqliteDb): CountRows {
     defer(() => {
       stmt_counter.incr();
       return from(db.execute(`SELECT count(*) FROM ${table}`));
-    }).pipe(map((res) => Number(res.rows[0]?.[0] ?? 0)));
+    }).pipe(map((queryResult) => Number(queryResult.rows[0]?.[0] ?? 0)));
 }
 
 export type EvalProgramHolds = AssertTrue<typeof evalProgramSql extends EvalProgram ? true : false>;

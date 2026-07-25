@@ -257,15 +257,15 @@ export class Tasks implements Reach, Cascade, Reconcile, GraphStore {
       .executeMultiple(`INSERT OR IGNORE INTO ${this.store.ns().dep}(parent_key,child_key) VALUES ${vals}`);
   }
   async children(key: number): Promise<number[]> {
-    const res = await this.store
+    const queryResult = await this.store
       .conn()
       .execute(`SELECT child_key FROM ${this.store.ns().dep} WHERE parent_key = ${key} ORDER BY child_key`);
-    return res.rows.map((row) => Number(row[0]));
+    return queryResult.rows.map((row) => Number(row[0]));
   }
   async parents(key: number): Promise<number[]> {
-    const res = await this.store
+    const queryResult = await this.store
       .conn()
       .execute(`SELECT parent_key FROM ${this.store.ns().dep} WHERE child_key = ${key} ORDER BY parent_key`);
-    return res.rows.map((row) => Number(row[0]));
+    return queryResult.rows.map((row) => Number(row[0]));
   }
 }

@@ -169,16 +169,16 @@ export function git_sha_bytes(hex: string): Uint8Array | null {
 export function byte_to_linecol(content: Uint8Array, offset: number): [number, number] {
   const end = Math.min(offset, content.length);
   let line = 0;
-  let col = 0;
+  let columnIndex = 0;
   for (let byteIndex = 0; byteIndex < end; byteIndex++) {
     if (content[byteIndex] === 0x0a) {
       line += 1;
-      col = 0;
+      columnIndex = 0;
     } else {
-      col += 1;
+      columnIndex += 1;
     }
   }
-  return [line, col];
+  return [line, columnIndex];
 }
 }
 

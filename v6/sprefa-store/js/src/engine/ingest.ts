@@ -116,12 +116,12 @@ if (REL_NAMED_BASE + REL_NAMED_SPACE >= KEY_STRIDE || ROW_HASH_SPACE > BigInt(KE
 
 /** FNV-1a 64-bit fold of a part list, joined with a separator that cannot appear in a part. */
 function fold_to_bigint(parts: ReadonlyArray<string | number>): bigint {
-  let acc = 0xcbf29ce484222325n;
+  let hashAccumulator = 0xcbf29ce484222325n;
   const joined = parts.join("");
   for (let charIndex = 0; charIndex < joined.length; charIndex++) {
-    acc = BigInt.asUintN(64, (acc ^ BigInt(joined.charCodeAt(charIndex))) * 0x100000001b3n);
+    hashAccumulator = BigInt.asUintN(64, (hashAccumulator ^ BigInt(joined.charCodeAt(charIndex))) * 0x100000001b3n);
   }
-  return acc;
+  return hashAccumulator;
 }
 
 /** A deterministic dense row id in [0, ROW_HASH_SPACE) for kinds with no surrogate key. */
@@ -137,20 +137,20 @@ export function rel_id_for_name(name: string): number {
 /** `mix`-XOR digest of a content tuple (the shape `salsa.node_digest` already uses). Exported
  *  so tests can recompute the identical "from-scratch reference" independently. */
 export function content_digest(parts: ReadonlyArray<number | string | bigint | null>): bigint {
-  let acc = 0n;
+  let digestAccumulator = 0n;
   for (const part of parts) {
     const as_big =
       part === null ? -1n : typeof part === "bigint" ? part : typeof part === "number" ? BigInt(part) : BigInt(hash_to_row([part]));
-    acc = BigInt.asUintN(64, acc ^ BigInt.asUintN(64, mix(as_big)));
+    digestAccumulator = BigInt.asUintN(64, digestAccumulator ^ BigInt.asUintN(64, mix(as_big)));
   }
-  return BigInt.asIntN(64, acc);
+  return BigInt.asIntN(64, digestAccumulator);
 }
 
 /** Lowercase hex, matching lib.ts's private `key_of` (unexported; duplicated here — 3 lines). */
 function hex_of(bytes: Uint8Array): string {
-  let s = "";
-  for (const byte of bytes) s += byte.toString(16).padStart(2, "0");
-  return s;
+  let hexString = "";
+  for (const byte of bytes) hexString += byte.toString(16).padStart(2, "0");
+  return hexString;
 }
 
 // ---- phase 1: parse the whole stream into typed, position-indexed buffers ---------------
@@ -269,11 +269,11 @@ async function resolve_files(
     await store.files_insert_batch(chunk.map((fileData) => [fileData.hash, fileData.size, fileData.lines] as const));
     const after_map = await store.file_ids_by_hashes(hashes);
     for (const fileData of chunk) {
-      const hex = hex_of(fileData.hash);
-      const file_id = after_map.get(hex);
-      if (file_id === undefined) throw new Error(`file ${hex} vanished after insert (should be impossible)`);
+      const hashHex = hex_of(fileData.hash);
+      const file_id = after_map.get(hashHex);
+      if (file_id === undefined) throw new Error(`file ${hashHex} vanished after insert (should be impossible)`);
       local_to_file_id.set(fileData.local, file_id);
-      if (!before_map.has(hex)) {
+      if (!before_map.has(hashHex)) {
         changed.set(cascade_key(REL_FILE, file_id), [REL_FILE, file_id]);
       }
     }
@@ -399,7 +399,7 @@ async function resolve_edges(
  *  buffered by phase 1, so this is a complete view, not a first-row guess). */
 function infer_cols(rows: readonly (readonly unknown[])[]): RelCol[] {
   const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
-  const cols: RelCol[] = [];
+  const columns: RelCol[] = [];
   for (let colIndex = 0; colIndex < width; colIndex++) {
     let saw_text = false;
     let saw_null = false;
@@ -409,9 +409,9 @@ function infer_cols(rows: readonly (readonly unknown[])[]): RelCol[] {
       else if (typeof value === "string") saw_text = true;
     }
     const name = `c${colIndex}`;
-    cols.push(saw_text ? rel_tables.rel_col_text(name) : saw_null ? rel_tables.rel_col_int_null(name) : rel_tables.rel_col_int(name));
+    columns.push(saw_text ? rel_tables.rel_col_text(name) : saw_null ? rel_tables.rel_col_int_null(name) : rel_tables.rel_col_int(name));
   }
-  return cols;
+  return columns;
 }
 
 function sql_literal(v: unknown): string {
@@ -431,30 +431,30 @@ async function resolve_rels(store: IStore, rel_lines: ParsedRel[], changed: Map<
   }
 
   for (const [name, rows] of by_name) {
-    const cols = infer_cols(rows);
-    const col_names = cols.map((col) => col.name);
-    await rel_tables.create_rel_table(db, name, cols, col_names);
+    const columns = infer_cols(rows);
+    const columnNames = columns.map((column) => column.name);
+    await rel_tables.create_rel_table(db, name, columns, columnNames);
     const rel_id = rel_id_for_name(name);
 
     for (const chunk of chunks(rows, CHUNK_ROWS)) {
       if (chunk.length === 0) continue;
-      const values = chunk.map((row) => `(${col_names.map((_, i) => sql_literal(row[i])).join(",")})`).join(",");
+      const values = chunk.map((row) => `(${columnNames.map((_, i) => sql_literal(row[i])).join(",")})`).join(",");
       stmt_counter.incr();
       const existing = await db.execute(
-        `SELECT ${col_names.join(",")} FROM ${name} WHERE (${col_names.join(",")}) IN (VALUES ${values})`,
+        `SELECT ${columnNames.join(",")} FROM ${name} WHERE (${columnNames.join(",")}) IN (VALUES ${values})`,
       );
       const existing_set = new Set<string>();
       for (const row of existing.rows) {
-        existing_set.add(col_names.map((colName) => String(row[colName as unknown as number])).join("|"));
+        existing_set.add(columnNames.map((colName) => String(row[colName as unknown as number])).join("|"));
       }
 
-      const new_rows = chunk.filter((row) => !existing_set.has(col_names.map((_, i) => String(row[i])).join("|")));
+      const new_rows = chunk.filter((row) => !existing_set.has(columnNames.map((_, i) => String(row[i])).join("|")));
       if (new_rows.length > 0) {
         const insert_values = new_rows
-          .map((row) => `(${col_names.map((_, i) => sql_literal(row[i])).join(",")})`)
+          .map((row) => `(${columnNames.map((_, i) => sql_literal(row[i])).join(",")})`)
           .join(",");
         stmt_counter.incr();
-        await db.execute(`INSERT INTO ${name}(${col_names.join(",")}) VALUES ${insert_values} ON CONFLICT DO NOTHING`);
+        await db.execute(`INSERT INTO ${name}(${columnNames.join(",")}) VALUES ${insert_values} ON CONFLICT DO NOTHING`);
         for (const row of new_rows) {
           const rel_row = hash_to_row([name, ...row.map((v) => String(v))]);
           changed.set(cascade_key(rel_id, rel_row), [rel_id, rel_row]);

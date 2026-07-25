@@ -210,8 +210,8 @@ export class RelStore implements IRelStore {
   }
   /** The stale frontier as `(rel, row)` pairs. */
   async dirty(): Promise<[number, number][]> {
-    const ids = await reconcile.dirty(this._db, this._ns);
-    return ids.map((encodedKey) => [Math.trunc(encodedKey / cascade.KEY_STRIDE), encodedKey % cascade.KEY_STRIDE]);
+    const dirtyIds = await reconcile.dirty(this._db, this._ns);
+    return dirtyIds.map((encodedKey) => [Math.trunc(encodedKey / cascade.KEY_STRIDE), encodedKey % cascade.KEY_STRIDE]);
   }
   /** Record a recomputed rel's digest; returns whether it moved (early cutoff). */
   async verify(rel: number, row: number, digest: bigint, rev: number): Promise<boolean> {
@@ -278,10 +278,10 @@ export class Interner implements IInterner {
    * `string_id` order so the reconstructed id equals the stored id — asserted.
    */
   load_row(id: number, content: string): void {
-    const got = this.intern(content);
-    if (got !== id) {
+    const internedId = this.intern(content);
+    if (internedId !== id) {
       throw new Error(
-        `interner reload out of order: got id ${got} for ${JSON.stringify(content)}, expected ${id}`,
+        `interner reload out of order: got id ${internedId} for ${JSON.stringify(content)}, expected ${id}`,
       );
     }
   }
@@ -348,7 +348,7 @@ export class Store implements IStore {
   async flush_strings(): Promise<number> {
     const dirty = this.interner.take_dirty();
     if (dirty.length === 0) return 0;
-    const n = dirty.length;
+    const dirtyCount = dirty.length;
     for (let chunkStart = 0; chunkStart < dirty.length; chunkStart += CHUNK_ROWS) {
       const chunk = dirty.slice(chunkStart, chunkStart + CHUNK_ROWS);
       const vals = chunk.map(([id, content]) => `(${id},${sql_str(content)})`).join(",");
@@ -357,7 +357,7 @@ export class Store implements IStore {
         `INSERT INTO strings(string_id,content) VALUES ${vals} ON CONFLICT(string_id) DO NOTHING`,
       );
     }
-    return n;
+    return dirtyCount;
   }
 
   // ---- dimensions ---------------------------------------------------------
@@ -368,20 +368,20 @@ export class Store implements IStore {
     const found = foundRes.rows[0] as { repo_id: number } | undefined;
     if (found) return Number(found.repo_id);
     stmt_counter.incr();
-    const res = await this._db.execute({
+    const queryResult = await this._db.execute({
       sql: "INSERT INTO repos (slug, root, url) VALUES (?, ?, ?)",
       args: [slug, root, url],
     });
-    return Number(res.lastInsertRowid);
+    return Number(queryResult.lastInsertRowid);
   }
 
   async root_insert(repo_id: number, path_string_id: number): Promise<number> {
     stmt_counter.incr();
-    const res = await this._db.execute({
+    const queryResult = await this._db.execute({
       sql: "INSERT INTO roots (repo_id, path_string_id) VALUES (?, ?)",
       args: [repo_id, path_string_id],
     });
-    return Number(res.lastInsertRowid);
+    return Number(queryResult.lastInsertRowid);
   }
 
   /** A committed rev (shared across roots that have this sha). Find-or-insert by (repo_id, git_sha). */
@@ -394,11 +394,11 @@ export class Store implements IStore {
     const found = foundRes.rows[0] as { rev_id: number } | undefined;
     if (found) return Number(found.rev_id);
     stmt_counter.incr();
-    const res = await this._db.execute({
+    const queryResult = await this._db.execute({
       sql: "INSERT INTO repo_revs (repo_id, kind, git_sha, root_id, base_rev_id) VALUES (?, 0, ?, NULL, NULL)",
       args: [repo_id, Buffer.from(git_sha)],
     });
-    return Number(res.lastInsertRowid);
+    return Number(queryResult.lastInsertRowid);
   }
 
   /** The WORK rev of a root (its uncommitted working tree). One per root. */
@@ -411,11 +411,11 @@ export class Store implements IStore {
     const found = foundRes.rows[0] as { rev_id: number } | undefined;
     if (found) return Number(found.rev_id);
     stmt_counter.incr();
-    const res = await this._db.execute({
+    const queryResult = await this._db.execute({
       sql: "INSERT INTO repo_revs (repo_id, kind, git_sha, root_id, base_rev_id) VALUES (?, 1, NULL, ?, ?)",
       args: [repo_id, root_id, base_rev_id],
     });
-    return Number(res.lastInsertRowid);
+    return Number(queryResult.lastInsertRowid);
   }
 
   // ---- files (content, dedup by hash) ------------------------------------
@@ -435,37 +435,37 @@ export class Store implements IStore {
 
   async file_id_of(content_hash: Uint8Array): Promise<number | null> {
     stmt_counter.incr();
-    const res = await this._db.execute({
+    const queryResult = await this._db.execute({
       sql: "SELECT file_id FROM files WHERE content_hash = ?",
       args: [Buffer.from(content_hash)],
     });
-    const found = res.rows[0] as { file_id: number } | undefined;
+    const found = queryResult.rows[0] as { file_id: number } | undefined;
     return found ? Number(found.file_id) : null;
   }
 
   /** Batch `content_hash -> file_id` resolution: ONE query per CHUNK_ROWS hashes. */
   async file_ids_by_hashes(hashes: ReadonlyArray<Uint8Array>): Promise<Map<string, number>> {
-    const map = new Map<string, number>();
+    const hashToFileId = new Map<string, number>();
     for (let chunkStart = 0; chunkStart < hashes.length; chunkStart += CHUNK_ROWS) {
       const chunk = hashes.slice(chunkStart, chunkStart + CHUNK_ROWS);
       const placeholders = chunk.map(() => "?").join(",");
       stmt_counter.incr();
-      const res = await this._db.execute({
+      const queryResult = await this._db.execute({
         sql: `SELECT content_hash, file_id FROM files WHERE content_hash IN (${placeholders})`,
         args: chunk.map((hash) => Buffer.from(hash)),
       });
-      for (const row of res.rows) {
+      for (const row of queryResult.rows) {
         const content_hash = new Uint8Array(row.content_hash as ArrayBuffer);
-        map.set(key_of(content_hash), Number(row.file_id));
+        hashToFileId.set(key_of(content_hash), Number(row.file_id));
       }
     }
-    return map;
+    return hashToFileId;
   }
 
   /** Paths in a WORK rev whose content differs from its base HEAD. */
   async unstaged_path_ids(work_rev: number): Promise<number[]> {
     stmt_counter.incr();
-    const res = await this._db.execute(
+    const queryResult = await this._db.execute(
       `SELECT w.path_string_id AS p \
              FROM revs_files w \
              JOIN repo_revs r ON r.rev_id = w.rev_id \
@@ -474,7 +474,7 @@ export class Store implements IStore {
              WHERE w.rev_id = ${work_rev} \
                AND (h.file_id IS NULL OR h.file_id <> w.file_id)`,
     );
-    return res.rows.map((row) => Number(row[0]));
+    return queryResult.rows.map((row) => Number(row[0]));
   }
 
   // ---- junction: place content at (rev, path) ----------------------------
@@ -540,7 +540,7 @@ function sql_str(s: string): string {
 
 /** Stable Map key for a 16-byte content hash. */
 function key_of(hash: Uint8Array): string {
-  let s = "";
-  for (const byte of hash) s += byte.toString(16).padStart(2, "0");
-  return s;
+  let hashHex = "";
+  for (const byte of hash) hashHex += byte.toString(16).padStart(2, "0");
+  return hashHex;
 }
