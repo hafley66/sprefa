@@ -86,8 +86,10 @@ import type {
   IRelStore,
   IStore,
 } from "./types.ts";
+import { firstValueFrom } from "rxjs";
 import { hashHex, key as cascade_key, KEY_STRIDE } from "./lib.ts";
 import { stmt_counter } from "./engine.ts";
+import { SqlRunner } from "./sqlRunner.ts";
 import { mix } from "./oracle.ts";
 import { rels as rel_tables } from "./spine.ts";
 type RelCol = rel_tables.RelCol;
@@ -283,8 +285,7 @@ async function resolve_nodes(
   changed: Map<number, [number, number]>,
 ): Promise<{ local_to_node_id: Map<number, number> }> {
   const db = store.db();
-  stmt_counter.incr();
-  const max_res = await db.execute("SELECT COALESCE(MAX(node_id),0) FROM node");
+    const max_res = await firstValueFrom(SqlRunner.execute(db, "SELECT COALESCE(MAX(node_id),0) FROM node"));
   let next_node_id = Number(max_res.rows[0]?.[0] ?? 0) + 1;
 
   const local_to_node_id = new Map<number, number>();
@@ -301,10 +302,9 @@ async function resolve_nodes(
       const values = resolved
         .map((resolvedNode) => `(${resolvedNode.family},${resolvedNode.file_id},${resolvedNode.start},${resolvedNode.kind})`)
         .join(",");
-      stmt_counter.incr();
-      const existing = await db.execute(
+            const existing = await firstValueFrom(SqlRunner.execute(db, 
         `SELECT node_id, family, file_id, byte_start, kind FROM node WHERE (family, file_id, byte_start, kind) IN (VALUES ${values})`,
-      );
+      ));
       const existing_map = new Map<string, number>();
       for (const row of existing.rows) {
         existing_map.set(
@@ -366,10 +366,9 @@ async function resolve_edges(
     if (resolved.length === 0) continue;
 
     const values = resolved.map((edge) => `(${edge.family},${edge.src_id},${edge.dst_id},${edge.kind})`).join(",");
-    stmt_counter.incr();
-    const existing = await db.execute(
+        const existing = await firstValueFrom(SqlRunner.execute(db, 
       `SELECT family, src_id, dst_id, kind FROM edge WHERE (family, src_id, dst_id, kind) IN (VALUES ${values})`,
-    );
+    ));
     const existing_set = new Set<string>();
     for (const row of existing.rows) {
       existing_set.add(node_identity_key(Number(row.family), Number(row.src_id), Number(row.dst_id), Number(row.kind)));
@@ -433,10 +432,9 @@ async function resolve_rels(store: IStore, rel_lines: ParsedRel[], changed: Map<
     for (const chunk of chunks(rows, CHUNK_ROWS)) {
       if (chunk.length === 0) continue;
       const values = chunk.map((row) => `(${columnNames.map((_, i) => sql_literal(row[i])).join(",")})`).join(",");
-      stmt_counter.incr();
-      const existing = await db.execute(
+            const existing = await firstValueFrom(SqlRunner.execute(db, 
         `SELECT ${columnNames.join(",")} FROM ${name} WHERE (${columnNames.join(",")}) IN (VALUES ${values})`,
-      );
+      ));
       const existing_set = new Set<string>();
       for (const row of existing.rows) {
         existing_set.add(columnNames.map((colName) => String(row[colName as unknown as number])).join("|"));
@@ -447,8 +445,7 @@ async function resolve_rels(store: IStore, rel_lines: ParsedRel[], changed: Map<
         const insert_values = new_rows
           .map((row) => `(${columnNames.map((_, i) => sql_literal(row[i])).join(",")})`)
           .join(",");
-        stmt_counter.incr();
-        await db.execute(`INSERT INTO ${name}(${columnNames.join(",")}) VALUES ${insert_values} ON CONFLICT DO NOTHING`);
+                await firstValueFrom(SqlRunner.execute(db, `INSERT INTO ${name}(${columnNames.join(",")}) VALUES ${insert_values} ON CONFLICT DO NOTHING`));
         for (const row of new_rows) {
           const rel_row = hash_to_row([name, ...row.map((v) => String(v))]);
           changed.set(cascade_key(rel_id, rel_row), [rel_id, rel_row]);

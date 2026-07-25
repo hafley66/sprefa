@@ -10,8 +10,10 @@
  * pure data structures, ported verbatim.
  */
 
+import { firstValueFrom } from "rxjs";
 import { createClient } from "@libsql/client";
 import { cascade, reconcile, stmt_counter } from "./engine.ts";
+import { SqlRunner } from "./sqlRunner.ts";
 import { OPEN_PRAGMAS, create_all_tables } from "./spine.ts";
 import type {
   AssertTrue,
@@ -178,15 +180,13 @@ export class RelStore implements IRelStore {
 
   /** Count live rows (weight > 0) across all relations. */
   async alive(): Promise<number> {
-    stmt_counter.incr();
-    const res = await this._db.execute(`SELECT count(*) FROM ${this._ns.row} WHERE weight>0`);
+        const res = await firstValueFrom(SqlRunner.execute(this._db, `SELECT count(*) FROM ${this._ns.row} WHERE weight>0`));
     return Number(res.rows[0]?.[0] ?? 0);
   }
 
   /** The live-row survivor SET as sorted encoded keys (`key = rel*KEY_STRIDE + row`). */
   async alive_keys(): Promise<number[]> {
-    stmt_counter.incr();
-    const res = await this._db.execute(`SELECT key FROM ${this._ns.row} WHERE weight>0 ORDER BY key`);
+        const res = await firstValueFrom(SqlRunner.execute(this._db, `SELECT key FROM ${this._ns.row} WHERE weight>0 ORDER BY key`));
     return res.rows.map((row) => Number(row[0]));
   }
 
@@ -363,58 +363,51 @@ export class Store implements IStore {
   // ---- dimensions ---------------------------------------------------------
 
   async repo_upsert(slug: string, root: string, url: string): Promise<number> {
-    stmt_counter.incr();
-    const foundRes = await this._db.execute({ sql: "SELECT repo_id FROM repos WHERE slug = ?", args: [slug] });
+        const foundRes = await firstValueFrom(SqlRunner.execute(this._db, { sql: "SELECT repo_id FROM repos WHERE slug = ?", args: [slug] }));
     const found = foundRes.rows[0] as { repo_id: number } | undefined;
     if (found) return Number(found.repo_id);
-    stmt_counter.incr();
-    const queryResult = await this._db.execute({
+        const queryResult = await firstValueFrom(SqlRunner.execute(this._db, {
       sql: "INSERT INTO repos (slug, root, url) VALUES (?, ?, ?)",
       args: [slug, root, url],
-    });
+    }));
     return Number(queryResult.lastInsertRowid);
   }
 
   async root_insert(repo_id: number, path_string_id: number): Promise<number> {
-    stmt_counter.incr();
-    const queryResult = await this._db.execute({
+        const queryResult = await firstValueFrom(SqlRunner.execute(this._db, {
       sql: "INSERT INTO roots (repo_id, path_string_id) VALUES (?, ?)",
       args: [repo_id, path_string_id],
-    });
+    }));
     return Number(queryResult.lastInsertRowid);
   }
 
   /** A committed rev (shared across roots that have this sha). Find-or-insert by (repo_id, git_sha). */
   async rev_committed(repo_id: number, git_sha: Uint8Array): Promise<number> {
-    stmt_counter.incr();
-    const foundRes = await this._db.execute({
+        const foundRes = await firstValueFrom(SqlRunner.execute(this._db, {
       sql: "SELECT rev_id FROM repo_revs WHERE repo_id = ? AND git_sha = ?",
       args: [repo_id, Buffer.from(git_sha)],
-    });
+    }));
     const found = foundRes.rows[0] as { rev_id: number } | undefined;
     if (found) return Number(found.rev_id);
-    stmt_counter.incr();
-    const queryResult = await this._db.execute({
+        const queryResult = await firstValueFrom(SqlRunner.execute(this._db, {
       sql: "INSERT INTO repo_revs (repo_id, kind, git_sha, root_id, base_rev_id) VALUES (?, 0, ?, NULL, NULL)",
       args: [repo_id, Buffer.from(git_sha)],
-    });
+    }));
     return Number(queryResult.lastInsertRowid);
   }
 
   /** The WORK rev of a root (its uncommitted working tree). One per root. */
   async rev_work(repo_id: number, root_id: number, base_rev_id: number): Promise<number> {
-    stmt_counter.incr();
-    const foundRes = await this._db.execute({
+        const foundRes = await firstValueFrom(SqlRunner.execute(this._db, {
       sql: "SELECT rev_id FROM repo_revs WHERE root_id = ? AND kind = 1",
       args: [root_id],
-    });
+    }));
     const found = foundRes.rows[0] as { rev_id: number } | undefined;
     if (found) return Number(found.rev_id);
-    stmt_counter.incr();
-    const queryResult = await this._db.execute({
+        const queryResult = await firstValueFrom(SqlRunner.execute(this._db, {
       sql: "INSERT INTO repo_revs (repo_id, kind, git_sha, root_id, base_rev_id) VALUES (?, 1, NULL, ?, ?)",
       args: [repo_id, root_id, base_rev_id],
-    });
+    }));
     return Number(queryResult.lastInsertRowid);
   }
 
@@ -425,20 +418,18 @@ export class Store implements IStore {
       const chunk = rows.slice(chunkStart, chunkStart + CHUNK_ROWS);
       const placeholders = chunk.map(() => "(?,?,?)").join(",");
       const params = chunk.flatMap(([hash, size, lines]) => [Buffer.from(hash), size, lines]);
-      stmt_counter.incr();
-      await this._db.execute({
+            await firstValueFrom(SqlRunner.execute(this._db, {
         sql: `INSERT INTO files(content_hash,size,lines) VALUES ${placeholders} ON CONFLICT(content_hash) DO NOTHING`,
         args: params,
-      });
+      }));
     }
   }
 
   async file_id_of(content_hash: Uint8Array): Promise<number | null> {
-    stmt_counter.incr();
-    const queryResult = await this._db.execute({
+        const queryResult = await firstValueFrom(SqlRunner.execute(this._db, {
       sql: "SELECT file_id FROM files WHERE content_hash = ?",
       args: [Buffer.from(content_hash)],
-    });
+    }));
     const found = queryResult.rows[0] as { file_id: number } | undefined;
     return found ? Number(found.file_id) : null;
   }
@@ -449,11 +440,10 @@ export class Store implements IStore {
     for (let chunkStart = 0; chunkStart < hashes.length; chunkStart += CHUNK_ROWS) {
       const chunk = hashes.slice(chunkStart, chunkStart + CHUNK_ROWS);
       const placeholders = chunk.map(() => "?").join(",");
-      stmt_counter.incr();
-      const queryResult = await this._db.execute({
+            const queryResult = await firstValueFrom(SqlRunner.execute(this._db, {
         sql: `SELECT content_hash, file_id FROM files WHERE content_hash IN (${placeholders})`,
         args: chunk.map((hash) => Buffer.from(hash)),
-      });
+      }));
       for (const row of queryResult.rows) {
         const content_hash = new Uint8Array(row.content_hash as ArrayBuffer);
         hashToFileId.set(hashHex(content_hash), Number(row.file_id));
@@ -464,8 +454,7 @@ export class Store implements IStore {
 
   /** Paths in a WORK rev whose content differs from its base HEAD. */
   async unstaged_path_ids(work_rev: number): Promise<number[]> {
-    stmt_counter.incr();
-    const queryResult = await this._db.execute(
+        const queryResult = await firstValueFrom(SqlRunner.execute(this._db, 
       `SELECT w.path_string_id AS p \
              FROM revs_files w \
              JOIN repo_revs r ON r.rev_id = w.rev_id \
@@ -473,7 +462,7 @@ export class Store implements IStore {
                ON h.rev_id = r.base_rev_id AND h.path_string_id = w.path_string_id \
              WHERE w.rev_id = ${work_rev} \
                AND (h.file_id IS NULL OR h.file_id <> w.file_id)`,
-    );
+    ));
     return queryResult.rows.map((row) => Number(row[0]));
   }
 
