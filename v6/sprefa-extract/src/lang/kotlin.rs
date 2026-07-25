@@ -35,7 +35,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::family::{CallF, CstF, DfF, SigSlot, TypeEntityKind, TypeF, TypeSig};
+use crate::family::{CallF, CallKind, CallSite, CstF, DfF, SigSlot, TypeEntityKind, TypeF, TypeSig};
 use crate::rows::{FamilyBundle, Node};
 use crate::seams::{Parser, Project};
 use crate::shape::{Span, Strings};
@@ -289,14 +289,158 @@ fn is_noise_kotlin(name: &str) -> bool {
     )
 }
 
-/// Project the CallF family. Commit C ports `kt_walk_call_defs` +
+// ════════════════════════════════════════════════════════════════════════════
+// CallF: callable definitions (nodes) + call sites (aux). Commit C.
+//
+// Ports v5 `kt_walk_call_defs` (defs, incl. ctors + lambda literals) +
+// `kt_walk_call_sites`/`kt_callee` (sites). v5's `sym`/`end` line are dropped:
+// a def is span + kind + name (the name is the bare identifier for callee
+// resolution, NOT a qualified sym). The def span COVERS its body (decl start
+// -> function_body end) so the seam's span-containment can bind a site's
+// caller; the parity line reads `line_of(span.start)` = the decl start line
+// (v5's `def.line`). Kind rules (v5-exact): a fun inside a class/object body
+// is a Method (a nested LOCAL fun is Free - descending into a fn body resets
+// the owner); primary/secondary constructors are Method rows named after the
+// CLASS (so a `Widget(x)` call site name-matches here); a lambda literal
+// inside a fn body is a nameless Lambda (a property-init lambda has no
+// enclosing fn scope and is skipped). A fn with no name (an anonymous
+// `fun(x) {}` expression) still mints a def with an empty name, like v5.
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Project the CallF family: one def node per callable (Free / Method /
+/// Lambda) + one site per call expression. Port of v5 `kt_walk_call_defs` +
 /// `kt_walk_call_sites`.
 fn project_call(
-    _root: tree_sitter::Node,
-    _src: &[u8],
-    _strings: &mut Strings,
-    _sink: &mut FamilyBundle<CallF>,
+    root: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
 ) {
+    kt_walk_call_defs(root, src, strings, sink, None, false);
+    kt_walk_call_sites(root, src, strings, sink);
+}
+
+/// Walk every callable declaration, minting one def node per Free function /
+/// Method / Lambda. Port of v5 `kt_walk_call_defs`. `parent` is the enclosing
+/// class/object name (v5's `parent`); `in_fn` is v5's `!enclosing.is_empty()`:
+/// a lambda literal only mints a Lambda def when inside a fn/lambda body (a
+/// property-init lambda has no enclosing scope to join). v6 drops the sym
+/// strings themselves - only the gate survives, the def's span is its only
+/// coordinate.
+fn kt_walk_call_defs(
+    node: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+    parent: Option<&str>,
+    in_fn: bool,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "class_declaration" | "object_declaration" => {
+                let owner = kt_first_child(child, "type_identifier").map(|n| kt_text(n, src));
+                // A class body is not a fn scope: reset `in_fn` (v5 resets
+                // `enclosing` to "") so a bare property-init lambda is skipped;
+                // a member fun opens its own scope below.
+                kt_walk_call_defs(child, src, strings, sink, owner, false);
+            }
+            // @callable kotlin function / @callable kotlin method
+            "function_declaration" => {
+                let name = kt_first_child(child, "simple_identifier")
+                    .map(|n| kt_text(n, src).to_string())
+                    .unwrap_or_default();
+                let kind = match parent {
+                    Some(_) => CallKind::Method,
+                    None => CallKind::Free,
+                };
+                // The def span covers the whole callable body [decl.start,
+                // body.end) for span-containment resolution; abstract/interface
+                // funs have no body, so fall back to the decl end (v5's exact
+                // fallback). line_of(span.start) == v5's def.line.
+                let span = def_span(child);
+                sink.nodes.push(Node::new(span, kind).with_name(strings.intern(&name)));
+                // v5 threads the fn's df_sym as `enclosing` and resets the
+                // owner: a nested local fun is Free, not a method.
+                kt_walk_call_defs(child, src, strings, sink, None, true);
+            }
+            // Primary/secondary constructors: Method rows named after the
+            // class, so a `Widget(x)` call site resolves here via the bare-name
+            // convention. Only minted inside a class/object body (parent Some).
+            // @callable kotlin method
+            "primary_constructor" | "secondary_constructor" => {
+                if let Some(owner) = parent {
+                    sink.nodes.push(
+                        Node::new(node_span(child), CallKind::Method)
+                            .with_name(strings.intern(owner)),
+                    );
+                }
+                kt_walk_call_defs(child, src, strings, sink, parent, in_fn);
+            }
+            // `{ it + 1 }` inside a fn body: a nameless Lambda def (v5 keys it
+            // by the same `lambda_sym` the df lift mints; v6 keeps only the
+            // span - the df closure VALUE node carries that name instead).
+            // @callable kotlin lambda
+            "lambda_literal" if in_fn => {
+                sink.nodes.push(Node::new(node_span(child), CallKind::Lambda));
+                kt_walk_call_defs(child, src, strings, sink, parent, true);
+            }
+            _ => kt_walk_call_defs(child, src, strings, sink, parent, in_fn),
+        }
+    }
+}
+
+/// The def span covers the whole callable `[child.start, body.end)` for
+/// span-containment resolution. Port of v5's `end` computation (the
+/// function_body end, or the decl end for a bodyless fun).
+fn def_span(child: tree_sitter::Node) -> Span {
+    let start = child.start_byte();
+    let end = kt_first_child(child, "function_body").unwrap_or(child).end_byte();
+    Span { start: start as u32, len: (end - start) as u32 }
+}
+
+/// Walk every `call_expression`, minting one call site per call. Port of v5
+/// `kt_walk_call_sites`. The site span is the LEAD callee node's span
+/// (line_of(span.start) = v5's reported site line - for `recv.m()` the
+/// navigation_expression's start, NOT the suffix's).
+fn kt_walk_call_sites(
+    node: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "call_expression" {
+            if let Some((callee, lead)) = kt_callee(child, src) {
+                sink.aux.sites.push(CallSite {
+                    span: node_span(lead),
+                    callee: strings.intern(&callee),
+                    callee_path: None,
+                });
+            }
+        }
+        kt_walk_call_sites(child, src, strings, sink);
+    }
+}
+
+/// (callee name, lead node) for a `call_expression`, or None when the callee
+/// is not a plain/navigation name (e.g. an invoked lambda value). Port of v5
+/// `kt_callee`: the lead is the call's first child that is not the
+/// `call_suffix`; a bare `simple_identifier` is the callee, or the trailing
+/// `simple_identifier` of a `navigation_expression` (`recv.qux()` -> "qux").
+fn kt_callee<'a>(call: tree_sitter::Node<'a>, src: &[u8]) -> Option<(String, tree_sitter::Node<'a>)> {
+    let mut cursor = call.walk();
+    let lead = call.children(&mut cursor).find(|c| c.kind() != "call_suffix")?;
+    match lead.kind() {
+        "simple_identifier" => Some((kt_text(lead, src).to_string(), lead)),
+        "navigation_expression" => {
+            let nav = kt_first_child(lead, "navigation_suffix")?;
+            let id = kt_first_child(nav, "simple_identifier")?;
+            Some((kt_text(id, src).to_string(), lead))
+        }
+        _ => None,
+    }
 }
 
 /// Project the DfF family. Commit D ports `kotlin_dataflow_from`.
