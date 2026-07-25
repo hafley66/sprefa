@@ -695,3 +695,54 @@ from-module question is the open sub-question. If ruled IN: the increment is
 its assertion strategy is part of the ruling (NO captured oracle rows exist
 for specifiers). If ruled OUT: the DefIndex remains the whole cross-file
 story and the shape stays hollow forever.
+
+## Dogfood findings (2026-07-25 — CLI used as a ts/rs/kotlin user, break-in-spirit battery)
+
+Battery: real repo files (extension.ts 763ln, derive.rs 2751ln), routing edge
+cases, encoding/syntax stress, modern-syntax files, 2MB scaling, mask timing.
+ZERO crashes, ZERO panics, error-tolerance confirmed (broken syntax, empty
+file, BOM, CRLF all produce sane partial output). Scaling linear (16KB min.js
+33ms; 2MB 3.8s debug). `--family` masks AT EXTRACT (df-only on derive.rs
+halves time, cst=0). `.kts` precedence over `.ts` correct. `.d.ts` parity
+with v5 verified (v5 also mints no entities for `declare module`; both emit
+exactly one let_bind). FALSE ALARM recorded so nobody re-chases it: `--bench`
+prints NODE counts only — sites/edges/sigs are separate records invisible in
+the summary; `call=0` means "no call defs", NOT "no call sites". The kotlin
+"kts top-level site suppression" suspicion was this misreading; script.kts
+matches v5 exactly (listOf/map/println sites all present).
+
+### CLI-1..8 (user-visible, ordered by cost/benefit; micros can batch into ONE agent session)
+
+- CLI-1 (micro, DO FIRST — it misled the dogfooder): `--bench` reports only
+  per-family NODE counts. Print per-RECORD totals (nodes/edges/sites/sigs/
+  consts) so the summary matches what the stream carries.
+- CLI-2 (micro): non-UTF8 input → silent zero rows exit 0, but `--help`
+  promises exit 1 for non-UTF-8. Pick one: enforce exit 1 (preferred — a
+  silent empty graph is a lie) or fix the doc.
+- CLI-3 (micro): `--family const` is advertised in the coverage table but
+  parse_mask rejects it silently; unknown names (`--family tyep`) also
+  silently yield zero rows. Accept `const` (alias into the types mask) and
+  eprintln-warn on unknown names.
+- CLI-4 (micro, ride with I5a): `--schema` says callee_path is "filled by
+  resolution" — wrong; phase-1 fills it for rust (multi-segment), I5a fills
+  ts. Fix the sentence when I5a touches the same surface.
+- CLI-5 (micro): io errors print a raw `Os { code: 2, ... }` Debug dump.
+  Wrap with `extract: <path>: <kind>` context (also covers EISDIR).
+- CLI-6 (small increment): stdin input (`extract -` or piped) + an explicit
+  `--ext <lang>` override so pipe workflows can name the language. Piping
+  proof exists for stdout; the input side is missing.
+- CLI-7 (micro): case-insensitive extension routing (`FOO.TS`, `X.Rs`) —
+  real on macOS/Windows checkouts.
+- CLI-8 (BIG, human-gated design): project mode — multi-file/dir/glob input
+  over the seed's BlobSource seam, prerequisite for streaming RESOLVE rows
+  (type_edge / caller→callee) on the CLI, which 4b already declared "its own
+  increment". As a user this is the most-wanted capability: it turns the
+  tool from a fact faucet into a navigation tool. Do NOT start without a
+  design pass (wire shape, snapshot growth, parity implications).
+
+### Survival log (no action needed)
+
+modern.ts (decorators, satisfies, template-literal types, bigint, generators,
+private fields, accessor) and modern.rs (async trait fns, const generics,
+impl Trait returns, match guards, raw strings, macro_rules!) both extracted
+clean. Macros (`println!`) mint no call sites — consistent with v5's model.
