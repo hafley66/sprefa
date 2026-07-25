@@ -116,12 +116,12 @@ if (REL_NAMED_BASE + REL_NAMED_SPACE >= KEY_STRIDE || ROW_HASH_SPACE > BigInt(KE
 
 /** FNV-1a 64-bit fold of a part list, joined with a separator that cannot appear in a part. */
 function fold_to_bigint(parts: ReadonlyArray<string | number>): bigint {
-  let acc = 0xcbf29ce484222325n;
+  let hashAccumulator = 0xcbf29ce484222325n;
   const joined = parts.join("");
-  for (let i = 0; i < joined.length; i++) {
-    acc = BigInt.asUintN(64, (acc ^ BigInt(joined.charCodeAt(i))) * 0x100000001b3n);
+  for (let charIndex = 0; charIndex < joined.length; charIndex++) {
+    hashAccumulator = BigInt.asUintN(64, (hashAccumulator ^ BigInt(joined.charCodeAt(charIndex))) * 0x100000001b3n);
   }
-  return acc;
+  return hashAccumulator;
 }
 
 /** A deterministic dense row id in [0, ROW_HASH_SPACE) for kinds with no surrogate key. */
@@ -137,20 +137,20 @@ export function rel_id_for_name(name: string): number {
 /** `mix`-XOR digest of a content tuple (the shape `salsa.node_digest` already uses). Exported
  *  so tests can recompute the identical "from-scratch reference" independently. */
 export function content_digest(parts: ReadonlyArray<number | string | bigint | null>): bigint {
-  let acc = 0n;
-  for (const p of parts) {
+  let digestAccumulator = 0n;
+  for (const part of parts) {
     const as_big =
-      p === null ? -1n : typeof p === "bigint" ? p : typeof p === "number" ? BigInt(p) : BigInt(hash_to_row([p]));
-    acc = BigInt.asUintN(64, acc ^ BigInt.asUintN(64, mix(as_big)));
+      part === null ? -1n : typeof part === "bigint" ? part : typeof part === "number" ? BigInt(part) : BigInt(hash_to_row([part]));
+    digestAccumulator = BigInt.asUintN(64, digestAccumulator ^ BigInt.asUintN(64, mix(as_big)));
   }
-  return BigInt.asIntN(64, acc);
+  return BigInt.asIntN(64, digestAccumulator);
 }
 
 /** Lowercase hex, matching lib.ts's private `key_of` (unexported; duplicated here — 3 lines). */
 function hex_of(bytes: Uint8Array): string {
-  let s = "";
-  for (const b of bytes) s += b.toString(16).padStart(2, "0");
-  return s;
+  let hexString = "";
+  for (const byte of bytes) hexString += byte.toString(16).padStart(2, "0");
+  return hexString;
 }
 
 // ---- phase 1: parse the whole stream into typed, position-indexed buffers ---------------
@@ -227,7 +227,7 @@ function node_identity_key(family: number, file_id: number, start: number, kind:
 
 function chunks<T>(items: readonly T[], size: number): T[][] {
   const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  for (let chunkStart = 0; chunkStart < items.length; chunkStart += size) out.push(items.slice(chunkStart, chunkStart + size));
   return out;
 }
 
@@ -246,8 +246,8 @@ async function resolve_strs(
   const initial_count = Number(before.rows[0]?.[0] ?? 0);
 
   const local_to_string_id = new Map<number, number>();
-  for (const { id, s } of strs) {
-    const string_id = store.intern(s);
+  for (const { id, s: text } of strs) {
+    const string_id = store.intern(text);
     local_to_string_id.set(id, string_id);
     if (string_id >= initial_count) {
       changed.set(cascade_key(REL_STR, string_id), [REL_STR, string_id]);
@@ -263,17 +263,17 @@ async function resolve_files(
   changed: Map<number, [number, number]>,
 ): Promise<{ local_to_file_id: Map<number, number> }> {
   const local_to_file_id = new Map<number, number>();
-  for (const chunk of chunks(files.map((f, i) => ({ ...f, local: i })), CHUNK_ROWS)) {
-    const hashes = chunk.map((f) => f.hash);
+  for (const chunk of chunks(files.map((file, localIndex) => ({ ...file, local: localIndex })), CHUNK_ROWS)) {
+    const hashes = chunk.map((fileData) => fileData.hash);
     const before_map = await store.file_ids_by_hashes(hashes);
-    await store.files_insert_batch(chunk.map((f) => [f.hash, f.size, f.lines] as const));
+    await store.files_insert_batch(chunk.map((fileData) => [fileData.hash, fileData.size, fileData.lines] as const));
     const after_map = await store.file_ids_by_hashes(hashes);
-    for (const f of chunk) {
-      const hex = hex_of(f.hash);
-      const file_id = after_map.get(hex);
-      if (file_id === undefined) throw new Error(`file ${hex} vanished after insert (should be impossible)`);
-      local_to_file_id.set(f.local, file_id);
-      if (!before_map.has(hex)) {
+    for (const fileData of chunk) {
+      const hashHex = hex_of(fileData.hash);
+      const file_id = after_map.get(hashHex);
+      if (file_id === undefined) throw new Error(`file ${hashHex} vanished after insert (should be impossible)`);
+      local_to_file_id.set(fileData.local, file_id);
+      if (!before_map.has(hashHex)) {
         changed.set(cascade_key(REL_FILE, file_id), [REL_FILE, file_id]);
       }
     }
@@ -294,18 +294,18 @@ async function resolve_nodes(
   let next_node_id = Number(max_res.rows[0]?.[0] ?? 0) + 1;
 
   const local_to_node_id = new Map<number, number>();
-  const indexed = nodes.map((n, i) => ({ ...n, local: i }));
+  const indexed = nodes.map((node, localIndex) => ({ ...node, local: localIndex }));
   for (const chunk of chunks(indexed, CHUNK_ROWS)) {
-    const resolved = chunk.map((n) => {
-      const file_id = local_to_file_id.get(n.file_local);
-      if (file_id === undefined) throw new Error(`node references unresolved file local index ${n.file_local}`);
-      const name_id = n.name_local === null ? null : (local_to_string_id.get(n.name_local) ?? null);
-      return { ...n, file_id, name_id };
+    const resolved = chunk.map((node) => {
+      const file_id = local_to_file_id.get(node.file_local);
+      if (file_id === undefined) throw new Error(`node references unresolved file local index ${node.file_local}`);
+      const name_id = node.name_local === null ? null : (local_to_string_id.get(node.name_local) ?? null);
+      return { ...node, file_id, name_id };
     });
 
     if (resolved.length > 0) {
       const values = resolved
-        .map((n) => `(${n.family},${n.file_id},${n.start},${n.kind})`)
+        .map((resolvedNode) => `(${resolvedNode.family},${resolvedNode.file_id},${resolvedNode.start},${resolvedNode.kind})`)
         .join(",");
       stmt_counter.incr();
       const existing = await db.execute(
@@ -320,32 +320,32 @@ async function resolve_nodes(
       }
 
       const new_rows: { node_id: number; family: number; file_id: number; start: number; len: number; kind: number; name_id: number | null }[] = [];
-      for (const n of resolved) {
-        const ident = node_identity_key(n.family, n.file_id, n.start, n.kind);
+      for (const resolvedNode of resolved) {
+        const ident = node_identity_key(resolvedNode.family, resolvedNode.file_id, resolvedNode.start, resolvedNode.kind);
         const existing_id = existing_map.get(ident);
         if (existing_id !== undefined) {
-          local_to_node_id.set(n.local, existing_id);
+          local_to_node_id.set(resolvedNode.local, existing_id);
         } else {
           const node_id = next_node_id++;
-          local_to_node_id.set(n.local, node_id);
-          new_rows.push({ node_id, family: n.family, file_id: n.file_id, start: n.start, len: n.len, kind: n.kind, name_id: n.name_id });
+          local_to_node_id.set(resolvedNode.local, node_id);
+          new_rows.push({ node_id, family: resolvedNode.family, file_id: resolvedNode.file_id, start: resolvedNode.start, len: resolvedNode.len, kind: resolvedNode.kind, name_id: resolvedNode.name_id });
         }
       }
 
       if (new_rows.length > 0) {
         await store.nodes_insert_batch(
-          new_rows.map((r) => ({
-            node_id: r.node_id,
-            family: r.family,
-            file_id: r.file_id,
-            byte_start: r.start,
-            byte_len: r.len,
-            kind: r.kind,
-            name_id: r.name_id,
+          new_rows.map((newRow) => ({
+            node_id: newRow.node_id,
+            family: newRow.family,
+            file_id: newRow.file_id,
+            byte_start: newRow.start,
+            byte_len: newRow.len,
+            kind: newRow.kind,
+            name_id: newRow.name_id,
           })),
         );
-        for (const r of new_rows) {
-          changed.set(cascade_key(REL_NODE, r.node_id), [REL_NODE, r.node_id]);
+        for (const newRow of new_rows) {
+          changed.set(cascade_key(REL_NODE, newRow.node_id), [REL_NODE, newRow.node_id]);
         }
       }
     }
@@ -361,17 +361,17 @@ async function resolve_edges(
 ): Promise<void> {
   const db = store.db();
   for (const chunk of chunks(edges, CHUNK_ROWS)) {
-    const resolved = chunk.map((e) => {
-      const src_id = local_to_node_id.get(e.src_local);
-      const dst_id = local_to_node_id.get(e.dst_local);
+    const resolved = chunk.map((edge) => {
+      const src_id = local_to_node_id.get(edge.src_local);
+      const dst_id = local_to_node_id.get(edge.dst_local);
       if (src_id === undefined || dst_id === undefined) {
-        throw new Error(`edge references unresolved node local index (${e.src_local} -> ${e.dst_local})`);
+        throw new Error(`edge references unresolved node local index (${edge.src_local} -> ${edge.dst_local})`);
       }
-      return { family: e.family, src_id, dst_id, kind: e.kind };
+      return { family: edge.family, src_id, dst_id, kind: edge.kind };
     });
     if (resolved.length === 0) continue;
 
-    const values = resolved.map((e) => `(${e.family},${e.src_id},${e.dst_id},${e.kind})`).join(",");
+    const values = resolved.map((edge) => `(${edge.family},${edge.src_id},${edge.dst_id},${edge.kind})`).join(",");
     stmt_counter.incr();
     const existing = await db.execute(
       `SELECT family, src_id, dst_id, kind FROM edge WHERE (family, src_id, dst_id, kind) IN (VALUES ${values})`,
@@ -382,12 +382,12 @@ async function resolve_edges(
     }
 
     const new_rows = resolved.filter(
-      (e) => !existing_set.has(node_identity_key(e.family, e.src_id, e.dst_id, e.kind)),
+      (edge) => !existing_set.has(node_identity_key(edge.family, edge.src_id, edge.dst_id, edge.kind)),
     );
     if (new_rows.length > 0) {
-      await store.edges_insert_batch(new_rows.map((e) => ({ family: e.family, src_id: e.src_id, dst_id: e.dst_id, kind: e.kind })));
-      for (const e of new_rows) {
-        const rel_row = hash_to_row([e.family, e.src_id, e.dst_id, e.kind]);
+      await store.edges_insert_batch(new_rows.map((edge) => ({ family: edge.family, src_id: edge.src_id, dst_id: edge.dst_id, kind: edge.kind })));
+      for (const edge of new_rows) {
+        const rel_row = hash_to_row([edge.family, edge.src_id, edge.dst_id, edge.kind]);
         changed.set(cascade_key(REL_EDGE, rel_row), [REL_EDGE, rel_row]);
       }
     }
@@ -398,20 +398,20 @@ async function resolve_edges(
  *  position, across ALL of this ingest call's rows for that name (rel lines are fully
  *  buffered by phase 1, so this is a complete view, not a first-row guess). */
 function infer_cols(rows: readonly (readonly unknown[])[]): RelCol[] {
-  const width = rows.reduce((m, r) => Math.max(m, r.length), 0);
-  const cols: RelCol[] = [];
-  for (let i = 0; i < width; i++) {
+  const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
+  const columns: RelCol[] = [];
+  for (let colIndex = 0; colIndex < width; colIndex++) {
     let saw_text = false;
     let saw_null = false;
     for (const row of rows) {
-      const v = row[i];
-      if (v === null || v === undefined) saw_null = true;
-      else if (typeof v === "string") saw_text = true;
+      const value = row[colIndex];
+      if (value === null || value === undefined) saw_null = true;
+      else if (typeof value === "string") saw_text = true;
     }
-    const name = `c${i}`;
-    cols.push(saw_text ? rel_tables.rel_col_text(name) : saw_null ? rel_tables.rel_col_int_null(name) : rel_tables.rel_col_int(name));
+    const name = `c${colIndex}`;
+    columns.push(saw_text ? rel_tables.rel_col_text(name) : saw_null ? rel_tables.rel_col_int_null(name) : rel_tables.rel_col_int(name));
   }
-  return cols;
+  return columns;
 }
 
 function sql_literal(v: unknown): string {
@@ -424,37 +424,37 @@ function sql_literal(v: unknown): string {
 async function resolve_rels(store: IStore, rel_lines: ParsedRel[], changed: Map<number, [number, number]>): Promise<void> {
   const db = store.db();
   const by_name = new Map<string, readonly unknown[][]>();
-  for (const r of rel_lines) {
-    const list = by_name.get(r.name);
-    if (list) (list as unknown[][]).push(r.row as unknown[]);
-    else by_name.set(r.name, [r.row as unknown[]]);
+  for (const relLine of rel_lines) {
+    const list = by_name.get(relLine.name);
+    if (list) (list as unknown[][]).push(relLine.row as unknown[]);
+    else by_name.set(relLine.name, [relLine.row as unknown[]]);
   }
 
   for (const [name, rows] of by_name) {
-    const cols = infer_cols(rows);
-    const col_names = cols.map((c) => c.name);
-    await rel_tables.create_rel_table(db, name, cols, col_names);
+    const columns = infer_cols(rows);
+    const columnNames = columns.map((column) => column.name);
+    await rel_tables.create_rel_table(db, name, columns, columnNames);
     const rel_id = rel_id_for_name(name);
 
     for (const chunk of chunks(rows, CHUNK_ROWS)) {
       if (chunk.length === 0) continue;
-      const values = chunk.map((row) => `(${col_names.map((_, i) => sql_literal(row[i])).join(",")})`).join(",");
+      const values = chunk.map((row) => `(${columnNames.map((_, i) => sql_literal(row[i])).join(",")})`).join(",");
       stmt_counter.incr();
       const existing = await db.execute(
-        `SELECT ${col_names.join(",")} FROM ${name} WHERE (${col_names.join(",")}) IN (VALUES ${values})`,
+        `SELECT ${columnNames.join(",")} FROM ${name} WHERE (${columnNames.join(",")}) IN (VALUES ${values})`,
       );
       const existing_set = new Set<string>();
       for (const row of existing.rows) {
-        existing_set.add(col_names.map((c) => String(row[c as unknown as number])).join("|"));
+        existing_set.add(columnNames.map((colName) => String(row[colName as unknown as number])).join("|"));
       }
 
-      const new_rows = chunk.filter((row) => !existing_set.has(col_names.map((_, i) => String(row[i])).join("|")));
+      const new_rows = chunk.filter((row) => !existing_set.has(columnNames.map((_, i) => String(row[i])).join("|")));
       if (new_rows.length > 0) {
         const insert_values = new_rows
-          .map((row) => `(${col_names.map((_, i) => sql_literal(row[i])).join(",")})`)
+          .map((row) => `(${columnNames.map((_, i) => sql_literal(row[i])).join(",")})`)
           .join(",");
         stmt_counter.incr();
-        await db.execute(`INSERT INTO ${name}(${col_names.join(",")}) VALUES ${insert_values} ON CONFLICT DO NOTHING`);
+        await db.execute(`INSERT INTO ${name}(${columnNames.join(",")}) VALUES ${insert_values} ON CONFLICT DO NOTHING`);
         for (const row of new_rows) {
           const rel_row = hash_to_row([name, ...row.map((v) => String(v))]);
           changed.set(cascade_key(rel_id, rel_row), [rel_id, rel_row]);

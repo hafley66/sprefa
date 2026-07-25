@@ -39,10 +39,10 @@ function asU64(x: bigint): bigint {
  * step reduces `k + CONST` mod 2^64, which is correct for either representation.
  */
 export function mix(k: bigint): bigint {
-  let z = asU64(k + 0x9e3779b97f4a7c15n);
-  z = asU64((z ^ (z >> 30n)) * 0xbf58476d1ce4e5b9n);
-  z = asU64((z ^ (z >> 27n)) * 0x94d049bb133111ebn);
-  return asI64(z ^ (z >> 31n));
+  let hashValue = asU64(k + 0x9e3779b97f4a7c15n);
+  hashValue = asU64((hashValue ^ (hashValue >> 30n)) * 0xbf58476d1ce4e5b9n);
+  hashValue = asU64((hashValue ^ (hashValue >> 27n)) * 0x94d049bb133111ebn);
+  return asI64(hashValue ^ (hashValue >> 31n));
 }
 
 export namespace salsa {
@@ -62,11 +62,11 @@ export namespace salsa {
    * 64-bit space; the final `as i64` matches Rust's i64 return.
    */
   export function node_digest(value: bigint, dep_digests: Iterable<bigint>): bigint {
-    let acc = asU64(mix(value));
-    for (const d of dep_digests) {
-      acc = asU64(acc ^ asU64(mix(d)));
+    let digestAccumulator = asU64(mix(value));
+    for (const digest of dep_digests) {
+      digestAccumulator = asU64(digestAccumulator ^ asU64(mix(digest)));
     }
-    return asI64(acc);
+    return asI64(digestAccumulator);
   }
 
   /**
@@ -76,18 +76,18 @@ export namespace salsa {
    */
   export function reconcile_graph(n: number): number[][] {
     const deps: number[][] = Array.from({ length: n }, () => []);
-    for (let i = 0; i < n; i++) {
+    for (let nodeIndex = 0; nodeIndex < n; nodeIndex++) {
       const seen = new Set<number>();
-      for (let d = 0; d < DEG; d++) {
-        const m = asU64(mix((BigInt(i) << 8n) ^ BigInt(d)));
-        const span = Number(m % BigInt(WIN)) + 1;
-        const j = i - span;
-        if (j >= 0 && !seen.has(j)) {
-          seen.add(j);
-          deps[i]!.push(j);
+      for (let depOffset = 0; depOffset < DEG; depOffset++) {
+        const hashValue = asU64(mix((BigInt(nodeIndex) << 8n) ^ BigInt(depOffset)));
+        const span = Number(hashValue % BigInt(WIN)) + 1;
+        const depIndex = nodeIndex - span;
+        if (depIndex >= 0 && !seen.has(depIndex)) {
+          seen.add(depIndex);
+          deps[nodeIndex]!.push(depIndex);
         }
       }
-      deps[i]!.sort((a, b) => a - b);
+      deps[nodeIndex]!.sort((indexA, indexB) => indexA - indexB);
     }
     return deps;
   }
@@ -119,45 +119,45 @@ export namespace salsa {
     ticks: number,
     per: number,
   ): RStream {
-    const val: bigint[] = [];
-    for (let i = 0; i < n; i++) val.push(cell_hash(i, 0n));
-    const init = val.slice();
+    const cellValues: bigint[] = [];
+    for (let nodeIndex = 0; nodeIndex < n; nodeIndex++) cellValues.push(cell_hash(nodeIndex, 0n));
+    const init = cellValues.slice();
 
     // rng = seed ^ (n as u64).wrapping_mul(0x9E3779B97F4A7C15)  (mod 2^64)
-    let rng = asU64(BigInt(seed) ^ asU64(BigInt(n) * 0x9e3779b97f4a7c15n));
+    let randomState = asU64(BigInt(seed) ^ asU64(BigInt(n) * 0x9e3779b97f4a7c15n));
     const next = (): bigint => {
-      rng = asU64(rng * 6364136223846793005n + 1442695040888963407n);
-      return rng >> 16n;
+      randomState = asU64(randomState * 6364136223846793005n + 1442695040888963407n);
+      return randomState >> 16n;
     };
 
     const edits: [number, bigint][][] = [];
-    for (let t = 0; t < ticks; t++) {
-      const e: [number, bigint][] = [];
-      for (let p = 0; p < per; p++) {
-        const i = Number(next() % BigInt(n));
+    for (let tickIndex = 0; tickIndex < ticks; tickIndex++) {
+      const tickEdits: [number, bigint][] = [];
+      for (let editIndex = 0; editIndex < per; editIndex++) {
+        const cellIndex = Number(next() % BigInt(n));
         const same = next() % 4n === 0n;
-        let nv: bigint;
+        let newValue: bigint;
         if (same) {
-          nv = val[i]!;
+          newValue = cellValues[cellIndex]!;
         } else {
-          const sn = next();
-          nv = cell_hash(i, asI64(sn) | 1n);
+          const saltValue = next();
+          newValue = cell_hash(cellIndex, asI64(saltValue) | 1n);
         }
-        val[i] = nv;
-        e.push([i, nv]);
+        cellValues[cellIndex] = newValue;
+        tickEdits.push([cellIndex, newValue]);
       }
-      edits.push(e);
+      edits.push(tickEdits);
     }
 
     // oracle: from-scratch, ascending (topo). Independent of both engines.
     const memo: bigint[] = new Array(n);
-    for (let i = 0; i < n; i++) {
-      const depDigests = deps[i]!.map((j) => memo[j]!);
-      memo[i] = node_digest(val[i]!, depDigests);
+    for (let nodeIndex = 0; nodeIndex < n; nodeIndex++) {
+      const depDigests = deps[nodeIndex]!.map((depIndex) => memo[depIndex]!);
+      memo[nodeIndex] = node_digest(cellValues[nodeIndex]!, depDigests);
     }
-    let acc = 0n;
-    for (const d of memo) acc = asU64(acc ^ asU64(d));
-    const oracle_answer = asI64(acc);
+    let digestAccumulator = 0n;
+    for (const digest of memo) digestAccumulator = asU64(digestAccumulator ^ asU64(digest));
+    const oracle_answer = asI64(digestAccumulator);
 
     return { init, edits, oracle_answer };
   }

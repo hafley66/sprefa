@@ -123,9 +123,9 @@ function normalizeQueryValue(raw: unknown): Value {
 }
 
 function rowFromRawQueryResult(rawRow: unknown, columns: readonly string[]): Row {
-  const raw = rawRow as Record<string, unknown>;
+  const rawRecord = rawRow as Record<string, unknown>;
   const row: Record<string, Value> = {};
-  for (const column of columns) row[column] = normalizeQueryValue(raw[column]);
+  for (const column of columns) row[column] = normalizeQueryValue(rawRecord[column]);
   return row as Row;
 }
 
@@ -175,21 +175,21 @@ function writeJson(res: http.ServerResponse, status: number, body: unknown): voi
 
 async function handleProgramLoad(
   state: ServerState,
-  cfg: { readonly dbPath: string },
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
+  config: { readonly dbPath: string },
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
 ): Promise<void> {
-  const dlText = await readBody(req);
+  const dlText = await readBody(request);
   const result = bridge(dlText, builtinDecls);
   if (result.kind === "err") {
-    writeJson(res, 400, { diags: result.diags satisfies readonly LoadDiag[] });
+    writeJson(response, 400, { diags: result.diags satisfies readonly LoadDiag[] });
     return;
   }
 
   await disposeCurrentProgram(state);
 
-  const runtime = await DlRuntime.boot({ dbPath: cfg.dbPath, bridge: result, extraDdl: [DIAG_V5_VIEW_SQL] });
-  const sideDb = open_db(`file:${cfg.dbPath}`);
+  const runtime = await DlRuntime.boot({ dbPath: config.dbPath, bridge: result, extraDdl: [DIAG_V5_VIEW_SQL] });
+  const sideDb = open_db(`file:${config.dbPath}`);
   // Order matters: HostRunner keys hosts by name (last write wins on a collision).
   // Builtins are listed LAST on purpose so they win over a same-named `sh` decl in
   // the loaded program. EMPIRICALLY FOUND (2026-07-24, running this exact golden):
@@ -209,78 +209,78 @@ async function handleProgramLoad(
   state.hostRunner = hostRunner;
   state.sideDb = sideDb;
 
-  writeJson(res, 200, {
+  writeJson(response, 200, {
     loaded: true,
     rels: result.program.rels.map((decl) => decl.name),
     minted: result.minted,
   });
 }
 
-async function handleFileChanged(state: ServerState, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+async function handleFileChanged(state: ServerState, request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
   if (!state.runtime) {
-    writeJson(res, 409, { error: "no program loaded" });
+    writeJson(response, 409, { error: "no program loaded" });
     return;
   }
-  const body = JSON.parse(await readBody(req)) as { path: string };
+  const body = JSON.parse(await readBody(request)) as { path: string };
   const report: TickReport = await ingestFile(state.runtime, body.path);
-  writeJson(res, 200, report);
+  writeJson(response, 200, report);
 }
 
 async function handleEdbInsert(
   state: ServerState,
   relName: string,
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
 ): Promise<void> {
   if (!state.runtime || !state.bridgeOk) {
-    writeJson(res, 409, { error: "no program loaded" });
+    writeJson(response, 409, { error: "no program loaded" });
     return;
   }
   if (!relDeclOf(state, relName)) {
-    writeJson(res, 400, { error: `unknown rel '${relName}'` });
+    writeJson(response, 400, { error: `unknown rel '${relName}'` });
     return;
   }
-  const body = JSON.parse(await readBody(req)) as { rows?: Row[] };
+  const body = JSON.parse(await readBody(request)) as { rows?: Row[] };
   const report: TickReport = await state.runtime.commit({
     insert: new Map([[relName, normalizePathSurface(body.rows ?? [])]]),
     retract: new Map(),
   });
-  writeJson(res, 200, report);
+  writeJson(response, 200, report);
 }
 
-async function handleIdbRead(state: ServerState, relName: string, res: http.ServerResponse): Promise<void> {
+async function handleIdbRead(state: ServerState, relName: string, response: http.ServerResponse): Promise<void> {
   if (!state.runtime || !relDeclOf(state, relName)) {
-    writeJson(res, 404, { error: `unknown rel '${relName}'` });
+    writeJson(response, 404, { error: `unknown rel '${relName}'` });
     return;
   }
   const rows = await state.runtime.rows(relName);
-  writeJson(res, 200, { rows: resolvePathSurface(rows) });
+  writeJson(response, 200, { rows: resolvePathSurface(rows) });
 }
 
 function handleSubscribe(
   state: ServerState,
   relName: string,
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
   bumpActive: (delta: number) => void,
 ): void {
   if (!state.runtime || !relDeclOf(state, relName)) {
-    writeJson(res, 404, { error: `unknown rel '${relName}'` });
+    writeJson(response, 404, { error: `unknown rel '${relName}'` });
     return;
   }
 
-  res.writeHead(200, {
+  response.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-cache",
     connection: "keep-alive",
   });
-  res.flushHeaders();
+  response.flushHeaders();
 
   bumpActive(1);
   let torn = false;
   const subscription = state.runtime.deltas$.pipe(filter((event: DeltaEvent) => event.rel === relName)).subscribe({
     next: (event) => {
-      res.write(`data: ${JSON.stringify(event)}\n\n`);
+      response.write(`data: ${JSON.stringify(event)}\n\n`);
     },
     complete: () => teardown(),
   });
@@ -293,45 +293,45 @@ function handleSubscribe(
   }
 
   // Teardown law: a dropped curl (socket close) must unsubscribe -- refCount
-  // honesty. req.socket is the one reliable signal across both a graceful client
-  // disconnect and an abrupt one (curl -N killed, `res.destroy()` from the client
+  // honesty. request.socket is the one reliable signal across both a graceful client
+  // disconnect and an abrupt one (curl -N killed, `response.destroy()` from the client
   // side, etc.).
-  req.socket.once("close", teardown);
+  request.socket.once("close", teardown);
 }
 
-async function handleQuery(state: ServerState, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+async function handleQuery(state: ServerState, request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
   if (!state.runtime || !state.bridgeOk || !state.sideDb) {
-    writeJson(res, 409, { error: "no program loaded" });
+    writeJson(response, 409, { error: "no program loaded" });
     return;
   }
-  const queryText = await readBody(req);
+  const queryText = await readBody(request);
   // A lone `? rel(args).` line is a valid Program on its own (grammar: statements*).
   // The current program's rels are passed as builtinRels so the query resolves
   // without re-declaring anything.
   const result = bridge(queryText, state.bridgeOk.program.rels);
   if (result.kind === "err") {
-    writeJson(res, 400, { diags: result.diags });
+    writeJson(response, 400, { diags: result.diags });
     return;
   }
   const queryRef = result.queries[0];
   if (!queryRef) {
-    writeJson(res, 400, { error: "no query statement found (expected `? rel(args).`)" });
+    writeJson(response, 400, { error: "no query statement found (expected `? rel(args).`)" });
     return;
   }
   const decl = relDeclOf(state, queryRef.rel);
   if (!decl) {
-    writeJson(res, 400, { error: `unknown rel '${queryRef.rel}'` });
+    writeJson(response, 400, { error: `unknown rel '${queryRef.rel}'` });
     return;
   }
 
   const whereClauses: string[] = [];
-  queryRef.args.forEach((arg, index) => {
+  queryRef.args.forEach((argument, index) => {
     const column = decl.columns[index];
     if (column === undefined) return; // trailing elision: unconstrained
-    if (arg.kind === "lit") {
-      const value = column === "path" && typeof arg.value === "string"
-        ? path.relative(DL_ROOT, path.resolve(DL_ROOT, arg.value))
-        : arg.value;
+    if (argument.kind === "lit") {
+      const value = column === "path" && typeof argument.value === "string"
+        ? path.relative(DL_ROOT, path.resolve(DL_ROOT, argument.value))
+        : argument.value;
       whereClauses.push(`${column} IS ${sqlLiteralForQuery(value)}`);
     }
     // "var"/"wild": unconstrained (a one-shot query has no other body atom to bind
@@ -342,7 +342,7 @@ async function handleQuery(state: ServerState, req: http.IncomingMessage, res: h
 
   const sqlResult = await state.sideDb.execute(sql);
   const rows = sqlResult.rows.map((rawRow) => rowFromRawQueryResult(rawRow, decl.columns));
-  writeJson(res, 200, { rows: resolvePathSurface(rows) });
+  writeJson(response, 200, { rows: resolvePathSurface(rows) });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -351,66 +351,66 @@ async function handleQuery(state: ServerState, req: http.IncomingMessage, res: h
 
 async function routeRequest(
   state: ServerState,
-  cfg: { readonly dbPath: string },
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
+  config: { readonly dbPath: string },
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
   bumpActive: (delta: number) => void,
 ): Promise<void> {
-  const method = req.method ?? "GET";
-  const url = new URL(req.url ?? "/", "http://localhost");
+  const method = request.method ?? "GET";
+  const url = new URL(request.url ?? "/", "http://localhost");
   const segments = url.pathname.split("/").filter((segment) => segment.length > 0);
 
   if (method === "POST" && segments.length === 2 && segments[0] === "edb" && segments[1] === "program") {
-    return handleProgramLoad(state, cfg, req, res);
+    return handleProgramLoad(state, config, request, response);
   }
   if (method === "POST" && segments.length === 2 && segments[0] === "edb" && segments[1] === "file_changed") {
-    return handleFileChanged(state, req, res);
+    return handleFileChanged(state, request, response);
   }
   if (method === "POST" && segments.length === 2 && segments[0] === "edb") {
-    return handleEdbInsert(state, segments[1]!, req, res);
+    return handleEdbInsert(state, segments[1]!, request, response);
   }
   if (method === "GET" && segments.length === 2 && segments[0] === "idb") {
-    return handleIdbRead(state, segments[1]!, res);
+    return handleIdbRead(state, segments[1]!, response);
   }
   if (method === "GET" && segments.length === 2 && segments[0] === "subscribe") {
-    handleSubscribe(state, segments[1]!, req, res, bumpActive);
+    handleSubscribe(state, segments[1]!, request, response, bumpActive);
     return;
   }
   if (method === "POST" && segments.length === 1 && segments[0] === "query") {
-    return handleQuery(state, req, res);
+    return handleQuery(state, request, response);
   }
 
-  writeJson(res, 404, { error: "not found", routes: ROUTE_LIST });
+  writeJson(response, 404, { error: "not found", routes: ROUTE_LIST });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // startServer: the public entry point.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function startServer(cfg: { dbPath: string; port: number }): Promise<DlServer> {
+export async function startServer(config: { dbPath: string; port: number }): Promise<DlServer> {
   const state = newServerState();
   let activeSubscriptions = 0;
   const bumpActive = (delta: number): void => {
     activeSubscriptions += delta;
   };
 
-  const server = http.createServer((req, res) => {
-    routeRequest(state, cfg, req, res, bumpActive).catch((err: unknown) => {
-      if (!res.headersSent) {
-        writeJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+  const server = http.createServer((request, response) => {
+    routeRequest(state, config, request, response, bumpActive).catch((failure: unknown) => {
+      if (!response.headersSent) {
+        writeJson(response, 500, { error: failure instanceof Error ? failure.message : String(failure) });
       } else {
-        res.end();
+        response.end();
       }
     });
   });
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(cfg.port, () => resolve());
+    server.listen(config.port, () => resolve());
   });
 
   const address = server.address();
-  const actualPort = typeof address === "object" && address !== null ? address.port : cfg.port;
+  const actualPort = typeof address === "object" && address !== null ? address.port : config.port;
 
   return {
     port: actualPort,
@@ -418,7 +418,7 @@ export async function startServer(cfg: { dbPath: string; port: number }): Promis
     async close(): Promise<void> {
       await disposeCurrentProgram(state);
       await new Promise<void>((resolve, reject) => {
-        server.close((err) => (err ? reject(err) : resolve()));
+        server.close((failure) => (failure ? reject(failure) : resolve()));
       });
     },
   };

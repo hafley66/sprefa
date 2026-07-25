@@ -103,13 +103,13 @@ export function lowerProgram(prog: Program, sources: Sources): LoweredProgram {
   const strata = stratify(graph, sccs);
 
   const relDecls = new Map<string, RelDecl>();
-  for (const d of prog.rels) relDecls.set(d.name, d);
+  for (const declaration of prog.rels) relDecls.set(declaration.name, declaration);
 
   const rulesByHead = new Map<string, Rule[]>();
-  for (const r of prog.rules) {
-    const list = rulesByHead.get(r.head);
-    if (list) list.push(r);
-    else rulesByHead.set(r.head, [r]);
+  for (const rule of prog.rules) {
+    const list = rulesByHead.get(rule.head);
+    if (list) list.push(rule);
+    else rulesByHead.set(rule.head, [rule]);
   }
 
   const lowered = new Map<string, Observable<Row[]>>();
@@ -151,7 +151,7 @@ function lowerRelRules(
   sources: Sources,
   headRel: string,
 ): Observable<Row[]> {
-  const ruleObs = rules.map((r) => lowerDerivedRule(r, relDecls, lowered, sources, headRel));
+  const ruleObs = rules.map((rule) => lowerDerivedRule(rule, relDecls, lowered, sources, headRel));
   if (ruleObs.length === 1) return ruleObs[0]!;
   // UNION: re-emit the deduped, sorted concatenation whenever any rule's inputs move.
   return combineLatest(ruleObs).pipe(map((sets) => dedupSorted(sets.flat())));
@@ -175,8 +175,8 @@ function recursiveBackend(
     if (decl.kind.materialization !== "lazy") return "defer";
     const rules = rulesByHead.get(relName);
     if (!rules || rules.length === 0) return "defer"; // a cycle member needs a rule; guard anyway
-    for (const r of rules) {
-      if (r.headTerms.some((t) => t.kind === "hagg")) return "defer";
+    for (const rule of rules) {
+      if (rule.headTerms.some((term) => term.kind === "hagg")) return "defer";
     }
   }
   return "fixpoint";
@@ -194,7 +194,7 @@ function lowerRecursiveStratum(
   sources: Sources,
 ): Map<string, Observable<Row[]>> {
   const members = new Set(stratum.rels);
-  const stratumRules: Rule[] = stratum.rels.flatMap((r) => rulesByHead.get(r) ?? []);
+  const stratumRules: Rule[] = stratum.rels.flatMap((relName) => rulesByHead.get(relName) ?? []);
 
   // External inputs: body rels outside the stratum, deduped, first-seen order. A
   // negated ref counts too — `stratify` already refused a negated ref whose
@@ -212,14 +212,14 @@ function lowerRecursiveStratum(
     }
   }
   const externalObs = externalNames.map((relName) => {
-    const obs = lowered.get(relName) ?? sources.get(relName);
-    if (!obs) {
+    const relObservable = lowered.get(relName) ?? sources.get(relName);
+    if (!relObservable) {
       throw new Error(
         `lower: body rel '${relName}' of recursive stratum [${stratum.rels.join(", ")}] has no ` +
           `source and is not lowered (undeclared, or part of a deferred recursive stratum)`,
       );
     }
-    return obs;
+    return relObservable;
   });
   const inputs$: Observable<Row[][]> =
     externalObs.length > 0 ? combineLatest(externalObs) : of([] as Row[][]);
@@ -227,7 +227,7 @@ function lowerRecursiveStratum(
   const fixpoint$ = inputs$.pipe(
     map((externalSets) => {
       const externalRows = new Map<string, Row[]>();
-      externalNames.forEach((relName, i) => externalRows.set(relName, externalSets[i]!));
+      externalNames.forEach((relName, index) => externalRows.set(relName, externalSets[index]!));
       return stratumFixpoint(stratumRules, members, externalRows);
     }),
   );
@@ -252,9 +252,9 @@ function stratumFixpoint(
 ): Map<string, Row[]> {
   const current = new Map<string, Row[]>();
   const seen = new Map<string, Set<string>>();
-  for (const m of members) {
-    current.set(m, []);
-    seen.set(m, new Set());
+  for (const memberRel of members) {
+    current.set(memberRel, []);
+    seen.set(memberRel, new Set());
   }
 
   let grew = true;
@@ -262,9 +262,9 @@ function stratumFixpoint(
     grew = false;
     for (const rule of rules) {
       const relRows = new Map<string, Row[]>();
-      for (const pred of rule.body) {
-        if (pred.kind === "cmp" || relRows.has(pred.rel)) continue;
-        relRows.set(pred.rel, members.has(pred.rel) ? current.get(pred.rel)! : (externalRows.get(pred.rel) ?? []));
+      for (const predicate of rule.body) {
+        if (predicate.kind === "cmp" || relRows.has(predicate.rel)) continue;
+        relRows.set(predicate.rel, members.has(predicate.rel) ? current.get(predicate.rel)! : (externalRows.get(predicate.rel) ?? []));
       }
       const bindings = equiJoin(rule, relRows);
       const selected = applySelection(rule, bindings);
@@ -272,9 +272,9 @@ function stratumFixpoint(
       const headSeen = seen.get(rule.head)!;
       const headRows = current.get(rule.head)!;
       for (const row of produced) {
-        const k = JSON.stringify(row);
-        if (!headSeen.has(k)) {
-          headSeen.add(k);
+        const rowKey = JSON.stringify(row);
+        if (!headSeen.has(rowKey)) {
+          headSeen.add(rowKey);
           headRows.push(row);
           grew = true;
         }
@@ -283,7 +283,7 @@ function stratumFixpoint(
   }
 
   const out = new Map<string, Row[]>();
-  for (const m of members) out.set(m, dedupSorted(current.get(m)!));
+  for (const memberRel of members) out.set(memberRel, dedupSorted(current.get(memberRel)!));
   return out;
 }
 
@@ -302,11 +302,11 @@ function lowerDerivedRule(
 ): Observable<Row[]> {
   const bodyRelNames = distinctBodyRelNames(rule.body);
   const bodyObs$ = bodyObsFor(bodyRelNames, lowered, sources, headRel);
-  const hasAgg = rule.headTerms.some((t) => t.kind === "hagg");
+  const hasAgg = rule.headTerms.some((term) => term.kind === "hagg");
   return bodyObs$.pipe(
     map((rowSets) => {
       const relRows = new Map<string, Row[]>();
-      bodyRelNames.forEach((name, i) => relRows.set(name, rowSets[i]!));
+      bodyRelNames.forEach((name, index) => relRows.set(name, rowSets[index]!));
       const bindings = equiJoin(rule, relRows); // 1. join: cartesian product + shared-var equality + literal selection + anti-join
       const selected = applySelection(rule, bindings); // 2. selection: Compare predicates
       return projectAndAggregate(rule.headTerms, selected, hasAgg); // 3. project head cols (+ 4. group-aggregate)
@@ -332,7 +332,7 @@ function bodyObsFor(
   sources: Sources,
   headRel: string,
 ): Observable<Row[][]> {
-  const obs = bodyRelNames.map((relName) => {
+  const bodyObservables = bodyRelNames.map((relName) => {
     const fromLowered = lowered.get(relName);
     if (fromLowered) return fromLowered;
     const fromSource = sources.get(relName);
@@ -342,11 +342,11 @@ function bodyObsFor(
         `(undeclared, or part of a deferred recursive stratum)`,
     );
   });
-  if (obs.length === 0) {
+  if (bodyObservables.length === 0) {
     // no body rel refs: a head with no join source is degenerate (EDB-fact territory); emit empty.
     return of([] as Row[][]);
   }
-  return combineLatest(obs);
+  return combineLatest(bodyObservables);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -361,25 +361,25 @@ function bodyObsFor(
 // ─────────────────────────────────────────────────────────────────────────────
 
 function equiJoin(rule: Rule, relRows: ReadonlyMap<string, Row[]>): Binding[] {
-  let acc: Binding[] = [new Map()];
-  for (const pred of rule.body) {
-    if (pred.kind === "cmp") continue; // Compare handled in applySelection
-    const rows = relRows.get(pred.rel) ?? [];
-    if (pred.kind === "notrel") {
-      acc = acc.filter((binding) => !rows.some((row) => tryBind(pred, row, binding) !== null));
+  let accumulator: Binding[] = [new Map()];
+  for (const predicate of rule.body) {
+    if (predicate.kind === "cmp") continue; // Compare handled in applySelection
+    const rows = relRows.get(predicate.rel) ?? [];
+    if (predicate.kind === "notrel") {
+      accumulator = accumulator.filter((binding) => !rows.some((row) => tryBind(predicate, row, binding) !== null));
     } else {
       const next: Binding[] = [];
-      for (const binding of acc) {
+      for (const binding of accumulator) {
         for (const row of rows) {
-          const extended = tryBind(pred, row, binding);
+          const extended = tryBind(predicate, row, binding);
           if (extended !== null) next.push(extended);
         }
       }
-      acc = next;
+      accumulator = next;
     }
-    if (acc.length === 0) break; // nothing survived this predicate; stop early
+    if (accumulator.length === 0) break; // nothing survived this predicate; stop early
   }
-  return acc;
+  return accumulator;
 }
 
 /** Extend `prev` with row's columns per the ref's args. Null if a Lit or shared-var
@@ -396,18 +396,18 @@ function equiJoin(rule: Rule, relRows: ReadonlyMap<string, Row[]>): Binding[] {
  *  columns are never consulted — same effect as an explicit trailing `Wild`. */
 function tryBind(ref: { readonly args: readonly NegArg[] }, row: Row, prev: Binding): Binding | null {
   const next = new Map(prev);
-  for (let col = 0; col < ref.args.length; col++) {
-    const arg = ref.args[col]!;
-    if (arg.kind === "wild") continue; // matches any value, binds nothing
-    const val = row[col];
-    if (arg.kind === "lit") {
-      if (val !== arg.value) return null; // literal selection
+  for (let columnIndex = 0; columnIndex < ref.args.length; columnIndex++) {
+    const argument = ref.args[columnIndex]!;
+    if (argument.kind === "wild") continue; // matches any value, binds nothing
+    const columnValue = row[columnIndex];
+    if (argument.kind === "lit") {
+      if (columnValue !== argument.value) return null; // literal selection
     } else {
-      const bound = next.get(arg.name);
-      if (bound !== undefined) {
-        if (bound !== val) return null; // shared-var consistency (equi-join key)
+      const boundValue = next.get(argument.name);
+      if (boundValue !== undefined) {
+        if (boundValue !== columnValue) return null; // shared-var consistency (equi-join key)
       } else {
-        next.set(arg.name, val);
+        next.set(argument.name, columnValue);
       }
     }
   }
@@ -419,27 +419,27 @@ function tryBind(ref: { readonly args: readonly NegArg[] }, row: Row, prev: Bind
 // ─────────────────────────────────────────────────────────────────────────────
 
 function applySelection(rule: Rule, bindings: readonly Binding[]): Binding[] {
-  const cmps = rule.body.filter((p): p is Compare => p.kind === "cmp");
-  if (cmps.length === 0) return bindings.slice();
-  return bindings.filter((b) => cmps.every((c) => evalCmp(c, b)));
+  const comparisons = rule.body.filter((predicate): predicate is Compare => predicate.kind === "cmp");
+  if (comparisons.length === 0) return bindings.slice();
+  return bindings.filter((binding) => comparisons.every((comparison) => evalCmp(comparison, binding)));
 }
 
-function evalCmp(c: Compare, b: Binding): boolean {
-  const v = b.get(c.lhs.name);
-  const r = c.rhs.value;
-  switch (c.op) {
+function evalCmp(comparison: Compare, binding: Binding): boolean {
+  const leftValue = binding.get(comparison.lhs.name);
+  const rightValue = comparison.rhs.value;
+  switch (comparison.op) {
     case "eq":
-      return v === r;
+      return leftValue === rightValue;
     case "ne":
-      return v !== r;
+      return leftValue !== rightValue;
     case "lt":
-      return (v as number) < (r as number);
+      return (leftValue as number) < (rightValue as number);
     case "le":
-      return (v as number) <= (r as number);
+      return (leftValue as number) <= (rightValue as number);
     case "gt":
-      return (v as number) > (r as number);
+      return (leftValue as number) > (rightValue as number);
     case "ge":
-      return (v as number) >= (r as number);
+      return (leftValue as number) >= (rightValue as number);
   }
 }
 
@@ -455,58 +455,58 @@ function projectAndAggregate(
   hasAgg: boolean,
 ): Row[] {
   if (!hasAgg) {
-    const projected = bindings.map((b) =>
-      headTerms.map((t) => (t.kind === "hvar" ? b.get(t.name) : undefined)),
+    const projected = bindings.map((binding) =>
+      headTerms.map((term) => (term.kind === "hvar" ? binding.get(term.name) : undefined)),
     );
     return dedupSorted(projected);
   }
 
   // group by the non-aggregated head vars (the group key).
   const groupKeyNames = headTerms
-    .filter((t): t is Extract<HeadTerm, { kind: "hvar" }> => t.kind === "hvar")
-    .map((t) => t.name);
+    .filter((term): term is Extract<HeadTerm, { kind: "hvar" }> => term.kind === "hvar")
+    .map((term) => term.name);
 
   const groups = new Map<string, { keyMap: Map<string, unknown>; rows: Binding[] }>();
-  for (const b of bindings) {
+  for (const binding of bindings) {
     const keyMap = new Map<string, unknown>();
-    for (const n of groupKeyNames) keyMap.set(n, b.get(n));
-    const k = JSON.stringify(groupKeyNames.map((n) => keyMap.get(n)));
-    let g = groups.get(k);
-    if (!g) {
-      g = { keyMap, rows: [] };
-      groups.set(k, g);
+    for (const groupKeyName of groupKeyNames) keyMap.set(groupKeyName, binding.get(groupKeyName));
+    const groupKey = JSON.stringify(groupKeyNames.map((groupKeyName) => keyMap.get(groupKeyName)));
+    let group = groups.get(groupKey);
+    if (!group) {
+      group = { keyMap, rows: [] };
+      groups.set(groupKey, group);
     }
-    g.rows.push(b);
+    group.rows.push(binding);
   }
 
   const out: Row[] = [];
-  for (const g of groups.values()) {
-    const row: unknown[] = headTerms.map((t) => {
-      if (t.kind === "hvar") return g.keyMap.get(t.name);
-      const vals = g.rows.map((b) => b.get(t.arg.name));
-      return aggregate(t.fn, vals);
+  for (const group of groups.values()) {
+    const row: unknown[] = headTerms.map((term) => {
+      if (term.kind === "hvar") return group.keyMap.get(term.name);
+      const values = group.rows.map((binding) => binding.get(term.arg.name));
+      return aggregate(term.fn, values);
     });
     out.push(row);
   }
   return dedupSorted(out);
 }
 
-function aggregate(fn: AggFn, vals: readonly unknown[]): unknown {
+function aggregate(fn: AggFn, values: readonly unknown[]): unknown {
   switch (fn) {
     case "max":
-      return vals.reduce<unknown>(
-        (m, v) => (m === undefined || (v as number) > (m as number) ? v : m),
+      return values.reduce<unknown>(
+        (maxValue, value) => (maxValue === undefined || (value as number) > (maxValue as number) ? value : maxValue),
         undefined,
       );
     case "min":
-      return vals.reduce<unknown>(
-        (m, v) => (m === undefined || (v as number) < (m as number) ? v : m),
+      return values.reduce<unknown>(
+        (minValue, value) => (minValue === undefined || (value as number) < (minValue as number) ? value : minValue),
         undefined,
       );
     case "sum":
-      return vals.reduce<number>((s, v) => s + (v as number), 0);
+      return values.reduce<number>((sumAccumulator, value) => sumAccumulator + (value as number), 0);
     case "count":
-      return vals.length;
+      return values.length;
   }
 }
 
@@ -514,12 +514,12 @@ function aggregate(fn: AggFn, vals: readonly unknown[]): unknown {
 function dedupSorted(rows: readonly Row[]): Row[] {
   const seen = new Set<string>();
   const out: Row[] = [];
-  for (const r of rows) {
-    const k = JSON.stringify(r);
-    if (!seen.has(k)) {
-      seen.add(k);
-      out.push(r);
+  for (const row of rows) {
+    const rowKey = JSON.stringify(row);
+    if (!seen.has(rowKey)) {
+      seen.add(rowKey);
+      out.push(row);
     }
   }
-  return out.sort((a, b) => (JSON.stringify(a) < JSON.stringify(b) ? -1 : 1));
+  return out.sort((rowA, rowB) => (JSON.stringify(rowA) < JSON.stringify(rowB) ? -1 : 1));
 }

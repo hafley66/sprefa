@@ -139,8 +139,8 @@ export namespace transforms {
 /** Strip to ASCII alphanumeric, lowercase (the one correct v5 transform). */
 export function normalize(value: string): string {
   let out = "";
-  for (const c of value) {
-    if (/[A-Za-z0-9]/.test(c)) out += c.toLowerCase();
+  for (const character of value) {
+    if (/[A-Za-z0-9]/.test(character)) out += character.toLowerCase();
   }
   return out;
 }
@@ -161,7 +161,7 @@ export function content_hash(bytes: Uint8Array): Uint8Array {
 export function git_sha_bytes(hex: string): Uint8Array | null {
   if (hex.length !== 40 || !/^[0-9a-fA-F]+$/.test(hex)) return null;
   const out = new Uint8Array(20);
-  for (let i = 0; i < 20; i++) out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  for (let byteIndex = 0; byteIndex < 20; byteIndex++) out[byteIndex] = Number.parseInt(hex.slice(byteIndex * 2, byteIndex * 2 + 2), 16);
   return out;
 }
 
@@ -169,16 +169,16 @@ export function git_sha_bytes(hex: string): Uint8Array | null {
 export function byte_to_linecol(content: Uint8Array, offset: number): [number, number] {
   const end = Math.min(offset, content.length);
   let line = 0;
-  let col = 0;
-  for (let i = 0; i < end; i++) {
-    if (content[i] === 0x0a) {
+  let columnIndex = 0;
+  for (let byteIndex = 0; byteIndex < end; byteIndex++) {
+    if (content[byteIndex] === 0x0a) {
       line += 1;
-      col = 0;
+      columnIndex = 0;
     } else {
-      col += 1;
+      columnIndex += 1;
     }
   }
-  return [line, col];
+  return [line, columnIndex];
 }
 }
 
@@ -227,10 +227,10 @@ export async function create_rel_table(
   pk: ReadonlyArray<string>,
   surrogate?: string,
 ): Promise<void> {
-  const col_defs = cols.map((c) => {
-    const ty = c.kind === "text" ? "TEXT" : "INTEGER";
-    const nn = c.kind === "int_null" ? "" : " NOT NULL";
-    return `${c.name} ${ty}${nn}`;
+  const col_defs = cols.map((column) => {
+    const sqlType = column.kind === "text" ? "TEXT" : "INTEGER";
+    const nullConstraint = column.kind === "int_null" ? "" : " NOT NULL";
+    return `${column.name} ${sqlType}${nullConstraint}`;
   });
   if (surrogate !== undefined) {
     let sql = `CREATE TABLE IF NOT EXISTS ${name} (${surrogate} INTEGER PRIMARY KEY, ${col_defs.join(", ")}`;

@@ -43,7 +43,7 @@ export function evalProgramSql(
   traceStatement?: (sql: string) => void,
 ): Observable<SupportReport> {
   return defer(() => {
-    const exec = makeExec(db, traceStatement);
+    const sqlExecutor = makeExec(db, traceStatement);
     const countRows = makeCountRows(db);
     const graph = buildRuleGraph(prog);
     const strata = stratify(graph, scc(graph));
@@ -60,36 +60,36 @@ export function evalProgramSql(
       .filter((decl) => decl.origin !== "EDB" && rulesByHead.has(decl.name))
       .map((decl) => `DELETE FROM ${tableOf(tables, decl.name).table}`);
 
-    return forEachInOrder(clearStatements, exec).pipe(
+    return forEachInOrder(clearStatements, sqlExecutor).pipe(
       concatMap(() =>
         forEachInOrder(strata, (stratum) =>
           stratum.recursive
-            ? evalRecursiveStratum(exec, countRows, stratum.rels, new Set(stratum.rels), rulesByHead, tables)
+            ? evalRecursiveStratum(sqlExecutor, countRows, stratum.rels, new Set(stratum.rels), rulesByHead, tables)
             : forEachInOrder(stratum.rels, (relName) =>
-                evalAcyclicRel(exec, relName, rulesByHead.get(relName) ?? [], tables),
+                evalAcyclicRel(sqlExecutor, relName, rulesByHead.get(relName) ?? [], tables),
               ),
         ),
       ),
       concatMap(() =>
-        support === undefined ? of({ rulesWithoutSupport: [] }) : emitSupportEdges(exec, prog, tables, support),
+        support === undefined ? of({ rulesWithoutSupport: [] }) : emitSupportEdges(sqlExecutor, prog, tables, support),
       ),
     );
   });
 }
 
-function evalAcyclicRel(exec: Exec, relName: string, rules: readonly Rule[], tables: RelTables): Observable<void> {
+function evalAcyclicRel(sqlExecutor: Exec, relName: string, rules: readonly Rule[], tables: RelTables): Observable<void> {
   const head = tableOf(tables, relName);
   const statements = rules
     .map((rule) => compileRuleSelect(rule, tables, new Map()))
     .filter((select): select is string => select !== null)
     .map((select) => `INSERT OR IGNORE INTO ${head.table}(${head.columns.join(", ")}) ${select}`);
-  return forEachInOrder(statements, exec);
+  return forEachInOrder(statements, sqlExecutor);
 }
 
 /** Semi-naive fixpoint. `expand` IS the loop: each round emits whether anything grew,
  *  and feeds another round back in until nothing does. */
 function evalRecursiveStratum(
-  exec: Exec,
+  sqlExecutor: Exec,
   countRows: CountRows,
   memberRels: readonly string[],
   members: ReadonlySet<string>,
@@ -102,8 +102,8 @@ function evalRecursiveStratum(
       return throwError(() => new AggregateInRecursionError(memberRels));
     }
 
-    const deltaOf = new Map(memberRels.map((relName) => [relName, `_dl_delta_${relName}`] as const));
-    const nextOf = new Map(memberRels.map((relName) => [relName, `_dl_next_${relName}`] as const));
+    const deltaTableOf = new Map(memberRels.map((relName) => [relName, `_dl_delta_${relName}`] as const));
+    const nextTableOf = new Map(memberRels.map((relName) => [relName, `_dl_next_${relName}`] as const));
 
     const recursivePositions = (rule: Rule): number[] =>
       rule.body.flatMap((pred, bodyIndex) => (pred.kind === "rel" && members.has(pred.rel) ? [bodyIndex] : []));
@@ -111,40 +111,40 @@ function evalRecursiveStratum(
     // Seed: every rule over the full tables. Recursive members are still empty, so only
     // the exit rules produce rows, and those become the first delta.
     const seed = forEachInOrder(memberRels, (relName) =>
-      createLike(exec, deltaOf.get(relName)!, tableOf(tables, relName)),
+      createLike(sqlExecutor, deltaTableOf.get(relName)!, tableOf(tables, relName)),
     ).pipe(
       concatMap(() =>
         forEachInOrder(stratumRules, (rule) =>
-          insertNewRows(exec, rule, tables, new Map(), deltaOf.get(rule.head)!),
+          insertNewRows(sqlExecutor, rule, tables, new Map(), deltaTableOf.get(rule.head)!),
         ),
       ),
       concatMap(() =>
         forEachInOrder(memberRels, (relName) =>
-          mergeDeltaIntoFull(exec, countRows, relName, tables, deltaOf.get(relName)!),
+          mergeDeltaIntoFull(sqlExecutor, countRows, relName, tables, deltaTableOf.get(relName)!),
         ),
       ),
     );
 
     const round = (): Observable<boolean> =>
-      forEachInOrder(memberRels, (relName) => createLike(exec, nextOf.get(relName)!, tableOf(tables, relName))).pipe(
+      forEachInOrder(memberRels, (relName) => createLike(sqlExecutor, nextTableOf.get(relName)!, tableOf(tables, relName))).pipe(
         concatMap(() =>
           forEachInOrder(stratumRules, (rule) =>
             forEachInOrder(recursivePositions(rule), (bodyIndex) => {
               const pred = rule.body[bodyIndex];
               if (pred?.kind !== "rel") return EMPTY;
-              const override = new Map<number, string>([[bodyIndex, deltaOf.get(pred.rel)!]]);
-              return insertNewRows(exec, rule, tables, override, nextOf.get(rule.head)!);
+              const override = new Map<number, string>([[bodyIndex, deltaTableOf.get(pred.rel)!]]);
+              return insertNewRows(sqlExecutor, rule, tables, override, nextTableOf.get(rule.head)!);
             }),
           ),
         ),
         concatMap(() =>
           from(memberRels).pipe(
             concatMap((relName) =>
-              mergeDeltaIntoFull(exec, countRows, relName, tables, nextOf.get(relName)!).pipe(
+              mergeDeltaIntoFull(sqlExecutor, countRows, relName, tables, nextTableOf.get(relName)!).pipe(
                 concatMap((rowsAdded) =>
                   inOrder([
-                    exec(`DROP TABLE IF EXISTS ${deltaOf.get(relName)!}`),
-                    exec(`ALTER TABLE ${nextOf.get(relName)!} RENAME TO ${deltaOf.get(relName)!}`),
+                    sqlExecutor(`DROP TABLE IF EXISTS ${deltaTableOf.get(relName)!}`),
+                    sqlExecutor(`ALTER TABLE ${nextTableOf.get(relName)!} RENAME TO ${deltaTableOf.get(relName)!}`),
                   ]).pipe(map(() => rowsAdded > 0)),
                 ),
               ),
@@ -158,14 +158,14 @@ function evalRecursiveStratum(
       concatMap(() => round()),
       expand((grew) => (grew ? round() : EMPTY)),
       last(),
-      concatMap(() => forEachInOrder(memberRels, (relName) => exec(`DROP TABLE IF EXISTS ${deltaOf.get(relName)!}`))),
+      concatMap(() => forEachInOrder(memberRels, (relName) => sqlExecutor(`DROP TABLE IF EXISTS ${deltaTableOf.get(relName)!}`))),
     );
   });
 }
 
 /** Rows `rule` produces that are not already in the head's full table go into `intoDelta`. */
 function insertNewRows(
-  exec: Exec,
+  sqlExecutor: Exec,
   rule: Rule,
   tables: RelTables,
   bodyPositionOverrides: ReadonlyMap<number, string>,
@@ -174,14 +174,14 @@ function insertNewRows(
   const head = tableOf(tables, rule.head);
   const select = compileRuleSelect(rule, tables, bodyPositionOverrides);
   if (select === null) return of(undefined);
-  return exec(
+  return sqlExecutor(
     `INSERT OR IGNORE INTO ${intoDelta}(${head.columns.join(", ")}) ${select} ` +
       `EXCEPT SELECT ${head.columns.join(", ")} FROM ${head.table}`,
   );
 }
 
 function mergeDeltaIntoFull(
-  exec: Exec,
+  sqlExecutor: Exec,
   countRows: CountRows,
   relName: string,
   tables: RelTables,
@@ -191,7 +191,7 @@ function mergeDeltaIntoFull(
   const columns = full.columns.join(", ");
   return countRows(full.table).pipe(
     concatMap((before) =>
-      exec(`INSERT OR IGNORE INTO ${full.table}(${columns}) SELECT ${columns} FROM ${delta}`).pipe(
+      sqlExecutor(`INSERT OR IGNORE INTO ${full.table}(${columns}) SELECT ${columns} FROM ${delta}`).pipe(
         concatMap(() => countRows(full.table)),
         map((after) => after - before),
       ),
@@ -199,18 +199,18 @@ function mergeDeltaIntoFull(
   );
 }
 
-function createLike(exec: Exec, name: string, like: RelTable): Observable<void> {
+function createLike(sqlExecutor: Exec, name: string, like: RelTable): Observable<void> {
   const columns = like.columns.join(", ");
   return inOrder([
-    exec(`DROP TABLE IF EXISTS ${name}`),
-    exec(`CREATE TEMP TABLE ${name}(${columns}, PRIMARY KEY (${columns})) WITHOUT ROWID`),
+    sqlExecutor(`DROP TABLE IF EXISTS ${name}`),
+    sqlExecutor(`CREATE TEMP TABLE ${name}(${columns}, PRIMARY KEY (${columns})) WITHOUT ROWID`),
   ]);
 }
 
 /** Support edges, one pass over the settled model. Per rule per positive body position:
  *  the (parent_key, child_key) pairs, joining back to the head table for its surrogate. */
 function emitSupportEdges(
-  exec: Exec,
+  sqlExecutor: Exec,
   prog: Program,
   tables: RelTables,
   support: SupportEdges,
@@ -229,7 +229,7 @@ function emitSupportEdges(
         rulesWithoutSupport.push({ head: rule.head, reason: "aggregate head: support is not monotone in the body" });
         continue;
       }
-      if (rule.body.some((pred) => pred.kind === "notrel")) {
+      if (rule.body.some((predicate) => predicate.kind === "notrel")) {
         rulesWithoutSupport.push({
           head: rule.head,
           reason: "negated body predicate: a body row destroys rather than adds a derivation",
@@ -248,13 +248,13 @@ function emitSupportEdges(
       let headBindingUnresolved = false;
       rule.headTerms.forEach((term, index) => {
         if (term.kind !== "hvar") return;
-        const ref = compiled.bound.get(term.name);
+        const boundColumnRef = compiled.bound.get(term.name);
         const column = headTable.columns[index];
-        if (ref === undefined || column === undefined) {
+        if (boundColumnRef === undefined || column === undefined) {
           headBindingUnresolved = true;
           return;
         }
-        headMatch.push(`${headAlias}.${column} = ${ref}`);
+        headMatch.push(`${headAlias}.${column} = ${boundColumnRef}`);
       });
       if (headBindingUnresolved) {
         rulesWithoutSupport.push({ head: rule.head, reason: "head term is not bound by a positive body rel" });
@@ -273,7 +273,7 @@ function emitSupportEdges(
       }
     }
 
-    return forEachInOrder(statements, exec).pipe(map(() => ({ rulesWithoutSupport })));
+    return forEachInOrder(statements, sqlExecutor).pipe(map(() => ({ rulesWithoutSupport })));
   });
 }
 
@@ -306,52 +306,52 @@ function compileRuleJoin(
   let positiveIndex = 0;
   let negIndex = 0;
 
-  rule.body.forEach((pred, bodyIndex) => {
-    if (pred.kind !== "rel") return;
-    const relTable = tableOf(tables, pred.rel);
+  rule.body.forEach((predicate, bodyIndex) => {
+    if (predicate.kind !== "rel") return;
+    const relTable = tableOf(tables, predicate.rel);
     const alias = `b${positiveIndex++}`;
     const sourceTable = bodyPositionOverrides.get(bodyIndex) ?? relTable.table;
     fromParts.push(`${sourceTable} ${alias}`);
-    positiveSources.push({ alias, rel: pred.rel });
-    for (let col = 0; col < pred.args.length; col++) {
-      const arg = pred.args[col]!;
-      if (arg.kind === "wild") continue;
-      const colRef = `${alias}.${relTable.columns[col]}`;
-      if (arg.kind === "lit") {
-        where.push(`${colRef} = ${sqlLit(arg.value)}`);
+    positiveSources.push({ alias, rel: predicate.rel });
+    for (let columnIndex = 0; columnIndex < predicate.args.length; columnIndex++) {
+      const argument = predicate.args[columnIndex]!;
+      if (argument.kind === "wild") continue;
+      const columnRef = `${alias}.${relTable.columns[columnIndex]}`;
+      if (argument.kind === "lit") {
+        where.push(`${columnRef} = ${sqlLit(argument.value)}`);
       } else {
-        const existing = bound.get(arg.name);
-        if (existing !== undefined) where.push(`${colRef} = ${existing}`);
-        else bound.set(arg.name, colRef);
+        const boundValue = bound.get(argument.name);
+        if (boundValue !== undefined) where.push(`${columnRef} = ${boundValue}`);
+        else bound.set(argument.name, columnRef);
       }
     }
   });
 
   if (fromParts.length === 0) return null;
 
-  for (const pred of rule.body) {
-    if (pred.kind === "cmp") {
-      const lhs = bound.get(pred.lhs.name);
+  for (const predicate of rule.body) {
+    if (predicate.kind === "cmp") {
+      const lhs = bound.get(predicate.lhs.name);
       if (lhs === undefined) continue; // range-restriction should bind it; skip defensively
-      where.push(`${lhs} ${sqlCmpOp(pred.op)} ${sqlLit(pred.rhs.value)}`);
-    } else if (pred.kind === "notrel") {
-      const negTable = tableOf(tables, pred.rel);
-      const alias = `n${negIndex++}`;
-      const sub: string[] = [];
-      for (let col = 0; col < pred.args.length; col++) {
-        const arg = pred.args[col]!;
-        if (arg.kind === "wild") continue;
-        const colRef = `${alias}.${negTable.columns[col]}`;
-        if (arg.kind === "lit") {
-          sub.push(`${colRef} = ${sqlLit(arg.value)}`);
+      where.push(`${lhs} ${sqlCmpOp(predicate.op)} ${sqlLit(predicate.rhs.value)}`);
+    } else if (predicate.kind === "notrel") {
+      const negTable = tableOf(tables, predicate.rel);
+      const negatedTableAlias = `n${negIndex++}`;
+      const conditions: string[] = [];
+      for (let columnIndex = 0; columnIndex < predicate.args.length; columnIndex++) {
+        const argument = predicate.args[columnIndex]!;
+        if (argument.kind === "wild") continue;
+        const columnRef = `${negatedTableAlias}.${negTable.columns[columnIndex]}`;
+        if (argument.kind === "lit") {
+          conditions.push(`${columnRef} = ${sqlLit(argument.value)}`);
         } else {
-          const existing = bound.get(arg.name);
+          const boundValue = bound.get(argument.name);
           // A bound var equi-joins into the anti-check; an unbound var is existential
           // over the negated rel's rows (negation-as-failure), so it adds no condition.
-          if (existing !== undefined) sub.push(`${colRef} = ${existing}`);
+          if (boundValue !== undefined) conditions.push(`${columnRef} = ${boundValue}`);
         }
       }
-      where.push(`NOT EXISTS (SELECT 1 FROM ${negTable.table} ${alias}${sub.length > 0 ? ` WHERE ${sub.join(" AND ")}` : ""})`);
+      where.push(`NOT EXISTS (SELECT 1 FROM ${negTable.table} ${negatedTableAlias}${conditions.length > 0 ? ` WHERE ${conditions.join(" AND ")}` : ""})`);
     }
   }
 
@@ -363,24 +363,24 @@ function compileRuleSelect(rule: Rule, tables: RelTables, bodyPositionOverrides:
   if (compiled === null) return null;
   const { bound, fromParts, where } = compiled;
 
-  const hasAgg = rule.headTerms.some((t) => t.kind === "hagg");
+  const hasAgg = rule.headTerms.some((term) => term.kind === "hagg");
   const selectList = rule.headTerms.map((term) => {
     if (term.kind === "hvar") {
-      const ref = bound.get(term.name);
-      if (ref === undefined) throw new Error(`lowerSql: head var '${term.name}' of rel '${rule.head}' is unbound`);
-      return ref;
+      const boundColumnRef = bound.get(term.name);
+      if (boundColumnRef === undefined) throw new Error(`lowerSql: head var '${term.name}' of rel '${rule.head}' is unbound`);
+      return boundColumnRef;
     }
-    const ref = bound.get(term.arg.name);
-    if (ref === undefined) throw new Error(`lowerSql: aggregate arg '${term.arg.name}' of rel '${rule.head}' is unbound`);
-    return `${sqlAgg(term.fn)}(${ref})`;
+    const boundColumnRef = bound.get(term.arg.name);
+    if (boundColumnRef === undefined) throw new Error(`lowerSql: aggregate arg '${term.arg.name}' of rel '${rule.head}' is unbound`);
+    return `${sqlAgg(term.fn)}(${boundColumnRef})`;
   });
 
   let sql = `SELECT ${selectList.join(", ")} FROM ${fromParts.join(", ")}`;
   if (where.length > 0) sql += ` WHERE ${where.join(" AND ")}`;
   if (hasAgg) {
     const groupRefs = rule.headTerms
-      .filter((t): t is Extract<typeof t, { kind: "hvar" }> => t.kind === "hvar")
-      .map((t) => bound.get(t.name)!);
+      .filter((term): term is Extract<typeof term, { kind: "hvar" }> => term.kind === "hvar")
+      .map((term) => bound.get(term.name)!);
     if (groupRefs.length > 0) sql += ` GROUP BY ${groupRefs.join(", ")}`;
     // Ungrouped aggregate over an EMPTY body: bare `SELECT count(x) FROM t` still
     // returns one row (0), while the in-memory evaluator groups bindings and so emits
@@ -453,7 +453,7 @@ function makeCountRows(db: SqliteDb): CountRows {
     defer(() => {
       stmt_counter.incr();
       return from(db.execute(`SELECT count(*) FROM ${table}`));
-    }).pipe(map((res) => Number(res.rows[0]?.[0] ?? 0)));
+    }).pipe(map((queryResult) => Number(queryResult.rows[0]?.[0] ?? 0)));
 }
 
 export type EvalProgramHolds = AssertTrue<typeof evalProgramSql extends EvalProgram ? true : false>;

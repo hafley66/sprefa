@@ -194,9 +194,9 @@ function fillTemplateSplice(template: string, row: Row, columns: readonly string
 }
 
 function envForRow(row: Row, columns: readonly string[]): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const column of columns) env[column] = valueToShellText(row[column] ?? null);
-  return env;
+  const variables: Record<string, string> = {};
+  for (const column of columns) variables[column] = valueToShellText(row[column] ?? null);
+  return variables;
 }
 
 function runShellLine(commandLine: string, envOverrides: Record<string, string>): Promise<string> {

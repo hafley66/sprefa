@@ -6,7 +6,7 @@
  *
  * DIVERGENCE (documented): Rust reads peak RSS via `getrusage` and enforces a hard address-
  * space cap via a counting `#[global_allocator]` (CappedAlloc). Node can do neither:
- * `process.memoryUsage().rss` is the analog peak sampler, and Node cannot `setrlimit` its
+ * `process.memoryUsage().residentSetSizeBytes` is the analog peak sampler, and Node cannot `setrlimit` its
  * own address space. So memcap here is a SOFT guard: it records the peak sampled RSS and
  * optionally throws when a sample exceeds the budget. The hard OS cap stays Rust-side; this
  * only confirms the TS process stays RAM-bounded (SQLite owns the data, the thesis).
@@ -24,18 +24,18 @@ export namespace benchgraph {
 
 /** `parents[node]` = the parent GLOBAL node ids. Nodes 0 and 1 are roots. */
 export function gen(layers: number, width: number): number[][] {
-  const n = 2 + layers * width;
-  const parents: number[][] = Array.from({ length: n }, () => []);
-  for (let l = 0; l < layers; l++) {
-    for (let w = 0; w < width; w++) {
-      const id = 2 + l * width + w;
-      if (l === 0) {
+  const totalNodeCount = 2 + layers * width;
+  const parents: number[][] = Array.from({ length: totalNodeCount }, () => []);
+  for (let layerIndex = 0; layerIndex < layers; layerIndex++) {
+    for (let widthIndex = 0; widthIndex < width; widthIndex++) {
+      const id = 2 + layerIndex * width + widthIndex;
+      if (layerIndex === 0) {
         parents[id]!.push(0);
-        if (w % 3 === 0) parents[id]!.push(1);
+        if (widthIndex % 3 === 0) parents[id]!.push(1);
       } else {
-        const prev = 2 + (l - 1) * width;
-        parents[id]!.push(prev + w);
-        parents[id]!.push(prev + ((w + 1) % width));
+        const prev = 2 + (layerIndex - 1) * width;
+        parents[id]!.push(prev + widthIndex);
+        parents[id]!.push(prev + ((widthIndex + 1) % width));
       }
     }
   }
@@ -57,27 +57,27 @@ export interface MultiGraph {
 /** The proven layered DAG, tiered into THREE relations so `(tag, id)` is load-bearing. */
 export function gen_multi(layers: number, width: number): MultiGraph {
   const parents = gen(layers, width);
-  const n = parents.length;
+  const nodeCount = parents.length;
 
-  const tier = (g: number): number => (g < 2 ? 0 : 1 + Math.floor((g - 2) / width));
-  const tag_of = (g: number): number => tier(g) % 3;
+  const tier = (globalNodeId: number): number => (globalNodeId < 2 ? 0 : 1 + Math.floor((globalNodeId - 2) / width));
+  const tag_of = (globalNodeId: number): number => tier(globalNodeId) % 3;
 
   // Assign a per-relation local id to every global node, in global order.
-  const local = new Array<number>(n).fill(0);
+  const local = new Array<number>(nodeCount).fill(0);
   const per_tag: number[] = [0, 0, 0];
-  for (let g = 0; g < n; g++) {
-    const t = tag_of(g);
-    local[g] = per_tag[t]!;
-    per_tag[t]! += 1;
+  for (let globalNodeId = 0; globalNodeId < nodeCount; globalNodeId++) {
+    const tag = tag_of(globalNodeId);
+    local[globalNodeId] = per_tag[tag]!;
+    per_tag[tag]! += 1;
   }
 
   const rows: [number, number, number][] = [];
   const edges: [number, number, number, number][] = [];
-  for (let g = 0; g < n; g++) {
-    const w = parents[g]!.length === 0 ? 1 : parents[g]!.length;
-    rows.push([tag_of(g), local[g]!, w]);
-    for (const p of parents[g]!) {
-      edges.push([tag_of(p), local[p]!, tag_of(g), local[g]!]);
+  for (let globalNodeId = 0; globalNodeId < nodeCount; globalNodeId++) {
+    const weight = parents[globalNodeId]!.length === 0 ? 1 : parents[globalNodeId]!.length;
+    rows.push([tag_of(globalNodeId), local[globalNodeId]!, weight]);
+    for (const parentGlobalId of parents[globalNodeId]!) {
+      edges.push([tag_of(parentGlobalId), local[parentGlobalId]!, tag_of(globalNodeId), local[globalNodeId]!]);
     }
   }
 
@@ -102,39 +102,39 @@ export function encode(tag: number, id: number): number {
  * global_id % back_stride == 0); 0 = no back-edges.
  */
 export function gen_multi_cyclic(layers: number, width: number, back_stride: number): MultiGraph {
-  const g = gen_multi(layers, width);
-  if (back_stride === 0) return g;
+  const graph = gen_multi(layers, width);
+  if (back_stride === 0) return graph;
   const parents = gen(layers, width);
-  const n = parents.length;
-  const tier = (gid: number): number => (gid < 2 ? 0 : 1 + Math.floor((gid - 2) / width));
-  const tag_of = (gid: number): number => tier(gid) % 3;
-  const local = new Array<number>(n).fill(0);
+  const nodeCount = parents.length;
+  const tier = (globalNodeId: number): number => (globalNodeId < 2 ? 0 : 1 + Math.floor((globalNodeId - 2) / width));
+  const tag_of = (globalNodeId: number): number => tier(globalNodeId) % 3;
+  const local = new Array<number>(nodeCount).fill(0);
   const per_tag: number[] = [0, 0, 0];
-  for (let gid = 0; gid < n; gid++) {
-    const t = tag_of(gid);
-    local[gid] = per_tag[t]!;
-    per_tag[t]! += 1;
+  for (let globalNodeId = 0; globalNodeId < nodeCount; globalNodeId++) {
+    const tag = tag_of(globalNodeId);
+    local[globalNodeId] = per_tag[tag]!;
+    per_tag[tag]! += 1;
   }
   // add back-support edges child -> first-parent, and bump the parent's weight.
   const extra_weight = new Map<string, number>();
-  for (let gid = 2; gid < n; gid++) {
-    if (gid % back_stride !== 0) continue;
-    const p = parents[gid]![0];
-    if (p === undefined) continue;
-    if (p < 2) continue; // never draw a back-edge INTO a root
-    const pt = tag_of(p);
-    const pi = local[p]!;
-    const ct = tag_of(gid);
-    const ci = local[gid]!;
-    g.edges.push([ct, ci, pt, pi]);
-    const k = `${pt}:${pi}`;
-    extra_weight.set(k, (extra_weight.get(k) ?? 0) + 1);
+  for (let globalNodeId = 2; globalNodeId < nodeCount; globalNodeId++) {
+    if (globalNodeId % back_stride !== 0) continue;
+    const firstParentGlobalId = parents[globalNodeId]![0];
+    if (firstParentGlobalId === undefined) continue;
+    if (firstParentGlobalId < 2) continue; // never draw a back-edge INTO a root
+    const parentTag = tag_of(firstParentGlobalId);
+    const parentLocalId = local[firstParentGlobalId]!;
+    const childTag = tag_of(globalNodeId);
+    const childLocalId = local[globalNodeId]!;
+    graph.edges.push([childTag, childLocalId, parentTag, parentLocalId]);
+    const key = `${parentTag}:${parentLocalId}`;
+    extra_weight.set(key, (extra_weight.get(key) ?? 0) + 1);
   }
-  for (const row of g.rows) {
-    const add = extra_weight.get(`${row[0]}:${row[1]}`);
-    if (add !== undefined) row[2] += add;
+  for (const row of graph.rows) {
+    const extraWeightDelta = extra_weight.get(`${row[0]}:${row[1]}`);
+    if (extraWeightDelta !== undefined) row[2] += extraWeightDelta;
   }
-  return g;
+  return graph;
 }
 
 /**
@@ -144,43 +144,43 @@ export function gen_multi_cyclic(layers: number, width: number, back_stride: num
  * Returns encoded survivor keys, sorted ascending (matches the store's `alive_keys`).
  */
 export function oracle_survivors(g: MultiGraph, cut: readonly [number, number]): number[] {
-  const cut_key = encode(cut[0], cut[1]);
-  const adj = new Map<number, number[]>();
+  const cutKey = encode(cut[0], cut[1]);
+  const adjacency = new Map<number, number[]>();
   const has_parent = new Set<number>();
-  for (const [pt, pi, ct, ci] of g.edges) {
-    const pk = encode(pt, pi);
-    const ck = encode(ct, ci);
-    let list = adj.get(pk);
-    if (list === undefined) {
-      list = [];
-      adj.set(pk, list);
+  for (const [parentTag, parentLocalId, childTag, childLocalId] of g.edges) {
+    const parentKey = encode(parentTag, parentLocalId);
+    const childKey = encode(childTag, childLocalId);
+    let adjacencyList = adjacency.get(parentKey);
+    if (adjacencyList === undefined) {
+      adjacencyList = [];
+      adjacency.set(parentKey, adjacencyList);
     }
-    list.push(ck);
-    has_parent.add(ck);
+    adjacencyList.push(childKey);
+    has_parent.add(childKey);
   }
 
   const frontier: number[] = [];
   const seen = new Set<number>();
-  for (const [t, id] of g.rows) {
-    const k = encode(t, id);
-    if (k !== cut_key && !has_parent.has(k)) {
-      seen.add(k);
-      frontier.push(k);
+  for (const [tag, id] of g.rows) {
+    const key = encode(tag, id);
+    if (key !== cutKey && !has_parent.has(key)) {
+      seen.add(key);
+      frontier.push(key);
     }
   }
   while (frontier.length > 0) {
-    const k = frontier.shift()!;
-    const children = adj.get(k);
+    const key = frontier.shift()!;
+    const children = adjacency.get(key);
     if (children !== undefined) {
-      for (const c of children) {
-        if (c !== cut_key && !seen.has(c)) {
-          seen.add(c);
-          frontier.push(c);
+      for (const childKey of children) {
+        if (childKey !== cutKey && !seen.has(childKey)) {
+          seen.add(childKey);
+          frontier.push(childKey);
         }
       }
     }
   }
-  return [...seen].sort((a, b) => a - b);
+  return [...seen].sort((keyA, keyB) => keyA - keyB);
 }
 }
 
@@ -230,16 +230,16 @@ export function cap_bytes(): number {
 
 /**
  * One RSS sample. Records the peak and, if a cap is set and the sample exceeds it, throws
- * (the soft-budget tripwire). Mirrors the role of Rust's `peak_rss_kb` sampling bracket:
+ * (the soft-budget tripwire). Mirrors the role of Rust's `peak_residentSetSizeBytes_kb` sampling bracket:
  * sample around heavy ops, report peak in KiB.
  */
 export function sample(): number {
-  const rss = process.memoryUsage().rss;
-  bump_peak(rss);
-  if (CAP !== 0 && rss > CAP) {
-    throw new Error(`memcap: RSS ${rss} exceeds soft cap ${CAP}`);
+  const residentSetSizeBytes = process.memoryUsage().rss;
+  bump_peak(residentSetSizeBytes);
+  if (CAP !== 0 && residentSetSizeBytes > CAP) {
+    throw new Error(`memcap: RSS ${residentSetSizeBytes} exceeds soft cap ${CAP}`);
   }
-  return rss;
+  return residentSetSizeBytes;
 }
 
 /** Peak RSS in KiB (the unit Rust's `peak_rss_kb` reports). */
