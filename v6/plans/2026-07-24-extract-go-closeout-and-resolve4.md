@@ -746,3 +746,77 @@ modern.ts (decorators, satisfies, template-literal types, bigint, generators,
 private fields, accessor) and modern.rs (async trait fns, const generics,
 impl Trait returns, match guards, raw strings, macro_rules!) both extracted
 clean. Macros (`println!`) mint no call sites — consistent with v5's model.
+
+### I0a — CLI micros batch (ONE agent session, ONE commit; launch before I1)
+
+All from the dogfood findings (§Dogfood CLI-1..5,7). The bin is clap 4
+derive (`src/bin/extract.rs`); keep it thin — logic stays in the lib.
+
+- CLI-1 bench per-record totals: `bench()` (bin/extract.rs:123-146) prints
+  only `b.nodes.len()` per family — sites/edges/sigs/consts are invisible
+  (this misled the dogfooder into a phantom bug hunt). Derive the summary
+  from the ALREADY-flattened `facts` Vec instead: tally by (family, record
+  tag) so sites/sigs/consts/edges all appear. Zero extraction changes.
+  CHECK FIRST: grep tests/ for any bench-output assertion (expected none —
+  bench is stderr human output; if one exists, STOP).
+- CLI-2 non-UTF8 exit 1: today a latin-1 file in a CLAIMED language routes
+  to its Source, UTF-8 failure collapses to `None`, and the CLI prints zero
+  rows exit 0 — while --help promises exit 1. Fix at the CLI: guard
+  `std::str::from_utf8(&content)` in main() before dispatch; on Err,
+  eprintln + exit 1. Uniform across langs; NO lib change.
+- CLI-3 `--family const` + warn-on-unknown: `parse_mask`
+  (bin/extract.rs:100-112) — accept `const` as an alias INTO the types mask
+  (const rows ride the TypeF aux; agent verifies on a ts const fixture that
+  `--family type` surfaces them today) and eprintln-warn on ANY unknown
+  family name (typo = loud, not silent zero rows).
+- CLI-4 schema doc: the SCHEMA const's callee_path line says "filled by
+  resolution" — wrong; phase-1 fills it for rust multi-segment paths (ts
+  fill is I5a). Reword: "the full qualified path as written when >1 segment
+  (filled at phase 1 where the lang collects it; else null)". Folded into
+  THIS batch; I5a's scope is now only the ts fill + snaps.
+- CLI-5 io error context: `std::fs::read(&path)?` (bin/extract.rs:89)
+  dumps a raw `Os { code: 2, ... }` Debug. map_err to
+  `extract: <path>: <io error>`; exit stays 1. Covers EISDIR too.
+- CLI-7 case-insensitive extension routing: lowercase the extension before
+  the FIRST-MATCH roster walk (find `source_for`; keep roster ORDER — the
+  `.kts`-before-`.ts` precedence is load-bearing, kotlin report §ast-grep
+  routing). `FOO.TS`/`X.Rs` must route; behavior for lowercase unchanged.
+
+ALLOWLIST: `v6/sprefa-extract/src/bin/extract.rs`; the ONE file home of
+`source_for` (find it; read-only otherwise);
+`v6/sprefa-extract/tests/snapshot.rs` (ADDITIVE assertions to
+`roster_routes_by_extension` only — snapshots byte-identical);
+`v6/sprefa-extract/tests/cli.rs` (NEW: std::process::Command +
+`env!("CARGO_BIN_EXE_extract")`, NO new deps — non-UTF8 exit 1, unknown
+--family warns, missing-file message names the path); ledger.
+
+GATE: standard; UPDATE_SNAP FORBIDDEN; zero .snap diffs; dep rails (no new
+deps — tests/cli.rs is std-only).
+
+COMMIT: `v6/extract: CLI micros (bench record totals, UTF-8 exit 1, family const alias + warn, io error context, case-insensitive routing, schema doc)`
+
+STOPs: any urge to touch dispatch/wire/snapshot.rs or a lang file; finding
+bench output asserted anywhere; `const` rows NOT visible under
+`--family type` (means const does not ride TypeF — report, do not invent a
+new mask bit).
+
+### I0b — stdin + --ext (ONE agent; launch after I0a merges)
+
+`extract -` (or piped stdin) reads stdin to bytes; `--ext <lang>` is
+REQUIRED with stdin (language cannot be inferred) and routed via a
+synthetic name (`stdin.<ext>`) so the ONE data-driven path
+(dispatch -> flatten -> stdout) and the roster's first-match order are
+untouched. `--ext` without stdin: reject (clap arg relation) — overriding
+file routing is a separate question, not this increment. Unknown `--ext`:
+error listing valid extensions. Errors: stdin without --ext = exit 2
+(usage). tests/cli.rs grows: piped ts produces sites, missing --ext fails
+loud. Update --help LONG_ABOUT coverage block + PATH_LONG (stdin mode) —
+the self-describing contract stays true.
+
+ALLOWLIST: `v6/sprefa-extract/src/bin/extract.rs`;
+`v6/sprefa-extract/tests/cli.rs`; ledger.
+
+COMMIT: `v6/extract: stdin input with --ext language override`
+
+STOPs: touching the lib (dispatch/roster/lib.rs); adding deps; buffering
+concerns (stdin read-to-end is fine — single file by design).
