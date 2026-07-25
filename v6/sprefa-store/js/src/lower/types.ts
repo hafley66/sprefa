@@ -3,7 +3,7 @@
 import type { Observable } from "rxjs";
 
 import type { Program, RelDecl, Rule } from "./ast.ts";
-import type { SqliteDb } from "../engine/types.ts";
+import type { QueryResult, SqliteDb, TraceStatement } from "../engine/types.ts";
 
 /** A rel's physical table plus its column names, positional. */
 export interface RelTable {
@@ -62,12 +62,74 @@ export type EvalProgram = (
   prog: Program,
   tables: RelTables,
   support?: SupportEdges,
-  traceStatement?: (sql: string) => void,
+  traceStatement?: TraceStatement,
 ) => Observable<SupportReport>;
-
-export interface IDatalog {
-  readonly evalProgram: EvalProgram;
-}
 
 export type RulesByHead = ReadonlyMap<string, readonly Rule[]>;
 export type RelDeclsByName = ReadonlyMap<string, RelDecl>;
+
+/** One positive body occurrence: its alias and the rel it reads. The support pass needs
+ *  this to name each parent row; the model SELECT does not use it. */
+export interface PositiveSource {
+  readonly alias: string;
+  readonly rel: string;
+}
+
+/** The FROM / WHERE / variable-binding core of a rule, shared by the model SELECT and the
+ *  support-edge emission so the two can never drift apart on join semantics. */
+export interface CompiledJoin {
+  readonly bound: ReadonlyMap<string, string>;
+  readonly fromParts: readonly string[];
+  readonly where: readonly string[];
+  readonly positiveSources: readonly PositiveSource[];
+}
+
+/**
+ * One evaluation of one program against one connection. Holds what the lowering used to
+ * thread through every helper as parameters: the connection, the program, the table map,
+ * the trace hook, and the derived stratification.
+ */
+export interface IDatalogEvaluator {
+  readonly db: SqliteDb;
+  readonly program: Program;
+  readonly tables: RelTables;
+  readonly support?: SupportEdges;
+  readonly trace?: TraceStatement;
+  readonly rulesByHead: RulesByHead;
+  readonly strata: readonly Stratum[];
+
+  /** Every statement goes through here, so every one is counted and traced. */
+  exec(sql: string): Observable<QueryResult>;
+  tableOf(relName: string): RelTable;
+  rulesFor(relName: string): readonly Rule[];
+
+  /** Emits exactly once, when every rule-headed table holds its current rowset. */
+  run(): Observable<SupportReport>;
+  acyclicRel(relName: string): Observable<unknown>;
+  insertNewRows(rule: Rule, bodyPositionOverrides: ReadonlyMap<number, string>, intoDelta: string): Observable<unknown>;
+  /** Emits how many rows the merge actually added, read off `rowsAffected`. */
+  mergeDeltaIntoFull(relName: string, delta: string): Observable<number>;
+  createLike(name: string, like: RelTable): Observable<unknown>;
+  emitSupportEdges(support: SupportEdges): Observable<SupportReport>;
+  compileRuleJoin(rule: Rule, bodyPositionOverrides: ReadonlyMap<number, string>): CompiledJoin | null;
+  compileRuleSelect(rule: Rule, bodyPositionOverrides: ReadonlyMap<number, string>): string | null;
+}
+
+/** One recursive SCC's semi-naive fixpoint. Its delta/next table names live only for the
+ *  duration of the loop. */
+export interface IRecursiveStratum {
+  readonly evaluator: IDatalogEvaluator;
+  readonly memberRels: readonly string[];
+  readonly members: ReadonlySet<string>;
+  readonly rules: readonly Rule[];
+  readonly deltaTableOf: ReadonlyMap<string, string>;
+  readonly nextTableOf: ReadonlyMap<string, string>;
+
+  delta(relName: string): string;
+  next(relName: string): string;
+  recursivePositions(rule: Rule): number[];
+  seed(): Observable<unknown>;
+  /** Emits whether anything grew this round. */
+  round(): Observable<boolean>;
+  run(): Observable<unknown>;
+}
