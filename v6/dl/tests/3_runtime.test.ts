@@ -2,7 +2,13 @@
  * tests/3_runtime.test.ts - M2 gate: DlRuntime commit()/rows()/deltas$ over the
  * SQLite tick store. One golden (add/noop/remove) proves idempotence + weight-retract
  * end to end; the rest are unit tests reaching what the golden can't isolate (the diff
- * combinatorics' noop case, retention 0/1, deltas$ fan-out, the sync-settle invariant).
+ * combinatorics' noop case, retention 0/1, deltas$ fan-out, settle-before-resolve).
+ *
+ * M11 tail (2026-07-25, the lowerSql swap): recursion, body literals through the string
+ * dictionary, and stratified negation, all at the DlRuntime level. The three recursion
+ * tests could not have been written before the swap — boot() threw on a recursive
+ * stratum — and the literal test is the rail for `internProgramForStorage` (bypass it
+ * and that test alone goes red, verified 2026-07-25).
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -14,9 +20,12 @@ import type { DeltaEvent } from "../tasks.d.ts";
 import {
   bootFixture,
   bootParentFixture,
+  buildAncestorProgram,
+  buildLiteralAndNegationProgram,
   cleanupDbFile,
   deltaDump,
   edbBatch,
+  rowsOf,
   singleEdbRelProgram,
 } from "./1_helpers_db.ts";
 
@@ -163,11 +172,139 @@ test("sync-settle: commit resolves with derived rows already queryable", async (
       }),
     );
 
-    // no timer/sleep: by the time commit()'s promise resolves, the derived fixpoint
-    // has already settled synchronously (the sync-settle assertion inside
-    // diffAgainstTables would have thrown otherwise).
+    // no timer/sleep: by the time commit()'s promise resolves the derived fixpoint has
+    // already run, because evalProgramSql is awaited inside the tick's own concatMap
+    // stage (applyDerivedTxn) before reportsSubject emits the report commit() waits on.
     const grandparentRows = await rt.rows("grandparent");
     assert.deepEqual(grandparentRows, [{ grandchild_name: "alice", grandparent_name: "carol" }]);
+  } finally {
+    await rt.dispose();
+    cleanupDbFile(dbPath);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M11 (2026-07-25): the SQL fixpoint IS the evaluator. Everything below was
+// structurally unreachable before the swap — DlRuntime.boot threw
+// "recursive strata not in this slice" on any recursive program, so the engine's
+// headline feature (recursion) had no dl-level test at all.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("recursive stratum: transitive closure over the parent chain settles inside one tick", async () => {
+  const { rt, dbPath } = await bootFixture(buildAncestorProgram());
+  try {
+    const report = await rt.commit(edbBatch({ parent: PARENT_ROWS }));
+    // 3 base edges + 2 two-hop + 1 three-hop = 6 closure rows, from 3 EDB rows.
+    assert.deepEqual(report.changed, [
+      ["ancestor", 6],
+      ["parent", 3],
+    ]);
+    assert.deepEqual(await rowsOf(rt, "ancestor"), [
+      { descendant_name: "alice", ancestor_name: "bob" },
+      { descendant_name: "alice", ancestor_name: "carol" },
+      { descendant_name: "alice", ancestor_name: "dana" },
+      { descendant_name: "bob", ancestor_name: "carol" },
+      { descendant_name: "bob", ancestor_name: "dana" },
+      { descendant_name: "carol", ancestor_name: "dana" },
+    ]);
+  } finally {
+    await rt.dispose();
+    cleanupDbFile(dbPath);
+  }
+});
+
+test("recursive stratum RETRACTS: killing the middle link retracts all 4 rows it supported, through weights", async () => {
+  const { rt, dbPath } = await bootFixture(buildAncestorProgram());
+  try {
+    await rt.commit(edbBatch({ parent: PARENT_ROWS }));
+
+    // bob -> carol is the sole support for 4 of the 6 closure rows: (alice,carol),
+    // (alice,dana), (bob,carol), (bob,dana). The 2 survivors (alice,bob) and
+    // (carol,dana) are supported by edges the retraction never touched — a full
+    // recompute that "worked" by clearing the rel would show -6, not -4.
+    const report = await rt.commit(edbBatch({}, { parent: [{ child_name: "bob", parent_name: "carol" }] }));
+    assert.deepEqual(report.changed, [
+      ["ancestor", -4],
+      ["parent", -1],
+    ]);
+    assert.deepEqual(await rowsOf(rt, "ancestor"), [
+      { descendant_name: "alice", ancestor_name: "bob" },
+      { descendant_name: "carol", ancestor_name: "dana" },
+    ]);
+
+    // ...and the Z-set log carries it: exactly 4 weight -1 ancestor rows on tick 2,
+    // each one the digest of a row that was +1 on tick 1 (retraction through weights,
+    // not a table rewrite).
+    const deltas = await deltaDump(dbPath);
+    const inserted = deltas.filter((d) => d.rel === "ancestor" && d.tick === 1 && d.weight === 1);
+    const retracted = deltas.filter((d) => d.rel === "ancestor" && d.tick === 2 && d.weight === -1);
+    assert.equal(inserted.length, 6);
+    assert.equal(retracted.length, 4);
+    const insertedDigests = new Set(inserted.map((d) => d.row_digest));
+    for (const entry of retracted) {
+      assert.ok(insertedDigests.has(entry.row_digest), `retracted digest ${entry.row_digest} was never inserted`);
+    }
+    // Net weight per digest is 0 for the 4 dead rows, +1 for the 2 survivors.
+    const netByDigest = new Map<number, number>();
+    for (const entry of deltas.filter((d) => d.rel === "ancestor")) {
+      netByDigest.set(entry.row_digest, (netByDigest.get(entry.row_digest) ?? 0) + entry.weight);
+    }
+    assert.equal([...netByDigest.values()].filter((w) => w === 0).length, 4);
+    assert.equal([...netByDigest.values()].filter((w) => w === 1).length, 2);
+  } finally {
+    await rt.dispose();
+    cleanupDbFile(dbPath);
+  }
+});
+
+test("recursive stratum re-adds: restoring the retracted link re-derives every row it supported", async () => {
+  const { rt, dbPath } = await bootFixture(buildAncestorProgram());
+  const middleLink = { child_name: "bob", parent_name: "carol" };
+  try {
+    await rt.commit(edbBatch({ parent: PARENT_ROWS }));
+    await rt.commit(edbBatch({}, { parent: [middleLink] }));
+    const report = await rt.commit(edbBatch({ parent: [middleLink] }));
+    assert.deepEqual(report.changed, [
+      ["ancestor", 4],
+      ["parent", 1],
+    ]);
+    assert.equal((await rt.rows("ancestor")).length, 6);
+  } finally {
+    await rt.dispose();
+    cleanupDbFile(dbPath);
+  }
+});
+
+test("a text literal in a rule body matches through the string dictionary (the interning crossing)", async () => {
+  const { rt, dbPath } = await bootFixture(buildLiteralAndNegationProgram());
+  try {
+    await rt.commit(edbBatch({ parent: PARENT_ROWS }));
+    // parent(child_name, "bob") selects one row. The literal is a surface STRING while
+    // relbase_parent.parent_name holds a dictionary id, so an un-interned literal
+    // compiles to `parent_name = 'bob'` and matches nothing — this asserting [] instead
+    // of alice is exactly the failure internProgramForStorage exists to prevent.
+    assert.deepEqual(await rowsOf(rt, "child_of_bob"), [{ child_name: "alice" }]);
+
+    // ...and it retracts with its support.
+    await rt.commit(edbBatch({}, { parent: [{ child_name: "alice", parent_name: "bob" }] }));
+    assert.deepEqual(await rowsOf(rt, "child_of_bob"), []);
+  } finally {
+    await rt.dispose();
+    cleanupDbFile(dbPath);
+  }
+});
+
+test("stratified negation: root(name) <- parent(_, name), !parent(name, _)", async () => {
+  const { rt, dbPath } = await bootFixture(buildLiteralAndNegationProgram());
+  try {
+    await rt.commit(edbBatch({ parent: PARENT_ROWS }));
+    // dana is a parent_name and never a child_name: the only root of the chain.
+    assert.deepEqual(await rowsOf(rt, "root"), [{ name: "dana" }]);
+
+    // Give dana a parent: the negated atom now matches, so the root row retracts and
+    // the new top (eve) takes its place — negation reacting in both directions.
+    await rt.commit(edbBatch({ parent: [{ child_name: "dana", parent_name: "eve" }] }));
+    assert.deepEqual(await rowsOf(rt, "root"), [{ name: "eve" }]);
   } finally {
     await rt.dispose();
     cleanupDbFile(dbPath);

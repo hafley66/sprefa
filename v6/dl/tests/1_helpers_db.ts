@@ -15,7 +15,18 @@ import os from "node:os";
 import path from "node:path";
 
 import { open_db } from "sprefa-store-engine/src/engine/lib.ts";
-import { derivedRel, edbRel, headVar, relRef, v, type Program, type Rule } from "sprefa-store-engine/src/lower/ast.ts";
+import {
+  derivedRel,
+  edbRel,
+  headVar,
+  lit,
+  notRel,
+  relRef,
+  v,
+  wild,
+  type Program,
+  type Rule,
+} from "sprefa-store-engine/src/lower/ast.ts";
 
 import { DlRuntime } from "../src/3_runtime.ts";
 import type { BridgeOk, ColumnType, EdbBatch, Retention, Row, Value } from "../tasks.d.ts";
@@ -65,6 +76,64 @@ export function buildParentGrandparentProgram(): Program {
 /** A single standalone EDB rel with no rules (retention tests: rel(0)/rel(1)). */
 export function singleEdbRelProgram(name: string, columns: readonly string[]): Program {
   return { rels: [edbRel(name, columns)], rules: [] };
+}
+
+/**
+ * EDB parent(child_name, parent_name) + the RECURSIVE transitive closure
+ * ancestor(descendant_name, ancestor_name) <- parent(d, a).
+ * ancestor(descendant_name, ancestor_name) <- parent(d, mid), ancestor(mid, a).
+ *
+ * A recursive stratum. Until the SQL fixpoint landed (M11, 2026-07-25) DlRuntime.boot
+ * THREW on this program ("recursive strata not in this slice"): lower.ts's in-memory
+ * evaluator defers every recursive stratum to a SQLite backend it had no wire to.
+ */
+export function buildAncestorProgram(): Program {
+  const baseCase: Rule = {
+    head: "ancestor",
+    headTerms: [headVar("descendant_name"), headVar("ancestor_name")],
+    body: [relRef("parent", v("descendant_name"), v("ancestor_name"))],
+  };
+  const inductiveCase: Rule = {
+    head: "ancestor",
+    headTerms: [headVar("descendant_name"), headVar("ancestor_name")],
+    body: [
+      relRef("parent", v("descendant_name"), v("mid_name")),
+      relRef("ancestor", v("mid_name"), v("ancestor_name")),
+    ],
+  };
+  return {
+    rels: [edbRel("parent", ["child_name", "parent_name"]), derivedRel("ancestor", ["descendant_name", "ancestor_name"])],
+    rules: [baseCase, inductiveCase],
+  };
+}
+
+/**
+ * EDB parent(child_name, parent_name) + two NON-recursive derived rels that exercise
+ * the storage-plane crossings lowerSql cannot see by itself:
+ *   child_of_bob(child_name) <- parent(child_name, "bob").   -- a TEXT literal in a body
+ *   root(name)               <- parent(_, name), !parent(name, _).  -- stratified negation
+ * The literal is the interning proof: "bob" must be rewritten to its dictionary id
+ * before it can match a `relbase_parent.parent_name` column, which holds ids.
+ */
+export function buildLiteralAndNegationProgram(): Program {
+  const literalRule: Rule = {
+    head: "child_of_bob",
+    headTerms: [headVar("child_name")],
+    body: [relRef("parent", v("child_name"), lit("bob"))],
+  };
+  const negationRule: Rule = {
+    head: "root",
+    headTerms: [headVar("name")],
+    body: [relRef("parent", wild(), v("name")), notRel("parent", v("name"), wild())],
+  };
+  return {
+    rels: [
+      edbRel("parent", ["child_name", "parent_name"]),
+      derivedRel("child_of_bob", ["child_name"]),
+      derivedRel("root", ["name"]),
+    ],
+    rules: [literalRule, negationRule],
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

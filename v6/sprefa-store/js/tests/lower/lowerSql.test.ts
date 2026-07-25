@@ -319,3 +319,27 @@ test("lowerSql: aggregation — deg(x, count(y)) <- edge(x,y), SQL === in-memory
   ];
   await assertRel(prog, { edge }, "deg", expected);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. Ungrouped aggregation over an EMPTY body. The divergence this pins (found while
+// wiring lowerSql into v6/dl, 2026-07-25): bare `SELECT count(x) FROM t` returns ONE
+// row (0) on an empty table, while the in-memory evaluator groups bindings and emits
+// NO row for zero bindings. dl's fixtures/sg-rail.dl `hit_count(hits: count(path))`
+// rides exactly this shape, so the whole-rel-empty case is the one the curl golden hits.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("lowerSql: ungrouped count over an EMPTY body derives no fact, SQL === in-memory", async () => {
+  const prog: Program = {
+    rels: [edbRel("hit", ["path"]), derivedRel("hit_count", ["hits"])],
+    rules: [{ head: "hit_count", headTerms: [headAgg("count", "path")], body: [relRef("hit", v("path"))] }],
+  };
+  await assertRel(prog, { hit: [] }, "hit_count", []);
+});
+
+test("lowerSql: ungrouped count over a NON-empty body derives the one total row, SQL === in-memory", async () => {
+  const prog: Program = {
+    rels: [edbRel("hit", ["path"]), derivedRel("hit_count", ["hits"])],
+    rules: [{ head: "hit_count", headTerms: [headAgg("count", "path")], body: [relRef("hit", v("path"))] }],
+  };
+  await assertRel(prog, { hit: [["a"], ["b"], ["c"]] }, "hit_count", [[3]]);
+});

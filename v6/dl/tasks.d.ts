@@ -48,7 +48,8 @@ export interface EpicLedger {
   /** DONE 2026-07-24 (dl/m2-runtime 306183a9, merged v11; 22/22 dl tests, tsgo clean):
    *  golden ticks [[grandparent,2],[parent,3]] / [] / [[grandparent,-2],[parent,-1]].
    *  Named pipeline stages exported (applyEdbTxn/injectSources/diffAgainstTables/
-   *  applyDerivedTxn/clearScratchRels + pure diffDerivedRel). Deviation recorded:
+   *  applyDerivedTxn/clearScratchRels + pure diffDerivedRel; `injectSources` and the
+   *  `diffAgainstTables` snapshot argument were removed at M11, see below). Deviation:
    *  rel(0) physical DELETE runs inside applyDerivedTxn's txn (tap can't await IO
    *  before commit's correlation resolves); the tap stage does rx-side bookkeeping. */
   M2_tick_runtime: { done: true; evidence: "add/noop/remove golden: zero-delta noop + weight retract" };
@@ -135,6 +136,48 @@ export interface EpicLedger {
    *  since M3 while the implementation took `(rt, filePath)`, wrong for the
    *  whole arc because no implementation was ever checked against it. */
   M10_contract_headers: { done: true; evidence: "both headers enforced by AssertTrue proofs; caught the stale IngestFile declaration" };
+
+  /** DONE 2026-07-25: the SQL least-fixpoint (sprefa-store lower/lowerSql.ts) is now
+   *  DlRuntime's evaluator. `applyDerivedTxn` calls `evalProgramSql` over the
+   *  `relbase_*` tables inside the tick's own BEGIN IMMEDIATE, then diffs the settled
+   *  tables against `derivedTableMirror` to publish the Z-set delta. Deleted with the
+   *  swap: `lowerProgram` (lower.ts's in-memory rx fixpoint) and everything that
+   *  existed only to feed it — the per-rel `BehaviorSubject` sources, `injectSources`,
+   *  `derivedSets$`/`shareReplay(1)`, and the `generation` sync-settle assertion (the
+   *  fixpoint is awaited in-stage now, so a stale read is not expressible). lower.ts
+   *  keeps its one remaining job: the independently-written oracle the differential
+   *  arm of tests/lower/lowerSql.test.ts checks the SQL evaluator against.
+   *
+   *  RECURSION NOW RUNS. boot() used to throw "recursive strata not in this slice" on
+   *  any recursive program, so the engine's headline feature had zero dl-level tests.
+   *  Three landed: transitive closure settles in one tick (6 rows from 3 EDB rows, the
+   *  3-hop row provable only by a fixpoint); killing the middle link retracts exactly
+   *  the 4 rows it supported and leaves the 2 it did not (a recompute that "worked" by
+   *  clearing the rel would read -6); re-adding it re-derives all 4.
+   *
+   *  Three defects found and fixed on the way, each with a fail-pre-fix rail:
+   *   (a) lowerSql's `exec` used `executeMultiple`, whose adapter guard
+   *       (`finally { if (inTransaction) ROLLBACK }`) would have silently killed dl's
+   *       open tick transaction. Every statement it builds is single, so it now uses
+   *       `execute`, the same law cascade's `exec` follows.
+   *   (b) an UNGROUPED aggregate over an empty body: bare `SELECT count(x) FROM t`
+   *       returns one row (0) where the in-memory oracle emits none.
+   *       `fixtures/sg-rail.dl`'s `hit_count(hits: count(path))` is exactly that shape,
+   *       so the curl golden would have broken. Fixed with `HAVING count(*) > 0` +
+   *       two differential tests (the empty one fails pre-fix with [[0]]).
+   *   (c) lowerSql is interning-agnostic by design, but a source literal is a surface
+   *       string while `relbase_*` columns hold dictionary ids, so `parent_name = 'bob'`
+   *       matches nothing. `internProgramForStorage` (3_runtime.ts) rewrites every body
+   *       literal to its id once at boot. It REFUSES two shapes rather than answer them
+   *       wrongly: ordering comparisons (< <= > >=) and max/min/sum on a TEXT column,
+   *       because id order is intern order. `=`/`!=`/`count` are safe and stay.
+   *
+   *  Also landed: a recompute skip (no EDB row moved and no scratch row was cleared =
+   *  the fixpoint is a provable no-op), which is what keeps an idempotent re-commit at
+   *  zero deltas without paying a full recompute. The fixpoint itself is still a FULL
+   *  recompute per changed tick; incremental maintenance is a later arc, but the tick's
+   *  OUTPUT is already incremental because the diff is taken against the mirror. */
+  M11_sql_fixpoint: { done: true; evidence: "70/70 dl + 83/83 store + curl-session golden PASS; recursive closure retracts -4 not -6" };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

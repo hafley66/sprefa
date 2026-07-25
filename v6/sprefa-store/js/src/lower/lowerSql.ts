@@ -290,6 +290,12 @@ function compileRuleSelect(rule: Rule, tables: RelTables, bodyPositionOverrides:
       .filter((t): t is Extract<typeof t, { kind: "hvar" }> => t.kind === "hvar")
       .map((t) => bound.get(t.name)!);
     if (groupRefs.length > 0) sql += ` GROUP BY ${groupRefs.join(", ")}`;
+    // Ungrouped aggregate over an EMPTY body: bare `SELECT count(x) FROM t` still
+    // returns one row (0), while the in-memory evaluator groups bindings and so emits
+    // NO row for zero bindings (lower.ts projectAndAggregate: no bindings = no groups).
+    // `HAVING count(*) > 0` restores the datalog reading — an aggregate rule with no
+    // satisfying body derives no fact — and is a no-op once any binding exists.
+    else sql += " HAVING count(*) > 0";
   }
   return sql;
 }
@@ -341,9 +347,15 @@ function tableOf(tables: RelTables, relName: string): RelTable {
   return t;
 }
 
+/** Every statement this file builds is a SINGLE statement, so it goes through
+ *  `db.execute`, not `executeMultiple`. That is not a style choice: the local-sqlite3
+ *  adapter's `executeMultiple` carries a `finally { if (db.inTransaction) ROLLBACK }`
+ *  guard (engine.ts header, sqlite3.js:161-172), so an `executeMultiple` inside an open
+ *  `with_txn` bracket would silently kill the bracket. dl's tick runs the whole fixpoint
+ *  inside one BEGIN IMMEDIATE, so this file obeys the same law cascade's `exec` does. */
 async function exec(db: SqliteDb, sql: string): Promise<void> {
   stmt_counter.incr();
-  await db.executeMultiple(sql);
+  await db.execute(sql);
 }
 
 async function count(db: SqliteDb, table: string): Promise<number> {
