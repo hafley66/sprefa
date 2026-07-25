@@ -1236,30 +1236,32 @@ pub enum FlatFact {
 // pub fn sources() -> &'static [&'static dyn Source] {
 //     &[
 //         &RustSource,    //  .rs               syn front-end            (lang/rust.rs)
-//         &GoSource,      //  .go               tree-sitter-go           (lang/go.rs)  // PENDING (in flight)
+//         &GoSource,      //  .go               tree-sitter-go           (lang/go.rs)
+//         &KotlinSource,  //  .kt/.kts          tree-sitter-kotlin-sg    (lang/kotlin.rs)
 //         &TsSource,      //  .ts/.tsx/.js/...  oxc front-end            (lang/ts.rs)
 //         &AstgrepSource, //  fallback: cst-only for any ast-grep grammar
 //     ]
 // }
+// (KotlinSource precedes TsSource: "x.kts".ends_with(".ts") routes .kts to kotlin.)
 
 // ════════════════════════════════════════════════════════════════════════════
 // STATUS  (flip a cell when it ships; [x] = ported + parity-green)
 // ════════════════════════════════════════════════════════════════════════════
 //
-//                          TS (oxc)   Rust (syn)   Go (tree-sitter-go)
-//   cst (ast-grep)           [x]         [x]            [x]
-//   type entities + sigs     [x]         [x]            [x]
-//   const facet              [x]         [x]            [-] n/a (v5 go emits none)
-//   call defs + sites        [x]         [x]            [x]
-//   df nodes + edges         [x]         [x]            [x]
-//   parity vs v5 oracle      [x]         [x]            [x]
+//                          TS (oxc)   Rust (syn)   Go (tree-sitter-go)   Kotlin (ts-kotlin-sg)
+//   cst (ast-grep)           [x]         [x]            [x]                 [x]
+//   type entities + sigs     [x]         [x]            [x]                 [x]
+//   const facet              [x]         [x]            [-] n/a (v5 go emits none)   [-] n/a (v5 kotlin emits none)
+//   call defs + sites        [x]         [x]            [x]                 [x]
+//   df nodes + edges         [x]         [x]            [x]                 [x]
+//   parity vs v5 oracle      [x]         [x]            [x]                 [x]
 //
 //   Parity is asserted with ZERO waivers: the closure df-node name (v5's
 //   lam_sym) is ported - minted in the df walks from span/containment data.
 //
 // DEFERRED (per-lang gates noted; the rest lands with Resolve<F>/follow-ups):
-//   type_edge (field/impl/variant/uses/generic)   -> TS ASSERTED (4b-iii); GO ASSERTED (4d-i-go, v5 go shape-only: field/impl/generic); rust ASSERTED (4d-i-rust; no sig-sourced rows per v5)
-//   resolved caller -> callee                     -> TS RATCHETED vs scip (4c-ii); GO RATCHETED vs scip-go (4d-ii-go); rust RATCHETED vs rust-analyzer-scip (4d-ii-rust)
+//   type_edge (field/impl/variant/uses/generic)   -> TS ASSERTED (4b-iii); GO ASSERTED (4d-i-go, v5 go shape-only: field/impl/generic); rust ASSERTED (4d-i-rust; no sig-sourced rows per v5); kotlin DEFERRED to the traits/codegen arc (v5 kotlin DOES emit: field/impl/generic/variant - candidates + Resolve<TypeF> land there)
+//   resolved caller -> callee                     -> TS RATCHETED vs scip (4c-ii); GO RATCHETED vs scip-go (4d-ii-go); rust RATCHETED vs rust-analyzer-scip (4d-ii-rust); kotlin DEFERRED to the traits/codegen arc
 //   docs facet                                    -> follow-up
 //   df aux (args/fields/lits/param_pos)           -> labels, follow-up
 //

@@ -95,12 +95,16 @@
 //! ratchet over the scip/ module: 1 NameResolve / 1 ScipOverride / 0 misses) + commit 4d
 //! COMPLETE for rust (4d-i-rust type_edge asserted, 3+3 rows zero divergence; 4d-ii-rust
 //! Resolve<CallF> + the rust-analyzer scip ratchet: 2 NameResolve / 3 ScipOverride / 0
-//! misses)) LANDED in v6/sprefa-extract/.
-//! The TS + Rust + Go phase-1
+//! misses) + the KOTLIN language (phase-1 ONLY: cst/type/call/df + the parity gold,
+//! 116 rows zero divergence; the type_edge candidates + Resolve<TypeF>/Resolve<CallF> +
+//! scip ratchet are DEFERRED to the traits/codegen arc)) LANDED in v6/sprefa-extract/.
+//! The TS + Rust + Go + Kotlin phase-1
 //! families - Cst / Type(+sigs) / Call / Df (+const) - all project + stream + snapshot through
 //! ONE uniform surface, AND each ported set matches a captured v5 oracle (see the (parity) /
-//! (rust) / (go) entries). THE RESOLVE PASS (commit 4) IS COMPLETE: type_edge asserted for
-//! ts+go+rust, call edges ratcheted vs three indexers. NEXT: the parked arcs (df aux port,
+//! (rust) / (go) / (kotlin) entries). THE RESOLVE PASS (commit 4) IS COMPLETE: type_edge
+//! asserted for
+//! ts+go+rust, call edges ratcheted vs three indexers. NEXT: resolve arms + the ratchet for
+//! kotlin land with the traits/codegen arc; the parked arcs (df aux port,
 //! docs port, oddity arc, dedup sweep, Epic 3) - 4b
 //! landed COMPLETE: machinery (4b-i) + specifiers (4b-ii) + the type_edge arm
 //! (4b-iii, ts type_edge asserted, zero divergence; the (4b-i) STOP was ruled
@@ -797,6 +801,51 @@
 //!             test reports the v6-only rust call-edge counts per case
 //!             (CASES corpus, no scip loaded = pure name-match: sample 1,
 //!             docs 1).
+//!   (kotlin) FOURTH LANGUAGE LANDED: `KotlinSource` (lang/kotlin.rs, ~940 lines),
+//!             placed BEFORE TsSource in the roster so .kt/.kts route to it (the
+//!             ".kts".ends_with(".ts") collision - v5 type_langs() makes the same
+//!             order-dependent call, typegraph/mod.rs:488). Mirror of GoSource
+//!             (the "floor as the only tier" - kotlin has no syn/oxc analog
+//!             either): cst via ast-grep (ast-grep's kotlin grammar) +
+//!             type/call/df via tree-sitter-kotlin-sg (`kt_parse` ->
+//!             `tree_sitter::Tree`). The grammar crate is tree-sitter-kotlin-sg
+//!             (the ast-grep fork), NOT tree-sitter-kotlin: it is the EXACT
+//!             crate v5's kotlin front-end carries (root Cargo.toml pins it, so
+//!             the v6 parse is byte-identical to the oracle's), already in this
+//!             lock as an ast-grep-language transitive (0.4.1), exports
+//!             `LANGUAGE: LanguageFn` like tree-sitter-go 0.23, and deps only
+//!             tree-sitter-language + cc - tree-sitter + tree-sitter-kotlin-sg
+//!             unify with ast-grep's transitives (one copy each; Cargo.lock
+//!             gained ONE dep-edge line, zero new dupes). Ports v5
+//!             `src/graph/typegraph/kotlin.rs` (KotlinTypes): TypeF entities
+//!             (class/interface/enum via the decl-children keyword scan over
+//!             class_declaration/object_declaration/companion_object; EVERY
+//!             function_declaration - v5 kotlin never mints a Method ENTITY,
+//!             member funs are Function) + arrow sigs (param slots positional,
+//!             ret unioned at pos 0, declared type-param names + Kotlin
+//!             builtins excluded, the extension-receiver overwrite quirk kept),
+//!             CallF (defs incl. primary/secondary ctors named after the CLASS
+//!             + lambda literals gated on an enclosing fn; sites: bare +
+//!             navigation callees, site span = the LEAD node), DfF (nodes +
+//!             Direct edges; the lam_sym closure naming is ported -
+//!             `{file}::function::{fn}::closure::{row}_{col}` 0-based, nesting
+//!             chains, EVERY fun roots at ::function::{name}; implicit `it` at
+//!             slot 0; the shared scope lets captures resolve and leaks `it`,
+//!             v5-exact). tree-sitter yields BYTE offsets directly -> v6 Span
+//!             with NO line/col bridge. TIER-2 PARITY GREEN vs the v5 oracle
+//!             (the NEW .kt/.kts arm in v5_normalize.rs - it precedes the .ts
+//!             fallback): ZERO divergence (type_node 8 + type_sig 7 +
+//!             call_def 8 + call_site 6 line-exact; df_node 47 + df_edge 40
+//!             byte-exact - 116 ported rows). v5 kotlin emits NO const facet
+//!             (extract leaves consts at Default); v6 matches (const_value=0
+//!             both sides). DEFERRED to the traits/codegen arc (this increment
+//!             is PHASE-1 ONLY): the type_edge candidates (kotlin_decl_edges:
+//!             field/impl/generic/variant - v5 kotlin DOES emit type_edge, 10
+//!             rows reported by the ledger test) + Resolve<TypeF> /
+//!             Resolve<CallF> + the scip ratchet; docs; df aux (args 10 /
+//!             fields 2 / param_pos 9 reported). Commits e22f642b (skeleton) /
+//!             594a7173 (TypeF) / 51bb1eab (CallF) / 8177a1bf (DfF) / a4a996ef
+//!             (parity gold).
 //!   PENDING:   TS type EDGES are now ASSERTED (see (4b): phase-1 candidates +
 //!              Resolve<TypeF>; field/variant/impl/generic/uses/param/returns);
 //!              RUST type edges are now ASSERTED (see (4d-i): field/variant/
