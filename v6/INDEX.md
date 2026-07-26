@@ -34,6 +34,7 @@
 | [plans/2026-07-23-sprefa-extract-golden-plan.md](plans/2026-07-23-sprefa-extract-golden-plan.md) | 537 | sprefa-extract - the golden plan (distill v5, normalize for v6) |
 | [plans/2026-07-24-extract-go-closeout-and-resolve4.md](plans/2026-07-24-extract-go-closeout-and-resolve4.md) | 957 | sprefa-extract: Go closeout → Resolve<\*> (commit 4) → fixture broadening |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
+| [sprefa-extract/AGENTS.md](sprefa-extract/AGENTS.md) | 66 | sprefa-extract — Agent Guidance |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
 
@@ -439,6 +440,15 @@
 37:## Copy-paste skeleton
 64:## Mermaid's real limits (when to reach for D2 instead)
 89:## Validate the render (don't trust the source)
+```
+
+### sprefa-extract/AGENTS.md
+```
+1:# sprefa-extract — Agent Guidance
+6:## The boundary law
+19:## Analysis family map (program vs facet vs rabbit hole)
+48:## Inter-procedural rule (permanent)
+57:## Pointers
 ```
 
 ### sprefa-store/FINDINGS-AND-GAPS.md
