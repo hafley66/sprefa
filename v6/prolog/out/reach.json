@@ -1,0 +1,69 @@
+{
+  "rels": [
+    {
+      "columns": ["node" ],
+      "kind": {
+	"buffer": {"onFull":"block","replay":0},
+	"materialization":"materialized",
+	"origin":"EDB",
+	"shape":"event",
+	"temperature":"hot"
+      },
+      "name":"root",
+      "origin":"EDB"
+    },
+    {
+      "columns": ["parent", "child" ],
+      "kind": {
+	"buffer": {"onFull":"block","replay":0},
+	"materialization":"materialized",
+	"origin":"EDB",
+	"shape":"event",
+	"temperature":"hot"
+      },
+      "name":"edge",
+      "origin":"EDB"
+    },
+    {
+      "columns": ["node" ],
+      "kind": {
+	"buffer": {"onFull":"block","replay":0},
+	"materialization":"lazy",
+	"origin":"IDB",
+	"shape":"pipe",
+	"temperature":"cold"
+      },
+      "name":"reach",
+      "origin":"IDB"
+    }
+  ],
+  "rules": [
+    {
+      "body": [
+	{
+	  "args": [ {"kind":"var","name":"v0"} ],
+	  "kind":"rel",
+	  "rel":"root"
+	}
+      ],
+      "head":"reach",
+      "headTerms": [ {"kind":"hvar","name":"v0"} ]
+    },
+    {
+      "body": [
+	{
+	  "args": [ {"kind":"var","name":"v1"},  {"kind":"var","name":"v0"} ],
+	  "kind":"rel",
+	  "rel":"edge"
+	},
+	{
+	  "args": [ {"kind":"var","name":"v1"} ],
+	  "kind":"rel",
+	  "rel":"reach"
+	}
+      ],
+      "head":"reach",
+      "headTerms": [ {"kind":"hvar","name":"v0"} ]
+    }
+  ]
+}
