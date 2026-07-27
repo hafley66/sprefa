@@ -124,12 +124,21 @@ ruling(storage_integer_keys, dense_int_surrogates, user,
 ruling(n1_statement_budget, flat_per_tick_statement_count, user,
        'v5 tick-counter law promoted into a graded conformance check').
 
-% Stale fill under a dead scope (sub-forest ambiguity 1): the policy is
-% EXPRESSIBLE IN THE LANGUAGE, not hardwired. The kernel surfaces every
-% fill whose demanding scope is gone as an engine rel (shape owed by the
-% switch_flow/absorption arc; merges the refused-fill diag gap, sub-forest
-% absorption item 7). Drop is then the default (nobody reads the rel),
-% admit-to-cache is a one-line program rule, dead-letter is a keep() on
-% the same rel. The four lab options become four programs.
-ruling(stale_fill_policy, surfaced_as_kernel_rel_program_decides, user,
-       'user 2026-07-27 PM: "stale fill should be expressable in the language, more kernel"').
+% Stale fill under a dead scope (sub-forest ambiguity 1). SUPERSEDED same
+% day: the first take ("surface orphan fills as a rel, program decides")
+% added a delivery-guarantee dimension the user rejected ("we're not
+% AMQP"). Final ruling: CANCELLATION IS THE KERNEL PRIMITIVE. Demand-row
+% deletion IS the abort signal (Go-context shape): when an effect's
+% demand support hits zero, the in-flight run is aborted (process killed,
+% fetch aborted, timer cancelled) and its pending cache row deleted.
+% There is no orphan fill by construction; the only residual is the
+% same-tick race (teardown and fill in one tick), which the absorption
+% arc grades both ways and picks one. Wanting a fill to outlive your
+% scope is not a fill policy, it is DEMAND FROM A LONGER-LIVED SCOPE
+% (the cache rule demands the fetch; the UI joins the cache rel).
+% STATUS: PROVISIONAL, not user-final. Immediately after the abort take the
+% user wavered ("could be sold on it because it could indicate something").
+% Both takes stay recorded above; neither is ruled. Do not build on either
+% until the anti-bias pass and the switch_flow lab land.
+ruling(stale_fill_policy, no_orphan_fills_abort_on_teardown, provisional,
+       'user 2026-07-27 PM: abort take, then wavered; awaiting anti-bias pass').
