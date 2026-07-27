@@ -191,6 +191,7 @@ task(clock_inference,     parked,  [clock_check]).       % swap ground clocks fo
 task(surface_dcg,         unbuilt, [desugar_machinery]). % rust-ish grammar -> kernel facts (sample approved)
 task(mode_lab,            unbuilt, []).                  % determinism.pl: (card, lifetime) + dominance
 task(register_lowering,   unbuilt, [kernel_sql_lowering]). % UPDATE..CASE per register + hist/retention
+task(ts_grammar_import,   unbuilt, []).                  % node-types.json -> con/enum facts; typed CST matching
 task(purity_split,        unbuilt, [desugar_machinery]). % pure-body test per segment
 task(island_partition,    unbuilt, [purity_split, clock_check]).
 task(rw_sets,             unbuilt, [purity_split]).

@@ -35,6 +35,9 @@ sugar(debounce,        [delay, register]).
 sugar(switch_map,      [clock_on, external_rel]).
 sugar(demand_lazy,     [rule, clock_on]).
 sugar(impure_loop,     [register, external_rel, rule, clock_on]).
+sugar(dot_access,      [ground_terms]).            % x.f.g = nested pattern
+sugar(list_each,       [ground_terms, rule]).      % `in` = one row per element
+sugar(typed_decode,    [envelope_match]).          % foreign data -> declared terms
 
 grounds(Feature) :- kernel(Feature).
 grounds(Feature) :- sugar(Feature, Parts), forall(member(P, Parts), grounds(P)).
