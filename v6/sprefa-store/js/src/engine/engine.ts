@@ -211,26 +211,26 @@ export function create_schema(db: Db, ns: IGraphNs): Observable<void> {
     concatMap(() =>
       uncounted_multi(
         db,
-        `CREATE TABLE ${ns.row} (
+        `CREATE TABLE IF NOT EXISTS ${ns.row} (
             key    INTEGER PRIMARY KEY,
             weight INTEGER NOT NULL DEFAULT 1,
             tag    INTEGER GENERATED ALWAYS AS (key / 1000000000) VIRTUAL,
             id     INTEGER GENERATED ALWAYS AS (key % 1000000000) VIRTUAL
          );
-         CREATE TABLE ${ns.dep} (
+         CREATE TABLE IF NOT EXISTS ${ns.dep} (
             parent_key INTEGER NOT NULL,
             child_key  INTEGER NOT NULL,
             PRIMARY KEY (parent_key, child_key)
          ) WITHOUT ROWID;
-         CREATE TEMP TABLE ${ns.frontier} (key INTEGER PRIMARY KEY);
-         CREATE TEMP TABLE ${ns.next}     (key INTEGER PRIMARY KEY);
-         CREATE TEMP TABLE ${ns.hits} (key INTEGER PRIMARY KEY, dec INTEGER NOT NULL);
-         CREATE TEMP TABLE ${ns.cone} (key INTEGER PRIMARY KEY);
-         CREATE TEMP TABLE ${ns.scc_scope} (key INTEGER PRIMARY KEY);
-         CREATE TEMP TABLE ${ns.scc_frontier} (key INTEGER PRIMARY KEY);
-         CREATE TEMP TABLE ${ns.scc_next} (key INTEGER PRIMARY KEY);
-         CREATE TEMP TABLE ${ns.scc_live} (key INTEGER PRIMARY KEY);
-         CREATE INDEX ${ns.ix_dep_child} ON ${ns.dep} (child_key);`,
+         CREATE TEMP TABLE IF NOT EXISTS ${ns.frontier} (key INTEGER PRIMARY KEY);
+         CREATE TEMP TABLE IF NOT EXISTS ${ns.next}     (key INTEGER PRIMARY KEY);
+         CREATE TEMP TABLE IF NOT EXISTS ${ns.hits} (key INTEGER PRIMARY KEY, dec INTEGER NOT NULL);
+         CREATE TEMP TABLE IF NOT EXISTS ${ns.cone} (key INTEGER PRIMARY KEY);
+         CREATE TEMP TABLE IF NOT EXISTS ${ns.scc_scope} (key INTEGER PRIMARY KEY);
+         CREATE TEMP TABLE IF NOT EXISTS ${ns.scc_frontier} (key INTEGER PRIMARY KEY);
+         CREATE TEMP TABLE IF NOT EXISTS ${ns.scc_next} (key INTEGER PRIMARY KEY);
+         CREATE TEMP TABLE IF NOT EXISTS ${ns.scc_live} (key INTEGER PRIMARY KEY);
+         CREATE INDEX IF NOT EXISTS ${ns.ix_dep_child} ON ${ns.dep} (child_key);`,
       ),
     ),
   );
@@ -950,18 +950,18 @@ export namespace reconcile {
 export function create_schema(db: Db, ns: IGraphNs): Observable<void> {
   return uncounted_multi(
     db,
-    `CREATE TABLE ${ns.memo} (
+    `CREATE TABLE IF NOT EXISTS ${ns.memo} (
             id          INTEGER PRIMARY KEY,
             digest      INTEGER NOT NULL,
             changed_at  INTEGER NOT NULL DEFAULT 0,
             verified_at INTEGER NOT NULL DEFAULT 0
          );
-         CREATE TABLE ${ns.rdep} (
+         CREATE TABLE IF NOT EXISTS ${ns.rdep} (
             reader INTEGER NOT NULL,
             read   INTEGER NOT NULL,
             PRIMARY KEY (reader, read)
          ) WITHOUT ROWID;
-         CREATE INDEX ${ns.ix_rdep_read} ON ${ns.rdep} (read);`,
+         CREATE INDEX IF NOT EXISTS ${ns.ix_rdep_read} ON ${ns.rdep} (read);`,
   );
 }
 
