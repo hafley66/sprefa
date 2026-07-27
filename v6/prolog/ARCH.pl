@@ -52,6 +52,18 @@
 %   speed. Same pipeline here: prolog desugar is the reference semantics,
 %   rust/sqlite native lowering is the optimization, and the two must agree.
 %
+% * LIFETIME IS DOMINATED. A stream's mode is (cardinality, lifetime):
+%   cardinality = prolog's det/semidet/multi; lifetime = finite | until(S) |
+%   never, and lifetime(inner) = min(own binding, enclosing scope). switch_map
+%   is a scope constructor: every(300s) alone is `never`, under switch_map it
+%   is until(outer_next). Unsubscribe = range-DELETE of the scope's demand
+%   rows, so dominance is row deletion, not a callback.
+%
+% * THE REGISTER ROW IS pre. Reading the row before the tick's fold IS the
+%   previous value; the batched UPSERT at tick commit is both the update and
+%   the downstream delta (-old/+new). pre depth > 1 = LAG reads on a hist
+%   table pruned at the retention bound. Crash = roll back to last tick's row.
+%
 % * NO @ SYMBOL. Time is a FIELD. A clock is a tick-valued column plus a
 %   join; "clocked on R" = "this struct carries tick_of(R)". Record typing
 %   tracks which rels carry which tick fields, so the temporal checker is the
@@ -113,6 +125,7 @@ algorithm(rw_disjoint,     conflict,    fold,              unbuilt).
 algorithm(magic_demand,    static_subs, rewrite,           'books/v6/algos/magic_sets.pl').
 algorithm(seminaive_eval,  delta_flow,  monotone_fixpoint, 'sqlite via js lowerSql / rust store').
 algorithm(count_ivm,       delta_flow,  monotone_fixpoint, 'rust store (beat DRed 4-5x)').
+algorithm(mode_analysis,   static_subs, fold,              unbuilt).  % (card, lifetime) + dominance
 algorithm(sql_emit,        ast,         rewrite,           'books/v6/algos/lower_sql.pl').
 algorithm(ts_emit,         ast,         rewrite,           'src/emit_ts.pl (literal TS onto the engine-v1 seam)').
 
@@ -141,6 +154,9 @@ technique(parallelism,   rw_disjoint_components,      'static; no lock manager')
 technique(absence,       negation_vs_reference_clock, 'needs @on(R); rejected on @own').
 technique(glitch_safety, clock_unification_on_joins,  'combineLatest on foreign clocks flagged').
 technique(recovery,      state_at_tick_is_a_row,      'replay = reread tables').
+technique(state_update,  upsert_at_tick_commit,       'register row = current state; UPDATE..CASE emitted per register, UDF escape hatch').
+technique(prev_value,    row_read_before_fold,        'pre = the row pre-write; depth>1 = hist LAG, retention-pruned').
+technique(ask_modes,     snapshot_vs_subscribe,       'read-1 = SELECT, always finite; tail = mode-typed (card, lifetime)').
 
 % ═════════════════════════════════════════════════════════════════════════════
 % THE SYNTAX KERNEL — the answer to "stop adding non-compositional features".
@@ -171,7 +187,10 @@ task(init_retention,      labbed,  []).
 task(causality_check,     labbed,  []).
 task(envelope_types,      labbed,  []).                  % enum_match
 task(demand_clocking,     labbed,  [kernel_sql_lowering]).
-task(clock_inference,     unbuilt, [clock_check]).       % swap ground clocks for holes
+task(clock_inference,     parked,  [clock_check]).       % swap ground clocks for holes; user-parked 2026-07-27
+task(surface_dcg,         unbuilt, [desugar_machinery]). % rust-ish grammar -> kernel facts (sample approved)
+task(mode_lab,            unbuilt, []).                  % determinism.pl: (card, lifetime) + dominance
+task(register_lowering,   unbuilt, [kernel_sql_lowering]). % UPDATE..CASE per register + hist/retention
 task(purity_split,        unbuilt, [desugar_machinery]). % pure-body test per segment
 task(island_partition,    unbuilt, [purity_split, clock_check]).
 task(rw_sets,             unbuilt, [purity_split]).
