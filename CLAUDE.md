@@ -59,71 +59,23 @@ file keeps only the standing laws + currently-open work.
 ## v5 Work — open items only (landed detail: .agent/memories/sprefa-task-ledger.md)
 
 ### In flight
-2026-07-19 AM wave (uncommitted on `next`):
-- **IO event trail** (src/eventlog.rs, new): `events.jsonl` beside `why.jsonl`.
-  The split is the point — `why` samples COST every 2s, `events` records the
-  ARGUMENTS the moment something happens. Incident that forced it: a root
-  reported `"15 changed path(s)"` on ten separate ticks while `find` proved
-  zero files moved in 15 min, and the trail could not name the 15 paths. The
-  paths were in memory the whole time (`ServedRoot.last_changed_paths`,
-  daemon/root.rs:39) and got `format!`ed to a count at root.rs:163. Causality
-  is not reconstructable from periodic samples, on principle.
-  Rides the tracing spine per standing law: emission is
-  `tracing::info!(target: "dl::event", ...)`, the writer is a
-  `tracing_subscriber::Layer` (`EventLayer`), installed in the daemon's
-  `init_daemon_tracing` only (one-shot CLI leaves TRAIL unset = no-op).
-  Reader: `dl daemon events [--kind K] [--root R] [--limit N]`, file-only like
-  `why`, answers with the daemon wedged. Event kinds being instrumented:
-  file_changed (full path list + which test fired, hash vs mtime, old/new),
-  tick_start/tick_end, gen_write (wrote vs skipped-identical), effect_call/
-  effect_result (filled template args, secrets redacted), db_write (per BATCH
-  — a per-row emit would violate the N+1 law and is a blocking defect).
-- `dl daemon health` builtin (src/cli/health.rs, 392 lines): dbstat buckets,
-  per-table rows+data+index MB ranking, identical-rowset dupe probe (EXCEPT
-  both directions), static copy-rule scan of the program set, orphan `roots/`
-  dirs vs roots.json with an origin probe + rm hint, db/corpus ratio. Read-only
-  opens inside one read transaction; answers with the daemon live or down.
-  Runs in ~2s over all 3 roots. Wired in daemon_cmd.rs + docs/daemon.md.
-- Class-14 rail: `hook::refuse_worktree_cold_check` + the `--check` wiring in
-  cli/mod.rs (green-by-skip exit 0, `DL_ALLOW_WORKTREE_COLD=1` hatch),
-  tests/it/worktree_cold_check.rs (3 cases). Docs entry in flight.
-- Storage diet (a) DONE: `port_of_reach` rename layer deleted from
-  .dl/flow-panel.dl (proven identical to `port_of_reach_rec`, 291k rows);
-  zero external readers repo-wide (it ends in neither `_node` nor `_edge`, so
-  panel layer discovery never saw it), `dl .dl/ --parse-only` exits 0.
-  - bom_edge/member_edge: identical rowsets but NOT collapsible. Both names are
-    read by editors/vscode-dl/media/flow-panel.html, and layer discovery pairs
-    `bom_node` (distinct: carries fan_in/fan_out/weight) with `bom_edge` by
-    suffix — dropping `bom_edge` would strand `bom_node` and delete the BOM
-    layer from discovery. The .dl/bom.dl:106 passthrough is the price.
-  - named_call_site (467k rows, 61MB): 2 independent declarations
-    (.dl/rails.dl:61, examples/db-seam-callgraph-audit.dl:83), each with exactly
-    ONE same-file consumer (rails.dl:70, audit.dl:93), both feeding
-    `loop_entry_fn`. No SQL-name reader anywhere. Inline-vs-keep is the user's
-    call; the receipts say it is 61MB serving one join each.
-  - Side flag: .dl/rails.dl:62-64 uses `p`/`l`, violating the descriptive-name
-    law; the examples twin already uses `call_file`/`call_line`.
-- plans/2026-07-19-lazy-rel-tier.md: amplification autopsy (indexes are 57% of
-  the 873MB file) + the build-vs-buy table for a lazy rel tier. VIEW-only is
-  the sole zero-dependency mechanism that drops table + autoindex + idx_ bytes
-  together; ~286MB of today's file is derived-from-derived staging it could
-  hold at zero bytes. Syntax/polarity decisions still the user's.
-
-(the 2026-07-18 wave landed in full: db-seam A+B, eprintln→tracing,
-storage-diet 2, cold-chunk, eaten-diag S6, rails pair, small-rails,
-queue-apalis, two-worlds, auto-refactor, clock bucket gate + derived
-digest-skip + view-DDL skip + wildcard-bucket clock salt, perflog test-globals
-lock, rusqlite-coupling Layer 5 call_def fix, _source_stage_owner batch.)
+(none. The 2026-07-19 AM wave is CONFIRMED LANDED on main, verified 2026-07-27:
+src/eventlog.rs event trail + `dl daemon events`; `dl daemon health`
+(src/cli/health.rs); class-14 rail (`hook::refuse_worktree_cold_check` +
+tests/it/worktree_cold_check.rs); storage diet (a). `next` is 0 ahead / 244
+behind main — nothing lives there. The 2026-07-18 wave landed in full earlier.
+Detail for both: .agent/memories/sprefa-task-ledger.md. Receipts still live
+from that wave: named_call_site is 61MB serving one join each,
+inline-vs-keep = user call; .dl/rails.dl:62-64 still uses `p`/`l` and owes the
+descriptive-name rename.)
 
 ### Blocked on user word
-- [x] ~~orphan root-dir rm~~ DONE 2026-07-19 (user ran it; +the hook-minted 32f74dffe orphan; ~1.5GB freed, roots/ = exactly the 3 registered). ~~DROP TABLE _job~~ DONE same session.
-- [x] ~~one-off VACUUM of the sprefa root db~~ DONE 2026-07-19 AM (1,010 -> 814MB). NOTE: back to 877MB by 09:00 with freelist ~0, so that is new pages, not churn. The 39x db/corpus ratio is the standing defect; see plans/2026-07-19-lazy-rel-tier.md.
 - [ ] **drop the orphaned `rel_port_of_reach` table + VACUUM** (one rewrite, not two): daemon stopped, `DROP VIEW IF EXISTS rel_port_of_reach_txt; DROP TABLE IF EXISTS rel_port_of_reach; VACUUM;` against `~/.local/state/sprefa/roots/fbabddda40d22347/db.sqlite`. Table 7.6MB + its PK autoindex 8.6MB = 15.5MB reclaimed; the deleted rule leaves the table behind.
 - [ ] **rm the 3 overnight orphan roots** (~1.86GB, minted by agent-worktree pre-commit hooks before the class-14 rail existed): `cd ~/.local/state/sprefa/roots && rm -rf 5658fb5a59d0f252 c22f2b330d2dd1f7 ea3041acfc1af14c`. `dl daemon health` prints this exact line now.
-- [ ] **lazy rel tier decisions** (plans/2026-07-19-lazy-rel-tier.md): syntax (`rel lazy foo(...)` vs `@lazy`), opt-in vs health-suggested, and whether demand-materialize-with-eviction is wanted at all or VIEW-only suffices (VIEW-only = zero new deps, zero policy code).
+- [ ] **lazy rel tier decisions** (plans/2026-07-19-lazy-rel-tier.md): syntax (`rel lazy foo(...)` vs `@lazy`), opt-in vs health-suggested, and whether demand-materialize-with-eviction is wanted at all or VIEW-only suffices (VIEW-only = zero new deps, zero policy code). Context: post-VACUUM the root db regrew 814 -> 877MB in hours with freelist ~0 (new pages, not churn); the 39x db/corpus ratio is the standing defect this decides.
 - [ ] **filesize-rail ruling**: verify.sh exits 2 — 29 src files >500 lines are NOT in scripts/filesize-allow.txt (all already over budget at pushed main a3c09e3f, none crossed this session). Grandfather (allowlist + .dl/file-size.dl rows, shrink-only law) or schedule splits.
 - [ ] **instant dom-match.dl rewrite** (user-side repo): drop pull/matches_latest/matches_body + both bucket columns onto `matches_resp(body) <- @async clock(5, _), matches() -> (body).` — caveat: matches_resp then accumulates distinct bodies unordered; keep a bound bucket if strict latest-wins matters.
-- [ ] **surviving worktrees** (refreshed 2026-07-19 early AM): only vscode-flow-panel remains non-agent (unmerged parked branch). a5b6cd2c + a93779ab vetted as earlier drafts of landed work and removed (patch backups in the job dir), ext-wave3 salvaged (S7/S8/S9 + perf RCA landed on next) and removed, a305bb unlocked+removed. All three agent arcs merged (ast-tree-share b5bb8ef2, reqid-midtick a49a0718, index-audit dc9b67b1); their trees and branches removed.
+- [ ] **worktree removal** (refreshed 2026-07-27, supersedes the 2026-07-19 row which undercounted by 40): reconcile pass found 42 worktrees. 34 are fully merged into main; all their uncommitted work is banked as 13 patches in archive/worktree-salvage-2026-07-27/ (README has per-patch inventory). `git worktree remove` was permission-blocked for the agent — the exact removal + merged-branch-deletion commands are in that README, run them. 8 unmerged trees stay alive (lsp-diags ahead 12, types, codex-intern, codex-qscip, g4-unify, refactor/file-splits ahead 7, vscode-flow-panel, extract-golden-plan ahead 76 + 4 uncommitted chat_logs — that last one needs a merge-or-kill decision).
 
 ### Next up (dispatchable, not started)
 - [ ] **storage-diet 4a**: WITHOUT ROWID junctions; then A=1a dense dictionary ids; step 5 coordinate-composite elimination rides ref-spine. Direction 5 CLOSED 2026-07-19 (branch index-audit dc9b67b1: planner-honest demand filters in create_auto_indexes — PK-prefix on rowid tables, tiny-rel floor, constant-column; 771 -> 262 idx_, -117.7MB dbstat on the root snapshot; two policies measured-and-rejected with receipts: broad low-selectivity loses to value skew, PK-prefix on WITHOUT ROWID flips fixpoint join sides).
@@ -140,11 +92,10 @@ lock, rusqlite-coupling Layer 5 call_def fix, _source_stage_owner batch.)
 - Low: 159-changed-paths mystery; tick_root pairing residual (c33ffc04).
 
 ### v6 STANDING PLAN (user-set 2026-07-25, execute IN ORDER, do not improvise past it)
-1. **Restore green + commit.** `v6/sprefa-store/js/src/engine/engine.ts` is missing 4
-   definitions deleted mid-cleanup (`sequence`, `uncounted_query`, `uncounted_multi`,
-   `execBatch`) and `exec` references an unimported name; `src/lib/rxjs.ts` is an orphan
-   to delete. Restore the agent-verified text, verify store 84/84 + dl 74/74 + both
-   typechecks, COMMIT immediately. Every green state gets a commit from now on.
+1. ~~Restore green + commit~~ DONE (verified 2026-07-27: store 89/89, dl 74/74, both
+   typechecks clean, `src/lib/rxjs.ts` orphan gone). Every green state gets a commit,
+   standing. NOTE for item 2: the restored `sequence` helper still sits in
+   engine.ts:115 with 2 call sites (:743, :744) — it is the first thing item 2 deletes.
 2. **Undo rxjs over sync code** (the user withdrew the "make it all rxjs" ask). Sync
    loops/list building are plain array code returning arrays. Observables exist only
    where a real async boundary lives (the SqlRunner driver seam, spawn, HTTP). While
@@ -159,6 +110,22 @@ lock, rusqlite-coupling Layer 5 call_def fix, _source_stage_owner batch.)
 4. **Rxjs rule of engagement**: before writing ANY new rxjs, stop and ask the user
    first: is this making sense, is there a shorter/more direct way, fewer variables,
    fewer methods. No new operator chains land without that check.
+
+### v6 awaiting user rulings (consolidated 2026-07-27; full text in the cited plans)
+- **stale fill under a dead scope** — BLOCKS the effect-rel/SWR lowering. Options:
+  drop (lab's graded choice) / admit-but-not-into-view / admit only for cache-declared
+  rels / dead-letter. plans/2026-07-27-sub-forest.md ambiguity 1.
+- **sub-id/salt minting**: engine-minted salt means switch scopes never share an
+  in-flight request — the opposite of content-addressed dedup. Semantics fork, not a
+  detail. sub-forest ambiguity 3.
+- **extraction ambiguities** A12 (from-world = nullary `->`?), A1 (glob residency),
+  A4 (fence escape), A14 (comment_span bind). plans/2026-07-27-extraction-spellings.md.
+- **Key(Type) vs `->`**: labs split three ways; present both files' arguments, no fiat.
+  plans/2026-07-27-lab-consolidation.md bottom.
+- Queued smaller: operators.pl models forkJoin as a level rule (correct only while
+  inputs are unscoped — refixture when the sub forest absorbs); `scope_done`
+  read-by-name violates the magic-rel ban (needs a decl); repeat's arrival-tick salt
+  collides on two same-tick resubscribes; `until(F)` formula presentation in CLI output.
 
 ### Lab protocol (user-set 2026-07-27, applies to every agent at every level)
 - **Planner seeds the header first.** Every lab starts from a planner-written contract
