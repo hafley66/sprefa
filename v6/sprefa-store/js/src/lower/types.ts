@@ -135,8 +135,9 @@ export interface IDatalogEvaluator {
   createLikeStatements(name: string, like: RelTable): SqlStatement[];
   supportPlan(support: SupportEdges): SupportPlan;
 
-  /** The one place a list of SQL becomes execution. */
-  runAll(statements: readonly SqlStatement[]): Observable<void>;
+  /** The one place a list of SQL becomes execution. Emits once, when the last statement
+   *  finishes; the per-statement results flow out. */
+  runAll(statements: readonly SqlStatement[]): Observable<QueryResult[]>;
 
   compileRuleJoin(rule: Rule, bodyPositionOverrides: ReadonlyMap<number, string>): CompiledJoin | null;
   compileRuleSelect(rule: Rule, bodyPositionOverrides: ReadonlyMap<number, string>): CompiledSelect | null;
@@ -164,5 +165,6 @@ export interface IRecursiveStratum {
   /** The only genuinely async step: each merge's `rowsAffected` decides whether the
    *  fixpoint runs again. */
   round(): Observable<boolean>;
-  run(): Observable<void>;
+  /** Emits once, at fixpoint, with the final drop statements' results. */
+  run(): Observable<QueryResult[]>;
 }

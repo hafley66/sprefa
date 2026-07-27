@@ -21,10 +21,6 @@ export const SqlRunner: ISqlRunner = {
     });
   },
 
-  run(db: SqliteDb, statement: SqlStatement, trace?: TraceStatement): Observable<void> {
-    return SqlRunner.execute(db, statement, trace).pipe(map(() => undefined));
-  },
-
   scalar(db: SqliteDb, statement: SqlStatement, trace?: TraceStatement): Observable<number> {
     return SqlRunner.execute(db, statement, trace).pipe(map((result) => Number(result.rows[0]?.[0] ?? 0)));
   },
@@ -39,14 +35,14 @@ export const SqlRunner: ISqlRunner = {
     });
   },
 
-  batch(db: SqliteDb, statements: readonly SqlStatement[], trace?: TraceStatement): Observable<void> {
+  batch(db: SqliteDb, statements: readonly SqlStatement[], trace?: TraceStatement): Observable<QueryResult[]> {
     return defer(() => {
-      if (statements.length === 0) return of(undefined);
+      if (statements.length === 0) return of([]);
       for (const statement of statements) {
         stmt_counter.incr();
         trace?.(typeof statement === "string" ? statement : statement.sql);
       }
-      return from(db.batch(statements.slice(), "write")).pipe(map(() => undefined));
+      return from(db.batch(statements.slice(), "write"));
     });
   },
 
@@ -68,8 +64,8 @@ export const SqlRunner: ISqlRunner = {
  * BEGIN / COMMIT / ROLLBACK, deliberately NOT counted. They are bracket overhead, not
  * data statements, and the N+1 golden tests assert an exact count of the latter.
  */
-function bracket(db: SqliteDb, statement: string): Observable<void> {
-  return defer(() => from(db.execute(statement))).pipe(map(() => undefined));
+function bracket(db: SqliteDb, statement: string): Observable<QueryResult> {
+  return defer(() => from(db.execute(statement)));
 }
 
 /** `;` never appears inside a literal in the SQL this engine emits. */

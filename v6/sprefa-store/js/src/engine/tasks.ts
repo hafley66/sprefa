@@ -13,12 +13,12 @@
  * Same machine, different carried value. The WHEN = salsa/control; the WHAT-after = dd/fact.
  */
 
-import { type Observable, map, of } from "rxjs";
+import { type Observable, concat, map, toArray } from "rxjs";
 
 import { SqliteReach } from "./algo.ts";
 import { cascade, reach, reconcile } from "./engine.ts";
 import { SqlRunner } from "./sqlRunner.ts";
-import type { IGraphNs, IRelStore } from "./types.ts";
+import type { IGraphNs, IRelStore, QueryResult } from "./types.ts";
 
 // =============================================================================
 // Trait A · Reach — read-only graph queries over cx_dep (prune = reached)
@@ -56,8 +56,8 @@ export interface Cascade {
 // Trait C · Reconcile — salsa-in-SQL digest plane (prune = digest moved)
 // =============================================================================
 export interface Reconcile {
-  seed(id: number, digest: bigint, deps: ReadonlyArray<readonly [number, number]>, rev: number): Observable<void>;
-  mark_changed(ids: ReadonlyArray<number>, rev: number): Observable<void>;
+  seed(id: number, digest: bigint, deps: ReadonlyArray<readonly [number, number]>, rev: number): Observable<QueryResult[]>;
+  mark_changed(ids: ReadonlyArray<number>, rev: number): Observable<QueryResult[]>;
   dirty(): Observable<number[]>; // the stale FRONTIER (one-hop, early cutoff)
   verify(id: number, new_digest: bigint, rev: number): Observable<boolean>; // moved? ⇒ cutoff
 }
@@ -67,8 +67,8 @@ export interface Reconcile {
 // =============================================================================
 export interface GraphStore {
   create(node_value_cols: ReadonlyArray<string>, per_tuple: boolean): void;
-  upsert_node(key: number, values: ReadonlyArray<number>): Observable<void>;
-  upsert_edges(edges: ReadonlyArray<readonly [number, number]>): Observable<void>;
+  upsert_node(key: number, values: ReadonlyArray<number>): Observable<QueryResult>;
+  upsert_edges(edges: ReadonlyArray<readonly [number, number]>): Observable<QueryResult[]>;
   children(key: number): Observable<number[]>; // forward traversal (cascade hits)
   parents(key: number): Observable<number[]>; // reverse traversal (rederive / dirty)
 }
@@ -225,11 +225,11 @@ export class Tasks implements Reach, Cascade, Reconcile, GraphStore {
 
   // ---- Reconcile ----
   /** Seed a rel's memo (id is a dense key; deps are (rel,row) pairs, keyed here). */
-  seed(id: number, digest: bigint, deps: ReadonlyArray<readonly [number, number]>, rev: number): Observable<void> {
+  seed(id: number, digest: bigint, deps: ReadonlyArray<readonly [number, number]>, rev: number): Observable<QueryResult[]> {
     const dep_keys = deps.map(([relId, rowIndex]) => cascade.key(relId, rowIndex));
     return reconcile.seed(this.store.conn(), this.store.ns(), id, digest, dep_keys, rev);
   }
-  mark_changed(ids: ReadonlyArray<number>, rev: number): Observable<void> {
+  mark_changed(ids: ReadonlyArray<number>, rev: number): Observable<QueryResult[]> {
     return reconcile.mark_changed(this.store.conn(), this.store.ns(), ids, rev);
   }
   dirty(): Observable<number[]> {
@@ -244,20 +244,19 @@ export class Tasks implements Reach, Cascade, Reconcile, GraphStore {
     // The split two-plane schema is stamped by `stamp` (IRelStore.attach). A generic node
     // store is the frontier in GraphStorePlan; no-op here pending that measurement.
   }
-  upsert_node(key: number, values: ReadonlyArray<number>): Observable<void> {
+  upsert_node(key: number, values: ReadonlyArray<number>): Observable<QueryResult> {
     const weight = values.length > 0 ? values[0]! : 1;
-    return SqlRunner.run(
+    return SqlRunner.execute(
       this.store.conn(),
       `INSERT INTO ${this.store.ns().row}(key,weight) VALUES (${key},${weight}) ON CONFLICT(key) DO UPDATE SET weight=excluded.weight`,
     );
   }
-  upsert_edges(edges: ReadonlyArray<readonly [number, number]>): Observable<void> {
-    if (edges.length === 0) return of(undefined);
+  upsert_edges(edges: ReadonlyArray<readonly [number, number]>): Observable<QueryResult[]> {
     const vals = edges.map(([parentKey, childKey]) => `(${parentKey},${childKey})`).join(",");
-    return SqlRunner.run(
-      this.store.conn(),
-      `INSERT OR IGNORE INTO ${this.store.ns().dep}(parent_key,child_key) VALUES ${vals}`,
-    );
+    const statements = edges.length === 0
+      ? []
+      : [`INSERT OR IGNORE INTO ${this.store.ns().dep}(parent_key,child_key) VALUES ${vals}`];
+    return concat(...statements.map((statement) => SqlRunner.execute(this.store.conn(), statement))).pipe(toArray());
   }
   children(key: number): Observable<number[]> {
     return SqlRunner.execute(

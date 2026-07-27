@@ -28,6 +28,7 @@ import type {
   IStoreStatics,
   OpenDb,
   NodeRow,
+  QueryResult,
   SpanRow,
   SqliteDb,
   SqlStatement,
@@ -157,11 +158,11 @@ export class RelStore implements IRelStore {
   // ---- FACT plane (generic Z-set over (rel,row)) ----------------------------
 
   /** Insert `(rel, row, weight)` tuples. */
-  add_rows(rows: ReadonlyArray<readonly [number, number, number]>): Observable<void> {
+  add_rows(rows: ReadonlyArray<readonly [number, number, number]>): Observable<QueryResult[]> {
     return cascade.insert_rows(this._db, this._ns, rows);
   }
   /** Insert dependency edges `(parent_rel, parent_row, child_rel, child_row)`. */
-  add_deps(edges: ReadonlyArray<readonly [number, number, number, number]>): Observable<void> {
+  add_deps(edges: ReadonlyArray<readonly [number, number, number, number]>): Observable<QueryResult[]> {
     return cascade.insert_deps(this._db, this._ns, edges);
   }
   /** Forward add: propagate aliveness from `seeds`. Returns rounds. */
@@ -206,12 +207,12 @@ export class RelStore implements IRelStore {
     digest: bigint,
     deps: ReadonlyArray<readonly [number, number]>,
     rev: number,
-  ): Observable<void> {
+  ): Observable<QueryResult[]> {
     const dep_keys = deps.map(([relId, rowIndex]) => cascade.key(relId, rowIndex));
     return reconcile.seed(this._db, this._ns, cascade.key(rel, row), digest, dep_keys, rev);
   }
   /** Bump changed_at for `cells` at `rev` (an input's digest moved). */
-  mark_changed(cells: ReadonlyArray<readonly [number, number]>, rev: number): Observable<void> {
+  mark_changed(cells: ReadonlyArray<readonly [number, number]>, rev: number): Observable<QueryResult[]> {
     const keys = cells.map(([relId, rowIndex]) => cascade.key(relId, rowIndex));
     return reconcile.mark_changed(this._db, this._ns, keys, rev);
   }
@@ -421,7 +422,7 @@ export class Store implements IStore {
 
   // ---- files (content, dedup by hash) ------------------------------------
 
-  files_insert_batch(rows: ReadonlyArray<readonly [Uint8Array, number, number]>): Observable<void> {
+  files_insert_batch(rows: ReadonlyArray<readonly [Uint8Array, number, number]>): Observable<QueryResult[]> {
     const statements = chunk_list(rows, CHUNK_ROWS).map((chunk) => ({
       sql: `INSERT INTO files(content_hash,size,lines) VALUES ${chunk.map(() => "(?,?,?)").join(",")} ON CONFLICT(content_hash) DO NOTHING`,
       args: chunk.flatMap(([hash, size, lines]) => [Buffer.from(hash), size, lines]),
@@ -477,7 +478,7 @@ export class Store implements IStore {
 
   // ---- junction: place content at (rev, path) ----------------------------
 
-  place_files_batch(rows: ReadonlyArray<readonly [number, number, number]>): Observable<void> {
+  place_files_batch(rows: ReadonlyArray<readonly [number, number, number]>): Observable<QueryResult[]> {
     const statements = chunk_list(rows, CHUNK_ROWS).map((chunk) => {
       const vals = chunk
         .map(([revisionId, pathStringId, fileId]) => `(${revisionId},${pathStringId},${fileId})`)
@@ -489,7 +490,7 @@ export class Store implements IStore {
 
   // ---- unified graph -----------------------------------------------------
 
-  nodes_insert_batch(rows: ReadonlyArray<NodeRow>): Observable<void> {
+  nodes_insert_batch(rows: ReadonlyArray<NodeRow>): Observable<QueryResult[]> {
     const statements = chunk_list(rows, CHUNK_ROWS).map((chunk) => {
       const vals = chunk
         .map(
@@ -502,7 +503,7 @@ export class Store implements IStore {
     return SqlRunner.batch(this._db, statements);
   }
 
-  edges_insert_batch(rows: ReadonlyArray<EdgeRow>): Observable<void> {
+  edges_insert_batch(rows: ReadonlyArray<EdgeRow>): Observable<QueryResult[]> {
     const statements = chunk_list(rows, CHUNK_ROWS).map((chunk) => {
       const vals = chunk.map((row) => `(${row.family},${row.src_id},${row.dst_id},${row.kind})`).join(",");
       return `INSERT INTO edge(family,src_id,dst_id,kind) VALUES ${vals} ON CONFLICT(family,src_id,dst_id,kind) DO NOTHING`;
@@ -510,7 +511,7 @@ export class Store implements IStore {
     return SqlRunner.batch(this._db, statements);
   }
 
-  spans_insert_batch(rows: ReadonlyArray<SpanRow>): Observable<void> {
+  spans_insert_batch(rows: ReadonlyArray<SpanRow>): Observable<QueryResult[]> {
     const statements = chunk_list(rows, CHUNK_ROWS).map((chunk) => {
       const vals = chunk
         .map((row) => `(${row.file_id},${row.start},${row.end},${row.string_id === null ? "NULL" : row.string_id})`)

@@ -87,13 +87,13 @@ import type {
   IStore,
   NodeRow,
 } from "./types.ts";
-import { type Observable, concat, concatMap, defer, from, map, of, reduce } from "rxjs";
+import { EMPTY, type Observable, concat, concatMap, defer, from, map, of, reduce, tap, toArray } from "rxjs";
 import { hashHex, key as cascade_key, KEY_STRIDE } from "./lib.ts";
 import { stmt_counter } from "./engine.ts";
 import { SqlRunner } from "./sqlRunner.ts";
 import { mix } from "./oracle.ts";
 import { rels as rel_tables } from "./spine.ts";
-import type { SqlStatement } from "./types.ts";
+import type { QueryResult, SqlStatement } from "./types.ts";
 type RelCol = rel_tables.RelCol;
 
 // ---- the candidate FactLine union (contract, verbatim) ----------------------------------
@@ -222,15 +222,6 @@ function parse_all(lines: AsyncIterable<string>): Observable<Parsed> {
   );
 }
 
-/** Run `steps` in order, then emit `value()`. The `sequence` idiom from engine.ts, with a
- *  result: the steps are SQL and carry nothing back, the caller's accumulator does. */
-function run_then<Value>(steps: readonly Observable<unknown>[], value: () => Value): Observable<Value> {
-  return concat(...steps).pipe(
-    reduce<unknown, void>(() => undefined, undefined),
-    map(value),
-  );
-}
-
 function node_identity_key(family: number, file_id: number, start: number, kind: number): string {
   return `${family}|${file_id}|${start}|${kind}`;
 }
@@ -281,7 +272,7 @@ function resolve_files(
             .files_insert_batch(chunk.map((fileData) => [fileData.hash, fileData.size, fileData.lines] as const))
             .pipe(
               concatMap(() => store.file_ids_by_hashes(hashes)),
-              map((after_map) => {
+              tap((after_map) => {
                 for (const fileData of chunk) {
                   const contentHex = hashHex(fileData.hash);
                   const file_id = after_map.get(contentHex);
@@ -298,7 +289,10 @@ function resolve_files(
         ),
       );
     });
-    return run_then(steps, () => local_to_file_id);
+    return concat(...steps).pipe(
+      toArray(),
+      map(() => local_to_file_id),
+    );
   });
 }
 
@@ -377,9 +371,9 @@ function resolve_nodes(
                     });
                   }
                 }
-                if (new_rows.length === 0) return of(undefined);
+                if (new_rows.length === 0) return EMPTY;
                 return store.nodes_insert_batch(new_rows).pipe(
-                  map(() => {
+                  tap(() => {
                     for (const newRow of new_rows) {
                       changed.set(cascade_key(REL_NODE, newRow.node_id), [REL_NODE, newRow.node_id]);
                     }
@@ -390,7 +384,10 @@ function resolve_nodes(
           }),
         );
 
-      return run_then(steps, () => local_to_node_id);
+      return concat(...steps).pipe(
+        toArray(),
+        map(() => local_to_node_id),
+      );
     }),
   );
 }
@@ -400,7 +397,7 @@ function resolve_edges(
   edges: ParsedEdge[],
   local_to_node_id: Map<number, number>,
   changed: Map<number, [number, number]>,
-): Observable<void> {
+): Observable<QueryResult[][]> {
   const db = store.db();
   const steps = chunks(edges, CHUNK_ROWS)
     .filter((chunk) => chunk.length > 0)
@@ -429,9 +426,9 @@ function resolve_edges(
             const new_rows = resolved.filter(
               (edge) => !existing_set.has(node_identity_key(edge.family, edge.src_id, edge.dst_id, edge.kind)),
             );
-            if (new_rows.length === 0) return of(undefined);
+            if (new_rows.length === 0) return EMPTY;
             return store.edges_insert_batch(new_rows).pipe(
-              map(() => {
+              tap(() => {
                 for (const edge of new_rows) {
                   const rel_row = hash_to_row([edge.family, edge.src_id, edge.dst_id, edge.kind]);
                   changed.set(cascade_key(REL_EDGE, rel_row), [REL_EDGE, rel_row]);
@@ -442,7 +439,7 @@ function resolve_edges(
         );
       }),
     );
-  return run_then(steps, () => undefined);
+  return concat(...steps).pipe(toArray());
 }
 
 /** Infer a rel table's column kind (int/int_null/text) from every value seen at that
@@ -472,7 +469,7 @@ function sql_literal(v: unknown): string {
   return `'${String(v).replace(/'/g, "''")}'`;
 }
 
-function resolve_rels(store: IStore, rel_lines: ParsedRel[], changed: Map<number, [number, number]>): Observable<void> {
+function resolve_rels(store: IStore, rel_lines: ParsedRel[], changed: Map<number, [number, number]>): Observable<QueryResult[][]> {
   const db = store.db();
   const by_name = new Map<string, readonly unknown[][]>();
   for (const relLine of rel_lines) {
@@ -502,15 +499,15 @@ function resolve_rels(store: IStore, rel_lines: ParsedRel[], changed: Map<number
             const new_rows = chunk.filter(
               (row) => !existing_set.has(columnNames.map((_, i) => String(row[i])).join("|")),
             );
-            if (new_rows.length === 0) return of(undefined);
+            if (new_rows.length === 0) return EMPTY;
             const insert_values = new_rows
               .map((row) => `(${columnNames.map((_, i) => sql_literal(row[i])).join(",")})`)
               .join(",");
-            return SqlRunner.run(
+            return SqlRunner.execute(
               db,
               `INSERT INTO ${name}(${columnNames.join(",")}) VALUES ${insert_values} ON CONFLICT DO NOTHING`,
             ).pipe(
-              map(() => {
+              tap(() => {
                 for (const row of new_rows) {
                   const rel_row = hash_to_row([name, ...row.map((value) => String(value))]);
                   changed.set(cascade_key(rel_id, rel_row), [rel_id, rel_row]);
@@ -523,16 +520,16 @@ function resolve_rels(store: IStore, rel_lines: ParsedRel[], changed: Map<number
 
     return rel_tables
       .create_rel_table(db, name, columns, columnNames)
-      .pipe(concatMap(() => run_then(chunkSteps, () => undefined)));
+      .pipe(concatMap(() => concat(...chunkSteps).pipe(toArray())));
   });
 
-  return run_then(steps, () => undefined);
+  return concat(...steps).pipe(toArray());
 }
 
 /** Batched multi-row `rx_memo` seed for brand-new cells (design decision 5). Mirrors
  *  `reconcile.seed`'s statement shape but covers the WHOLE new-cell set in CHUNK_ROWS
  *  batches instead of one `IRelStore.seed_memo` call per cell (that would be per-row). */
-function seed_new_cells(rels: IRelStore, cells: readonly [number, number][], rev: number): Observable<void> {
+function seed_new_cells(rels: IRelStore, cells: readonly [number, number][], rev: number): Observable<QueryResult[]> {
   const ns = rels.ns();
   const statements: SqlStatement[] = chunks(cells, CHUNK_ROWS)
     .filter((chunk) => chunk.length > 0)
@@ -582,8 +579,8 @@ export function ingestJsonl(
           concatMap(() => resolve_rels(store, parsed.rels, changed)),
           concatMap(() => {
             const changed_list = [...changed.values()];
-            const marked =
-              changed_list.length > 0 ? rels.mark_changed(changed_list, rev) : of(undefined);
+            const marked: Observable<QueryResult[]> =
+              changed_list.length > 0 ? rels.mark_changed(changed_list, rev) : of([]);
             return seed_new_cells(rels, changed_list, rev).pipe(
               concatMap(() => marked),
               map(() => ({

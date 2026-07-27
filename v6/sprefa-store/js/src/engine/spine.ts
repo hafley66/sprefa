@@ -13,6 +13,7 @@ import type {
   AssertTrue,
   CreateAllTables,
   IRelTableApi,
+  QueryResult,
   RelCol as RelColShape,
   SqliteDb,
 } from "./types.ts";
@@ -229,7 +230,7 @@ export function create_rel_table(
   cols: ReadonlyArray<RelCol>,
   pk: ReadonlyArray<string>,
   surrogate?: string,
-): Observable<void> {
+): Observable<QueryResult> {
   const col_defs = cols.map((column) => {
     const sqlType = column.kind === "text" ? "TEXT" : "INTEGER";
     const nullConstraint = column.kind === "int_null" ? "" : " NOT NULL";
@@ -239,18 +240,18 @@ export function create_rel_table(
     let sql = `CREATE TABLE IF NOT EXISTS ${name} (${surrogate} INTEGER PRIMARY KEY, ${col_defs.join(", ")}`;
     if (pk.length > 0) sql += `, UNIQUE (${pk.join(", ")})`;
     sql += ")";
-    return SqlRunner.run(db, sql);
+    return SqlRunner.execute(db, sql);
   }
   let sql = `CREATE TABLE IF NOT EXISTS ${name} (${col_defs.join(", ")}`;
   if (pk.length > 0) sql += `, PRIMARY KEY (${pk.join(", ")})`;
   sql += ")";
   if (pk.length > 0) sql += " WITHOUT ROWID";
-  return SqlRunner.run(db, sql);
+  return SqlRunner.execute(db, sql);
 }
 
 /** Drop a rel table (an evicted rel leaves zero bytes). */
-export function drop_rel_table(db: SqliteDb, name: string): Observable<void> {
-  return SqlRunner.run(db, `DROP TABLE IF EXISTS ${name}`);
+export function drop_rel_table(db: SqliteDb, name: string): Observable<QueryResult> {
+  return SqlRunner.execute(db, `DROP TABLE IF EXISTS ${name}`);
 }
 }
 

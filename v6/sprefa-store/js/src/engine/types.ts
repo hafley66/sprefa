@@ -57,18 +57,19 @@ export type TraceStatement = (sql: string) => void;
  */
 export interface ISqlRunner {
   execute(db: SqliteDb, statement: SqlStatement, trace?: TraceStatement): Observable<QueryResult>;
-  run(db: SqliteDb, statement: SqlStatement, trace?: TraceStatement): Observable<void>;
   /** First column of the first row, 0 when there is no row. */
   scalar(db: SqliteDb, statement: SqlStatement, trace?: TraceStatement): Observable<number>;
+  /** Multi-statement DDL. Counts one per `;`-separated statement. `Observable<void>` is
+   *  honest here alone: the driver's own `executeMultiple` resolves nothing. */
+  executeMultiple(db: SqliteDb, sql: string, trace?: TraceStatement): Observable<void>;
+  /** One atomic batch write. Counts one per statement. The driver returns one result per
+   *  statement (rowsAffected included), and those flow to the caller. */
+  batch(db: SqliteDb, statements: readonly SqlStatement[], trace?: TraceStatement): Observable<QueryResult[]>;
   /**
    * BEGIN IMMEDIATE / COMMIT / ROLLBACK as an observable bracket. Single statements on
    * the one pinned connection: `executeMultiple` carries its own rollback guard and
    * would kill the open transaction.
    */
-  /** Multi-statement DDL. Counts one per `;`-separated statement. */
-  executeMultiple(db: SqliteDb, sql: string, trace?: TraceStatement): Observable<void>;
-  /** One atomic batch write. Counts one per statement. */
-  batch(db: SqliteDb, statements: readonly SqlStatement[], trace?: TraceStatement): Observable<void>;
   inTransaction<Value>(db: SqliteDb, body: () => Observable<Value>): Observable<Value>;
 }
 
@@ -170,10 +171,10 @@ export interface IRelStore {
 
   // ---- FACT plane (generic Z-set over (rel,row)) ----------------------------
 
-  /** Insert `(rel, row, weight)` tuples. */
-  add_rows(rows: ReadonlyArray<readonly [number, number, number]>): Observable<void>;
+  /** Insert `(rel, row, weight)` tuples. Emits the driver's per-statement results. */
+  add_rows(rows: ReadonlyArray<readonly [number, number, number]>): Observable<QueryResult[]>;
   /** Insert dependency edges `(parent_rel, parent_row, child_rel, child_row)`. */
-  add_deps(edges: ReadonlyArray<readonly [number, number, number, number]>): Observable<void>;
+  add_deps(edges: ReadonlyArray<readonly [number, number, number, number]>): Observable<QueryResult[]>;
   /** Forward add: propagate aliveness from `seeds`. Returns rounds. */
   assert(seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;
   /** Counting retraction (fast, correct on ACYCLIC support graphs). Returns rounds. */
@@ -198,9 +199,9 @@ export interface IRelStore {
     digest: bigint,
     deps: ReadonlyArray<readonly [number, number]>,
     rev: number,
-  ): Observable<void>;
+  ): Observable<QueryResult[]>;
   /** Bump changed_at for `cells` at `rev` (an input's digest moved). */
-  mark_changed(cells: ReadonlyArray<readonly [number, number]>, rev: number): Observable<void>;
+  mark_changed(cells: ReadonlyArray<readonly [number, number]>, rev: number): Observable<QueryResult[]>;
   /** The stale frontier as `(rel, row)` pairs. */
   dirty(): Observable<[number, number][]>;
   /** Record a recomputed rel's digest; returns whether it moved (early cutoff). */
@@ -276,7 +277,7 @@ export interface IStore {
 
   // ---- files (content, dedup by hash) ------------------------------------
 
-  files_insert_batch(rows: ReadonlyArray<readonly [Uint8Array, number, number]>): Observable<void>;
+  files_insert_batch(rows: ReadonlyArray<readonly [Uint8Array, number, number]>): Observable<QueryResult[]>;
   file_id_of(content_hash: Uint8Array): Observable<number | null>;
   /** Batch `content_hash -> file_id` resolution: ONE query per CHUNK_ROWS hashes. */
   file_ids_by_hashes(hashes: ReadonlyArray<Uint8Array>): Observable<Map<string, number>>;
@@ -285,13 +286,13 @@ export interface IStore {
 
   // ---- junction: place content at (rev, path) ----------------------------
 
-  place_files_batch(rows: ReadonlyArray<readonly [number, number, number]>): Observable<void>;
+  place_files_batch(rows: ReadonlyArray<readonly [number, number, number]>): Observable<QueryResult[]>;
 
   // ---- unified graph -----------------------------------------------------
 
-  nodes_insert_batch(rows: ReadonlyArray<NodeRow>): Observable<void>;
-  edges_insert_batch(rows: ReadonlyArray<EdgeRow>): Observable<void>;
-  spans_insert_batch(rows: ReadonlyArray<SpanRow>): Observable<void>;
+  nodes_insert_batch(rows: ReadonlyArray<NodeRow>): Observable<QueryResult[]>;
+  edges_insert_batch(rows: ReadonlyArray<EdgeRow>): Observable<QueryResult[]>;
+  spans_insert_batch(rows: ReadonlyArray<SpanRow>): Observable<QueryResult[]>;
 }
 
 /** The static side of the Store class. Its constructor is private: `open` is the only way in. */
@@ -332,7 +333,8 @@ export interface ISqliteReachStatics {
  * write. Role: the versioned base layer UNDER the graph, with no parity trait.
  */
 export interface ITemporalStore {
-  commit(deltas: ReadonlyArray<readonly [number, number]>): Observable<void>;
+  /** One batched atomic write; the driver's per-statement results flow back. */
+  commit(deltas: ReadonlyArray<readonly [number, number]>): Observable<QueryResult[]>;
   live(): Observable<number>;
   total_rows(): Observable<number>;
   digest(): Observable<number>;
@@ -419,12 +421,12 @@ export interface ICascadeApi {
     db: SqliteDb,
     ns: IGraphNs,
     rows: ReadonlyArray<readonly [number, number, number]>,
-  ): Observable<void>;
+  ): Observable<QueryResult[]>;
   insert_deps(
     db: SqliteDb,
     ns: IGraphNs,
     edges: ReadonlyArray<readonly [number, number, number, number]>,
-  ): Observable<void>;
+  ): Observable<QueryResult[]>;
   /** Forward add: propagate aliveness from `seeds`. Returns rounds. */
   assert(db: SqliteDb, ns: IGraphNs, seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;
   /** Counting retraction. Fast, correct on ACYCLIC support graphs only. */
@@ -481,8 +483,8 @@ export interface IReconcileApi {
     digest: bigint,
     deps: ReadonlyArray<number>,
     rev: number,
-  ): Observable<void>;
-  mark_changed(db: SqliteDb, ns: IGraphNs, ids: ReadonlyArray<number>, rev: number): Observable<void>;
+  ): Observable<QueryResult[]>;
+  mark_changed(db: SqliteDb, ns: IGraphNs, ids: ReadonlyArray<number>, rev: number): Observable<QueryResult[]>;
   /** The stale FRONTIER (one hop), not the whole cone. */
   dirty(db: SqliteDb, ns: IGraphNs): Observable<number[]>;
   /** Record a recomputed digest; returns whether it MOVED. */
@@ -515,8 +517,8 @@ export interface IRelTableApi {
     cols: ReadonlyArray<RelCol>,
     pk: ReadonlyArray<string>,
     surrogate?: string,
-  ): Observable<void>;
-  drop_rel_table(db: SqliteDb, name: string): Observable<void>;
+  ): Observable<QueryResult>;
+  drop_rel_table(db: SqliteDb, name: string): Observable<QueryResult>;
 }
 
 // ---- ingest (src/engine/ingest.ts) -----------------------------------------
