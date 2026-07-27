@@ -81,6 +81,13 @@ weight), Neo4j GDS (daemon), Semgrep (syntactic, not graph).
 
 ## Decisions
 
+- **Head-to-head framing (user, 2026-07-25): "lab it out with joern and
+  then see if rust can go faster."** Joern runs EARLY as the reference
+  implementation of the shape (its numbers + its ergonomics are the bar);
+  the rust lab (datafrog/Ascent or bespoke over extract JSONL) runs as the
+  challenger whose explicit job is beating joern's wall/RSS at equal
+  answers. Soufflé/Kuzu/graph-tool become OPTIONAL fillers only if the
+  head-to-head is inconclusive.
 - Bake-off over adoption-by-reading: rejected "just read Joern's docs" —
   shape knowledge ≠ scale knowledge.
 - Parse-only rule: rejected build-tracing platforms and per-repo scip as
@@ -116,9 +123,13 @@ weight), Neo4j GDS (daemon), Semgrep (syntactic, not graph).
 - Phase 0 — harness + corpus pinning + measure script + this battery as a
   runnable appendix: ONE agent (worktree TBD at kickoff; base = branch tip).
 - Phase 1 — control: v5 `dl` answers Q1–Q10 over C0–C2: ONE agent.
-- Phase 2 — native labs (Soufflé, Kuzu, rust datafrog/Ascent, graph-tool):
-  ONE agent each, sequential unless sandboxed.
-- Phase 3 — Joern shape reference: ONE agent.
+- Phase 2 — REFERENCE: joern answers Q1–Q10 over C0–C2, JVM tax recorded
+  (heap, cold-start, import time): ONE agent.
+- Phase 3 — CHALLENGER: rust lab (datafrog/Ascent or bespoke over extract
+  JSONL) answers the same battery with the explicit target of beating
+  joern's wall/RSS at equal answers: ONE agent.
+- Phase 3b (ONLY if 2 vs 3 is inconclusive) — Soufflé / Kuzu / graph-tool
+  fillers: ONE agent each.
 - Phase 4 — orchestrator assembles MATRIX.md + verdict table; HUMAN GATE
   decides adopt/retire per candidate.
 - Suite budget: each agent runs its own tier once; NO agent starts C3
