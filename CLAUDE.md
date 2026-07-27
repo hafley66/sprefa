@@ -131,12 +131,14 @@ descriptive-name rename.)
   (the content_hash pattern).
 
 ### v6 awaiting user rulings (consolidated 2026-07-27; full text in the cited plans)
-- **stale fill under a dead scope** — BLOCKS the effect-rel/SWR lowering. Options:
-  drop (lab's graded choice) / admit-but-not-into-view / admit only for cache-declared
-  rels / dead-letter. plans/2026-07-27-sub-forest.md ambiguity 1.
+- ~~stale fill under a dead scope~~ RULED 2026-07-27 PM (rulings.pl
+  stale_fill_policy): surfaced as a kernel rel, program decides; drop = default,
+  admit/dead-letter = one-line rules. Rel shape owed by the switch_flow/absorption arc.
 - **sub-id/salt minting**: engine-minted salt means switch scopes never share an
   in-flight request — the opposite of content-addressed dedup. Semantics fork, not a
-  detail. sub-forest ambiguity 3.
+  detail. sub-forest ambiguity 3. User wants joint thinking; options laid out
+  2026-07-27 PM (per-scope vs content-addressed vs content-addressed-with-explicit-
+  freshness-column; note the TS runtime already ships content-addressed digests).
 - **extraction ambiguities** A12 (from-world = nullary `->`?), A1 (glob residency),
   A4 (fence escape), A14 (comment_span bind). plans/2026-07-27-extraction-spellings.md.
 - **Key(Type) vs `->`**: labs split three ways; present both files' arguments, no fiat.

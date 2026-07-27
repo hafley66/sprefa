@@ -123,3 +123,13 @@ ruling(storage_integer_keys, dense_int_surrogates, user,
 % statement-budget rail (fixture at 1x vs 100x data, identical counts).
 ruling(n1_statement_budget, flat_per_tick_statement_count, user,
        'v5 tick-counter law promoted into a graded conformance check').
+
+% Stale fill under a dead scope (sub-forest ambiguity 1): the policy is
+% EXPRESSIBLE IN THE LANGUAGE, not hardwired. The kernel surfaces every
+% fill whose demanding scope is gone as an engine rel (shape owed by the
+% switch_flow/absorption arc; merges the refused-fill diag gap, sub-forest
+% absorption item 7). Drop is then the default (nobody reads the rel),
+% admit-to-cache is a one-line program rule, dead-letter is a keep() on
+% the same rel. The four lab options become four programs.
+ruling(stale_fill_policy, surfaced_as_kernel_rel_program_decides, user,
+       'user 2026-07-27 PM: "stale fill should be expressable in the language, more kernel"').
