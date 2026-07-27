@@ -106,6 +106,7 @@
 | [prolog/labs/check_eventing.md](prolog/labs/check_eventing.md) | 314 | check_eventing: the LSP-diagnostics / agent-turn-hook loop under level vs edge |
 | [prolog/labs/diag_emit.md](prolog/labs/diag_emit.md) | 232 | diag_emit: prolog checks into the editor, with zero new editor code |
 | [prolog/labs/expressions.md](prolog/labs/expressions.md) | 440 | expressions: the tier-0 expression layer |
+| [prolog/labs/extraction_syntax.md](prolog/labs/extraction_syntax.md) | 571 | extraction_syntax: verdict on the last big surface gap |
 | [prolog/labs/merge_family.md](prolog/labs/merge_family.md) | 302 | merge_family: does the rxjs merge family lower to plain rules? |
 | [prolog/labs/occurrence_identity.md](prolog/labs/occurrence_identity.md) | 487 | occurrence_identity: ruling R1, engine stamps vs Z-set counts |
 | [prolog/labs/out/fixtures/dash.md](prolog/labs/out/fixtures/dash.md) | 2 | dash fixture |
@@ -1779,6 +1780,29 @@
 363:## What this unblocks
 381:## Tier placement
 420:## Deviations from the LANG.md snapshot
+```
+
+### prolog/labs/extraction_syntax.md
+```
+1:# extraction_syntax: verdict on the last big surface gap
+15:## Verdict
+41:## 1. THE SPELLING TABLE
+72:### The three static laws this rests on
+88:### S4 answered: glob residency is a DEMAND COLUMN, not program-text residency
+112:### Does scan-shaped sugar survive? No.
+126:## 2. DESUGARING INTO THE RULED KERNEL SHAPES
+152:### The FileSpan mint point, and why dedup is correct
+169:### The adversarial law, and its honest scope
+187:## 3. THE THREE TRANSCRIPTIONS
+194:### 3a. `.dl/no-new-eprintln.dl` (lint rail: scan + match_line + comment waivers + aggregates + ratchet)
+274:### 3b. `examples/pin-skew.dl` (cross-repo: manifests -> pins -> demand -> rev_behind)
+358:### 3c. `examples/flow-services.dl` (openapi jsonp extraction + cross-repo wire hop)
+416:## 4. LINE COUNTS AND CONSTRUCT BUDGET
+418:### Line counts (non-blank, non-comment)
+442:### New constructs and their budget cost
+462:## 5. DEVIATIONS FROM LANG.md AND AGGREGATE
+480:## 6. AMBIGUITIES (numbered)
+543:## 7. WHAT THIS MEANS FOR THE TIER ORDER
 ```
 
 ### prolog/labs/merge_family.md

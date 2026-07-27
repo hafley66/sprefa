@@ -77,6 +77,17 @@
 %   is not a program construct at all: a tail ask held open per connection
 %   by a consumer.
 %
+% * LOWERING ORDER IS RXJS FIRST (user-set 2026-07-27 PM). v6 lowers onto
+%   the js engine + rxjs residue and must MATCH rxjs-isms before any rust
+%   port: Observables only at real async boundaries, one terminal subscribe,
+%   completion as the complete notification, marble-testable behavior. The
+%   conformance corpus's per-tick delta lists ARE marble diagrams (tick =
+%   frame), so the js leg reuses the same fixtures as its oracle. The rust
+%   port comes AFTER and must agree via that shared corpus — which is
+%   json-rx's own mechanism (marble fixtures as the cross-target agreement
+%   record), so the portable core that emerges from the two-target agreement
+%   IS the json-rx kernel, realized on iteration three.
+%
 % * NO @ SYMBOL. Time is a FIELD. A clock is a tick-valued column plus a
 %   join; "clocked on R" = "this struct carries tick_of(R)". Record typing
 %   tracks which rels carry which tick fields, so the temporal checker is the
@@ -212,6 +223,7 @@ task(rw_sets,             unbuilt, [purity_split]).
 task(pushdown_optimizer,  unbuilt, [island_partition, rw_sets]).
 task(thread_schedule,     unbuilt, [rw_sets]).
 task(emit_ts_direct,      done,    [kernel_sql_lowering]). % src/emit_ts.pl -> ast.ts helpers, swi-emit bench row
+task(js_conformance_leg,  unbuilt, [emit_ts_direct]).      % run the conformance fixture corpus against the js engine + rxjs residue; per-tick deltas as the marble oracle; RXJS FIRST law
 task(sub_graph_disk,      unbuilt, [emit_ts_direct]).
 task(count_ivm_port,      unbuilt, [kernel_sql_lowering]).
 task(cost_model,          unbuilt, [pushdown_optimizer]). % perf rows feed plan choice
