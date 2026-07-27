@@ -4,7 +4,7 @@
  *  interned-INTEGER tables and plain text tables alike. Nothing here is async: the only
  *  promise is `db.execute`, and it arrives already wrapped by SqlRunner. */
 
-import { EMPTY, Observable, concat, count, defer, expand, from, last, map, of, reduce, throwError, concatMap } from "rxjs";
+import { EMPTY, Observable, concat, defer, expand, from, last, map, of, reduce, throwError, toArray, concatMap } from "rxjs";
 
 import type { AggFn, Compare, Program, Rule } from "./ast.ts";
 import { buildRuleGraph, scc, stratify } from "./rulegraph.ts";
@@ -95,17 +95,14 @@ export class DatalogEvaluator implements IDatalogEvaluator {
   }
 
   /** The one place a list of SQL becomes execution. Emits once, when the last statement
-   *  finishes. DDL result sets are not values anybody wants, so `void` is the honest
-   *  payload; `count` guarantees the single emission even for an empty list. */
-  runAll(statements: readonly SqlStatement[]): Observable<void> {
-    return concat(...statements.map((statement) => this.exec(statement))).pipe(
-      count(),
-      map(() => undefined),
-    );
+   *  finishes; the per-statement results flow out (`toArray` emits `[]` even for an
+   *  empty list, so callers can always sequence on the single emission). */
+  runAll(statements: readonly SqlStatement[]): Observable<QueryResult[]> {
+    return concat(...statements.map((statement) => this.exec(statement))).pipe(toArray());
   }
 
   run(): Observable<SupportReport> {
-    const settleModel = this.strata.reduce<Observable<void>>(
+    const settleModel = this.strata.reduce<Observable<QueryResult[]>>(
       (chain, stratum) =>
         chain.pipe(
           concatMap(() =>
@@ -438,7 +435,7 @@ export class RecursiveStratum implements IRecursiveStratum {
 
   /** `expand` IS the loop: each round emits whether anything grew and feeds another round
    *  back in until nothing does. `last` waits for the fixpoint to settle before the drops. */
-  run(): Observable<void> {
+  run(): Observable<QueryResult[]> {
     return defer(() => {
       if (this.rules.some((rule) => rule.headTerms.some((term) => term.kind === "hagg"))) {
         return throwError(() => new AggregateInRecursionError(this.memberRels));

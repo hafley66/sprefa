@@ -16,12 +16,12 @@ import { SqlRunner } from "../../src/engine/sqlRunner.ts";
 
 test("inTransaction: a committed body persists", async () => {
   const db = createClient({ url: ":memory:", intMode: "bigint" });
-  await firstValueFrom(SqlRunner.run(db, "CREATE TABLE t(x INTEGER)"));
+  await firstValueFrom(SqlRunner.execute(db, "CREATE TABLE t(x INTEGER)"));
 
   await firstValueFrom(
     SqlRunner.inTransaction(db, () =>
-      SqlRunner.run(db, "INSERT INTO t(x) VALUES (1)").pipe(
-        concatMap(() => SqlRunner.run(db, "INSERT INTO t(x) VALUES (2)")),
+      SqlRunner.execute(db, "INSERT INTO t(x) VALUES (1)").pipe(
+        concatMap(() => SqlRunner.execute(db, "INSERT INTO t(x) VALUES (2)")),
       ),
     ),
   );
@@ -32,14 +32,14 @@ test("inTransaction: a committed body persists", async () => {
 
 test("inTransaction: an erroring body rolls back and the connection keeps its TEMP tables", async () => {
   const db = createClient({ url: ":memory:", intMode: "bigint" });
-  await firstValueFrom(SqlRunner.run(db, "CREATE TABLE t(x INTEGER)"));
-  await firstValueFrom(SqlRunner.run(db, "CREATE TEMP TABLE tt(x INTEGER)"));
-  await firstValueFrom(SqlRunner.run(db, "INSERT INTO t(x) VALUES (1)"));
+  await firstValueFrom(SqlRunner.execute(db, "CREATE TABLE t(x INTEGER)"));
+  await firstValueFrom(SqlRunner.execute(db, "CREATE TEMP TABLE tt(x INTEGER)"));
+  await firstValueFrom(SqlRunner.execute(db, "INSERT INTO t(x) VALUES (1)"));
 
   await assert.rejects(
     firstValueFrom(
       SqlRunner.inTransaction(db, () =>
-        SqlRunner.run(db, "INSERT INTO t(x) VALUES (3)").pipe(
+        SqlRunner.execute(db, "INSERT INTO t(x) VALUES (3)").pipe(
           concatMap(() => throwError(() => new Error("boom"))),
         ),
       ),
@@ -54,7 +54,7 @@ test("inTransaction: an erroring body rolls back and the connection keeps its TE
 
   // The same connection is still usable and still owns its TEMP tables (:memory: +
   // TEMP state is exactly what a swapped connection would have lost).
-  await firstValueFrom(SqlRunner.run(db, "INSERT INTO tt(x) VALUES (9)"));
+  await firstValueFrom(SqlRunner.execute(db, "INSERT INTO tt(x) VALUES (9)"));
   assert.strictEqual(
     await firstValueFrom(SqlRunner.scalar(db, "SELECT count(*) FROM tt")),
     1,

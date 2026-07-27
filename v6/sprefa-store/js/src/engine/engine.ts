@@ -64,7 +64,7 @@
  */
 
 import type { InArgs } from "@libsql/client";
-import { EMPTY, Observable, concat, concatMap, defer, expand, from, last, map, of, reduce, tap } from "rxjs";
+import { EMPTY, Observable, concat, concatMap, defer, expand, from, last, map, of, reduce, tap, toArray } from "rxjs";
 
 import { SqlRunner } from "./sqlRunner.ts";
 import type {
@@ -111,11 +111,6 @@ function split_statements(sql: string): string[] {
     .filter((stmt) => stmt.length > 0);
 }
 
-/** Run `sources` in order and emit once when the last one completes. */
-function sequence(sources: Observable<void>[]): Observable<void> {
-  return concat(...sources).pipe(reduce<void, void>(() => undefined, undefined));
-}
-
 /**
  * Drive a round `step` to its fixpoint. `step` emits 1 when it ran a round and 0 when the
  * loop's break condition tripped; the result is the number of rounds that ran.
@@ -133,14 +128,17 @@ function uncounted_query(db: Db, sql: string): Observable<QueryResult> {
   return defer(() => from(db.execute(sql)));
 }
 
-/** Uncounted `executeMultiple` (schema DDL and the walk scratch tables). */
+/** Uncounted `executeMultiple` (schema DDL and the walk scratch tables). `Observable<void>`
+ *  because the driver's own `executeMultiple` resolves nothing. */
 function uncounted_multi(db: Db, sql: string): Observable<void> {
-  return defer(() => from(db.executeMultiple(sql))).pipe(map(() => undefined));
+  return defer(() => from(db.executeMultiple(sql)));
 }
 
-function exec(db: Db, sql: string): Observable<void> {
+/** Run each `;`-separated statement in order through the counted seam; the per-statement
+ *  results flow out in one emission when the last statement finishes. */
+function exec(db: Db, sql: string): Observable<QueryResult[]> {
   return defer(() => {
-    const run = sequence(split_statements(sql).map((statement) => SqlRunner.run(db, statement)));
+    const run = concat(...split_statements(sql).map((statement) => SqlRunner.execute(db, statement))).pipe(toArray());
     if (!traced()) return run;
     const startedAt = process.hrtime.bigint();
     return run.pipe(
@@ -156,15 +154,6 @@ function exec(db: Db, sql: string): Observable<void> {
 /** One scalar (first column of first row), 0 if no row. */
 function scalar(db: Db, sql: string): Observable<number> {
   return SqlRunner.scalar(db, sql);
-}
-
-/** Run a fixed, upfront-known list of write statements as one atomic batch. */
-function execBatch(db: Db, stmts: ReadonlyArray<string>): Observable<void> {
-  return defer(() => {
-    if (stmts.length === 0) return of(undefined as void);
-    for (const _s of stmts) stmt_counter.incr();
-    return from(db.batch(stmts.slice(), "write")).pipe(map(() => undefined));
-  });
 }
 
 /** Ids from the first column. */
@@ -241,14 +230,14 @@ export function insert_rows(
   db: Db,
   ns: IGraphNs,
   rows: ReadonlyArray<readonly [number, number, number]>,
-): Observable<void> {
+): Observable<QueryResult[]> {
   const stmts: string[] = [];
   for (let chunkStart = 0; chunkStart < rows.length; chunkStart += CHUNK) {
     const chunk = rows.slice(chunkStart, chunkStart + CHUNK);
     const vals = chunk.map(([tag, id, weight]) => `(${key(tag, id)},${weight})`).join(",");
     stmts.push(`INSERT INTO ${ns.row}(key,weight) VALUES ${vals}`);
   }
-  return execBatch(db, stmts);
+  return SqlRunner.batch(db, stmts);
 }
 
 /** Batch-insert dependency edges `(parent_tag, parent_id, child_tag, child_id)`. */
@@ -256,14 +245,14 @@ export function insert_deps(
   db: Db,
   ns: IGraphNs,
   edges: ReadonlyArray<readonly [number, number, number, number]>,
-): Observable<void> {
+): Observable<QueryResult[]> {
   const stmts: string[] = [];
   for (let chunkStart = 0; chunkStart < edges.length; chunkStart += CHUNK) {
     const chunk = edges.slice(chunkStart, chunkStart + CHUNK);
     const vals = chunk.map(([parentTag, parentId, childTag, childId]) => `(${key(parentTag, parentId)},${key(childTag, childId)})`).join(",");
     stmts.push(`INSERT INTO ${ns.dep}(parent_key,child_key) VALUES ${vals}`);
   }
-  return execBatch(db, stmts);
+  return SqlRunner.batch(db, stmts);
 }
 
 /**
@@ -287,7 +276,7 @@ function retract_body(
   const seed_vals = seeds.map(([tag, id]) => key(tag, id).toString()).join(",");
   const seed_in = `(${seed_vals})`;
 
-  const round_work = (): Observable<void> =>
+  const round_work = (): Observable<QueryResult[]> =>
     // 1. hits = the frontier's children + how many supports each loses now.
     exec(db, `DELETE FROM ${ns.hits}`).pipe(
       concatMap(() =>
@@ -637,7 +626,7 @@ export function retract_dred_cte(
          SELECT key FROM alive`,
     `UPDATE ${ns.row} SET weight=1 WHERE key IN (SELECT key FROM ${ns.frontier})`,
   ];
-  return execBatch(db, stmts).pipe(map(() => 0));
+  return SqlRunner.batch(db, stmts).pipe(map(() => 0));
 }
 }
 
@@ -740,8 +729,8 @@ export function multi_source_walk(
         )`,
     ).pipe(
       concatMap(() => uncounted_multi(db, `CREATE TEMP TABLE ${halt_table} (node INTEGER PRIMARY KEY)`)),
-      concatMap(() => sequence(halt_inserts)),
-      concatMap(() => sequence(start_inserts)),
+      concatMap(() => concat(...halt_inserts).pipe(toArray())),
+      concatMap(() => concat(...start_inserts).pipe(toArray())),
       concatMap(() =>
         walk_round(0).pipe(
           expand((state) => (state.expanded ? walk_round(state.round) : EMPTY)),
@@ -976,18 +965,18 @@ export function seed(
   digest: bigint,
   deps: ReadonlyArray<number>,
   rev: number,
-): Observable<void> {
+): Observable<QueryResult[]> {
   const stmts: string[] = [
     `INSERT INTO ${ns.memo}(id,digest,changed_at,verified_at) VALUES (${id},${digest},${rev},${rev})`,
   ];
   for (const dep of deps) {
     stmts.push(`INSERT OR IGNORE INTO ${ns.rdep}(reader,read) VALUES (${id},${dep})`);
   }
-  return execBatch(db, stmts);
+  return SqlRunner.batch(db, stmts);
 }
 
 /** An input's digest moved at `rev`: bump its changed_at so the CTE sees it stale. */
-export function mark_changed(db: Db, ns: IGraphNs, ids: ReadonlyArray<number>, rev: number): Observable<void> {
+export function mark_changed(db: Db, ns: IGraphNs, ids: ReadonlyArray<number>, rev: number): Observable<QueryResult[]> {
   const in_list = ids.map((id) => id.toString()).join(",");
   return exec(db, `UPDATE ${ns.memo} SET changed_at=${rev} WHERE id IN (${in_list})`);
 }
@@ -1184,9 +1173,9 @@ export class TemporalStore implements ITemporalStore {
     );
   }
 
-  commit(deltas: ReadonlyArray<readonly [number, number]>): Observable<void> {
+  commit(deltas: ReadonlyArray<readonly [number, number]>): Observable<QueryResult[]> {
     return defer(() => {
-      if (deltas.length === 0) return of(undefined as void);
+      if (deltas.length === 0) return of([]);
       this.revision += 1;
       const revision = this.revision;
       const delta_json_val = delta_json(deltas);
@@ -1209,7 +1198,7 @@ export class TemporalStore implements ITemporalStore {
           args: [revision],
         },
       ];
-      return from(this.db.batch(stmts, "write")).pipe(map(() => undefined));
+      return from(this.db.batch(stmts, "write"));
     });
   }
 
