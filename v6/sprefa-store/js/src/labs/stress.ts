@@ -41,7 +41,8 @@ import {
   defer,
   map,
   of,
-  reduce,
+  tap,
+  toArray,
 } from "rxjs";
 import { createClient } from "@libsql/client";
 import Database from "better-sqlite3";
@@ -109,15 +110,6 @@ export function runGun(cfg: GunConfig, backend: "rx" | "sql"): Observable<GunRep
 
 export function runGunDetailed(cfg: GunConfig, backend: "rx" | "sql"): Observable<GunRunDetail> {
   return backend === "rx" ? defer(() => of(runRxBackend(cfg))) : runSqlBackend(cfg);
-}
-
-/** Run `steps` in order, then emit `value()`. The `sequence` idiom from engine.ts, with a
- *  result: the steps are SQL and carry nothing back, the caller's accumulator does. */
-function run_then<Value>(steps: readonly Observable<unknown>[], value: () => Value): Observable<Value> {
-  return concat(...steps).pipe(
-    reduce<unknown, void>(() => undefined, undefined),
-    map(value),
-  );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -643,7 +635,7 @@ function runSqlBackend(cfg: GunConfig): Observable<GunRunDetail> {
       const seeds = strata.map((stratum, id) =>
         reconcile.seed(db, ns, id, digestStratum(dataDb, stmtCache, stratum), depsOf[id]!, 0),
       );
-      return run_then(seeds, () => undefined);
+      return concat(...seeds).pipe(toArray());
     });
 
     const ticks = Array.from({ length: cfg.churnTicks }, (_, tickIndex) => tickIndex + 1).map((tick) =>
@@ -673,7 +665,7 @@ function runSqlBackend(cfg: GunConfig): Observable<GunRunDetail> {
         const seeds = [...touchedLeafIds];
         return reconcile.mark_changed(db, ns, seeds, tick).pipe(
           concatMap(() => reconcile.propagate(db, ns, seeds, tick, (id) => latestDigest.get(id)!)),
-          map((recomputeCount) => {
+          tap((recomputeCount) => {
             tickMsList.push(Number(process.hrtime.bigint() - t0) / 1e6);
             wakeList.push(recomputeCount);
             rssMibList.push(memcap.sample() / 1_048_576);
@@ -691,7 +683,7 @@ function runSqlBackend(cfg: GunConfig): Observable<GunRunDetail> {
       concatMap(() => {
         memcap.reset_peak();
         lastStmtCount = stmt_counter.get();
-        return run_then(ticks, () => undefined);
+        return concat(...ticks).pipe(toArray());
       }),
       map(() => {
         const finalRows = new Map<string, Row[]>();
@@ -754,7 +746,7 @@ export function runRetractShootout(): Observable<RetractTiming[]> {
                   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
                   const stmts = stmt_counter.get() - before;
                   return store.alive_keys().pipe(
-                    map((survivors) => {
+                    tap((survivors) => {
                       const correct =
                         survivors.length === expected.length &&
                         survivors.every((key, index) => key === expected[index]);
@@ -769,7 +761,10 @@ export function runRetractShootout(): Observable<RetractTiming[]> {
         ),
       ),
     );
-    return run_then(runs, () => results);
+    return concat(...runs).pipe(
+      toArray(),
+      map(() => results),
+    );
   });
 }
 
@@ -868,10 +863,10 @@ function printRetractShootout(): Observable<void> {
 }
 
 function main(): Observable<void> {
-  return run_then(
-    CONFIGS.map(([label, cfg]) => printReportTable(label, cfg)),
-    () => undefined,
-  ).pipe(concatMap(() => printRetractShootout()));
+  return concat(...CONFIGS.map(([label, cfg]) => printReportTable(label, cfg))).pipe(
+    toArray(),
+    concatMap(() => printRetractShootout()),
+  );
 }
 
 const isMainModule = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
