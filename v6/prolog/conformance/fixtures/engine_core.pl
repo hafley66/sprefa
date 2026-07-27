@@ -96,6 +96,19 @@ fixture(unmarked_edge_replays_backlog,
     [ +subscriber(bob) ] ],
   [ final(sent/2, [ sent(alice, one), sent(bob, one) ]) ]).
 
+% A tick of PURE retractions from a Set source rel: rows leave, the level
+% view retracts, no edge fires. (Regression: the check_eventing promotion
+% found the engine failing silently on any net-shrinking tick.)
+fixture(retraction_only_tick_retracts_level_view,
+  prog([ kind(source_row/1, set) ],
+       [ (mirror(Item) <- source_row(Item)) ]),
+  [],
+  [ [ +source_row(alpha), +source_row(beta) ],
+    [ -source_row(alpha), -source_row(beta) ] ],
+  [ deltas(mirror/1, [ [ +mirror(alpha), +mirror(beta) ],
+                       [ -mirror(alpha), -mirror(beta) ] ]),
+    final(mirror/1, []) ]).
+
 % Set arrivals dedup (q2: identical content is the same thing) while Log
 % arrivals stack: the same row delivered twice is one occurrence vs two.
 fixture(set_dedups_log_stacks,

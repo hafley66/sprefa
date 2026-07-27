@@ -268,9 +268,106 @@ split_rules(Rules, AggRules, PlainLevel, EdgeRules) :-
             PlainLevel),
     findall(Rule, ( member(Rule, Rules), Rule = (_ <+ _) ), EdgeRules).
 
+% Stratified evaluation (defect found by the timeless_rail promotion: a joint
+% fixpoint let not/1 over a DERIVED rel read an incomplete set and permanently
+% admit wrong rows). Rules group by head stratum; a negated or aggregated rel
+% must sit strictly below its consumer, so by the time a stratum runs, every
+% rel it negates or aggregates is complete.
 level_closure(PlainLevel, AggRules, Base, Tick, Level) :-
-    plain_fixpoint(PlainLevel, Base, Tick, [], Level0),
-    agg_loop(PlainLevel, AggRules, Base, Tick, Level0, Level).
+    append(PlainLevel, AggRules, LevelRules),
+    stratify_level_rules(LevelRules, Strata),
+    eval_strata(Strata, Base, Tick, [], Level).
+
+eval_strata([], _, _, Acc, Level) :- sort(Acc, Level).
+eval_strata([Group | Rest], Base, Tick, Acc0, Level) :-
+    append(Base, Acc0, Lower),
+    findall(Rule, ( member(Rule, Group), Rule = (Head <- _), aggregate_head(Head, _, _) ),
+            GroupAgg),
+    findall(Rule, ( member(Rule, Group), Rule = (Head <- _), \+ aggregate_head(Head, _, _) ),
+            GroupPlain),
+    findall(Row, ( member(Rule, GroupAgg), agg_rule_rows(Rule, Lower, Tick, Row) ), AggRows),
+    append(Lower, AggRows, StratumBase),
+    plain_fixpoint(GroupPlain, StratumBase, Tick, [], PlainRows),
+    append([Acc0, AggRows, PlainRows], Acc),
+    eval_strata(Rest, Base, Tick, Acc, Level).
+
+% ── stratum assignment ──────────────────────────────────────────────────────
+% S(head) >= S(body rel) for a positive read; strictly greater for a rel under
+% not/1 or feeding an aggregate head. Only level-rule heads are derived; every
+% other rel (facts, stored, edge-headed) is stratum 0. A program that cannot
+% stabilize (negation or aggregation through a cycle) throws not_stratified.
+
+stratify_level_rules(LevelRules, Strata) :-
+    findall(Ref, ( member((Head <- _), LevelRules), rel_ref(Head, Ref) ), DerivedRefs0),
+    sort(DerivedRefs0, DerivedRefs),
+    findall(HeadRef-constraint(BodyRef, Gap),
+            ( member((Head <- Body), LevelRules),
+              rel_ref(Head, HeadRef),
+              rule_body_constraint(Head, Body, BodyRef, Gap),
+              memberchk(BodyRef, DerivedRefs) ),
+            Constraints),
+    length(DerivedRefs, DerivedCount),
+    Cap is DerivedCount + 1,
+    findall(Ref-0, member(Ref, DerivedRefs), Strata0),
+    relax_strata(Constraints, Cap, Strata0, StrataMap),
+    findall(Number-Rule,
+            ( member(Rule, LevelRules), Rule = (Head <- _),
+              rel_ref(Head, Ref), memberchk(Ref-Number, StrataMap) ),
+            Numbered),
+    keysort(Numbered, Sorted),
+    group_pairs_by_key(Sorted, Grouped),
+    pairs_values(Grouped, Strata).
+
+rule_body_constraint(Head, Body, BodyRef, Gap) :-
+    (   aggregate_head(Head, _, _)
+    ->  goal_rel_refs(Body, PosRefs, NegRefs),
+        append(PosRefs, NegRefs, AllRefs),
+        member(BodyRef, AllRefs), Gap = 1
+    ;   goal_rel_refs(Body, PosRefs, NegRefs),
+        (   member(BodyRef, PosRefs), Gap = 0
+        ;   member(BodyRef, NegRefs), Gap = 1 )
+    ).
+
+goal_rel_refs((Left, Right), Pos, Neg) :- !,
+    goal_rel_refs(Left, LeftPos, LeftNeg),
+    goal_rel_refs(Right, RightPos, RightNeg),
+    append(LeftPos, RightPos, Pos), append(LeftNeg, RightNeg, Neg).
+goal_rel_refs(not(Goal), [], Neg) :- !,
+    goal_rel_refs(Goal, InnerPos, InnerNeg),
+    append(InnerPos, InnerNeg, Neg).
+goal_rel_refs(only(Atom), [Ref], []) :- !, rel_ref(Atom, Ref).
+goal_rel_refs(pre(_), [], []) :- !.
+goal_rel_refs(now(_), [], []) :- !.
+goal_rel_refs(true, [], []) :- !.
+goal_rel_refs(_ := _, [], []) :- !.
+goal_rel_refs(_ is _, [], []) :- !.
+goal_rel_refs(decode(_, _), [], []) :- !.
+goal_rel_refs(json_each(_, _), [], []) :- !.
+goal_rel_refs(Goal, [], []) :- comparison_goal(Goal), !.
+goal_rel_refs(Atom, [Ref], []) :- rel_ref(Atom, Ref).
+
+relax_strata(Constraints, Cap, Strata0, Strata) :-
+    findall(changed,
+            ( member(HeadRef-constraint(BodyRef, Gap), Constraints),
+              memberchk(HeadRef-HeadStratum, Strata0),
+              memberchk(BodyRef-BodyStratum, Strata0),
+              HeadStratum < BodyStratum + Gap ),
+            Changes),
+    (   Changes == []
+    ->  Strata = Strata0
+    ;   findall(Ref-Number,
+                ( member(Ref-Current, Strata0),
+                  findall(Needed,
+                          ( member(Ref-constraint(BodyRef, Gap), Constraints),
+                            memberchk(BodyRef-BodyStratum, Strata0),
+                            Needed is BodyStratum + Gap ),
+                          Neededs),
+                  max_list([Current | Neededs], Number) ),
+                Strata1),
+        forall(member(_-Number, Strata1),
+               ( Number =< Cap -> true ; throw(not_stratified) )),
+        relax_strata(Constraints, Cap, Strata1, Strata)
+    ).
 
 plain_fixpoint(PlainLevel, Base, Tick, Known0, Level) :-
     append(Base, Known0, Visible),
@@ -454,15 +551,14 @@ tick(Prog, state(Tick, Store0, PrevLevel, PrevAll), CarryIn, OutsideArrivals,
     Prog = prog(_, Rules),
     split_rules(Rules, AggRules, PlainLevel, _),
     absorb_arrivals(Prog, Tick, OutsideArrivals, Store0, 1, StoreArrived, _, ArrivalOccs),
-    reverse_preserving(StoreArrived, Store0, StoreArrivedOrdered),
-    store_rows(StoreArrivedOrdered, MidBase),
+    store_rows(StoreArrived, MidBase),
     level_closure(PlainLevel, AggRules, MidBase, Tick, MidLevel),
     ord_subtract(MidLevel, PrevLevel, NewLevelRows),
     stamp_extra(Tick, NewLevelRows, 1000, LevelOccs),
     stamp_extra(Tick, CarryIn, 2000, CarryOccs),
     append([CarryOccs, ArrivalOccs, LevelOccs], Occurrences),
     process_occurrences(Prog, Tick, frozen(MidLevel, PrevLevel), Occurrences,
-                        StoreArrivedOrdered, StoreWritten, WrittenRows),
+                        StoreArrived, StoreWritten, WrittenRows),
     apply_retention(Prog, StoreWritten, Store),
     store_rows(Store, FinalBase),
     level_closure(PlainLevel, AggRules, FinalBase, Tick, Level),
@@ -476,12 +572,6 @@ tick(Prog, state(Tick, Store0, PrevLevel, PrevAll), CarryIn, OutsideArrivals,
     dedupe_keep_order(CarryCandidates0, CarryCandidates),
     findall(Row, ( member(Row, CarryCandidates), memberchk(+Row, Deltas) ), CarryOut),
     NextTick is Tick + 1.
-
-% absorb_arrivals prepends; restore arrival order for stamped reads.
-reverse_preserving(StoreNew, StoreOld, Ordered) :-
-    length(StoreOld, Kept),
-    length(Suffix, Kept), append(Added, Suffix, StoreNew),
-    reverse(Added, InOrder), append(Suffix, InOrder, Ordered).
 
 stamp_extra(_, [], _, []).
 stamp_extra(Tick, [Row | Rest], Seq, [occ(st(Tick, Seq), Row) | More]) :-
