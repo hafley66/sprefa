@@ -32,7 +32,7 @@
 import { spawn, type SpawnOptions } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { EMPTY, Observable, Subscription, concatMap, filter, firstValueFrom, from, mergeMap } from "rxjs";
+import { EMPTY, Observable, Subscription, concatMap, filter, firstValueFrom, from, merge, mergeMap } from "rxjs";
 
 import { foldRowDigest } from "./0_digest.ts";
 import { RowCodec } from "./0_row.ts";
@@ -368,16 +368,33 @@ export class HostRunner implements IHostRunner {
   }
 
   /** Subscribes runtime.deltas$. concatMap is the serialization lock (one effect runs
-   *  at a time this arc; the cache row is the dedupe, not a queue data structure). */
+   *  at a time this arc; the cache row is the dedupe, not a queue data structure).
+   *
+   *  BOOT REPLAY (endurance law, goal-endurance.sh phase 1): demand rows are durable
+   *  but deltas are not -- a request committed before a crash never re-announces
+   *  itself on deltas$. So start() also replays EVERY live __req_* row through the
+   *  same pipeline. runEffectOnce's cache-hit check makes already-answered requests
+   *  no-ops, so replay-everything is correct without a "which are unanswered" query.
+   *  Orphaned 'pending' cache rows are deleted first: the cache row is the in-flight
+   *  lock, and at start() time this single-process runner cannot have anything in
+   *  flight, so a surviving 'pending' can only belong to a dead process. merge (not
+   *  concat) because deltas$ is hot -- a concat would drop deltas emitted while the
+   *  replay scan runs; ordering between the two sources is irrelevant under the
+   *  concatMap lock + cache dedupe. */
   start(): void {
     if (this.subscription) return;
-    const requests$: Observable<void> = this.runtime.deltas$.pipe(
+    const livePending$: Observable<PendingEffect> = this.runtime.deltas$.pipe(
       filter((event) => event.rel.startsWith("__req_") && event.inserts.length > 0),
       mergeMap((event) => {
         const host = this.hostsByRequestRel.get(event.rel);
         if (!host) return EMPTY;
         return from(event.inserts.map((insertRow): PendingEffect => ({ host, requestRow: insertRow, tick: event.tick })));
       }),
+    );
+    const bootPending$: Observable<PendingEffect> = from(this.replayableRequests()).pipe(
+      mergeMap((pendings) => from(pendings)),
+    );
+    const requests$: Observable<void> = merge(bootPending$, livePending$).pipe(
       concatMap((pending) => from(this.runEffectOnce(pending))),
     );
     this.subscription = requests$.subscribe({
@@ -387,6 +404,27 @@ export class HostRunner implements IHostRunner {
         throw error;
       },
     });
+  }
+
+  /** The boot-replay scan: clear dead in-flight locks, then re-present every live
+   *  demand row. One rows() read per host rel (per-REL, never per-row: N+1 law).
+   *  The registry always carries the builtins (sg/extract) but the bridge mints
+   *  __req_* rels per-program, so a registered-but-unused host has no rel to scan;
+   *  that one runtime error is expected and skipped, anything else rethrows. */
+  private async replayableRequests(): Promise<PendingEffect[]> {
+    await this.cacheDb.execute({ sql: "DELETE FROM effect_cache WHERE state = 'pending'", args: [] });
+    const pendings: PendingEffect[] = [];
+    for (const [requestRel, host] of this.hostsByRequestRel) {
+      let requestRows: Row[];
+      try {
+        requestRows = await this.runtime.rows(requestRel);
+      } catch (failure) {
+        if (failure instanceof Error && failure.message.includes("unknown rel")) continue;
+        throw failure;
+      }
+      for (const requestRow of requestRows) pendings.push({ host, requestRow, tick: 0 });
+    }
+    return pendings;
   }
 
   /** Unsubscribes; any run already past its `host.run()` drain settles harmlessly
