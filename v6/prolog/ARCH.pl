@@ -149,7 +149,9 @@ algorithm(rw_disjoint,     conflict,    fold,              unbuilt).
 algorithm(magic_demand,    static_subs, rewrite,           'books/v6/algos/magic_sets.pl').
 algorithm(seminaive_eval,  delta_flow,  monotone_fixpoint, 'sqlite via js lowerSql / rust store').
 algorithm(count_ivm,       delta_flow,  monotone_fixpoint, 'rust store (beat DRed 4-5x)').
-algorithm(mode_analysis,   static_subs, fold,              unbuilt).  % (card, lifetime) + dominance
+algorithm(mode_analysis,   static_subs, monotone_fixpoint, 'plans/2026-07-27-mode-lattice.md (labbed; engine home unbuilt)').
+% ^ was fold: the mode lattice lab found the graph cyclic (poll -> fetch ->
+%   cache -> cache_tag -> poll), so the fold iterates to a least fixpoint.
 algorithm(sql_emit,        ast,         rewrite,           'books/v6/algos/lower_sql.pl').
 algorithm(ts_emit,         ast,         rewrite,           'src/emit_ts.pl (literal TS onto the engine-v1 seam)').
 
@@ -249,9 +251,10 @@ task(envelope_types,      labbed,  []).                  % enum_match
 task(demand_clocking,     labbed,  [kernel_sql_lowering]).
 task(clock_inference,     parked,  [clock_check]).       % swap ground clocks for holes; user-parked 2026-07-27
 task(surface_dcg,         unbuilt, [desugar_machinery]). % rust-ish grammar -> kernel facts (sample approved)
-task(mode_lab,            unbuilt, []).                  % determinism.pl: (card, lifetime) + dominance
+task(mode_lab,            labbed,  []).                  % plans/2026-07-27-mode-lattice.md: lifetime = free distributive lattice over end-signals; scope_min=OR join_max=AND; 80/80 at 2fff3f61
+task(sub_forest,          labbed,  []).                  % plans/2026-07-27-sub-forest.md: demand rows + sub forest + prefix-DELETE teardown; 7-item engine-absorption list; 41/41 at 2fff3f61
 task(register_lowering,   unbuilt, [kernel_sql_lowering]). % UPDATE..CASE per register + hist/retention
-task(ts_grammar_import,   unbuilt, []).                  % node-types.json -> con/enum facts; typed CST matching
+task(ts_grammar_import,   labbed,  []).                  % node-types.json -> con/enum facts; typed CST matching (astgrep lab, lab-consolidation PROVEN 5; quoted-DSL pipeline end to end)
 task(purity_split,        unbuilt, [desugar_machinery]). % pure-body test per segment
 task(island_partition,    unbuilt, [purity_split, clock_check]).
 task(rw_sets,             unbuilt, [purity_split]).

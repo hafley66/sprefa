@@ -34,7 +34,7 @@
 %
 % Not exercised here (own territory, not attempted): the mixed-head
 % git_repo pattern (world-fed AND rule-derived rows sharing one head,
-% ARCH.pl callout) belongs to the labs/ARCH.pl arc; group 4 below keeps
+% ARCH.pl callout) belongs to the ARCH.pl mixed-head arc; group 4 below keeps
 % known_repo and repo_candidate as two separate rels instead of testing
 % that construct. FileSpan byte-span columns (start/end) are not unpacked
 % anywhere; xref carries span ids as opaque integers only.

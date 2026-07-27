@@ -118,7 +118,8 @@ fixture(new_salt_refires_fresh_stream,
 % re-observes an unchanged input mints a fresh demand/fresh fill instead of
 % the polling-period-shaped or change-shaped recurrence the two real salts
 % give for free. Ruling: lab-consolidation PROVEN 4
-% (v6/prolog/labs/AGGREGATE.md:98, :165; shell_stream.md sect 4). Two salts
+% (plans/2026-07-27-aggregate-analysis.md:98, :165; labs/shell_stream.md
+% sect 4, lab deleted, last copy at 2fff3f61). Two salts
 % exist for two different recurrence reasons and neither is "time elapsed
 % since the engine happened to tick"; arrival-tick salt is rejected outright,
 % not re-graded into a fixture of its own.
