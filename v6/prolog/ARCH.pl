@@ -114,7 +114,7 @@ algorithm(magic_demand,    static_subs, rewrite,           'books/v6/algos/magic
 algorithm(seminaive_eval,  delta_flow,  monotone_fixpoint, 'sqlite via js lowerSql / rust store').
 algorithm(count_ivm,       delta_flow,  monotone_fixpoint, 'rust store (beat DRed 4-5x)').
 algorithm(sql_emit,        ast,         rewrite,           'books/v6/algos/lower_sql.pl').
-algorithm(ts_emit,         ast,         rewrite,           'books/v6/dl_to_ts.pl (naive; redirect: reuse engine v1)').
+algorithm(ts_emit,         ast,         rewrite,           'src/emit_ts.pl (literal TS onto the engine-v1 seam)').
 
 % ── tech roles: who is allowed to do what ───────────────────────────────────
 
@@ -177,7 +177,7 @@ task(island_partition,    unbuilt, [purity_split, clock_check]).
 task(rw_sets,             unbuilt, [purity_split]).
 task(pushdown_optimizer,  unbuilt, [island_partition, rw_sets]).
 task(thread_schedule,     unbuilt, [rw_sets]).
-task(emit_ts_direct,      unbuilt, [kernel_sql_lowering]). % literal TS reusing engine v1 seam
+task(emit_ts_direct,      done,    [kernel_sql_lowering]). % src/emit_ts.pl -> ast.ts helpers, swi-emit bench row
 task(sub_graph_disk,      unbuilt, [emit_ts_direct]).
 task(count_ivm_port,      unbuilt, [kernel_sql_lowering]).
 task(cost_model,          unbuilt, [pushdown_optimizer]). % perf rows feed plan choice

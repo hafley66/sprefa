@@ -24,6 +24,7 @@ ENGINES=(
   "swipl-pure|bench/engines/swipl_pure.sh|"
   "swi-sqlite|bench/engines/swi_sqlite.sh|"
   "swi-ts|bench/engines/swi_ts.sh|"
+  "swi-emit|bench/engines/swi_emit.sh|"
 )
 # Scale sweep as "layers x width". Kept medium so a laptop survives.
 SCALES="${SCALES:-2x200 6x2000 8x20000 10x50000 14x80000}"

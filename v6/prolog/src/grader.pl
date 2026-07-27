@@ -3,11 +3,14 @@
 
 :- module(grader, [run/1]).
 
-:- meta_predicate run(2).
+% `:` not `2`: the check FACTS carry goals that must run back in the lab's own
+% module, not in grader's. Non-module labs (user) behaved either way; a module
+% lab's private helpers need the qualification.
+:- meta_predicate run(:).
 
-run(Check) :-
-    forall(call(Check, Name, Goal),
-           (   catch(Goal, Error, (print_message(error, Error), fail))
+run(Module:Check) :-
+    forall(call(Module:Check, Name, Goal),
+           (   catch(Module:Goal, Error, (print_message(error, Error), fail))
            ->  format("PASS  ~w~n", [Name])
            ;   format("fail  ~w~n", [Name])
            )).
