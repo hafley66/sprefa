@@ -98,6 +98,7 @@
 | [plans/2026-07-24-sqlite-retract-perf-lab.md](plans/2026-07-24-sqlite-retract-perf-lab.md) | 425 | 2026-07-24 SQLite retraction perf lab |
 | [plans/2026-07-24-v6-dl-mvp-slice.md](plans/2026-07-24-v6-dl-mvp-slice.md) | 664 | v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24) |
 | [plans/2026-07-25-sql-builder-build-vs-buy.md](plans/2026-07-25-sql-builder-build-vs-buy.md) | 322 | SQL query-builder / templating: build-vs-buy for `lowerSql.ts` |
+| [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 81 | The shared fixture contract (read before promoting a lab) |
 | [prolog/labs/AGGREGATE.md](prolog/labs/AGGREGATE.md) | 523 | AGGREGATE: v6 language arc reconciliation (2026-07-27) |
 | [prolog/labs/AUDIT.md](prolog/labs/AUDIT.md) | 794 | AUDIT: adversarial read of the v6 surface language (2026-07-27) |
 | [prolog/labs/LANG.md](prolog/labs/LANG.md) | 95 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
@@ -1654,6 +1655,16 @@
 244:## Recommendation
 280:## Migration sketch
 301:## Could not verify
+```
+
+### prolog/conformance/FIXTURES.md
+```
+1:# The shared fixture contract (read before promoting a lab)
+17:## Program shape
+30:## Rules the engine enforces (rulings.pl; your expectations must match)
+58:## Expectations
+66:## Re-grading discipline (AGGREGATE.md 5c)
+76:## Out of scope for fixtures
 ```
 
 ### prolog/labs/AGGREGATE.md
