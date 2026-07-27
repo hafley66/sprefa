@@ -17,17 +17,14 @@ import {
   catchError,
   concat,
   concatMap,
-  count,
   defer,
   filter,
   firstValueFrom,
   forkJoin,
   from,
-  groupBy,
   map,
   mergeMap,
   of,
-  range,
   reduce,
   share,
   tap,
@@ -268,20 +265,20 @@ function relMaxColumnWidth(relDecls: ReadonlyMap<string, RelDecl>): number {
 type QueryResult = Awaited<ReturnType<Db["execute"]>>;
 
 const execute$ = (db: Db, sql: string): Observable<QueryResult> => defer(() => from(db.execute(sql)));
-const run$ = (db: Db, sql: string): Observable<void> => execute$(db, sql).pipe(map(() => undefined));
 
-/** Run every step in order, emit once at the end. */
-const inOrder = (steps: readonly Observable<unknown>[]): Observable<void> =>
-  steps.length === 0 ? of(undefined) : concat(...steps).pipe(count(), map(() => undefined));
+/** Run each statement in order; one emission with every result once the last finishes
+ *  (`toArray` emits `[]` even for an empty list, so callers can always sequence on it). */
+const executeAll$ = (db: Db, statements: readonly string[]): Observable<QueryResult[]> =>
+  concat(...statements.map((sql) => execute$(db, sql))).pipe(toArray());
 
 /** BEGIN IMMEDIATE / COMMIT / ROLLBACK as an observable bracket. Single statements on the
  *  one pinned connection: `executeMultiple` would trip the adapter's rollback guard. */
 function inTransaction<Value>(db: Db, body: () => Observable<Value>): Observable<Value> {
-  return run$(db, "BEGIN IMMEDIATE").pipe(
+  return execute$(db, "BEGIN IMMEDIATE").pipe(
     concatMap(body),
-    concatMap((value) => run$(db, "COMMIT").pipe(map(() => value))),
+    concatMap((value) => execute$(db, "COMMIT").pipe(map(() => value))),
     catchError((failure: unknown) =>
-      run$(db, "ROLLBACK").pipe(
+      execute$(db, "ROLLBACK").pipe(
         catchError(() => of(undefined)),
         concatMap(() => throwError(() => failure)),
       ),
@@ -297,26 +294,21 @@ function loadRowMatchCandidates(
   relDecls: ReadonlyMap<string, RelDecl>,
   rows: readonly StoredRow[],
   rowWidth: number,
-): Observable<void> {
+): Observable<QueryResult[]> {
   return defer(() => {
     const allColumns = Array.from({ length: relMaxColumnWidth(relDecls) }, (_, index) => `c${index}`).join(", ");
     const usedColumns = Array.from({ length: rowWidth }, (_, index) => `c${index}`).join(", ");
-    const chunkStarts = range(0, Math.ceil(rows.length / ROW_MATCH_INSERT_CHUNK));
-    return inOrder([
-      run$(db, `CREATE TEMP TABLE IF NOT EXISTS ${ROW_MATCH_TEMP_TABLE} (${allColumns})`),
-      run$(db, `DELETE FROM ${ROW_MATCH_TEMP_TABLE}`),
-    ]).pipe(
-      concatMap(() =>
-        chunkStarts.pipe(
-          map((chunkIndex) => rows.slice(chunkIndex * ROW_MATCH_INSERT_CHUNK, (chunkIndex + 1) * ROW_MATCH_INSERT_CHUNK)),
-          concatMap((chunk) =>
-            run$(db, `INSERT INTO ${ROW_MATCH_TEMP_TABLE}(${usedColumns}) VALUES ${chunk.map(sqlTuple).join(",")}`),
-          ),
-          count(),
-          map(() => undefined),
-        ),
+    const chunks: StoredRow[][] = [];
+    for (let chunkStart = 0; chunkStart < rows.length; chunkStart += ROW_MATCH_INSERT_CHUNK) {
+      chunks.push(rows.slice(chunkStart, chunkStart + ROW_MATCH_INSERT_CHUNK));
+    }
+    return executeAll$(db, [
+      `CREATE TEMP TABLE IF NOT EXISTS ${ROW_MATCH_TEMP_TABLE} (${allColumns})`,
+      `DELETE FROM ${ROW_MATCH_TEMP_TABLE}`,
+      ...chunks.map(
+        (chunk) => `INSERT INTO ${ROW_MATCH_TEMP_TABLE}(${usedColumns}) VALUES ${chunk.map(sqlTuple).join(",")}`,
       ),
-    );
+    ]);
   });
 }
 
@@ -328,9 +320,7 @@ function rowMatchJoinCondition(columns: readonly string[], relAlias: string, tem
 
 function selectAll(db: Db, relName: string, columns: readonly string[]): Observable<Row[]> {
   return execute$(db, `SELECT ${columns.join(",")} FROM rel_${relName}`).pipe(
-    concatMap((result) => from(result.rows)),
-    map((rawRow) => RowCodec.rowFromRaw(rawRow, columns)),
-    toArray(),
+    map((result) => result.rows.map((rawRow) => RowCodec.rowFromRaw(rawRow, columns))),
   );
 }
 
@@ -351,18 +341,25 @@ function preCheckExistingKeys(
         `SELECT ${selectColumns} FROM relbase_${relName} t JOIN ${ROW_MATCH_TEMP_TABLE} c ON ${rowMatchJoinCondition(columns, "t", "c")}`,
       ),
     ),
-    concatMap((result) => from(result.rows)),
-    map((rawRow) => storedRowKey(columns.map((column) => Number((rawRow as Record<string, unknown>)[column])))),
-    reduce((keys: Set<string>, key: string) => keys.add(key), new Set<string>()),
+    map(
+      (result) =>
+        new Set(
+          result.rows.map((rawRow) =>
+            storedRowKey(columns.map((column) => Number((rawRow as Record<string, unknown>)[column]))),
+          ),
+        ),
+    ),
   );
 }
 
-function insertRows(db: Db, relName: string, columns: readonly string[], rows: readonly StoredRow[]): Observable<void> {
-  if (rows.length === 0) return of(undefined);
-  return run$(
-    db,
-    `INSERT INTO relbase_${relName}(${columns.join(",")}) VALUES ${rows.map(sqlTuple).join(",")} ON CONFLICT DO NOTHING`,
-  );
+function insertRows(db: Db, relName: string, columns: readonly string[], rows: readonly StoredRow[]): Observable<QueryResult[]> {
+  const statements =
+    rows.length === 0
+      ? []
+      : [
+          `INSERT INTO relbase_${relName}(${columns.join(",")}) VALUES ${rows.map(sqlTuple).join(",")} ON CONFLICT DO NOTHING`,
+        ];
+  return executeAll$(db, statements);
 }
 
 function deleteRows(
@@ -371,23 +368,22 @@ function deleteRows(
   relName: string,
   columns: readonly string[],
   rows: readonly StoredRow[],
-): Observable<void> {
-  if (rows.length === 0) return of(undefined);
+): Observable<QueryResult[]> {
+  if (rows.length === 0) return of([]);
   const tableRef = `relbase_${relName}`;
   return loadRowMatchCandidates(db, relDecls, rows, columns.length).pipe(
     concatMap(() =>
-      run$(
-        db,
+      executeAll$(db, [
         `DELETE FROM ${tableRef} WHERE EXISTS (SELECT 1 FROM ${ROW_MATCH_TEMP_TABLE} c WHERE ${rowMatchJoinCondition(columns, tableRef, "c")})`,
-      ),
+      ]),
     ),
   );
 }
 
-function insertDeltaRows(db: Db, rows: readonly DeltaRow[]): Observable<void> {
-  if (rows.length === 0) return of(undefined);
+function insertDeltaRows(db: Db, rows: readonly DeltaRow[]): Observable<QueryResult[]> {
   const values = rows.map((row) => `(${row.rel_tag},${row.row_digest},${row.tick},${row.weight})`).join(",");
-  return run$(db, `INSERT INTO delta(rel_tag,row_digest,tick,weight) VALUES ${values}`);
+  const statements = rows.length === 0 ? [] : [`INSERT INTO delta(rel_tag,row_digest,tick,weight) VALUES ${values}`];
+  return executeAll$(db, statements);
 }
 
 /** What one rel's EDB write resolved to, before any of it is applied. */
@@ -473,10 +469,13 @@ function applyRelWrite(
               ...retractedIds,
               ...superseded.map((row) => encodeSurfaceRowByColumns(state.store, state.columnTypes, relName, columns, row)),
             ];
-            return inOrder([
+            return concat(
               insertRows(db, relName, columns, insertedIds),
               deleteRows(db, state.relDecls, relName, columns, allRetractedIds),
-            ]).pipe(map(() => ({ relName, columns, inserted, retracted: allRetracted })));
+            ).pipe(
+              toArray(),
+              map(() => ({ relName, columns, inserted, retracted: allRetracted })),
+            );
           }),
         );
       }),
@@ -494,7 +493,7 @@ export function applyEdbTxn(state: RuntimeState, request: CommitRequest): Observ
   // them back as NULL.
   const encodedInsert = encodeBatchSide(state, request.batch.insert);
   const encodedRetract = encodeBatchSide(state, request.batch.retract);
-  return defer(() => from(state.store.flush_strings())).pipe(
+  return state.store.flush_strings().pipe(
     concatMap(() =>
       inTransaction(db, () =>
         execute$(db, "UPDATE store_meta SET value = value + 1 WHERE key='tick' RETURNING value").pipe(
@@ -605,58 +604,57 @@ function selectSurrogates(
         `SELECT t.${ROW_SURROGATE} FROM relbase_${relName} t JOIN ${ROW_MATCH_TEMP_TABLE} c ON ${rowMatchJoinCondition(columns, "t", "c")}`,
       ),
     ),
-    concatMap((result) => from(result.rows)),
-    map((rawRow) => Number((rawRow as Record<string, unknown>)[ROW_SURROGATE])),
-    toArray(),
+    map((result) => result.rows.map((rawRow) => Number((rawRow as Record<string, unknown>)[ROW_SURROGATE]))),
   );
 }
 
-/** Unpack `key = rel_tag * KEY_STRIDE + row_id`, group by rel, one SELECT per rel. */
+/** Unpack `key = rel_tag * KEY_STRIDE + row_id`, group by rel (plain Map — the keys are
+ *  already in memory), one SELECT per rel, run in order. */
 function resolveFactKeys(state: RuntimeState, keys: readonly number[]): Observable<DeadFact[]> {
   const nameOfTag = new Map([...state.relTags].map(([relName, tag]) => [tag, relName] as const));
-  return from(keys).pipe(
-    groupBy((key) => Math.trunc(key / KEY_STRIDE)),
-    mergeMap((group) =>
-      group.pipe(
-        map((key) => key % KEY_STRIDE),
-        toArray(),
-        concatMap((rowIds) => {
-          const relName = nameOfTag.get(group.key);
-          const decl = relName === undefined ? undefined : state.relDecls.get(relName);
-          if (relName === undefined || !decl) return EMPTY;
-          return execute$(
-            state.db,
-            `SELECT ${decl.columns.join(",")} FROM rel_${relName} WHERE ${ROW_SURROGATE} IN (${rowIds.join(",")})`,
-          ).pipe(
-            concatMap((result) => from(result.rows)),
-            map((rawRow) => ({ rel: relName, row: RowCodec.rowFromRaw(rawRow, decl.columns) })),
-          );
-        }),
+  const rowIdsByTag = new Map<number, number[]>();
+  for (const key of keys) {
+    const tag = Math.trunc(key / KEY_STRIDE);
+    const rowIds = rowIdsByTag.get(tag);
+    if (rowIds) rowIds.push(key % KEY_STRIDE);
+    else rowIdsByTag.set(tag, [key % KEY_STRIDE]);
+  }
+  const selects = [...rowIdsByTag].flatMap(([tag, rowIds]) => {
+    const relName = nameOfTag.get(tag);
+    const decl = relName === undefined ? undefined : state.relDecls.get(relName);
+    if (relName === undefined || !decl) return [];
+    return [
+      execute$(
+        state.db,
+        `SELECT ${decl.columns.join(",")} FROM rel_${relName} WHERE ${ROW_SURROGATE} IN (${rowIds.join(",")})`,
+      ).pipe(
+        map((result) =>
+          result.rows.map((rawRow) => ({ rel: relName, row: RowCodec.rowFromRaw(rawRow, decl.columns) })),
+        ),
       ),
-    ),
+    ];
+  });
+  return concat(...selects).pipe(
     toArray(),
+    map((factsPerRel) => factsPerRel.flat()),
   );
 }
 
 /** Mirror the settled model into the store's Z-set fact plane, SQL-to-SQL, one statement
  *  per rel. `key = rel_tag * KEY_STRIDE + row_id`, computed from two dense integer
  *  columns, so no row ever enters the JS heap here. */
-function refreshFactPlane(state: RuntimeState): Observable<void> {
+function refreshFactPlane(state: RuntimeState): Observable<QueryResult[]> {
   const rowTable = state.relStore.ns().row;
   const stride = state.supportEdges.stride;
-  return from(state.relTables).pipe(
-    concatMap(([relName, table]) => {
-      const tag = state.relTags.get(relName);
-      if (tag === undefined) return EMPTY;
-      return run$(
-        state.db,
-        `INSERT INTO ${rowTable}(key, weight) SELECT ${tag} * ${stride} + ${ROW_SURROGATE}, 1 FROM ${table.table} ` +
-          `WHERE true ON CONFLICT(key) DO UPDATE SET weight = 1`,
-      );
-    }),
-    count(),
-    map(() => undefined),
-  );
+  const statements = [...state.relTables].flatMap(([relName, table]) => {
+    const tag = state.relTags.get(relName);
+    if (tag === undefined) return [];
+    return [
+      `INSERT INTO ${rowTable}(key, weight) SELECT ${tag} * ${stride} + ${ROW_SURROGATE}, 1 FROM ${table.table} ` +
+        `WHERE true ON CONFLICT(key) DO UPDATE SET weight = 1`,
+    ];
+  });
+  return executeAll$(state.db, statements);
 }
 
 /** The fixpoint stage. One transaction: evalProgramSql, mirror into cx_row, diff the
@@ -673,12 +671,12 @@ export function applyDerivedTxn(state: RuntimeState, outcome: EdbTickOutcome): O
     .map(([relName]) => relName);
 
   return inTransaction(db, () => {
-    const fixpoint =
+    const fixpoint: Observable<QueryResult[]> =
       edbMoved && state.derivedRelNames.length > 0
         ? evalProgramSql(db, state.storageProgram, state.relTables, state.supportEdges).pipe(
             concatMap(() => refreshFactPlane(state)),
           )
-        : of(undefined);
+        : of([]);
 
     return fixpoint.pipe(
       concatMap(() => (edbMoved ? diffAgainstTables(state) : of(new Map<string, PerRelDiff>()))),
