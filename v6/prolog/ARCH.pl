@@ -167,7 +167,7 @@ prior_art(json_rx,       '~/projects/hafley-rxjs/packages/json-rx', conformance_
 prior_art(hafley_tsp,    '~/projects/hafley-tsp',                  bind_vocabulary,
           'TypeSpec app-gen; config/env/CLI sources + @secret redaction for binds').
 prior_art(atlas_anim,    '~/projects/anim',                        arch_map,
-          'the atlas renderer; tools/arch_map.pl emits into it; the map that remembers').
+          'the vis ARSENAL, not just atlas: cone-focus graph atlas, Frames animated explainers, CodeSpotlight, CssGraph, deck, datalog-to-atlas + from-git converters, shoot-* screenshotters; arch_map emits into it').
 prior_art(dl_flow_panel, 'editors/vscode-dl',                      circuit_view,
           '_node/_edge layer discovery; the schema-convention precedent for program maps').
 
