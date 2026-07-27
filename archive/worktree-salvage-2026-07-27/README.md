@@ -61,6 +61,17 @@ git branch -d codex/engine-mod-split codex/feedback-batch1 codex/feedback-batch2
   worktree-agent-ac82718cb39bd3740
 ```
 
+## Branch graveyard (separate from trees)
+
+137 local branches are fully merged into main (agent worktree branches,
+dl/m1-m5 arc, codex/*, one-off fixes). After the tree removals above:
+
+```sh
+git branch --merged main | grep -vE '^\*|^\+| main$| next$|cleanup' | xargs git branch -d
+```
+
+`-d` refuses anything unmerged, so this is safe to run as-is.
+
 ## Kept alive (unmerged, not touched)
 
 | tree | branch | ahead of main | note |

@@ -111,6 +111,20 @@ descriptive-name rename.)
    first: is this making sense, is there a shorter/more direct way, fewer variables,
    fewer methods. No new operator chains land without that check.
 
+### v6 primed queue (user, 2026-07-27 PM, unordered — "i want a lot of things")
+- diags done + LSP hosted from TS (best-buy research first; note: v5 `dl --lsp
+  --diag-db` boots NO engine and polls `diag_v5`, which 5_diag.ts already creates —
+  the zero-code interim is pointing v5 at the v6 db).
+- endurance goal: v6/dl/scripts/goal-endurance.sh IS the end-goal definition
+  (kill -9 mid-delay, reboot, value lands exactly once). Phase 0 green; phase 1 =
+  the pending-witness wedge + no boot replay of unanswered demand.
+- snippets proving each v5 builtin rel's v6 behavior, ZERO new language features.
+- bootstrap story: how the language owns its own utilities (swipl-to-C analogy);
+  rust return eventually (souffle-of-rust + rx logic); formalizing the v8 event loop.
+- self-diags on our own .pl files (pick up by pattern/extension/marker word).
+- generic `--changed` concept (biome-style recent-change-lines gating) directable
+  from dl; the old pre-commit hooks did this.
+
 ### v6 awaiting user rulings (consolidated 2026-07-27; full text in the cited plans)
 - **stale fill under a dead scope** — BLOCKS the effect-rel/SWR lowering. Options:
   drop (lab's graded choice) / admit-but-not-into-view / admit only for cache-declared
