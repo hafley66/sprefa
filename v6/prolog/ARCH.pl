@@ -153,6 +153,24 @@ algorithm(mode_analysis,   static_subs, fold,              unbuilt).  % (card, l
 algorithm(sql_emit,        ast,         rewrite,           'books/v6/algos/lower_sql.pl').
 algorithm(ts_emit,         ast,         rewrite,           'src/emit_ts.pl (literal TS onto the engine-v1 seam)').
 
+% ── prior art: the user's own tools and what each feeds v6 ──────────────────
+% prior_art(Name, Path, Feeds, Gift). The anti-forgetting ledger (user
+% 2026-07-27: "i forgot i made atlas, i make too many things"): every tool
+% already built, where it lives, and which v6 piece inherits from it.
+
+prior_art(sprefa_v5,     '~/projects/sprefa',                      extraction_binds,
+          'solved machinery: scan/git/ast/watchers; enters v6 as binds, never rebuilt').
+prior_art(og_coordinate, '~/projects/sprefa-archive-20260428',     file_span_types,
+          'byte-span refs table + repo/tag auto-checkout = the File/FileSpan/discovery loop').
+prior_art(json_rx,       '~/projects/hafley-rxjs/packages/json-rx', conformance_corpus,
+          'marble fixtures as cross-target agreement; per-tick deltas ARE marbles').
+prior_art(hafley_tsp,    '~/projects/hafley-tsp',                  bind_vocabulary,
+          'TypeSpec app-gen; config/env/CLI sources + @secret redaction for binds').
+prior_art(atlas_anim,    '~/projects/anim',                        arch_map,
+          'the atlas renderer; tools/arch_map.pl emits into it; the map that remembers').
+prior_art(dl_flow_panel, 'editors/vscode-dl',                      circuit_view,
+          '_node/_edge layer discovery; the schema-convention precedent for program maps').
+
 % ── tech roles: who is allowed to do what ───────────────────────────────────
 
 tech(prolog, compiler_tier, [parse_via_ops, desugar, check, weave, emit],
