@@ -96,17 +96,23 @@ descriptive-name rename.)
    typechecks clean, `src/lib/rxjs.ts` orphan gone). Every green state gets a commit,
    standing. NOTE for item 2: the restored `sequence` helper still sits in
    engine.ts:115 with 2 call sites (:743, :744) — it is the first thing item 2 deletes.
-2. **Undo rxjs over sync code** (the user withdrew the "make it all rxjs" ask). Sync
-   loops/list building are plain array code returning arrays. Observables exist only
-   where a real async boundary lives (the SqlRunner driver seam, spawn, HTTP). While
-   here: values always flow; completion IS the `complete` notification; `Observable<void>`
-   only where the driver itself returns nothing; `map(() => undefined)`,
-   reduce-to-undefined, and named completion-signal helpers (`sequence`/`run_then`
-   and kin) are banned. Sequential run-and-collect is `concat(...).pipe(toArray())`, inline.
+2. ~~Undo rxjs over sync code~~ DONE 2026-07-27 PM (agent arc, merged): `sequence`,
+   `run_then` (both copies), `execBatch`, `run$`, `inOrder` deleted; sequential run is
+   `concat(...).pipe(toArray())` inline; rowsAffected flows through SqlRunner/batch/
+   cascade/reconcile/TemporalStore/runAll; side-effect maps became `tap`; sync unwraps
+   (`from(rows)->map->toArray`, rxjs `groupBy` over in-memory keys) are plain array
+   code. Legitimate voids kept with reasons: `executeMultiple` (driver resolves
+   nothing), rollback-path `catchError` swallows. Receipts: store 89/89, dl 74/74,
+   both typechecks, ratchet 3, goal-endurance 3/3, statement counts unchanged.
 3. **Single subscribe point.** Collapse the 3 manual `.subscribe()` sites
-   (`dl/src/3_runtime.ts` keepAlive, `dl/src/1_hosts.ts` host effects,
-   `dl/src/6_http.ts` SSE) into the one terminal subscription in `main.ts`
-   (`v6/tools/one-subscribe.sh` ratchet 3 -> 1). This is the next milestone after 2.
+   (`dl/src/3_runtime.ts:782` keepAlive, `dl/src/1_hosts.ts:383` host effects,
+   `dl/src/6_http.ts:281` SSE) into the one terminal subscription in `main.ts`
+   (`v6/tools/one-subscribe.sh` ratchet 3 -> 1). This is the next milestone.
+   Blockers refreshed 2026-07-27 PM: 7 `new Promise` wrappers untouched;
+   `commits$`/`reportsSubject` pair now `3_runtime.ts:764`/`:96`; NEW seam from the
+   item-2 arc: `insertRows`/`deleteRows`/`insertDeltaRows`/`refreshFactPlane` all emit
+   `QueryResult[]` via one `executeAll$` helper, so the tick chain has one uniform
+   seam instead of four ad-hoc void shapes.
 4. **Rxjs rule of engagement**: before writing ANY new rxjs, stop and ask the user
    first: is this making sense, is there a shorter/more direct way, fewer variables,
    fewer methods. No new operator chains land without that check.
