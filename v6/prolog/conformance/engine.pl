@@ -58,13 +58,16 @@
 
 :- module(engine,
           [ run_fixture_checks/2, run_program/5, fixture_expectations_hold/2,
-            rel_rows/3, rel_deltas/3, json_canon/2 ]).
+            rel_rows/3, rel_deltas/3 ]).
+:- reexport(body, [json_canon/2]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(ordsets)).
 :- use_module(library(pairs)).
 :- use_module(rulings).
+:- use_module(body).
+:- use_module(level_eval).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -81,7 +84,6 @@ drain_cap(100).
 %   Rules: (Head <- Body) | (Head <+ Body)
 % Bound: count(N) | all      (duration bounds arrive with the clock fixtures)
 
-rel_ref(Atom, Name/Arity) :- functor(Atom, Name, Arity).
 
 declared_kind(Decls, Ref, Kind) :- memberchk(kind(Ref, Kind), Decls).
 
@@ -105,7 +107,9 @@ check_program(prog(Decls, Rules)) :-
     forall(( member(kind(Ref, log), Decls), \+ memberchk(keep(Ref, _), Decls) ),
            throw(missing_retention(Ref))),
     forall(( member((Head <+ _), Rules), aggregate_head(Head, _, _) ),
-           throw(aggregate_in_edge_head)).
+           throw(aggregate_in_edge_head)),
+    forall(( member((_ <- Body), Rules), body_departed_ref(Body, Ref2) ),
+           throw(departed_in_level_rule(Ref2))).
 
 % ═══ the store ══════════════════════════════════════════════════════════════
 % srow(Row) for Set rels; lrow(st(Tick, Seq), Row) for Log rels. Level views
@@ -125,325 +129,52 @@ log_stamps(Store, Ref, Stamps) :-
             ( member(lrow(Stamp, Row), Store), rel_ref(Row, Ref) ), Stamps0),
     msort(Stamps0, Stamps).
 
-% ═══ expressions ════════════════════════════════════════════════════════════
-% Evaluation is the default; goals run left to right: an atom binds, := / is
-% computes, a comparison filters. / truncates (Int-only law). concat is the
-% interpolation lowering target.
-
-eval_expr(Value, _) :- var(Value), !, throw(unbound_in_expression).
-eval_expr(Number, Number) :- number(Number), !.
-eval_expr(concat(Parts), Out) :- !,
-    maplist(eval_expr, Parts, Values),
-    maplist(text_piece, Values, Pieces),
-    atomic_list_concat(Pieces, Out).
-eval_expr(Left + Right, Out)   :- !, eval_int2(Left, Right, LeftV, RightV), Out is LeftV + RightV.
-eval_expr(Left - Right, Out)   :- !, eval_int2(Left, Right, LeftV, RightV), Out is LeftV - RightV.
-eval_expr(Left * Right, Out)   :- !, eval_int2(Left, Right, LeftV, RightV), Out is LeftV * RightV.
-eval_expr(Left / Right, Out)   :- !, eval_int2(Left, Right, LeftV, RightV), Out is LeftV // RightV.
-eval_expr(Left mod Right, Out) :- !, eval_int2(Left, Right, LeftV, RightV), Out is LeftV mod RightV.
-eval_expr(Braces, Canon) :- Braces = {}(_), !, json_canon(Braces, Canon).
-eval_expr([Head | Tail], Canon) :- !, json_canon([Head | Tail], Canon).
-eval_expr(Value, Value).
-
-eval_int2(Left, Right, LeftV, RightV) :-
-    eval_expr(Left, LeftV), eval_expr(Right, RightV),
-    ( integer(LeftV), integer(RightV) -> true ; throw(arith_on_non_int(LeftV, RightV)) ).
-
-text_piece(Value, Value) :- atomic(Value), !.
-text_piece(Value, _) :- throw(non_display_in_concat(Value)).
-
-comparison_goal(_ < _). comparison_goal(_ =< _). comparison_goal(_ > _).
-comparison_goal(_ >= _). comparison_goal(_ == _). comparison_goal(_ \== _).
-
-solve_comparison(Left < Right)   :- eval_int2(Left, Right, LeftV, RightV), LeftV < RightV.
-solve_comparison(Left =< Right)  :- eval_int2(Left, Right, LeftV, RightV), LeftV =< RightV.
-solve_comparison(Left > Right)   :- eval_int2(Left, Right, LeftV, RightV), LeftV > RightV.
-solve_comparison(Left >= Right)  :- eval_int2(Left, Right, LeftV, RightV), LeftV >= RightV.
-solve_comparison(Left == Right)  :- eval_expr(Left, LeftV), eval_expr(Right, RightV), LeftV == RightV.
-solve_comparison(Left \== Right) :- eval_expr(Left, LeftV), eval_expr(Right, RightV), LeftV \== RightV.
-
-% ═══ json ═══════════════════════════════════════════════════════════════════
-
-json_canon(Braces, obj(Sorted)) :- nonvar(Braces), Braces = {}(Fields), !,
-    braces_pairs(Fields, Pairs),
-    keysort(Pairs, Sorted),
-    pairs_keys(Sorted, Keys),
-    ( sort(Keys, Distinct), length(Keys, N), length(Distinct, N)
-    -> true ; throw(json_dup_key(Keys)) ).
-json_canon(List, Canon) :- is_list(List), !, maplist(json_canon, List, Canon).
-json_canon(obj(Pairs), obj(Canon)) :- !,
-    findall(Key-Value, ( member(Key-Raw, Pairs), json_canon(Raw, Value) ), Canon0),
-    keysort(Canon0, Canon).
-json_canon(Value, Value).
-
-braces_pairs((Left, Right), Pairs) :- !,
-    braces_pairs(Left, LeftPairs), braces_pairs(Right, RightPairs),
-    append(LeftPairs, RightPairs, Pairs).
-braces_pairs(Key: Raw, [Key-Value]) :- json_canon(Raw, Value).
-
-% decode: open object patterns, holes bind canonical values.
-json_decode(Value, Pattern) :- var(Pattern), !, Pattern = Value.
-json_decode(obj(Pairs), Pattern) :- nonvar(Pattern), Pattern = {}(Fields), !,
-    braces_decode(Fields, Pairs).
-json_decode(List, Pattern) :- is_list(Pattern), !,
-    is_list(List),
-    maplist(json_decode_flip, Pattern, List).
-json_decode(Value, Pattern) :- Value = Pattern.
-
-json_decode_flip(Pattern, Value) :- json_decode(Value, Pattern).
-
-braces_decode((Left, Right), Pairs) :- !,
-    braces_decode(Left, Pairs), braces_decode(Right, Pairs).
-braces_decode(Key: Pattern, Pairs) :-
-    memberchk(Key-Value, Pairs),
-    Value \== none,
-    json_decode(Value, Pattern).
-
-% ═══ body solving ═══════════════════════════════════════════════════════════
-% ctx(Visible, PreState, Tick): Visible = rows body atoms read; PreState =
-% evolving pre rows; Tick = the phantom clock for now/1.
-
-solve(true, _) :- !.
-solve((Left, Right), Ctx) :- !, solve(Left, Ctx), solve(Right, Ctx).
-solve(not(Goal), Ctx) :- !, \+ solve(Goal, Ctx).
-solve(only(Atom), Ctx) :- !, Ctx = ctx(Visible, _, _), member(Atom, Visible).
-solve(pre(Atom), Ctx) :- !, Ctx = ctx(_, PreState, _), member(Atom, PreState).
-solve(now(Tick), Ctx) :- !, Ctx = ctx(_, _, Tick).
-solve(Variable := Expr, _) :- !, eval_expr(Expr, Value), Variable = Value.
-solve(Variable is Expr, _)  :- !, eval_expr(Expr, Value), Variable = Value.
-solve(decode(Expr, Pattern), _) :- !,
-    eval_expr(Expr, Value), json_decode(Value, Pattern).
-solve(json_each(Expr, Element), _) :- !,
-    eval_expr(Expr, List), is_list(List), member(Element, List).
-solve(Comparison, _) :- comparison_goal(Comparison), !, solve_comparison(Comparison).
-solve(Atom, Ctx) :- Ctx = ctx(Visible, _, _), member(Atom, Visible).
-
-body_atoms((Left, Right), Atoms) :- !,
-    body_atoms(Left, LeftAtoms), body_atoms(Right, RightAtoms),
-    append(LeftAtoms, RightAtoms, Atoms).
-body_atoms(only(Atom), [Atom]) :- !.
-body_atoms(pre(_), []) :- !.
-body_atoms(not(_), []) :- !.
-body_atoms(now(_), []) :- !.
-body_atoms(true, []) :- !.
-body_atoms(_ := _, []) :- !.
-body_atoms(_ is _, []) :- !.
-body_atoms(decode(_, _), []) :- !.
-body_atoms(json_each(_, _), []) :- !.
-body_atoms(Goal, []) :- comparison_goal(Goal), !.
-body_atoms(Atom, [Atom]).
-
 % q6: markers narrow the trigger set; an unmarked body keeps any-atom.
-trigger_atoms(Body, Triggers) :-
-    marked_atoms(Body, Marked),
-    ( Marked == [] -> body_atoms(Body, Triggers) ; Triggers = Marked ).
+% r4: departed(Atom) is a DEPARTURE trigger position; it fires on a Set/level
+% row's -delta arriving as a next-tick occurrence, and is never satisfiable
+% as a read (the row is gone). Items are arrival(Atom) | departure(Atom).
+trigger_items(Body, Items) :-
+    marked_items(Body, Marked),
+    ( Marked == [] -> unmarked_items(Body, Items) ; Items = Marked ).
 
-marked_atoms((Left, Right), Atoms) :- !,
-    marked_atoms(Left, LeftAtoms), marked_atoms(Right, RightAtoms),
-    append(LeftAtoms, RightAtoms, Atoms).
-marked_atoms(only(Atom), [Atom]) :- !.
-marked_atoms(_, []).
+marked_items((Left, Right), Items) :- !,
+    marked_items(Left, LeftItems), marked_items(Right, RightItems),
+    append(LeftItems, RightItems, Items).
+marked_items(only(departed(Atom)), [departure(Atom)]) :- !.
+marked_items(only(Atom), [arrival(Atom)]) :- !.
+marked_items(_, []).
 
-% ═══ level closure with aggregates ══════════════════════════════════════════
-% Plain rules run to fixpoint; aggregate rules recompute over the result; the
-% two alternate until stable (fixtures are stratified).
+unmarked_items((Left, Right), Items) :- !,
+    unmarked_items(Left, LeftItems), unmarked_items(Right, RightItems),
+    append(LeftItems, RightItems, Items).
+unmarked_items(departed(Atom), [departure(Atom)]) :- !.
+% maplist, NEVER findall: findall copies its template, which would sever the
+% trigger atom from the body and let solve rejoin over the whole store.
+unmarked_items(Atom, Items) :-
+    body_atoms(Atom, Atoms),
+    maplist(wrap_arrival, Atoms, Items).
 
-aggregate_head(Head, Template, Ref) :-
-    Head =.. [Name | Args],
-    length(Args, Arity), Ref = Name/Arity,
-    maplist(classify_head_arg, Args, Template),
-    memberchk(agg(_, _), Template).
+wrap_arrival(Atom, arrival(Atom)).
 
-classify_head_arg(Arg, agg(Kind, Expr)) :-
-    nonvar(Arg), Arg =.. [Kind, Expr],
-    memberchk(Kind, [count, sum, min, max, json_array]), !.
-classify_head_arg(Arg, agg(json_object, KeyExpr-ValueExpr)) :-
-    nonvar(Arg), Arg = json_object(KeyExpr, ValueExpr), !.
-classify_head_arg(Arg, plain(Arg)).
+% An occurrence either is a departure (dep(Row) payload) matching a
+% departure item, with the ground departed goal substituted away before
+% solving (the row is absent from Visible), or a plain arrival.
+occurrence_trigger(dep(Row), Items, Body0, Body) :- !,
+    member(departure(Atom), Items), Atom = Row,
+    substitute_goal(Body0, departed(Row), Body).
+occurrence_trigger(Row, Items, Body, Body) :-
+    member(arrival(Atom), Items), Atom = Row.
 
-split_rules(Rules, AggRules, PlainLevel, EdgeRules) :-
-    findall(Rule, ( member(Rule, Rules), Rule = (Head <- _), aggregate_head(Head, _, _) ),
-            AggRules),
-    findall(Rule, ( member(Rule, Rules), Rule = (Head <- _), \+ aggregate_head(Head, _, _) ),
-            PlainLevel),
-    findall(Rule, ( member(Rule, Rules), Rule = (_ <+ _) ), EdgeRules).
 
-% Stratified evaluation (defect found by the timeless_rail promotion: a joint
-% fixpoint let not/1 over a DERIVED rel read an incomplete set and permanently
-% admit wrong rows). Rules group by head stratum; a negated or aggregated rel
-% must sit strictly below its consumer, so by the time a stratum runs, every
-% rel it negates or aggregates is complete.
-level_closure(PlainLevel, AggRules, Base, Tick, Level) :-
-    append(PlainLevel, AggRules, LevelRules),
-    stratify_level_rules(LevelRules, Strata),
-    eval_strata(Strata, Base, Tick, [], Level).
+listened_departure_refs(Rules, Refs) :-
+    findall(Ref, ( member((_ <+ Body), Rules), body_departed_ref(Body, Ref) ),
+            Refs0),
+    sort(Refs0, Refs).
 
-eval_strata([], _, _, Acc, Level) :- sort(Acc, Level).
-eval_strata([Group | Rest], Base, Tick, Acc0, Level) :-
-    append(Base, Acc0, Lower),
-    findall(Rule, ( member(Rule, Group), Rule = (Head <- _), aggregate_head(Head, _, _) ),
-            GroupAgg),
-    findall(Rule, ( member(Rule, Group), Rule = (Head <- _), \+ aggregate_head(Head, _, _) ),
-            GroupPlain),
-    findall(Row, ( member(Rule, GroupAgg), agg_rule_rows(Rule, Lower, Tick, Row) ), AggRows),
-    append(Lower, AggRows, StratumBase),
-    plain_fixpoint(GroupPlain, StratumBase, Tick, [], PlainRows),
-    append([Acc0, AggRows, PlainRows], Acc),
-    eval_strata(Rest, Base, Tick, Acc, Level).
-
-% ── stratum assignment ──────────────────────────────────────────────────────
-% S(head) >= S(body rel) for a positive read; strictly greater for a rel under
-% not/1 or feeding an aggregate head. Only level-rule heads are derived; every
-% other rel (facts, stored, edge-headed) is stratum 0. A program that cannot
-% stabilize (negation or aggregation through a cycle) throws not_stratified.
-
-stratify_level_rules(LevelRules, Strata) :-
-    findall(Ref, ( member((Head <- _), LevelRules), rel_ref(Head, Ref) ), DerivedRefs0),
-    sort(DerivedRefs0, DerivedRefs),
-    findall(HeadRef-constraint(BodyRef, Gap),
-            ( member((Head <- Body), LevelRules),
-              rel_ref(Head, HeadRef),
-              rule_body_constraint(Head, Body, BodyRef, Gap),
-              memberchk(BodyRef, DerivedRefs) ),
-            Constraints),
-    length(DerivedRefs, DerivedCount),
-    Cap is DerivedCount + 1,
-    findall(Ref-0, member(Ref, DerivedRefs), Strata0),
-    relax_strata(Constraints, Cap, Strata0, StrataMap),
-    findall(Number-Rule,
-            ( member(Rule, LevelRules), Rule = (Head <- _),
-              rel_ref(Head, Ref), memberchk(Ref-Number, StrataMap) ),
-            Numbered),
-    keysort(Numbered, Sorted),
-    group_pairs_by_key(Sorted, Grouped),
-    pairs_values(Grouped, Strata).
-
-rule_body_constraint(Head, Body, BodyRef, Gap) :-
-    (   aggregate_head(Head, _, _)
-    ->  goal_rel_refs(Body, PosRefs, NegRefs),
-        append(PosRefs, NegRefs, AllRefs),
-        member(BodyRef, AllRefs), Gap = 1
-    ;   goal_rel_refs(Body, PosRefs, NegRefs),
-        (   member(BodyRef, PosRefs), Gap = 0
-        ;   member(BodyRef, NegRefs), Gap = 1 )
-    ).
-
-goal_rel_refs((Left, Right), Pos, Neg) :- !,
-    goal_rel_refs(Left, LeftPos, LeftNeg),
-    goal_rel_refs(Right, RightPos, RightNeg),
-    append(LeftPos, RightPos, Pos), append(LeftNeg, RightNeg, Neg).
-goal_rel_refs(not(Goal), [], Neg) :- !,
-    goal_rel_refs(Goal, InnerPos, InnerNeg),
-    append(InnerPos, InnerNeg, Neg).
-goal_rel_refs(only(Atom), [Ref], []) :- !, rel_ref(Atom, Ref).
-goal_rel_refs(pre(_), [], []) :- !.
-goal_rel_refs(now(_), [], []) :- !.
-goal_rel_refs(true, [], []) :- !.
-goal_rel_refs(_ := _, [], []) :- !.
-goal_rel_refs(_ is _, [], []) :- !.
-goal_rel_refs(decode(_, _), [], []) :- !.
-goal_rel_refs(json_each(_, _), [], []) :- !.
-goal_rel_refs(Goal, [], []) :- comparison_goal(Goal), !.
-goal_rel_refs(Atom, [Ref], []) :- rel_ref(Atom, Ref).
-
-relax_strata(Constraints, Cap, Strata0, Strata) :-
-    findall(changed,
-            ( member(HeadRef-constraint(BodyRef, Gap), Constraints),
-              memberchk(HeadRef-HeadStratum, Strata0),
-              memberchk(BodyRef-BodyStratum, Strata0),
-              HeadStratum < BodyStratum + Gap ),
-            Changes),
-    (   Changes == []
-    ->  Strata = Strata0
-    ;   findall(Ref-Number,
-                ( member(Ref-Current, Strata0),
-                  findall(Needed,
-                          ( member(Ref-constraint(BodyRef, Gap), Constraints),
-                            memberchk(BodyRef-BodyStratum, Strata0),
-                            Needed is BodyStratum + Gap ),
-                          Neededs),
-                  max_list([Current | Neededs], Number) ),
-                Strata1),
-        forall(member(_-Number, Strata1),
-               ( Number =< Cap -> true ; throw(not_stratified) )),
-        relax_strata(Constraints, Cap, Strata1, Strata)
-    ).
-
-plain_fixpoint(PlainLevel, Base, Tick, Known0, Level) :-
-    append(Base, Known0, Visible),
-    findall(EvaluatedHead,
-            ( member((Head <- Body), PlainLevel),
-              solve(Body, ctx(Visible, [], Tick)),
-              eval_head(Head, EvaluatedHead) ),
-            Heads),
-    append(Known0, Heads, Merged0),
-    sort(Merged0, Merged),
-    ( Merged == Known0 -> Level = Known0
-    ; plain_fixpoint(PlainLevel, Base, Tick, Merged, Level) ).
-
-% Head values are expressions (named-column rule); evaluate after the joins.
-eval_head(Head, Evaluated) :-
-    Head =.. [Name | Args],
-    maplist(eval_expr, Args, Values),
-    Evaluated =.. [Name | Values].
-
-agg_loop(PlainLevel, AggRules, Base, Tick, Known0, Level) :-
-    append(Base, Known0, Visible),
-    findall(Row, ( member(Rule, AggRules), agg_rule_rows(Rule, Visible, Tick, Row) ), AggRows),
-    append(Known0, AggRows, Merged0),
-    sort(Merged0, Merged),
-    ( Merged == Known0 -> Level = Known0
-    ; plain_fixpoint(PlainLevel, Base, Tick, Merged, Widened),
-      agg_loop(PlainLevel, AggRules, Base, Tick, Widened, Level) ).
-
-agg_rule_rows((Head <- Body), Visible, Tick, Row) :-
-    aggregate_head(Head, Template, Ref),
-    Ref = Name/_,
-    findall(Contribution,
-            ( solve(Body, ctx(Visible, [], Tick)),
-              maplist(head_arg_value, Template, Contribution) ),
-            Bag),
-    Bag \== [],
-    findall(GroupKey, ( member(Solution, Bag), group_key(Template, Solution, GroupKey) ), Keys0),
-    sort(Keys0, GroupKeys),
-    member(GroupKey, GroupKeys),
-    findall(Solution, ( member(Solution, Bag), group_key(Template, Solution, GroupKey) ), Group),
-    aggregate_args(Template, Group, Args),
-    Row =.. [Name | Args].
-
-head_arg_value(plain(Expr), value(Value)) :- eval_expr(Expr, Value).
-head_arg_value(agg(json_object, KeyExpr-ValueExpr), contrib(Key-Value)) :- !,
-    eval_expr(KeyExpr, Key), eval_expr(ValueExpr, Value).
-head_arg_value(agg(_, Expr), contrib(Value)) :- eval_expr(Expr, Value).
-
-group_key(Template, Solution, GroupKey) :-
-    findall(Value, ( nth1(Position, Template, plain(_)), nth1(Position, Solution, value(Value)) ),
-            GroupKey).
-
-aggregate_args(Template, Group, Args) :-
-    findall(Arg,
-            ( nth1(Position, Template, TemplateArg),
-              template_arg_out(TemplateArg, Position, Group, Arg) ),
-            Args).
-
-template_arg_out(plain(_), Position, [Solution | _], Value) :-
-    nth1(Position, Solution, value(Value)).
-template_arg_out(agg(Kind, _), Position, Group, Value) :-
-    findall(Contribution,
-            ( member(Solution, Group), nth1(Position, Solution, contrib(Contribution)) ),
-            Contributions),
-    agg_compute(Kind, Contributions, Value).
-
-agg_compute(count, Contributions, Count) :- length(Contributions, Count).
-agg_compute(sum, Contributions, Sum) :- sum_list(Contributions, Sum).
-agg_compute(min, Contributions, Min) :- min_list(Contributions, Min).
-agg_compute(max, Contributions, Max) :- max_list(Contributions, Max).
-agg_compute(json_array, Contributions, Array) :- msort(Contributions, Array).
-agg_compute(json_object, Pairs, obj(Object)) :-
-    sort(Pairs, Distinct), keysort(Distinct, Object),
-    pairs_keys(Object, Keys),
-    ( sort(Keys, DistinctKeys), length(Keys, N), length(DistinctKeys, N)
-    -> true ; throw(json_object_dup_key(Keys)) ).
+body_departed_ref((Left, Right), Ref) :-
+    ( body_departed_ref(Left, Ref) ; body_departed_ref(Right, Ref) ).
+body_departed_ref(only(departed(Atom)), Ref) :- rel_ref(Atom, Ref).
+body_departed_ref(departed(Atom), Ref) :- rel_ref(Atom, Ref).
 
 % ═══ arrivals ═══════════════════════════════════════════════════════════════
 
@@ -474,7 +205,7 @@ absorb_arrivals(Prog, Tick, [Signed | Rest], Store0, Seq0, Store, Seq, Occurrenc
 % ═══ edge firing, one occurrence at a time ══════════════════════════════════
 
 process_occurrences(_, _, _, [], Store, Store, []).
-process_occurrences(Prog, Tick, Frozen, [occ(_, Row) | Rest], Store0, Store, Written) :-
+process_occurrences(Prog, Tick, Frozen, [occ(_, Payload) | Rest], Store0, Store, Written) :-
     Prog = prog(Decls, Rules),
     Frozen = frozen(MidLevel, PrevLevel),
     store_rows(Store0, StoreRows),
@@ -483,9 +214,9 @@ process_occurrences(Prog, Tick, Frozen, [occ(_, Row) | Rest], Store0, Store, Wri
     findall(EvaluatedHead,
             ( member((Head <+ Body), Rules),
               copy_term((Head <+ Body), (HeadCopy <+ BodyCopy)),
-              trigger_atoms(BodyCopy, Triggers),
-              member(Row, Triggers),
-              solve(BodyCopy, ctx(Visible, PreState, Tick)),
+              trigger_items(BodyCopy, Items),
+              occurrence_trigger(Payload, Items, BodyCopy, SolvableBody),
+              solve(SolvableBody, ctx(Visible, PreState, Tick)),
               eval_head(HeadCopy, EvaluatedHead) ),
             Derived0),
     dedupe_keep_order(Derived0, Derived),
@@ -570,7 +301,15 @@ tick(Prog, state(Tick, Store0, PrevLevel, PrevAll), CarryIn, OutsideArrivals,
     % fold, equal-row no-op) never becomes a T+1 arrival.
     append(WrittenRows, PostWriteLevelRows, CarryCandidates0),
     dedupe_keep_order(CarryCandidates0, CarryCandidates),
-    findall(Row, ( member(Row, CarryCandidates), memberchk(+Row, Deltas) ), CarryOut),
+    findall(Row, ( member(Row, CarryCandidates), memberchk(+Row, Deltas) ), ArrivalCarry),
+    % r4: a -delta of a LISTENED rel is a departure occurrence at T+1. Only
+    % rels some rule actually binds with departed/1 carry, so programs
+    % without departure rules never mint drain ticks for retractions.
+    listened_departure_refs(Rules, DepartureRefs),
+    findall(dep(Row),
+            ( member(-Row, Deltas), rel_ref(Row, DepRef), memberchk(DepRef, DepartureRefs) ),
+            DepartureCarry),
+    append(ArrivalCarry, DepartureCarry, CarryOut),
     NextTick is Tick + 1.
 
 stamp_extra(_, [], _, []).

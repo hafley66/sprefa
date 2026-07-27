@@ -109,6 +109,37 @@ fixture(retraction_only_tick_retracts_level_view,
                        [ -mirror(alpha), -mirror(beta) ] ]),
     final(mirror/1, []) ]).
 
+% r4 (user-ruled): departed/1 binds a retraction. The -delta of a listened
+% Set/level rel becomes a departure occurrence at T+1 (q4 next-tick), and
+% the closed-at telemetry the eventing lab called inexpressible is now two
+% rules. Tick trace: +mirror at 1, -mirror at 2, departure fires at 3
+% (drain), closed_at's own write drains at 4.
+fixture(departed_fires_next_tick_on_retraction,
+  prog([ kind(source_row/1, set),
+         kind(closed_at/2, log), keep(closed_at/2, all) ],
+       [ (mirror(Item) <- source_row(Item)),
+         (closed_at(Item, Tick) <+ departed(mirror(Item)), now(Tick)) ]),
+  [],
+  [ [ +source_row(alpha) ],
+    [ -source_row(alpha) ] ],
+  [ deltas(mirror/1, [ [ +mirror(alpha) ], [ -mirror(alpha) ], [], [] ]),
+    final(closed_at/2, [ closed_at(alpha, 3) ]),
+    ticks(4) ]).
+
+% r4 rider: a keyed REPLACE departs the old ROW (row-level reading; the key
+% did not depart). Pinned so the lowering cannot choose the other reading
+% silently.
+fixture(keyed_replace_departs_the_old_row,
+  prog([ kind(from_poll/2, log), keep(from_poll/2, all),
+         keyed(latest/2, [1]),
+         kind(replaced_value/2, log), keep(replaced_value/2, all) ],
+       [ (latest(Key, Value) <+ from_poll(Key, Value)),
+         (replaced_value(Key, OldValue) <+ departed(latest(Key, OldValue))) ]),
+  [],
+  [ [ +from_poll(cli, v1) ], [ +from_poll(cli, v2) ] ],
+  [ final(replaced_value/2, [ replaced_value(cli, v1) ]),
+    final(latest/2, [ latest(cli, v2) ]) ]).
+
 % Set arrivals dedup (q2: identical content is the same thing) while Log
 % arrivals stack: the same row delivered twice is one occurrence vs two.
 fixture(set_dedups_log_stacks,
