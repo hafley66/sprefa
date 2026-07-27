@@ -55,3 +55,10 @@ examples/_npm/
 # Python bytecode produced by local benchmark helpers.
 __pycache__/
 *.pyc
+
+# heptagon reference clone (lustre-family compiler, lab reading material)
+vendor/heptagon/
+
+# heptagon reference clone (lustre-family compiler, lab reading material)
+vendor/heptagon/
+vendor/trealla/

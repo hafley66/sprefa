@@ -20,6 +20,10 @@ ENGINES=(
   "sqlite-disk|sqlite_reach|DL_SQLITE_MODE=disk"
   "dd|dd_reach|"
   "dbsp|dbsp_reach|"
+  "swi-incr|bench/engines/swi_incr.sh|"
+  "swipl-pure|bench/engines/swipl_pure.sh|"
+  "swi-sqlite|bench/engines/swi_sqlite.sh|"
+  "swi-ts|bench/engines/swi_ts.sh|"
 )
 # Scale sweep as "layers x width". Kept medium so a laptop survives.
 SCALES="${SCALES:-2x200 6x2000 8x20000 10x50000 14x80000}"
@@ -28,7 +32,8 @@ echo "engine,nodes,edges,killed,setup_ms,retract_ms,ops,rss_mb" > "$CSV"
 
 for spec in "${ENGINES[@]}"; do
   IFS='|' read -r label bin env <<< "$spec"
-  binpath="target/release/examples/$bin"
+  # entries with a slash are wrapper scripts (prolog contenders), used as-is
+  if [[ "$bin" == */* ]]; then binpath="$bin"; else binpath="target/release/examples/$bin"; fi
   if [[ ! -x "$binpath" ]]; then
     echo "SKIP $label ($binpath not built)"; continue
   fi
