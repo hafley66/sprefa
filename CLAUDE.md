@@ -124,6 +124,11 @@ descriptive-name rename.)
 - self-diags on our own .pl files (pick up by pattern/extension/marker word).
 - generic `--changed` concept (biome-style recent-change-lines gating) directable
   from dl; the old pre-commit hooks did this.
+- `input/distinctUntil(shallowEquals|deepEquals)` on rels — mostly already physics
+  here (R7 boundary diffing = distinctUntilChanged at every rel edge; set/keyed
+  identical writes are zero-delta); the real residue is WHICH columns count as
+  identity (= the Key/Q8 ruling) and digest-vs-value for structured blob columns
+  (the content_hash pattern).
 
 ### v6 awaiting user rulings (consolidated 2026-07-27; full text in the cited plans)
 - **stale fill under a dead scope** — BLOCKS the effect-rel/SWR lowering. Options:
