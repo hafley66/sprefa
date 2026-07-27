@@ -1,8 +1,9 @@
 # mode_lab: (cardinality, lifetime) with dominance
 
-Lab: `v6/prolog/labs/mode_lab.pl` (80 checks, all PASS, 43ms).
-Run: `swipl -q -l v6/prolog/labs/mode_lab.pl -g go -g halt`
-Table: `swipl -q -l v6/prolog/labs/mode_lab.pl -g report -g halt`
+Lab: `v6/prolog/labs/mode_lab.pl` (80 checks, all PASS, 43ms), DELETED per lab
+protocol; last lives at commit 2fff3f61, recover via
+`git show 2fff3f61:v6/prolog/labs/mode_lab.pl`.
+Run (from that checkout): `swipl -q -l mode_lab.pl -g go -g halt`; `-g report` prints the table.
 
 Contract: `plans/2026-07-27-mode-dominance.md` (the five grading cases at the
 bottom), `labs/AGGREGATE.md` T6, `labs/AUDIT.md` finding 13,

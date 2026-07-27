@@ -1,8 +1,8 @@
 # extraction_syntax: verdict on the last big surface gap
 
-Lab: `v6/prolog/labs/extraction_syntax.pl`.
-Run: `swipl -q -l v6/prolog/labs/extraction_syntax.pl -g go -g halt`. 48 PASS, exit 0,
-empty stderr.
+Lab: `v6/prolog/labs/extraction_syntax.pl`. 48 PASS, exit 0, empty stderr. DELETED
+per lab protocol; last lives at commit 2fff3f61, recover via
+`git show 2fff3f61:v6/prolog/labs/extraction_syntax.pl`.
 
 Scope: AUDIT finding 17, the largest open surface gap (139 of 173 v5 files use extraction,
 the candidate surface has no syntax for it). This is a SPELLING lab. The semantics are

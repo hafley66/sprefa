@@ -160,6 +160,19 @@ lock, rusqlite-coupling Layer 5 call_def fix, _source_stage_owner batch.)
    first: is this making sense, is there a shorter/more direct way, fewer variables,
    fewer methods. No new operator chains land without that check.
 
+### Lab protocol (user-set 2026-07-27, applies to every agent at every level)
+- **Planner seeds the header first.** Every lab starts from a planner-written contract
+  file: the predicates/checks the lab must implement, the questions it must grade, and
+  named slots for ambiguities it may discover. No lab starts from a blank file.
+- **Implementation agents run in worktrees** (Agent `isolation: "worktree"`), never in
+  the main tree. Main-tree file ownership belongs to the coordinator only.
+- **Labs die on landing.** In the same arc that a lab lands: durable output distills to
+  its permanent home (conformance/fixtures, rulings.pl, plans/, ARCH.pl), the lab files
+  are deleted, and the plan doc records the commit hash holding the last copy
+  (`git show <hash>:<path>` recovers it). Git history is the archive.
+- `v6/prolog/labs/` was deleted 2026-07-27 (last full copy at 2fff3f61) and stays
+  deleted; a lab file surviving its landing commit is a defect, not a follow-up.
+
 ### Style notes for this repo
 - dl variable names are descriptive, never single-letter: `path`/`line`/`callee_name`, not `p`/`l`/`q`. Applies to every snippet in skills, examples, book, tests, and agent prompts; rename opportunistically when touching old files.
 - N+1: never a per-row write. Collect the set, call `Db::insert_rows` once. The tick counter screams if you don't.

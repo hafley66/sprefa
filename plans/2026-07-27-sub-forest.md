@@ -1,8 +1,9 @@
 # sub_lifetimes: the subscription forest (runtime half of lifetimes)
 
-Lab: `v6/prolog/labs/sub_lifetimes.pl`. 41 checks, all PASS.
-Run: `swipl -q -l v6/prolog/labs/sub_lifetimes.pl -g go -g halt` (exit 0).
-Trace: same file, `-g report`.
+Lab: `v6/prolog/labs/sub_lifetimes.pl`. 41 checks, all PASS. DELETED per lab
+protocol; last lives at commit 2fff3f61, recover via
+`git show 2fff3f61:v6/prolog/labs/sub_lifetimes.pl`.
+Run (from that checkout): `swipl -q -l sub_lifetimes.pl -g go -g halt`; `-g report` traces.
 
 Thesis under test (user, 2026-07-27): sets and dbs do not have lifetimes, rx
 scripts do. Rows are eternal (retention-bounded); lifetime lives only in the
