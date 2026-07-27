@@ -59,6 +59,9 @@ emit_d2(Stream) :-
     forall(prior_art(Name, _, _, _), format(Stream, "  ~w~n", [Name])),
     forall(prior_art_target(Target), format(Stream, "  ~w~n", [Target])),
     format(Stream, "}~n", []),
+    format(Stream, "everytool: the capability inventory {~n", []),
+    forall(capability(Name, _, _), format(Stream, "  ~w~n", [Name])),
+    format(Stream, "}~n", []),
     % edges
     forall(refines(Child, Parent),
            format(Stream, "graphs.~w -> graphs.~w~n", [Child, Parent])),
@@ -123,6 +126,11 @@ emit_d2(Stream) :-
            ( sanitize(Gift, GiftText), sanitize(Path, PathText),
              format(Stream, "# @ made.~w : ~w -- lives at ~w~n", [Name, GiftText, PathText]),
              format(Stream, "# tag made.~w : prior_art~n", [Name]) )),
+    forall(capability(Name, V5Receipt, V6Home),
+           ( sanitize(V5Receipt, ReceiptText),
+             format(Stream, "# @ everytool.~w : v5 receipt ~w -- v6 home ~w~n",
+                    [Name, ReceiptText, V6Home]),
+             format(Stream, "# tag everytool.~w : capability~n", [Name]) )),
     forall(prior_art_target(Target),
            format(Stream, "# tag made.~w : inherited_into_v6~n", [Target])),
     format(Stream, "# view focus=graphs.ast mode=cone layout=dagre dir=LR~n", []).

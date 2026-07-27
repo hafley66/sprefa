@@ -171,6 +171,23 @@ prior_art(atlas_anim,    '~/projects/anim',                        arch_map,
 prior_art(dl_flow_panel, 'editors/vscode-dl',                      circuit_view,
           '_node/_edge layer discovery; the schema-convention precedent for program maps').
 
+% ── the everytool inventory (user vision 2026-07-27) ────────────────────────
+% capability(Name, V5Receipt, V6Home). Every capability is a query or an
+% emitter over the ONE fact spine; none is a subsystem. That is the whole
+% bet: parsing/doc/comment/type/flow/refactor/lsp/codegen ride the same
+% rels, so each lands as a program.
+
+capability(language_parsing,   'ast/sg/comment/json ops, tree-sitter grammars', 't1_quoted_regions_grammar_import').
+capability(doc_management,     'examples/gen-doc-index.dl, doc_ref rel',        't3_library').
+capability(comment_management, 'comment op, @eprintln-ok waivers',              'comment_span_region_extraction').
+capability(type_measurement,   'type_entity rels, measures views',              't0_structs_plus_queries').
+capability(cross_repo_pointing,'pin-skew, flow-services, openapi-lsp',          'xref_rel_plus_rev_demand').
+capability(flow_analysis,      'std/flow.dl, flow_edge closure, taint',         't2_graph_operators').
+capability(refactoring,        'v5 --move, auto-refactor brace arcs',           'far_write_effects').
+capability(auto_docing,        'gen rules writing doc indexes',                 't5_write_effects_audit15').
+capability(lsp,                'dl-lsp, --diag-db, diag_v5 loop',               't3_diag_plus_t6_tail_asks').
+capability(codegen_typegen,    'hafley-tsp + json-rx lineage',                  'far_emitters_over_facts').
+
 % ── tech roles: who is allowed to do what ───────────────────────────────────
 
 tech(prolog, compiler_tier, [parse_via_ops, desugar, check, weave, emit],
