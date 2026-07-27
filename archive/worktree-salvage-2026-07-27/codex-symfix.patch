@@ -1,0 +1,51 @@
+diff --git a/SYMFIX_BRIEF.txt b/SYMFIX_BRIEF.txt
+new file mode 100644
+index 00000000..a5fdba98
+--- /dev/null
++++ b/SYMFIX_BRIEF.txt
+@@ -0,0 +1,20 @@
++Worktree: /Users/chrishafley/projects/sprefa-codex-symfix, branch codex/symfix (off release/0.10.0). Work ONLY here. Commit here; do NOT push. No daemon, no `dl --lsp`. Hermetic: SPREFA_CONFIG=/nonexistent/x.toml DL_NO_DAEMON=1, scratch --db, fresh XDG_STATE_HOME=$(mktemp -d). Throttle EVERY cargo run: prefix `RAYON_NUM_THREADS=2 CARGO_BUILD_JOBS=2` and wrap in `taskpolicy -b nice -n 19` so the machine stays cool. Use `cargo nextest run --profile gate` (the .config/nextest.toml bounds each test to ~60s then KILLS it — a run can never hang).
++
++The 0.10.0 text-is-sym arc regressed TWO integration tests that passed in the 0.9.0 baseline. Both are almost certainly the SAME class as the parity fix already shipped (an interned text column joined against raw text, or a std/*.dl rule that now interns a join key). The 10-rel parity gate did NOT cover these rels, so the bad join slipped through. The sym arc also edited std/entry.dl and std/flow.dl -- inspect those.
++
++FAILURE 1 (real; reproduces under plain cargo test too):
++  checkout_sweep::checkout_sink_dirty_working_tree_left_untouched
++  The tick logs `files 0/0 parsed` (empty corpus) so the checkout sink never sees the dirty tree; assert at tests/it/checkout_sweep.rs:289 fails. Find why scan/`changed` yields 0 files now -- likely an interned path column compared to a raw path in the checkout/`changed`/scan lowering.
++
++FAILURE 2 (hangs, killed at 60s):
++  agg::gate_fan_out_over_type_edge
++  TIMEOUT: an aggregation over type_edge never completes -- a mixed interned/raw join key can cartesian-blow-up. Find the type_edge join in the rule the test loads and the lowered SQL; every join key must be interned on BOTH sides or raw on BOTH.
++
++METHOD:
++1. Reproduce: `cargo nextest run --profile gate -E 'test(checkout_sink_dirty_working_tree_left_untouched) + test(gate_fan_out_over_type_edge)'`.
++2. Root-cause via the lowered SQL (same eq_cond/sym_decode mechanism your parity fix used). Fix in src/lower.rs / std/*.dl. Do NOT weaken the tests to pass.
++3. RE-RUN THE 10-REL PARITY GATE (plans/2026-07-12-0.10.0-text-is-sym.md) to prove the flow graph stayed byte-identical. If parity broke, the fix is wrong.
++4. Full gate: `cargo nextest run --profile gate`. Report EXACT counts (N passed / M failed / K timed out). Treat every failure as real unless you PROVE it also fails on feat/text-is-sym (pre-sym) and is environmental.
++5. Commit each fix with `git commit -n`.
++
++If a failure is genuinely pre-existing on feat/text-is-sym, say so with proof and skip it. Final summary: root cause of each, exact join/rule fixed, parity re-verification result, full gate counts, per-commit shas.
+diff --git a/TRIAGE_BRIEF.txt b/TRIAGE_BRIEF.txt
+new file mode 100644
+index 00000000..9228c4c1
+--- /dev/null
++++ b/TRIAGE_BRIEF.txt
+@@ -0,0 +1,19 @@
++Continue on branch codex/symfix (worktree /Users/chrishafley/projects/sprefa-codex-symfix). Your 2 checkout-sink fixes landed and parity holds. Now the FULL no-fail-fast gate is red: ~74 failed / 3 timed out. The decision from the user: HOLD the 0.10.0 tag until this suite is GREEN. Drive it to zero real failures.
++
++Laws: work ONLY in this worktree, commit here (`git commit -n`), do NOT push. Hermetic: SPREFA_CONFIG=/nonexistent/x.toml DL_NO_DAEMON=1, scratch --db, fresh XDG_STATE_HOME=$(mktemp -d). Throttle EVERY cargo run: `RAYON_NUM_THREADS=2 CARGO_BUILD_JOBS=2 taskpolicy -b nice -n 19 cargo ...`. Use `cargo nextest run --profile gate` (bounds each test ~60s then kills it — never let a run hang).
++
++STEP 1 — get the real list. Run the full gate no-fail-fast and capture every failure:
++  cargo nextest run --profile gate --no-fail-fast 2>&1 | tee /tmp/sym-gate.log
++  grep -E "^\s+(FAIL|TIMEOUT)" /tmp/sym-gate.log | sed -E 's/.*sprefa-dl::(it|lib) //' | sort -u
++This is the authoritative set; the earlier "74" mixed reproduce runs.
++
++STEP 2 — CLASSIFY each failing test as REAL (sym regression) vs ENVIRONMENT (fails the same way on the pre-sym base). The pre-sym base is branch feat/text-is-sym. For a suspected-environmental test (anything in: daemon*, checkout_sweep, gh_cache, ghcacher_parity, lsp_*, mcp_daemon, check_daemon, embed_similar, poll_head_demo, move_refactor, scip_want, perf_facts, settle), verify by checking it out and running it on feat/text-is-sym in a scratch build. If it ALSO fails there, it is pre-existing/environmental -> OUT OF SCOPE, list it but do not fix. If it PASSES on feat/text-is-sym and FAILS on codex/symfix, it is a REAL sym regression -> must fix.
++  Confirmed REAL already: json_agg::example_json_out_runs, json_agg::json_agg_output_is_deterministic (interned json aggregation output/order). Start there.
++
++STEP 3 — FIX every REAL sym regression. Root-cause via lowered SQL, same eq_cond/sym_decode/sprf_sym mechanism as your parity fix. The recurring shape is a join or aggregation site that compares an interned i64 StringId against raw text, or decodes/orders on the wrong column. Do NOT weaken tests to pass. After each fix batch, re-run the affected tests.
++
++STEP 4 — GUARD parity: after your fixes, re-run the 10-rel parity gate (plans/2026-07-12-0.10.0-text-is-sym.md). It must stay byte-identical. If a fix breaks parity, it is wrong.
++
++STEP 5 — final full gate: cargo nextest run --profile gate --no-fail-fast. Report EXACT final counts and, for every still-failing test, the PROOF it is environmental (fails identically on feat/text-is-sym). The bar is: zero REAL failures; only environment/worktree failures may remain, each proven.
++
++Commit per coherent fix. Final summary: authoritative failure list with REAL/ENV label each, root cause + fix for every REAL one, parity re-verification, final gate counts, per-commit shas. If some REAL failure resists fixing within the laws, STOP it and report the exact join/site, do not hack the test.

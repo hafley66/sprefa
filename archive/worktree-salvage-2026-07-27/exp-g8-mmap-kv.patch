@@ -1,0 +1,541 @@
+diff --git a/v6/labs/labkit/Cargo.lock b/v6/labs/labkit/Cargo.lock
+index a9027953..df78e353 100644
+--- a/v6/labs/labkit/Cargo.lock
++++ b/v6/labs/labkit/Cargo.lock
+@@ -815,6 +815,7 @@ dependencies = [
+  "differential-dataflow",
+  "libc",
+  "libsqlite3-sys",
++ "redb",
+  "salsa",
+  "sea-orm",
+  "sprefa-store",
+@@ -1035,6 +1036,15 @@ dependencies = [
+  "crossbeam-utils",
+ ]
+ 
++[[package]]
++name = "redb"
++version = "3.1.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4ba239c1c1693315d3cc0e601db3b3965543afbf48c41730fdca2f069f510f4a"
++dependencies = [
++ "libc",
++]
++
+ [[package]]
+ name = "redox_syscall"
+ version = "0.5.18"
+diff --git a/v6/labs/labkit/Cargo.toml b/v6/labs/labkit/Cargo.toml
+index 878d6568..9e89ac08 100644
+--- a/v6/labs/labkit/Cargo.toml
++++ b/v6/labs/labkit/Cargo.toml
+@@ -21,6 +21,7 @@ sprefa-store = { path = "../../sprefa-store" }
+ sea-orm = { version = "2.0", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
+ tokio = { version = "1", features = ["rt"] }
+ libsqlite3-sys = "0.37"
++redb = "3.1"
+ 
+ # oracles, off by default:
+ salsa = { version = "0.28", optional = true }
+diff --git a/v6/labs/labkit/EXPERIMENT-G8-MMAP-KV.md b/v6/labs/labkit/EXPERIMENT-G8-MMAP-KV.md
+new file mode 100644
+index 00000000..93a172d8
+--- /dev/null
++++ b/v6/labs/labkit/EXPERIMENT-G8-MMAP-KV.md
+@@ -0,0 +1,75 @@
++# G8 — mmap KV-store retraction engine: MINIMIZE RESIDENT RAM (speed second)
++
++You own `v6/labs/labkit/` ONLY. Do not touch v6/sprefa-store or other labs.
++
++## The objective, stated by the user, in priority order
++1. **OPTIMAL MEMORY USAGE** — lowest RESIDENT RAM at correctness. This is the win
++   metric. The engine that holds the least resident RAM at a given scale wins.
++2. Speed — second. A slower engine that stays flat on RAM beats a faster one that
++   climbs.
++
++Context: dd is fast but its arrangements are RESIDENT (~215 B/node, climbs to
++618 MB at 2.9M, OOMs past the RAM budget). The sqlite/counting engine stays flat
++(~0.1 MB Rust) because state lives on disk in a paged, evictable store, but pays
++the SQLite bytecode-VM ~10x speed tax. The hypothesis: an **mmap B-tree KV store
++driven from compiled Rust** keeps sqlite's flat/evictable RAM AND drops the VM
++tax — landing between the two. Memory is what we are chasing; prove the RAM line.
++
++## Phase 1 — build-vs-buy analysis FIRST (standing law, no bespoke line before it)
++Write `v6/labs/labkit/MMAP-KV-CANDIDATES.md`: a candidate-by-candidate analysis
++for a constant-resident-RAM, mmap/paged embedded B-tree KV store in Rust:
++  - **heed** (LMDB) — mmap B-tree; RSS = touched pages, OS-evictable; proven.
++  - **redb** — pure-Rust B-tree, mmap, MVCC; native cursors, no SQL VM.
++  - **sanakirja** — COW B-tree (pijul); transactional cursors.
++  - (note why sled / rocksdb are the WRONG shape here: resident memtables, not
++    constant pressure — a sentence each, not a dismissal.)
++Judge each ONLY on: resident-RAM behaviour (does RSS stay bounded + evictable as
++the dataset grows?), cursor/range-scan API for the cascade, transaction model,
++and integration cost. Pick ONE and say why. Do NOT skip this doc.
++
++## Phase 2 — spike the winner as a new labkit Engine
++Implement the counting Z-set retraction (weight = # supports, delete-at-zero,
++the SAME semantics as cascade::retract) over the chosen KV store's cursors,
++entirely on disk:
++  - keys: dense (tag,id) -> i64; a `row` tree (key -> weight) and a `dep` tree
++    (parent_key -> child_key, a multimap / duplicate-key range).
++  - retract = BFS frontier fixpoint driven by Rust over cursors: decrement each
++    child's weight per lost support, delete at zero, enqueue newly-dead. No SQL,
++    no bytecode VM; native cursor seeks.
++  - DAG counting is enough for this spike. Cyclic (SCC) correctness is a
++    documented follow-up — say so; do not fake cyclic correctness.
++Implement the `Experiment` trait (name/setup/tick/digest/live) so it enters the
++harness exactly like the other engines. Name it e.g. `redb-count` / `lmdb-count`.
++
++## Phase 3 — measure it in the SAME hermetic harness, RAM-first
++Add it to the per-process matrix (0_unified and/or a small dedicated runner) so
++it is measured hermetically (one process per cell, memcap gun, staging dropped
++before tick) against `sqlite-count` and `dd` on the DAG workload across scales
++INTO THE MILLIONS. Report, per scale: **resident Rust MB and RSS MB** (the win
++metric) first, then ms. The headline table is: nodes -> {engine -> resident RAM}.
++
++## DISCIPLINE (standing this session, non-negotiable)
++- Interpret your own numbers firsthand; say what each means.
++- DISTRUST the first output. Re-run; confirm the correctness hash is identical
++  across runs before trusting any measurement.
++- Identical-across-scale numbers are a RED FLAG to disprove. If the KV engine's
++  resident RAM looks flat, PROVE it is real (show the on-disk file grows while
++  RSS stays bounded) — do not report a flat line you have not verified.
++- Correctness = blake3/digest vs the harness oracle. A faster/leaner-but-wrong
++  engine is a failure.
++
++## Validate
++- `cargo build` green (default), and with whatever feature gate the KV dep needs.
++- The new engine's digest matches the oracle on the DAG workload across scales.
++- Existing engines and tests untouched and still green.
++
++## Commit
++Leave changes STAGED (`git add -A v6/labs/labkit`). Do NOT commit (pre-commit
++hook execs `dl`, not on PATH; do not bypass). Coordinator commits.
++
++## Result file
++`v6/labs/labkit/EXPERIMENT-G8-RESULT.md`: the chosen store + why (1 paragraph
++referencing the candidates doc), the resident-RAM-vs-nodes table for
++{kv-engine, sqlite-count, dd} into the millions WITH your firsthand read, what
++you re-ran to falsify yourself, and the honest verdict: does the mmap KV engine
++hold LESS resident RAM than sqlite/dd, and at what speed cost. Terse.
+diff --git a/v6/labs/labkit/EXPERIMENT-G8-RESULT.md b/v6/labs/labkit/EXPERIMENT-G8-RESULT.md
+new file mode 100644
+index 00000000..49dd1dbc
+--- /dev/null
++++ b/v6/labs/labkit/EXPERIMENT-G8-RESULT.md
+@@ -0,0 +1,30 @@
++# G8 result
++
++Selected `redb`, per [MMAP-KV-CANDIDATES.md](MMAP-KV-CANDIDATES.md): it provides
++the required file-backed ordered B-tree cursors and transactions without SQL
++bytecode. `RedbCount` uses native `(parent, child)` ranges and is DAG-counting
++only. Cyclic retraction requires an SCC-aware follow-up.
++
++Hermetic release runner: `src/bin/1_mmap_kv.rs`; one process per cell, 2 GiB
++Rust gun, setup staging dropped before the timed retraction. `rss_mb` is current
++macOS task resident size after the post-tick digest scan. Every completed cell
++has `digest == oracle == 0` and `live == 0`.
++
++| nodes | engine | resident Rust MB | RSS MB | tick ms | disk MB | result |
++|---:|---|---:|---:|---:|---:|---|
++| 100,000 | redb-count | 7.007 | 30.422 | 199.041 | 16.066 | digest match |
++| 100,000 | sqlite-count | 0.108 | 32.156 | 12,654.459 | 3.359 | digest match |
++| 200,000 | sqlite-count | 0.116 | 64.859 | 20,277.980 | 6.844 | digest match |
++| 1,000,000 | redb-count | 97.175 | 354.500 | 2,051.357 | 128.504 | digest match |
++| 2,000,000 | redb-count | 194.067 | 547.844 | 4,309.811 | 257.004 | digest match |
++| 2,000,000 rerun | redb-count | 194.067 | 555.062 | 4,512.409 | 257.004 | same digest; RSS repeat |
++| 500,000 | sqlite-count | - | - | - | - | child terminated before `RESULT` under the 2 GiB gun |
++| any | dd | - | - | - | - | existing `DdReach` has an all-pairs reachability digest, not this counting-Z-set DAG oracle |
++
++The file-size series and the repeated 2m cell falsify a bounded-RSS reading for
++redb in this implementation: disk grows by 16.0x from 100k to 2m and resident
++RSS grows by 18.0x. The redb spike does not hold less resident Rust RAM than
++sqlite-count in completed cells. It is faster at 100k by about 63.6x. No
++resident-RAM conclusion against dd is reported because the available dd engine
++does not implement this counting workload, and no SQLite million-node result is
++reported because the child did not reach a digest under the stated cap.
+diff --git a/v6/labs/labkit/MMAP-KV-CANDIDATES.md b/v6/labs/labkit/MMAP-KV-CANDIDATES.md
+new file mode 100644
+index 00000000..99f98219
+--- /dev/null
++++ b/v6/labs/labkit/MMAP-KV-CANDIDATES.md
+@@ -0,0 +1,25 @@
++# mmap KV candidates for G8
++
++Decision criteria are resident-RAM behavior under a growing on-disk data set,
++ordered cursor/range scans for `dep(parent, child)`, transaction shape for one
++retraction fixpoint, and labkit integration cost.
++
++| candidate | resident-RAM behavior | cursor / transaction shape | integration cost |
++|---|---|---|---|
++| heed / LMDB | The map is file-backed; RSS consists of pages the process has touched and the kernel may evict clean pages as the map grows. LMDB has an address-space map sized for the configured maximum, so virtual address space and resident pages must be reported separately. | Ordered B+tree cursors, including `DUP_SORT` duplicate values, fit `dep(parent, child)` directly. One write transaction can contain a BFS fixpoint, but LMDB permits one writer. | Rust wrapper over the LMDB C library and its map-size / platform behavior. |
++| redb | File-backed copy-on-write B-tree pages are mmap-backed. Reads touch mapped pages, and file growth must be checked beside RSS because mapped pages can be reclaimed by the OS. | Typed ordered table ranges expose the parent-key range scan needed for dependencies. A single write transaction can drive the whole retraction. | Pure Rust dependency; row and dependency trees can use fixed-width byte keys and native range iterators. |
++| sanakirja | File-backed COW B-tree pages are mmap-backed; resident pages are the active/touched portion rather than a required full resident index. The measurement still needs file-size and RSS evidence. | Transactional B-tree cursors can represent the row tree and parent-to-child ordering. | Lower-level page and transaction API than the other two candidates; the spike would carry more storage-specific mechanics. |
++
++`sled` keeps in-memory caches and write buffers, so its normal resident-memory
++shape includes a memtable/cache pressure not targeted by this experiment.
++`rocksdb` similarly uses resident memtables, block caches, and background
++compaction buffers; it does not isolate the mmap/paged-B-tree resident-RAM
++question.
++
++## Selection: redb
++
++The spike uses `redb`: its file-backed mmap B-tree and ordered typed range API
++cover the two required trees without a SQL execution layer or C binding. The
++implementation keeps weights in `row` and `(parent, child)` in `dep`; each
++retraction executes inside one write transaction. This establishes DAG counting
++only. Cyclic graphs need an SCC-aware algorithm and are outside this spike.
+diff --git a/v6/labs/labkit/src/bin/0_unified.rs b/v6/labs/labkit/src/bin/0_unified.rs
+index 91ab4fbe..abcb4bb3 100644
+--- a/v6/labs/labkit/src/bin/0_unified.rs
++++ b/v6/labs/labkit/src/bin/0_unified.rs
+@@ -1,4 +1,4 @@
+-use labkit::{gun, live_set_workload, reach_workload, CascadeZset, Experiment, RamReach, RamZset, SqliteReach, SqliteTemporal};
++use labkit::{gun, live_set_workload, reach_workload, CascadeZset, Experiment, RamReach, RamZset, RedbCount, SqliteReach, SqliteTemporal};
+ #[cfg(feature = "with-dd")]
+ use labkit::DdReach;
+ #[cfg(feature = "with-salsa")]
+@@ -17,6 +17,7 @@ fn engine(name: &str) -> Box<dyn Experiment> {
+         "ram-reach" => Box::new(RamReach::default()),
+         "sqlite-reach" => Box::new(SqliteReach::default()),
+         "sqlite-temporal" => Box::new(SqliteTemporal::default()),
++        "redb-count" => Box::new(RedbCount::default()),
+         #[cfg(feature = "with-dd")]
+         "dd-reach" => Box::new(DdReach::default()),
+         #[cfg(feature = "with-salsa")]
+@@ -49,7 +50,7 @@ fn main() {
+     let exe = std::env::current_exe().unwrap();
+     let mut report = String::from("# Unified G4v2 report\n\n| engine | workload | scale | result |\n|---|---|---:|---|\n");
+     #[allow(unused_mut)]
+-    let mut live_engines = vec!["ram-zset", "cascade-zset", "sqlite-temporal"];
++    let mut live_engines = vec!["ram-zset", "cascade-zset", "sqlite-temporal", "redb-count"];
+     #[cfg(feature = "with-salsa")]
+     live_engines.push("salsa-rows");
+     #[allow(unused_mut)]
+diff --git a/v6/labs/labkit/src/bin/1_mmap_kv.rs b/v6/labs/labkit/src/bin/1_mmap_kv.rs
+new file mode 100644
+index 00000000..a4272656
+--- /dev/null
++++ b/v6/labs/labkit/src/bin/1_mmap_kv.rs
+@@ -0,0 +1,78 @@
++//! Hermetic G8 measurement: one process per engine / DAG scale.
++//!
++//! The workload is a one-support-per-node DAG chain. Thus the counting rule is
++//! exercised as a full cascade and has the same result as the DAG oracle. The
++//! existing `DdReach` answers all-pairs reachability rather than this row Z-set,
++//! so it is not emitted as a false same-digest comparator here.
++
++use labkit::cascade::{cascade_oracle, CascadeZset};
++use labkit::{gun, RedbCount};
++use std::process::Command;
++use std::time::Instant;
++
++#[global_allocator]
++static GLOBAL: gun::Gun = gun::Gun;
++
++fn dag(nodes: usize) -> (Vec<(i64, i64)>, Vec<(i64, i64)>) {
++    let rows = (0..nodes as i64).map(|id| (id, 1)).collect();
++    let deps = (1..nodes as i64).map(|id| (id - 1, id)).collect();
++    (rows, deps)
++}
++
++fn load_sqlite(db: &mut CascadeZset, rows: &[(i64, i64)], deps: &[(i64, i64)]) {
++    // StoreDb's SQL builder materializes an INSERT statement. Chunk setup so the
++    // measurement can reach millions without one SQL string exceeding the gun.
++    for chunk in rows.chunks(50_000) { db.insert_rows(chunk); }
++    for chunk in deps.chunks(50_000) { db.insert_deps(chunk); }
++}
++
++fn child(engine: &str, nodes: usize) {
++    let (rows, deps) = dag(nodes);
++    let expected = cascade_oracle(&rows, &deps, &[0]);
++    match engine {
++        "redb-count" => {
++            let mut db = RedbCount::default();
++            db.insert_rows(&rows);
++            db.insert_deps(&deps);
++            drop(rows); drop(deps);
++            gun::reset_peak();
++            let started = Instant::now();
++            db.retract(&[0]);
++            let actual = db.survivors();
++            println!("RESULT engine=redb-count nodes={nodes} correct={} digest={} oracle={} live={} rust_mb={:.3} rss_mb={:.3} ms={:.3} disk_mb={:.3}", actual == expected, actual.0, expected.0, actual.1, gun::peak_mb(), gun::resident_rss_mb(), started.elapsed().as_secs_f64() * 1000.0, db.db_size_mb());
++        }
++        "sqlite-count" => {
++            let mut db = CascadeZset::default();
++            load_sqlite(&mut db, &rows, &deps);
++            drop(rows); drop(deps);
++            gun::reset_peak();
++            let started = Instant::now();
++            db.retract(&[0]);
++            let actual = db.survivors();
++            println!("RESULT engine=sqlite-count nodes={nodes} correct={} digest={} oracle={} live={} rust_mb={:.3} rss_mb={:.3} ms={:.3} disk_mb={:.3}", actual == expected, actual.0, expected.0, actual.1, gun::peak_mb(), gun::resident_rss_mb(), started.elapsed().as_secs_f64() * 1000.0, db.db_size_mb());
++        }
++        _ => panic!("unknown engine {engine}"),
++    }
++}
++
++fn main() {
++    let cap = std::env::var("DL_MEMCAP_MB").ok().and_then(|s| s.parse().ok()).unwrap_or(2048);
++    gun::install(cap);
++    let args: Vec<String> = std::env::args().collect();
++    if args.get(1).map(String::as_str) == Some("--child") {
++        child(&args[2], args[3].parse().unwrap());
++        return;
++    }
++    let executable = std::env::current_exe().unwrap();
++    for nodes in [100_000usize, 1_000_000, 2_000_000] {
++        for engine in ["redb-count", "sqlite-count"] {
++            let output = Command::new(&executable)
++                .args(["--child", engine, &nodes.to_string()])
++                .env("DL_MEMCAP_MB", cap.to_string())
++                .output()
++                .unwrap();
++            print!("{}", String::from_utf8_lossy(&output.stdout));
++            eprint!("{}", String::from_utf8_lossy(&output.stderr));
++        }
++    }
++}
+diff --git a/v6/labs/labkit/src/gun.rs b/v6/labs/labkit/src/gun.rs
+index a7d5d046..89d581ed 100644
+--- a/v6/labs/labkit/src/gun.rs
++++ b/v6/labs/labkit/src/gun.rs
+@@ -138,3 +138,25 @@ pub fn peak_rss_mb() -> f64 {
+     unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut ru) };
+     ru.ru_maxrss as f64 / (1024.0 * 1024.0) // darwin bytes
+ }
++
++/// Resident bytes now, rather than `getrusage`'s process-lifetime high-water.
++/// The mmap experiment uses this after setup staging has been dropped.
++#[cfg(target_os = "macos")]
++pub fn resident_rss_mb() -> f64 {
++    unsafe {
++        let mut info: libc::mach_task_basic_info = std::mem::zeroed();
++        let mut count = libc::MACH_TASK_BASIC_INFO_COUNT;
++        let rc = libc::task_info(
++            libc::mach_task_self(),
++            libc::MACH_TASK_BASIC_INFO,
++            &mut info as *mut _ as libc::task_info_t,
++            &mut count,
++        );
++        if rc == 0 { info.resident_size as f64 / (1024.0 * 1024.0) } else { 0.0 }
++    }
++}
++
++#[cfg(not(target_os = "macos"))]
++pub fn resident_rss_mb() -> f64 {
++    peak_rss_mb()
++}
+diff --git a/v6/labs/labkit/src/lib.rs b/v6/labs/labkit/src/lib.rs
+index 39ea52a1..ce909c8d 100644
+--- a/v6/labs/labkit/src/lib.rs
++++ b/v6/labs/labkit/src/lib.rs
+@@ -23,6 +23,7 @@ mod reach_exp;
+ #[cfg(feature = "with-salsa")]
+ mod salsa_exp;
+ mod sqlite_exp;
++mod redb_count;
+ pub use ram_exp::RamZset;
+ pub use reach_exp::{RamReach, SqliteReach};
+ pub use cascade::CascadeZset;
+@@ -32,6 +33,7 @@ pub use reconcile::SalsaReconciler;
+ #[cfg(feature = "with-salsa")]
+ pub use salsa_exp::SalsaRows;
+ pub use sqlite_exp::SqliteTemporal;
++pub use redb_count::RedbCount;
+ 
+ #[cfg(feature = "with-dd")]
+ mod dd_exp;
+diff --git a/v6/labs/labkit/src/redb_count.rs b/v6/labs/labkit/src/redb_count.rs
+new file mode 100644
+index 00000000..017fdf1f
+--- /dev/null
++++ b/v6/labs/labkit/src/redb_count.rs
+@@ -0,0 +1,186 @@
++//! File-backed counting Z-set cascade over redb cursors.
++//!
++//! `row` maps the dense `(tag=0, id)` key to its signed support count. `dep`
++//! maps the ordered packed `(parent, child)` key to `()`, so the key range
++//! `[parent << 64, (parent + 1) << 64)` is the native child cursor for a parent.
++//! The retraction algorithm is correct for DAGs. A cyclic graph needs SCC-aware
++//! deletion semantics and is deliberately outside this experiment.
++
++use crate::{Complexity, Experiment};
++use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
++
++const ROW: TableDefinition<u64, i64> = TableDefinition::new("row");
++const DEP: TableDefinition<u128, u8> = TableDefinition::new("dep");
++static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++
++fn dep_key(parent: i64, child: i64) -> u128 {
++    ((parent as u64 as u128) << 64) | child as u64 as u128
++}
++
++pub struct RedbCount {
++    db: Database,
++    path: std::path::PathBuf,
++    writes: u64,
++    rounds: u64,
++    rows: u64,
++}
++
++impl Default for RedbCount {
++    fn default() -> Self {
++        let id = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++        let path = std::env::temp_dir().join(format!("labkit_redb_count_{}_{}.redb", std::process::id(), id));
++        let _ = std::fs::remove_file(&path);
++        Self { db: Database::create(&path).unwrap(), path, writes: 0, rounds: 0, rows: 0 }
++    }
++}
++
++impl Drop for RedbCount {
++    fn drop(&mut self) {
++        let _ = std::fs::remove_file(&self.path);
++    }
++}
++
++impl RedbCount {
++    pub fn insert_rows(&mut self, rows: &[(i64, i64)]) {
++        let txn = self.db.begin_write().unwrap();
++        {
++            let mut table = txn.open_table(ROW).unwrap();
++            for &(id, weight) in rows {
++                table.insert(id as u64, weight).unwrap();
++            }
++        }
++        txn.commit().unwrap();
++        self.rows += rows.len() as u64;
++        self.writes += rows.len() as u64;
++    }
++
++    pub fn insert_deps(&mut self, edges: &[(i64, i64)]) {
++        let txn = self.db.begin_write().unwrap();
++        {
++            let mut table = txn.open_table(DEP).unwrap();
++            for &(parent, child) in edges {
++                table.insert(dep_key(parent, child), 0).unwrap();
++            }
++        }
++        txn.commit().unwrap();
++        self.writes += edges.len() as u64;
++    }
++
++    /// Decrement every seed once. A zero transition propagates exactly one lost
++    /// support down each stored edge. The frontier holds only newly dead rows.
++    pub fn retract(&mut self, seeds: &[i64]) -> u64 {
++        let txn = self.db.begin_write().unwrap();
++        let mut frontier = Vec::with_capacity(seeds.len());
++        {
++            let mut rows = txn.open_table(ROW).unwrap();
++            for &seed in seeds {
++                let Some(guard) = rows.get(seed as u64).unwrap() else { continue };
++                let before = guard.value();
++                let after = before - 1;
++                drop(guard);
++                rows.insert(seed as u64, after).unwrap();
++                self.writes += 1;
++                if before > 0 && after <= 0 {
++                    frontier.push(seed);
++                }
++            }
++        }
++
++        let mut rounds = 0;
++        while !frontier.is_empty() {
++            rounds += 1;
++            let mut hits = Vec::new();
++            {
++                let deps = txn.open_table(DEP).unwrap();
++                for &parent in &frontier {
++                    let start = (parent as u64 as u128) << 64;
++                    let end = start + (1u128 << 64);
++                    for entry in deps.range(start..end).unwrap() {
++                        let (key, _) = entry.unwrap();
++                        hits.push((key.value() & u64::MAX as u128) as u64 as i64);
++                    }
++                }
++            }
++
++            let mut next = Vec::new();
++            {
++                let mut rows = txn.open_table(ROW).unwrap();
++                for child in hits {
++                    let Some(guard) = rows.get(child as u64).unwrap() else { continue };
++                    let before = guard.value();
++                    let after = before - 1;
++                    drop(guard);
++                    rows.insert(child as u64, after).unwrap();
++                    self.writes += 1;
++                    if before > 0 && after <= 0 {
++                        next.push(child);
++                    }
++                }
++            }
++            frontier = next;
++        }
++        txn.commit().unwrap();
++        self.rounds = rounds;
++        rounds
++    }
++
++    pub fn survivors(&self) -> (i64, u64) {
++        let txn = self.db.begin_read().unwrap();
++        let table = txn.open_table(ROW).unwrap();
++        table.iter().unwrap().filter_map(|entry| {
++            let (id, weight) = entry.unwrap();
++            (weight.value() > 0).then(|| id.value() as i64)
++        }).fold((0, 0), |(digest, live), id| (digest ^ crate::mix(id), live + 1))
++    }
++
++    pub fn db_size_mb(&self) -> f64 {
++        std::fs::metadata(&self.path).map(|m| m.len() as f64 / (1024.0 * 1024.0)).unwrap_or(0.0)
++    }
++}
++
++impl Experiment for RedbCount {
++    fn name(&self) -> &'static str { "redb-count" }
++    fn complexity(&self) -> Complexity { Complexity { time: "O(Δ · log rows + cascade edges)", space: "O(frontier) Rust; mmap pages RSS" } }
++    fn rationale(&self) -> &'static str { "redb file-backed B-tree rows with native ordered dependency cursors; DAG counting only" }
++    fn reset(&mut self) { *self = Self::default(); }
++    fn setup(&mut self, base: usize) {
++        self.insert_rows(&(0..base as i64).map(|id| (id, 1)).collect::<Vec<_>>());
++    }
++    fn tick(&mut self, adds: &[i64], removes: &[i64]) {
++        if !adds.is_empty() {
++            let txn = self.db.begin_write().unwrap();
++            {
++                let mut rows = txn.open_table(ROW).unwrap();
++                for &id in adds {
++                    let before = rows.get(id as u64).unwrap().map(|v| v.value()).unwrap_or(0);
++                    rows.insert(id as u64, before + 1).unwrap();
++                    self.writes += 1;
++                }
++            }
++            txn.commit().unwrap();
++        }
++        if !removes.is_empty() { self.retract(removes); }
++    }
++    fn digest(&self) -> i64 { self.survivors().0 }
++    fn live(&self) -> u64 { self.survivors().1 }
++    fn total_rows(&self) -> u64 { self.rows }
++    fn recompute_units(&self) -> u64 { self.rounds }
++    fn writes(&self) -> u64 { self.writes }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::RedbCount;
++    use crate::cascade::cascade_oracle;
++
++    #[test]
++    fn dag_retraction_matches_counting_oracle() {
++        let rows = [(0, 1), (1, 1), (2, 2), (3, 1), (4, 1)];
++        let deps = [(0, 2), (1, 2), (2, 3), (3, 4)];
++        let mut db = RedbCount::default();
++        db.insert_rows(&rows);
++        db.insert_deps(&deps);
++        db.retract(&[0, 1]);
++        assert_eq!(db.survivors(), cascade_oracle(&rows, &deps, &[0, 1]));
++    }
++}

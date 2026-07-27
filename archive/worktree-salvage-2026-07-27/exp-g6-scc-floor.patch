@@ -1,0 +1,18 @@
+diff --git a/v6/sprefa-store/examples/perf_report.rs b/v6/sprefa-store/examples/perf_report.rs
+index 7dfa8422..5dbb1bba 100644
+--- a/v6/sprefa-store/examples/perf_report.rs
++++ b/v6/sprefa-store/examples/perf_report.rs
+@@ -368,8 +368,13 @@ async fn main() {
+         ("DAG 240k", 6, 40_000, 0),
+         ("DAG 960k", 6, 160_000, 0),
+         ("DAG 2.9M", 6, 480_000, 0),
++        ("DAG 5.8M", 6, 960_000, 0),
++        ("DAG 11.5M", 6, 1_920_000, 0),
+         ("CYC 60k s7", 6, 10_000, 7),
+         ("CYC 960k s7", 6, 160_000, 7),
++        ("CYC 2.9M s7", 6, 480_000, 7),
++        ("CYC 5.8M s7", 6, 960_000, 7),
++        ("CYC 11.5M s7", 6, 1_920_000, 7),
+     ];
+ 
+     let started = Instant::now();

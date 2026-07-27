@@ -1,0 +1,349 @@
+diff --git a/src/engine/cold_stage.rs b/src/engine/cold_stage.rs
+index 52e67ef9..36efc726 100644
+--- a/src/engine/cold_stage.rs
++++ b/src/engine/cold_stage.rs
+@@ -395,7 +395,15 @@ impl Engine {
+             // Re-prime the per-file analysis caches (idempotent — cached) so a
+             // type/call node parses through the same bundle the inline path used.
+             super::extract::prime_analysis_bundles(self, prog)?;
+-            if fam.shardable_cold() {
++            // Cross-family intern batching (see `batch_rel_interns`'s field
++            // doc on `Engine`): this job writes only one family's one shard,
++            // but a shardable family's slice refresh can still call
++            // `append_rel` several times (7 rels for a dataflow slice) — one
++            // flush per shard instead of one per rel. Off again right after,
++            // before the completion-gate digest saves below (which don't
++            // write rel rows, but keep the scope tight regardless).
++            self.set_batch_rel_interns(true);
++            let result = if fam.shardable_cold() {
+                 let files = self.cold_family_files(family)?;
+                 let slices = self.cold_chunk_slices_of(files)?;
+                 let slice = slices.get(shard as usize).cloned().unwrap_or_default();
+@@ -404,15 +412,17 @@ impl Engine {
+                     "[cold-chunk] running chunk"
+                 );
+                 match family {
+-                    "dataflow-rels" => self.refresh_dataflow_rels_slice(&slice)?,
+-                    "comment-rels" => self.refresh_comment_rels_slice(&slice)?,
+-                    "template-rels" => self.refresh_template_rels_slice(&slice)?,
+-                    "unresolved-rels" => self.refresh_unresolved_rel_slice(&slice)?,
++                    "dataflow-rels" => self.refresh_dataflow_rels_slice(&slice),
++                    "comment-rels" => self.refresh_comment_rels_slice(&slice),
++                    "template-rels" => self.refresh_template_rels_slice(&slice),
++                    "unresolved-rels" => self.refresh_unresolved_rel_slice(&slice),
+                     other => bail!("cold-chunk: family '{other}' is shardable but has no slice refresh"),
+                 }
+             } else {
+-                fam.refresh(self)?;
+-            }
++                fam.refresh(self).map(|_| ())
++            };
++            self.set_batch_rel_interns(false);
++            result?;
+         }
+         let now = super::now_secs();
+         self.db.exec_params(
+@@ -457,6 +467,15 @@ impl Engine {
+                 }
+             }
+         }
++        // Flush the cross-family intern batch this job's `encode_rel_rows`/
++        // `append_rel` calls queued (see `flush_pending_rel_interns`'s doc on
++        // `Engine`) before this job's own tick ends. Spine never runs as a
++        // cold node (it is post-node only, dispatched by the regular tick
++        // after cold-staging completes), so there is no mid-job ordering
++        // requirement here — this is the catch-all that keeps a chunked
++        // family's several `append_rel` calls to ONE `_strings` insert per
++        // shard instead of one per rel.
++        self.flush_pending_rel_interns()?;
+         self.last_n1 = self.db.tick_end();
+         Ok(())
+     }
+diff --git a/src/engine/mod.rs b/src/engine/mod.rs
+index 191e7872..48842be1 100644
+--- a/src/engine/mod.rs
++++ b/src/engine/mod.rs
+@@ -663,6 +663,36 @@ pub struct Engine {
+     /// Monotonic per-engine tick sequence number, used to timestamp ledger rows.
+     /// Starts at 1 on the first tick that runs.
+     tick_seq: std::cell::Cell<i64>,
++    /// Per-family intern batch for `encode_rel_rows` (the residual `INSERT
++    /// _strings` N+1 a multi-family rebuild trips). Every rel write
++    /// (`refresh_rel`/`refresh_rel_for_revs`/`insert_rel_rows`/`append_rel`)
++    /// used to open its OWN `SymSink` and flush it immediately — one
++    /// `_strings` insert per REL, not per family (7+ rels in the type family
++    /// alone, similarly for call/dataflow). Queued into by `encode_rel_rows`;
++    /// drained by `flush_pending_rel_interns`, which replaces the cell with a
++    /// fresh `SymSink` BEFORE draining so the drop-safety panic
++    /// (`SymSink::drop`) still fires on the OLD instance if a call site is
++    /// ever skipped. Scoped to ONE family's refresh per drain, never wider:
++    /// `type`/`call`'s resolvers read back an EARLIER family's just-written,
++    /// interned columns this SAME tick (Win D:
++    /// `module_import_map`/`module_binding_resolved_map` over `module`'s
++    /// rows), so a family's minted strings must be durable before the NEXT
++    /// family in the loop runs — batching across families broke that
++    /// ordering (2 resolver ITs regressed to 0 rows) and was narrowed back to
++    /// per-family.
++    pending_rel_interns: std::cell::RefCell<spine::SymSink>,
++    /// Opt-in switch for the batching above. Default `false`: `encode_rel_rows`
++    /// flushes immediately after every call, byte-identical to the pre-batch
++    /// behavior — every call site OUTSIDE the extract-family orchestration
++    /// (term-extract's `source_prepare` batches, unit tests that call a
++    /// family's `refresh_*` directly without going through `tick`/
++    /// `tick_paths`) never sees a behavior change. The orchestration loops in
++    /// `engine/tick.rs`/`engine/cold_stage.rs` set this `true` around exactly
++    /// ONE family's `refresh`/`refresh_paths` call, flush right after, then
++    /// set it back to `false` before the next family — so a rel write from
++    /// `rebuild_derived`/a `RelKind`/daemon-effect refresh, all of which
++    /// still expect the OLD immediate-flush contract, is unaffected.
++    batch_rel_interns: std::cell::Cell<bool>,
+ }
+ 
+ struct ScanSpec {
+@@ -739,6 +769,8 @@ impl Engine {
+             warned_orphan_effect_kinds: std::cell::RefCell::new(std::collections::HashSet::new()),
+             write_ledger: std::cell::RefCell::new(Vec::new()),
+             tick_seq: std::cell::Cell::new(0),
++            pending_rel_interns: std::cell::RefCell::new(spine::SymSink::new()),
++            batch_rel_interns: std::cell::Cell::new(false),
+         }
+     }
+ 
+@@ -861,27 +893,67 @@ impl Engine {
+             .iter()
+             .map(|name| meta.cols.iter().position(|col| col.name == *name))
+             .collect();
+-        let mut sink = spine::SymSink::new();
++        // Queue into the shared cross-family sink instead of a local one-shot
++        // `SymSink` (was: create + immediately `flush_syms` here, one
++        // `INSERT _strings` per REL). Scoped so the borrow ends before the
++        // flush decision below (which itself needs to borrow the cell).
+         let mut encoded = Vec::with_capacity(rows.len());
+-        for row in rows {
+-            let mut out = row.clone();
+-            for (pos, value) in out.iter_mut().enumerate() {
+-                let Some(meta_pos) = positions.get(pos).and_then(|p| *p) else {
+-                    continue;
+-                };
+-                if !meta.cols[meta_pos].interned() {
+-                    continue;
+-                }
+-                if let Value::Text(text) = value {
+-                    *value = Value::Int(sink.sym(text).cell());
++        {
++            let mut sink = self.pending_rel_interns.borrow_mut();
++            for row in rows {
++                let mut out = row.clone();
++                for (pos, value) in out.iter_mut().enumerate() {
++                    let Some(meta_pos) = positions.get(pos).and_then(|p| *p) else {
++                        continue;
++                    };
++                    if !meta.cols[meta_pos].interned() {
++                        continue;
++                    }
++                    if let Value::Text(text) = value {
++                        *value = Value::Int(sink.sym(text).cell());
++                    }
+                 }
++                encoded.push(out);
+             }
+-            encoded.push(out);
+         }
+-        self.db.flush_syms(&mut sink)?;
++        // Default (`batch_rel_interns` false): flush immediately, exactly the
++        // old per-call contract — every caller outside the extract-family
++        // orchestration (term-extract's `source_prepare` batches, a unit test
++        // calling a family's `refresh_*` directly) sees no behavior change.
++        // The orchestration loops in `tick`/`tick_paths`/cold-chunk jobs set
++        // `batch_rel_interns` true around exactly one family's own refresh
++        // call and flush right after it instead (see
++        // `flush_pending_rel_interns`) — never wider than one family, see
++        // `pending_rel_interns`'s field doc for why.
++        if !self.batch_rel_interns.get() {
++            self.flush_pending_rel_interns()?;
++        }
+         Ok(encoded)
+     }
+ 
++    /// Drain the shared `pending_rel_interns` batch (see its field doc) into
++    /// ONE `Db::flush_syms` call. Replaces the cell with a fresh `SymSink`
++    /// BEFORE draining so the drop-safety panic still guards the old
++    /// instance if a future call site forgets to flush. Call sites: every
++    /// `encode_rel_rows` call when `batch_rel_interns` is false (the default
++    /// — one flush per call, unchanged from before batching existed), and
++    /// the extraction-phase boundaries in `tick`/`tick_paths`/cold-chunk jobs
++    /// when it is true (always before the spine family reads `_strings`
++    /// back, and once more right before every `Db::tick_end()` as a
++    /// catch-all).
++    pub(crate) fn flush_pending_rel_interns(&self) -> Result<usize> {
++        let mut batch = std::mem::take(&mut *self.pending_rel_interns.borrow_mut());
++        self.db.flush_syms(&mut batch)
++    }
++
++    /// Turn cross-family intern batching on/off for `encode_rel_rows` (see
++    /// `batch_rel_interns`'s field doc). The orchestration loops call this
++    /// around the extraction-family phase only; every other code path keeps
++    /// the pre-batching immediate-flush-per-call contract.
++    pub(crate) fn set_batch_rel_interns(&self, on: bool) {
++        self.batch_rel_interns.set(on);
++    }
++
+     pub(crate) fn insert_rel_rows(
+         &self,
+         rel: &str,
+diff --git a/src/engine/tick.rs b/src/engine/tick.rs
+index fa895312..d004d3f6 100644
+--- a/src/engine/tick.rs
++++ b/src/engine/tick.rs
+@@ -621,6 +621,10 @@ impl Engine {
+         if !cold_staged.is_empty() {
+             // Short tick: facts intentionally incomplete, derived NOT rebuilt.
+             // Report reads UNSETTLED (`cold_pending`) so await-settle waits.
++            // Catch-all flush (see `flush_pending_rel_interns`'s doc):
++            // pre_extract RelKinds above already ran, so drain whatever they
++            // queued before this tick ends. No-op (Ok(0)) when nothing did.
++            self.flush_pending_rel_interns()?;
+             self.last_n1 = self.db.tick_end();
+             self.flush_write_ledger(tick)?;
+             self.clear_exe_identity_cache();
+@@ -630,12 +634,24 @@ impl Engine {
+                 ..Default::default()
+             });
+         }
++        // Cross-family intern batching (see `batch_rel_interns`'s field doc on
++        // `Engine`): `encode_rel_rows` normally flushes immediately after
++        // every rel write. Scoped to ONE family per batch, never wider —
++        // `type`/`call`'s resolvers read back an EARLIER family's rows this
++        // same tick (Win D: `module_import_map`/`module_binding_resolved_map`
++        // over `module`'s just-written, interned columns), so a family's
++        // minted strings must be durable in `_strings` before the NEXT
++        // family in this loop runs, not merely before spine.
+         for fam in crate::rels::extract_families_pre_node() {
+             if !fam.used(prog) { continue; }
+             crate::cancel::checkpoint(fam.name())?;
+             crate::activity::detail(fam.name());
+             let t = std::time::Instant::now();
+-            if fam.refresh(self)?.moved() {
++            self.set_batch_rel_interns(true);
++            let outcome = fam.refresh(self);
++            self.set_batch_rel_interns(false);
++            self.flush_pending_rel_interns()?;
++            if outcome?.moved() {
+                 for r in fam.rels() {
+                     changed_source_rels.insert(r.to_string());
+                 }
+@@ -646,7 +662,11 @@ impl Engine {
+             crate::cancel::checkpoint("node-rels")?;
+             crate::activity::detail("node");
+             let t = std::time::Instant::now();
+-            if self.refresh_node_rels()? {
++            self.set_batch_rel_interns(true);
++            let moved = self.refresh_node_rels();
++            self.set_batch_rel_interns(false);
++            self.flush_pending_rel_interns()?;
++            if moved? {
+                 changed = true;
+                 for n in NODE_RELS { changed_source_rels.insert(n.to_string()); }
+             }
+@@ -669,7 +689,11 @@ impl Engine {
+                 true
+             };
+             let moved = if run {
+-                fam.refresh(self)?.moved()
++                self.set_batch_rel_interns(true);
++                let outcome = fam.refresh(self);
++                self.set_batch_rel_interns(false);
++                self.flush_pending_rel_interns()?;
++                outcome?.moved()
+             } else {
+                 false
+             };
+@@ -1113,6 +1137,10 @@ impl Engine {
+         if !next_rules.is_empty() || !async_rules.is_empty() {
+             self.set_tx(cur_tx + 1)?;
+         }
++        // Catch-all flush (see `flush_pending_rel_interns`'s doc): the
++        // RelKind/daemon/effect refreshes below the extract-family loops can
++        // still queue interns after the two extraction-phase flushes above.
++        self.flush_pending_rel_interns()?;
+         self.last_n1 = self.db.tick_end();
+         self.flush_write_ledger(tick)?;
+ 
+@@ -1398,6 +1426,13 @@ impl Engine {
+             // it as part of a file/rev delta.
+             self.sweep_gone_revs()?;
+         }
++        // Cross-family intern batching (see `batch_rel_interns`'s field doc):
++        // scoped to ONE family per batch, never wider — `type`/`call`'s
++        // resolvers read back module's just-written, interned columns this
++        // SAME tick (Win D: `module_import_map`/`module_binding_resolved_map`),
++        // so module's minted strings must be durable before the NEXT family
++        // runs, not merely before spine. See the full tick's identical note.
++        self.set_batch_rel_interns(true);
+         let module_dependency_before = self.module_resolution_dependency_digest(&self.self_rev.text());
+         let module_outcome = if wants_module_rels {
+             crate::rels::ModuleFamily
+@@ -1405,6 +1440,8 @@ impl Engine {
+         } else {
+             crate::rels::RefreshOutcome::Unchanged
+         };
++        self.set_batch_rel_interns(false);
++        self.flush_pending_rel_interns()?;
+         let module_dependency_after = self.module_resolution_dependency_digest(&self.self_rev.text());
+         let module_dependency_changed = module_dependency_before != module_dependency_after;
+         if module_outcome.moved() {
+@@ -1434,7 +1471,12 @@ impl Engine {
+             crate::cancel::checkpoint("extract")?;
+             super::extract::prime_analysis_bundles(self, prog)?;
+             for fam in crate::rels::extract_families_paths_pre_node() {
+-                if fam.used(prog) && fam.refresh_paths(self, &path_refresh_context)?.moved() {
++                if !fam.used(prog) { continue; }
++                self.set_batch_rel_interns(true);
++                let outcome = fam.refresh_paths(self, &path_refresh_context);
++                self.set_batch_rel_interns(false);
++                self.flush_pending_rel_interns()?;
++                if outcome?.moved() {
+                     for r in fam.rels() {
+                         changed_source_rels.insert(r.to_string());
+                     }
+@@ -1444,15 +1486,26 @@ impl Engine {
+             // the spine projection (else this tick's `ref`/`string` miss node spans).
+             // Path-scoped: re-walk ONLY this tick's changed files; the other
+             // files' node/child rows are untouched.
+-            if files_changed && node_rels_used(prog) && self.refresh_node_rels_delta(&node_delta_paths)? {
+-                for n in NODE_RELS {
+-                    changed_source_rels.insert(n.to_string());
++            if files_changed && node_rels_used(prog) {
++                self.set_batch_rel_interns(true);
++                let moved = self.refresh_node_rels_delta(&node_delta_paths);
++                self.set_batch_rel_interns(false);
++                self.flush_pending_rel_interns()?;
++                if moved? {
++                    for n in NODE_RELS {
++                        changed_source_rels.insert(n.to_string());
++                    }
++                    changed_facts = true;
+                 }
+-                changed_facts = true;
+             }
+             if files_changed {
+                 for fam in crate::rels::extract_families_post_node() {
+-                    if fam.used(prog) && fam.refresh(self)?.moved() {
++                    if !fam.used(prog) { continue; }
++                    self.set_batch_rel_interns(true);
++                    let outcome = fam.refresh(self);
++                    self.set_batch_rel_interns(false);
++                    self.flush_pending_rel_interns()?;
++                    if outcome?.moved() {
+                         for r in fam.rels() {
+                             changed_source_rels.insert(r.to_string());
+                         }
+@@ -1616,6 +1669,8 @@ impl Engine {
+             tracing::warn!(dropped, "[checked-type] dropped {dropped} rows");
+             self.dropped = 0;
+         }
++        // Catch-all flush (see `flush_pending_rel_interns`'s doc).
++        self.flush_pending_rel_interns()?;
+         self.last_n1 = self.db.tick_end();
+         self.flush_write_ledger(tick)?;
+         // Surface a slow incremental tick in the LSP server log so live

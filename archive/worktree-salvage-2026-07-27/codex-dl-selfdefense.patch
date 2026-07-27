@@ -1,0 +1,27 @@
+diff --git a/DLFIX_BRIEF.txt b/DLFIX_BRIEF.txt
+new file mode 100644
+index 00000000..67ff60fa
+--- /dev/null
++++ b/DLFIX_BRIEF.txt
+@@ -0,0 +1,21 @@
++Worktree: /Users/chrishafley/projects/sprefa-codex-dlfix, branch codex/dl-selfdefense, base a398b7a2. Work ONLY here. No daemon, no `dl --lsp`. Hermetic: SPREFA_CONFIG=/nonexistent/x.toml DL_NO_DAEMON=1, scratch --db, fresh XDG_STATE_HOME=$(mktemp -d) for the it suite. Line numbers below may be stale; re-find by symbol name. File-size law: 300 target / 500 hard / stop-and-propose if a split is needed. N+1 law: collect-then-flush, never a per-row write. No banned identifiers (provenance/substrate/load-bearing/regime).
++
++Two defects where dl obstructs the user's own workflow. Fix BOTH. One commit per defect.
++
++== DEFECT 1: a running `dl daemon` keeps serving the OLD binary after `cargo install`, wasting CPU/battery. The daemon must self-exit when its own binary file on disk changes, so the next `dl` invocation spawns the new version. ==
++- src/daemon.rs already has `enforce_mem_limit(label)` (grep it) called in the heartbeat `RecvTimeoutError::Timeout` branch AND after each tick. There is an `exe_stamp()` (len+mtime of current_exe, with a DL_EXE_STAMP override).
++- Add a sibling guard `enforce_fresh_binary(label)`: at daemon startup capture the launch-time exe stamp of `std::env::current_exe()`; on each heartbeat + after each tick, recompute and compare. If it changed, log e.g. `[daemon] binary replaced on disk, exiting so the next call runs the new version` and `std::process::exit(0)` (clean, frees the socket). Reuse the exe_stamp() file-stat logic; do not shell out.
++- Guard the obvious races: if current_exe() fails or the file is mid-write (stat fails), do NOT exit (only exit on a confirmed DIFFERENT stamp, not on an error). Skip the check entirely if DL_EXE_STAMP is set (tests).
++- Test: drive the compare function directly with two stamps (changed -> exit-intent true, unchanged/error -> false). Do not spawn a real daemon in the test.
++
++== DEFECT 2: the guarded-match rail false-positives and the PostToolUse hook then locks the WHOLE session. ==
++Find the rail (grep `guarded_match_session_touch`, `guarded_match`, `agent_touch` under examples/ and .dl/) and the hook config (grep `dl --check` / `PostToolUse` under .claude/ and any hooks dir; it may be a global hook — if you cannot find the hook file in-repo, note that and fix only the rail).
++The rail joins `guarded_match(file, match_start, match_end, reason)` with `agent_touch(_, _, file)` on PATH ONLY. So: (1) editing ANY line of a guarded file trips a guard that is about a specific dispatch site; (2) agent_touch is append-only and git-free, so reverting the file to byte-identical HEAD never clears it; (3) the hook escalates one guarded-file touch into blocking every Write/Edit.
++Ship these fixes:
++  (a) REQUIRED: suppress the diag when the file is byte-identical to HEAD. Add a git-diff / content-vs-HEAD gate to the rule (or a derived `file_dirty(file)` fact joined in) so a reverted file stops tripping. This kills the revert false-positive.
++  (b) IF FEASIBLE within the rail's fact model: give agent_touch an edit line-range and join on range overlap with match_start..match_end instead of path. If agent_touch has no line data available from the harness store, skip (b) and note why.
++  (c) REQUIRED if the hook file is in-repo: scope the PostToolUse block to edits of the guarded file only, not every file. If the hook is global/out-of-repo, document the needed change in the final summary instead.
++
++Verify: `cargo test --lib` (state counts). Run the affected rail with a hermetic scratch --db proving a reverted-to-HEAD guarded file no longer emits the diag. `cargo test --test it` under fresh XDG_STATE_HOME only if you touched engine code (defect 1) — baseline 789/0; budget 2 full runs; daemon/checkout/embed tests are environment-flaky in a linked worktree, don't chase those.
++
++Commit protocol: `git commit -n`, one commit per defect, do NOT push. If a step can't be done within these laws, STOP that step and explain in the final summary instead of improvising. Final summary: per-commit shas, the exact rail rule change, the daemon guard call sites, test counts, and any skipped sub-fix with the reason.

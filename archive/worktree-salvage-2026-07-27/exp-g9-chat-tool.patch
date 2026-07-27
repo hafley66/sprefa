@@ -1,0 +1,80 @@
+diff --git a/EXPERIMENT-G9-CHAT-TOOL.md b/EXPERIMENT-G9-CHAT-TOOL.md
+new file mode 100644
+index 00000000..1e04f158
+--- /dev/null
++++ b/EXPERIMENT-G9-CHAT-TOOL.md
+@@ -0,0 +1,74 @@
++# G9 (grunt) — reverse-reference chat search + pin tool, soft-delete scan, MAP backlinks
++
++You own ONLY: `tools/` (new, repo root), `v6/MAP-SOURCES.md` (new),
++`v6/findings/soft-delete-durable-scan.md` (new), `v6/findings/PINS.md` (new).
++Touch NOTHING else. Do not edit v6/MAP.md, v6/DECISIONS.md, or any source.
++
++## Data sources (read-only)
++- Session summaries: `chat_log/*.md` (in the repo).
++- Raw Claude Code transcripts (JSON lines):
++  `~/.claude/projects/-Users-chrishafley-projects-sprefa/*.jsonl` (~67 files,
++  ~577MB total — NEVER cat a whole file; always rg with a pattern).
++- Design docs: `plans/*.md`, `v6/plans/*.md`, `v6/*.md`, `v6/findings/*.md`.
++
++## Task 1 — the tool `tools/chat-find.sh` (bash, rg + fzf, NO new deps)
++Build vs buy: rg and fzf ARE the bought tools; this is a thin glue script, not a
++new search engine. Do not add dependencies beyond rg (ripgrep) and fzf.
++
++Behaviour:
++- `chat-find.sh PATTERN` — rg (case-insensitive) across chat_log/*.md, the design
++  docs, AND the raw *.jsonl transcripts; print `path:line: snippet` ranked. For
++  jsonl, the lines are JSON — extract/clean the human-readable text for display
++  (strip the JSON envelope enough to read the sentence; a rough sed/rg -o is
++  fine). If `fzf` is on PATH, pipe results through it for interactive select;
++  the selected line gets appended to `v6/findings/PINS.md` as a pin
++  (`- [YYYY-MM-DD] PATTERN — path:line — "snippet"`). If fzf is absent, just
++  print the ranked list (degrade gracefully, print a note).
++- `chat-find.sh --sessions PATTERN` — the REVERSE reference: list transcript +
++  chat_log files ranked by hit count, using
++  `rg -ic PATTERN <files> | sort -t: -k2 -rn`. This answers "which sessions
++  discussed X".
++- `chat-find.sh --pin path:line "note"` — manually append a pin to PINS.md.
++- `-h/--help` prints usage. Keep it POSIX-bash, `set -euo pipefail`, commented.
++
++## Task 2 — run the tool to answer a specific question
++Scan for whether we EVER discussed NOT deleting at weight zero — i.e. keeping the
++zero-weight row as a TOMBSTONE (filter by `weight > 0`) to enable soft-delete /
++sweep-later / temporal ("what was alive at revision N") / durable history —
++versus the current hard delete-at-zero.
++Search terms to try (each via the tool / rg): `soft delete`, `tombstone`,
++`delete at zero`, `weight > 0`, `weight = 0`, `sweep`, `durable`, `bitemporal`,
++`close-interval`, `tt_to`, `temporal query`, `keep the row`, `garbage collect`.
++Write `v6/findings/soft-delete-durable-scan.md`:
++- Distinguish two things with QUOTED snippets + `path:line` for each: (a) the
++  bitemporal / temporal-fact plane (SqliteTemporal, close-interval, tt_to — a
++  SEPARATE durable-history mechanism) vs (b) soft-delete/tombstone INSIDE the
++  counting cascade (retract).
++- State plainly, with receipts: was weight>0 soft-delete + sweep ever proposed or
++  tested for the counting cascade, or is delete-at-zero the only thing tried?
++- If a term is not found anywhere, write "not found" — do NOT invent a citation.
++
++## Task 3 — MAP backlinks `v6/MAP-SOURCES.md`
++For each major decision in `v6/MAP.md` and `v6/DECISIONS.md` (the unification, the
++counting-not-DRed call, SCC nested fixpoint, dd/salsa-as-teachers, the 7-function
++covering set, the exploration verdicts), find the source session(s) and give a
++jump reference. Format a table: `| decision | source path:line | one-line
++snippet |`. Every row must be a REAL rg hit you can reproduce — no fabrication.
++
++## DISCIPLINE (hard rule)
++NEVER fabricate a snippet, path, or line number. Every citation must be a real,
++reproducible rg hit. If you cannot find something, write "not found". A made-up
++citation is worse than a missing one.
++
++## Validate (paste output into the result)
++- `bash tools/chat-find.sh counting | head` returns real hits.
++- `bash tools/chat-find.sh --sessions durable` prints a ranked file list.
++- The three md files exist and every citation resolves (spot-check 3 with rg).
++
++## Commit
++Leave changes STAGED (`git add -A tools v6/MAP-SOURCES.md v6/findings`). Do NOT
++commit (pre-commit hook needs `dl`, not on PATH). Coordinator commits.
++
++## Result file
++Append a short `## G9 result` to `v6/findings/soft-delete-durable-scan.md`: what
++the tool does, the soft-delete answer in 3 sentences, and the validation output.
