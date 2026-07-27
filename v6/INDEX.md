@@ -108,6 +108,7 @@
 | [prolog/labs/expressions.md](prolog/labs/expressions.md) | 440 | expressions: the tier-0 expression layer |
 | [prolog/labs/extraction_syntax.md](prolog/labs/extraction_syntax.md) | 571 | extraction_syntax: verdict on the last big surface gap |
 | [prolog/labs/merge_family.md](prolog/labs/merge_family.md) | 302 | merge_family: does the rxjs merge family lower to plain rules? |
+| [prolog/labs/mode_lab.md](prolog/labs/mode_lab.md) | 350 | mode_lab: (cardinality, lifetime) with dominance |
 | [prolog/labs/occurrence_identity.md](prolog/labs/occurrence_identity.md) | 487 | occurrence_identity: ruling R1, engine stamps vs Z-set counts |
 | [prolog/labs/out/fixtures/dash.md](prolog/labs/out/fixtures/dash.md) | 2 | dash fixture |
 | [prolog/labs/out/fixtures/notes.md](prolog/labs/out/fixtures/notes.md) | 4 | fixture notes |
@@ -118,6 +119,7 @@
 | [prolog/labs/review_temporal_pipe.md](prolog/labs/review_temporal_pipe.md) | 190 | Review: temporal_pipe lab (`\|>`) |
 | [prolog/labs/review_timeless_rail.md](prolog/labs/review_timeless_rail.md) | 138 | Review: timeless_rail lab |
 | [prolog/labs/shell_stream.md](prolog/labs/shell_stream.md) | 294 | shell_stream lab: streaming shell effects |
+| [prolog/labs/sub_lifetimes.md](prolog/labs/sub_lifetimes.md) | 311 | sub_lifetimes: the subscription forest (runtime half of lifetimes) |
 | [prolog/labs/temporal_pipe.md](prolog/labs/temporal_pipe.md) | 463 | temporal_pipe: verdict on the temporal pipe `\|>` |
 | [prolog/labs/timeless_rail.md](prolog/labs/timeless_rail.md) | 412 | timeless_rail: the tier-0 exit criterion, labbed |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
@@ -1820,6 +1822,18 @@
 272:## What this means for the tier order
 ```
 
+### prolog/labs/mode_lab.md
+```
+1:# mode_lab: (cardinality, lifetime) with dominance
+16:## 1. Verdict
+93:## 2. The mode table
+145:### How each row is derived
+181:## 3. Static lifetime is not runtime lifetime
+196:## 4. Deviations from plans/2026-07-27-mode-dominance.md
+255:## 5. Ambiguities found (numbered)
+336:## 6. What this means for the tier order
+```
+
 ### prolog/labs/occurrence_identity.md
 ```
 1:# occurrence_identity: ruling R1, engine stamps vs Z-set counts
@@ -1931,6 +1945,25 @@
 242:## 6. Deviations from the LANG snapshot
 254:## 7. Tier order
 286:## 8. What the lab does not prove
+```
+
+### prolog/labs/sub_lifetimes.md
+```
+1:# sub_lifetimes: the subscription forest (runtime half of lifetimes)
+11:## Verdict
+50:## What the conformance engine must GAIN
+55:### 1. Three store rels (engine-written, program-readable)
+76:### 2. One engine-injected level rule
+86:### 3. One new declaration (surface `switch_map`)
+98:### 4. One new completion signal
+106:### 5. New tick-item alphabet (fixture format change)
+122:### 6. Exactly two tick-phase changes
+140:### 7. One diagnostic gap
+147:## Deviations from LANG.md
+166:## Ambiguities (numbered, for the ruling queue)
+230:## Correspondence with mode_lab (the static claim, operational)
+249:## The UI worked example, end to end
+297:## What this means for the tier order
 ```
 
 ### prolog/labs/temporal_pipe.md
