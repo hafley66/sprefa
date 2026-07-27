@@ -64,6 +64,19 @@
 %   the downstream delta (-old/+new). pre depth > 1 = LAG reads on a hist
 %   table pruned at the retention bound. Crash = roll back to last tick's row.
 %
+% * MIXED HEADS ARE SOUND (supersedes v5's one-rel-one-rule-kind law, which
+%   guarded rebuild_derived's DELETE-all recompute). Under count-IVM a row
+%   carries its support; injected and derived rows may share a head, and
+%   retraction subtracts per-origin. EDB/IDB is per-ROW origin, not a rel
+%   classification.
+%
+% * PROTOCOLS BIND AT LINK TIME. Program text declares boundary SIGNATURES
+%   (external name/arity/envelope); binding(Name, Protocol) facts attach
+%   shell/every/sse per deployment. First-order linking, no higher-order
+%   terms; every external needs exactly one binding or the link fails. SSE
+%   is not a program construct at all: a tail ask held open per connection
+%   by a consumer.
+%
 % * NO @ SYMBOL. Time is a FIELD. A clock is a tick-valued column plus a
 %   join; "clocked on R" = "this struct carries tick_of(R)". Record typing
 %   tracks which rels carry which tick fields, so the temporal checker is the
@@ -157,6 +170,7 @@ technique(recovery,      state_at_tick_is_a_row,      'replay = reread tables').
 technique(state_update,  upsert_at_tick_commit,       'register row = current state; UPDATE..CASE emitted per register, UDF escape hatch').
 technique(prev_value,    row_read_before_fold,        'pre = the row pre-write; depth>1 = hist LAG, retention-pruned').
 technique(ask_modes,     snapshot_vs_subscribe,       'read-1 = SELECT, always finite; tail = mode-typed (card, lifetime)').
+technique(protocols,     bind_facts_at_link,          'signatures in program, binding(Name, Protocol) per deployment; test = canned rows').
 
 % ═════════════════════════════════════════════════════════════════════════════
 % THE SYNTAX KERNEL — the answer to "stop adding non-compositional features".
