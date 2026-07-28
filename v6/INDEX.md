@@ -12,7 +12,7 @@
 | [.agents/skills/v6-plan/SKILL.md](.agents/skills/v6-plan/SKILL.md) | 85 | V6 primed context |
 | [AGENTS.md](AGENTS.md) | 103 | v6 — AGENTS.md (start here; stay out of everything else) |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 162 | v6 architecture — every graph algorithm, and why |
-| [DECISIONS.md](DECISIONS.md) | 175 | v6 pinned decisions — STOP re-deriving these |
+| [DECISIONS.md](DECISIONS.md) | 176 | v6 pinned decisions — STOP re-deriving these |
 | [MAP.md](MAP.md) | 245 | v6 — the living map (algorithms · unification · exploration · DONE) |
 | [README.md](README.md) | 110 | V6 |
 | [dl/fixtures/ghcacher-findings.md](dl/fixtures/ghcacher-findings.md) | 372 | ghcacher expression in v6 dl — findings + grading receipts |
@@ -112,14 +112,14 @@
 34:## The retraction / recursion model (DECIDED)
 69:## The TS engine + rxjs lowering (DECIDED 2026-07-23)
 86:## TS SQLite bindings are FROZEN (owner ruling 2026-07-23 PM)
-96:## Rel retention forms: rel(0) / rel(1) / rel (owner ruling 2026-07-23 PM)
-114:## Tick column shape: (b) current + delta log (owner ruling 2026-07-24)
-127:## Surface rulings, fork session 2026-07-24 (forked-for-sql-pipeline-syntax)
-162:## How to re-find any past decision (the commands that work)
-165:# raw Claude Code transcripts (the real conversation, ranked by hit count):
-168:# then pull phrases without dumping the 500MB file:
-171:# session summaries + design decisions:
-174:# decision docs live in plans/ and v6/plans/ (dated YYYY-MM-DD-topic.md)
+97:## Rel retention forms: rel(0) / rel(1) / rel (owner ruling 2026-07-23 PM)
+115:## Tick column shape: (b) current + delta log (owner ruling 2026-07-24)
+128:## Surface rulings, fork session 2026-07-24 (forked-for-sql-pipeline-syntax)
+163:## How to re-find any past decision (the commands that work)
+166:# raw Claude Code transcripts (the real conversation, ranked by hit count):
+169:# then pull phrases without dumping the 500MB file:
+172:# session summaries + design decisions:
+175:# decision docs live in plans/ and v6/plans/ (dated YYYY-MM-DD-topic.md)
 ```
 
 ### MAP.md

@@ -90,8 +90,9 @@ paths, no leak-chasing, no upstream filing. The TS side is the prototype lab; th
 SQLite data plane returns to Rust at the json-rx generation point (rest-epic plan
 E9). The measured libsql native RSS creep (~0.3-0.4 MiB per 100 execute calls,
 better-sqlite3 flat on the identical workload; receipt in the E1 stress gun,
-js/src/labs/stress.ts header) is ACCEPTED lab noise; stress gates are set above
-it. Agents: do not "fix" this.
+`js/src/labs/stress.ts` header — deleted 2026-07-28 per the labs-die-on-landing
+protocol, `git log --follow` it if needed) is ACCEPTED lab noise; stress gates
+are set above it. Agents: do not "fix" this.
 
 ## Rel retention forms: rel(0) / rel(1) / rel (owner ruling 2026-07-23 PM)
 

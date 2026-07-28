@@ -8,8 +8,7 @@
   "scripts": {
     "typecheck": "tsgo --noEmit",
     "tsc": "tsgo --noEmit",
-    "test": "node --test --experimental-transform-types",
-    "stress": "node --experimental-transform-types src/labs/stress.ts"
+    "test": "node --test --experimental-transform-types"
   },
   "dependencies": {
     "@libsql/client": "^0.17.4",
