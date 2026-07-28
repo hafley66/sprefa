@@ -136,9 +136,51 @@ ruling(n1_statement_budget, flat_per_tick_statement_count, user,
 % arc grades both ways and picks one. Wanting a fill to outlive your
 % scope is not a fill policy, it is DEMAND FROM A LONGER-LIVED SCOPE
 % (the cache rule demands the fetch; the UI joins the cache rel).
-% STATUS: PROVISIONAL, not user-final. Immediately after the abort take the
-% user wavered ("could be sold on it because it could indicate something").
-% Both takes stay recorded above; neither is ruled. Do not build on either
-% until the anti-bias pass and the switch_flow lab land.
-ruling(stale_fill_policy, no_orphan_fills_abort_on_teardown, provisional,
-       'user 2026-07-27 PM: abort take, then wavered; awaiting anti-bias pass').
+% RESOLVED 2026-07-27 late PM by the salt ruling below: under
+% content-addressed salts a fill is never stale, it is a cache update
+% addressed to (identity, witness), valid for every scope that ever
+% demands that identity (redteam-stale-fill B4: all three fill readings
+% converge to the same store under content salts). No fill policy,
+% no orphan rel, no per-instance identity, no fill tick-item.
+ruling(stale_fill_policy, not_applicable_under_content_salts, user,
+       'user 2026-07-27 late PM grunt 1; plans/2026-07-27-redteam-stale-fill.md decision shape Q1').
+
+% Salt minting: CONTENT-ADDRESSED, always. The salt is witness data
+% (content hash, clock bucket), never a subscription id. Two scopes
+% demanding the same (identity, witness) share ONE in-flight effect and
+% one cache row; teardown safety comes free from IVM support refcounting
+% (sub-forest finding). Per-instance salts measured 12x world calls on
+% the gh-cache retick probe. Freshness-on-purpose is spelled as an
+% explicit extra salt column (nonce/bucket), data not policy.
+ruling(salt_minting, content_addressed, user,
+       'user 2026-07-27 late PM: "one hunt"; matches shipped TS effect_cache digests + v5 two-salts law').
+
+% Abort on demand-support-zero: YES, as BEST-EFFORT world-cost machinery,
+% never a semantic guarantee. User-stated invariant: "no one stop arrow,
+% no arrow stop exist, is lie" -- a cancelled effect MAY still have
+% spent/landed; correctness never depends on cancellation having worked
+% (store semantics already do not: fills are cache updates per the salt
+% ruling). The invariant carries a painted warning at the abort site and
+% a debug/trace line on every abort attempt+outcome. Lowering owed:
+% AbortSignal through HostDef.run + cancel-handle map + pending cache-row
+% delete on abort (none exist today, 1_hosts.ts:387 filters inserts only).
+ruling(effect_abort, best_effort_cancel_on_support_zero, user,
+       'user 2026-07-27 late PM grunt 2: "rope arrow" + warn-paint invariant').
+
+% Subscription kernel: MINIMAL. Zero stored semantic rels, zero new tick
+% phases. switchMap = keyed replace on an ordinary program rel; flattening
+% policy = the scope row primary key shape ([1]=switch, [1,2]=merge,
+% [1]+guard=exhaust); concat queue, scope_done, demanded/2 are program
+% rules; teardown = ordinary IVM retraction (counting kill measured FLAT,
+% 21 statements at cone depth 1..256). Two OBLIGATIONS ride the ruling:
+%   1. static scope-coverage check -- every rel derived under a scope
+%      carries the scope key, refused otherwise (answers redteam A2b's
+%      zombie-scope break; decidable, mode-lattice column-flow machinery);
+%   2. ghost forest -- the scope tree derivable as a diagnostic view on
+%      demand, never stored semantics (answers redteam A2 forensics).
+% Filed separately, NOT part of this ruling: recursive rels inside scope
+% cones force DRed at f(depth) statements in EVERY kernel design
+% (redteam A1); that is a lowering/scheduler hazard against
+% n1_statement_budget, owner unassigned.
+ruling(subscription_kernel, minimal_with_coverage_check_and_ghost_view, user,
+       'user 2026-07-27 late PM grunt 3; plans/2026-07-27-redteam-minimal-kernel.md verdicts').

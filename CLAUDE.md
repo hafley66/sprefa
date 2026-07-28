@@ -142,34 +142,29 @@ descriptive-name rename.)
   identity (= the Key/Q8 ruling) and digest-vs-value for structured blob columns
   (the content_hash pattern).
 
-### v6 awaiting user rulings (refreshed 2026-07-27 late PM with switch_flow evidence;
-full text: plans/2026-07-27-switch-flow.md ambiguities, plans/2026-07-27-sub-forest.md)
-- **FOREST MODEL vs MINIMAL KERNEL** (switch_flow ambiguity 1, blocks most others):
-  the lab's Q6 headline is that the minimal stored set is ZERO engine rels and zero
-  new tick phases — switchMap IS keyed replace on an ordinary program rel, the
-  flattening policy IS the scope row's primary key shape ([1]=switch, [1,2]=merge,
-  [1]+guard=exhaust), scope_done is an ordinary rule, concat's queue is a program rel
-  (and derived concat dequeues in ONE tick, beating the stored forest's two). Cost:
-  1 line becomes 3-5 per switch site; one static law (self-completion may not level-
-  rule over rows produced under its own scope); teardown-cascade cost UNMEASURED vs
-  range-DELETE (ambiguity 9, wants a lowering-tier benchmark before committing).
-- **stale-fill trichotomy** (switch_flow graded all three): orphan-as-a-row needs
-  ONE FEWER primitive than drop and collapses the fill tick-item into +Row; abort and
-  drop are observationally identical in the store; drop is the only reading that ADDS
-  a primitive (content-addressed demand cannot detect a stale fill). rulings.pl row
-  stays provisional until the user picks with this evidence in hand.
-- **sub-id/salt minting**: entangled with the above — per-instance identity exists
-  ONLY if drop is ruled. Options from 2026-07-27 PM stand (per-scope vs content-
-  addressed vs content-addressed + explicit freshness column; TS runtime already
-  ships content-addressed).
-- **switch on a multi-key register** (switch_flow ambiguity 6): one parent scope is
-  one flattening slot, so switch on a multi-key register silently serializes keys;
-  merge + per-key scope_done is the correct spelling; wants a static check, owner
+### v6 rulings RESOLVED 2026-07-27 late PM (three grunts; rulings.pl is the record)
+- **salt_minting = content_addressed** ("one hunt"): shared in-flight effects, IVM
+  support refcounting for free, freshness = explicit extra salt column. Consequence:
+  **stale_fill_policy = not_applicable** — under content salts a fill is a cache
+  update, never stale; no orphan rel, no fill tick-item, no per-instance identity.
+- **effect_abort = best_effort_cancel_on_support_zero** ("rope arrow" + the
+  invariant: "no arrow stop exist, is lie" — cancellation is cost optimization,
+  never semantics; warn-paint at the abort site + debug line per attempt). Lowering
+  owed: AbortSignal through HostDef.run + cancel map + pending-row delete (ARCH task
+  effect_abort).
+- **subscription_kernel = minimal_with_coverage_check_and_ghost_view**: zero stored
+  rels, zero new phases; obligations = scope-coverage static check (ARCH task
+  scope_cover_check, answers the zombie-scope break) + ghost forest diagnostic view
+  (ARCH task ghost_forest_view). Shared DRed-depth hazard (recursive rels in scope
+  cones = f(depth) statements vs n1_statement_budget) filed separately, owner
   unassigned.
-- **tabling verdict recorded** (plans/2026-07-27-tabling-verdict.md): SHIFTS
-  SEMANTICS — 97/97 corpus + 3/3 retraction stress byte-identical, but tabled \+
-  silently resolves non-stratifiable programs the engine correctly refuses
-  (not_stratified guard). Hand-rolled fixpoint stays; not a ruling, a closed question.
+
+### v6 still awaiting user word (small, none blocking the absorption arc)
+- **Q8 residual**: confirm left-of-arrow = demand key on effect rels, `Key()` never
+  appears there (the shipped TS reading; extraction lab's preference).
+- **filesize rail + lazy-rel-tier + dom-match rewrite** (v5 side, unchanged).
+- Tabling question CLOSED (plans/2026-07-27-tabling-verdict.md): SHIFTS SEMANTICS,
+  hand-rolled fixpoint stays (the not_stratified guard IS semantics).
 - **extraction ambiguities** A12 (from-world = nullary `->`?), A1 (glob residency),
   A4 (fence escape), A14 (comment_span bind). plans/2026-07-27-extraction-spellings.md.
 - **Key(Type) vs `->`**: labs split three ways; present both files' arguments, no fiat.
