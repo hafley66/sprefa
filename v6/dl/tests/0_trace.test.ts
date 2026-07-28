@@ -137,7 +137,16 @@ test("on: effectDone/ingestDone fold into the same tick's line with the exact fi
   try {
     const tick = 42;
     PerfTrace.effectDone(tick, "sg", 12345, 3.5, "done");
-    PerfTrace.ingestDone(tick, "src/foo.ts", 1.25, 7, 2);
+    PerfTrace.ingestDone(tick, {
+      path: "src/foo.ts",
+      read_ms: 0.5,
+      extract_wall_ms: 1.25,
+      fact_ms: 0.75,
+      diff_ms: 0.4,
+      commit_ms: 0.3,
+      fact_lines: 7,
+      diff_size: 2,
+    });
     PerfTrace.tickSettled(tick);
 
     await waitOneMacrotask();
@@ -148,7 +157,16 @@ test("on: effectDone/ingestDone fold into the same tick's line with the exact fi
 
     assert.equal(line.stmt_count, 0); // no sqlTraceFor calls this test
     assert.deepEqual(line.effects, [{ host: "sg", effect_id: 12345, ms: 3.5, status: "done" }]);
-    assert.deepEqual(line.ingest, { path: "src/foo.ts", extract_ms: 1.25, fact_lines: 7, diff_size: 2 });
+    assert.deepEqual(line.ingest, {
+      path: "src/foo.ts",
+      read_ms: 0.5,
+      extract_wall_ms: 1.25,
+      fact_ms: 0.75,
+      diff_ms: 0.4,
+      commit_ms: 0.3,
+      fact_lines: 7,
+      diff_size: 2,
+    });
   } finally {
     cleanupLogFile(logPath);
   }

@@ -167,11 +167,25 @@ function contentHashOf(buffer: Buffer): string {
   return crypto.createHash("sha256").update(buffer).digest("hex");
 }
 
-export function toFactLines(records: readonly ExtractRecord[], filePath: string): readonly FactLine[] {
+/** Sub-span timings for one toFactLines call, read by ingestFile's perf trace (see
+ *  PerfIngestEntry in 0_types.ts). `readMs` is the file-read + hash sub-portion of
+ *  `factMs` (nested, not disjoint: `factMs >= readMs` always). toFactLines below is a
+ *  thin wrapper over this so its own public signature/behavior never moves — same one
+ *  read, same output, just measured. */
+interface FactLinesTimed {
+  readonly factLines: readonly FactLine[];
+  readonly readMs: number;
+  readonly factMs: number;
+}
+
+function toFactLinesTimed(records: readonly ExtractRecord[], filePath: string): FactLinesTimed {
+  const factStartedAt = performance.now();
   const absPath = path.resolve(DL_ROOT, filePath);
   const relPath = rootRelativePath(absPath);
+  const readStartedAt = performance.now();
   const buffer = fs.readFileSync(absPath);
   const contentHash = contentHashOf(buffer);
+  const readMs = performance.now() - readStartedAt;
   const lineStarts = buildLineStarts(buffer);
   const offsets = new Set<number>();
   const recordLines: FactLine[] = [];
@@ -221,7 +235,12 @@ export function toFactLines(records: readonly ExtractRecord[], filePath: string)
       return relLine("span_line", [relPath, offset, line, col]);
     });
 
-  return [relLine("file", [relPath, contentHash]), ...recordLines, ...spanLineLines];
+  const factLines = [relLine("file", [relPath, contentHash]), ...recordLines, ...spanLineLines];
+  return { factLines, readMs, factMs: performance.now() - factStartedAt };
+}
+
+export function toFactLines(records: readonly ExtractRecord[], filePath: string): readonly FactLine[] {
+  return toFactLinesTimed(records, filePath).factLines;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -269,22 +288,30 @@ export async function ingestFile(rt: IDlRuntime, filePath: string): Promise<Tick
   const absPath = path.resolve(DL_ROOT, filePath);
   const relPath = rootRelativePath(absPath);
 
-  // Perf trace (0_trace.ts, seam 3): "extract wall" per the header, deliberately
-  // scoped to extractFile + toFactLines only, NOT the commit below.
-  const extractStartedAt = performance.now();
+  // Perf trace (0_trace.ts, seam 3): every sub-span below is a plain performance.now()
+  // delta around an existing call, per PerfIngestEntry's field docs (0_types.ts).
   let factLineCount = 0;
+  let readMs = 0;
+  let extractWallMs = 0;
+  let factMs = 0;
 
   if (fileExistsOnDisk(absPath)) {
+    const extractStartedAt = performance.now();
     const records: ExtractRecord[] = [];
     for await (const record of extractFile(absPath)) records.push(record);
-    const factLines = toFactLines(records, absPath);
-    factLineCount = factLines.length;
-    newRowsByRel = groupFactLinesByRel(factLines);
+    extractWallMs = performance.now() - extractStartedAt;
+
+    const timed = toFactLinesTimed(records, absPath);
+    factLineCount = timed.factLines.length;
+    readMs = timed.readMs;
+    factMs = timed.factMs;
+    newRowsByRel = groupFactLinesByRel(timed.factLines);
   }
   // else: DELETE-FILE case (task 3.3) — newRowsByRel stays empty, so every current row
   // scoped to this path retracts below (empty newSet, non-empty oldSet -> full retract).
-  const extractMs = performance.now() - extractStartedAt;
+  // read_ms/extract_wall_ms/fact_ms all stay 0: nothing was read or extracted.
 
+  const diffStartedAt = performance.now();
   const insert = new Map<string, readonly Row[]>();
   const retract = new Map<string, readonly Row[]>();
   let diffSize = 0;
@@ -299,12 +326,24 @@ export async function ingestFile(rt: IDlRuntime, filePath: string): Promise<Tick
     if (toRetract.length > 0) retract.set(relName, toRetract);
     diffSize += toInsert.length + toRetract.length;
   }
+  const diffMs = performance.now() - diffStartedAt;
 
+  const commitStartedAt = performance.now();
   const report = await rt.commit({ insert, retract });
+  const commitMs = performance.now() - commitStartedAt;
   // No further `await` between commit() resolving and this publish, per 0_trace.ts's
   // FLUSH TIMING note -- see 1_hosts.ts's runEffectOnce for the same rule applied to
   // the effect seam.
-  PerfTrace.ingestDone(report.tick, relPath, extractMs, factLineCount, diffSize);
+  PerfTrace.ingestDone(report.tick, {
+    path: relPath,
+    read_ms: readMs,
+    extract_wall_ms: extractWallMs,
+    fact_ms: factMs,
+    diff_ms: diffMs,
+    commit_ms: commitMs,
+    fact_lines: factLineCount,
+    diff_size: diffSize,
+  });
   return report;
 }
 

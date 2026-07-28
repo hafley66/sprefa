@@ -45,10 +45,11 @@
  *   they are tagged with the DEMAND tick (`pending.tick`) instead — a real asymmetry
  *   in the underlying system, not a shortcut taken here.
  *
- *   sprefa:ingest — one event per file's EXTRACT phase only (4_ingest.ts,
- *   ingestFile): extractFile + toFactLines, deliberately NOT the commit that
- *   follows (the header's "extract wall" wording, not "ingestFile wall"). Tagged
- *   with the commit's own `TickReport.tick`, known only once `rt.commit()` resolves.
+ *   sprefa:ingest — one event per file, now split into every sub-span `ingestFile`
+ *   (4_ingest.ts) measures (read_ms/extract_wall_ms/fact_ms/diff_ms/commit_ms — see
+ *   PerfIngestEntry in 0_types.ts for what each covers; this is the attribution work
+ *   for the unexplained-3s-per-60-files perf hunt). Tagged with the commit's own
+ *   `TickReport.tick`, known only once `rt.commit()` resolves.
  *
  * AGGREGATION: exactly one subscriber per channel, installed only when DL_PERF_LOG
  * is set (`installFromEnv`, called once at import time for the real app; tests call
@@ -116,12 +117,8 @@ interface EffectEvent {
   readonly status: "done" | "cache_hit" | "error";
 }
 
-interface IngestEvent {
+interface IngestEvent extends PerfIngestEntry {
   readonly tick: number;
-  readonly path: string;
-  readonly extractMs: number;
-  readonly factLines: number;
-  readonly diffSize: number;
 }
 
 function round2(value: number): number {
@@ -225,9 +222,13 @@ function onIngestMessage(message: unknown): void {
   // would need this to become an array, matching `effects`.
   bufferFor(event.tick).ingest = {
     path: event.path,
-    extract_ms: round2(event.extractMs),
-    fact_lines: event.factLines,
-    diff_size: event.diffSize,
+    read_ms: round2(event.read_ms),
+    extract_wall_ms: round2(event.extract_wall_ms),
+    fact_ms: round2(event.fact_ms),
+    diff_ms: round2(event.diff_ms),
+    commit_ms: round2(event.commit_ms),
+    fact_lines: event.fact_lines,
+    diff_size: event.diff_size,
   };
 }
 
@@ -248,10 +249,10 @@ function effectDone(
   effectChannel.publish({ tick, host, effectId, ms, status } satisfies EffectEvent);
 }
 
-function ingestDone(tick: number, path: string, extractMs: number, factLines: number, diffSize: number): void {
+function ingestDone(tick: number, entry: PerfIngestEntry): void {
   if (!ingestChannel.hasSubscribers) return;
   noteTickTouched(tick, performance.now());
-  ingestChannel.publish({ tick, path, extractMs, factLines, diffSize } satisfies IngestEvent);
+  ingestChannel.publish({ tick, ...entry } satisfies IngestEvent);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
