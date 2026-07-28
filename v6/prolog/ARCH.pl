@@ -496,7 +496,7 @@ task(tsv2_pipeline,       done,    [emit_ts_direct, desugar_machinery]). % compi
 task(js_conformance_leg,  done,    [tsv2_pipeline]).       % LANDED as the phase C sweep: 109 fixtures graded by tick-log byte diff vs ticklog.pl oracle; compile/SCOREBOARD.md 9 identical / 8 wrong / 92 unsupported at sweep time; the marble-oracle idea made real
 task(tsv2_typed_columns,  in_flight, [tsv2_pipeline]).     % C2 agent, ruling 2026-07-28: int decls -> INTEGER storage, compounds stay inline-flat (nested/reference model BANKED as future header); flips the 5 typing WRONGs
 task(tsv2_unmarked_trigger, in_flight, [tsv2_pipeline]).   % C2 agent, ruling 2026-07-28: any-body-atom occurrence model (NOT whole-world), only() = opt-in restriction; unblocks up to 48 fixtures
-task(clock_bind,          in_flight, []).                  % binds agent, ruling clock_residency = world_fed_bind_not_construct: IBindDef registry (input twin of HostDef) + clock_period rows -> interval per period in the cold app graph; dissolves ghcacher F2 at zero construct cost
+task(clock_bind,          done,    []).                    % LANDED 2026-07-28 (merge 378a39cf): BindDef/BindRunner input twin of HostDef in 1_binds.ts, clock_period rows -> interval per period, bucket = floor(epoch/period), teardown rides program-swap switchMap; dl 90/90, endurance PASS. Known limits in 1_binds.ts header: config read once at subscribe (mid-run clock_period row needs reload); no input-side dedupe cache (wall-clock cadence has no witness -- real asymmetry vs effect_cache)
 task(sub_graph_disk,      unbuilt, [emit_ts_direct]).
 task(count_ivm_port,      unbuilt, [kernel_sql_lowering]).
 task(cost_model,          unbuilt, [pushdown_optimizer]). % perf rows feed plan choice

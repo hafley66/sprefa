@@ -145,7 +145,16 @@ refuse instead). Open: retention keep(count) not lowered AND invisible to
 tick-log-only grading (needs final-state in the grade); 4 empty-schedule
 fixtures pass vacuously. MORNING DESIGN CALLS: column typing (int columns
 in storage vs TEXT-only), unmarked-trigger semantics, final-state grading
-leg. Phase D (.dl DCG + hosts) unstarted.
+leg. PHASE D PARSER IN FLIGHT (2026-07-28, sonnet worktree, contract
+plans/2026-07-28-tsv2-phase-d-parser-header.md): parse_dl.pl DCG +
+print_dl.pl + dl_view/ fixture renderings + SYNTAX.md; grade = round-trip
+variant over all fixtures + real-file parse of ghcacher.dl/conformance.dl.
+USER RULING riding it: langium was ALWAYS a stopgap — the prolog DCG is
+the CANONICAL parser after merge; dl.langium demoted to spelling
+reference (relayed to the agent mid-flight). Hosts half of D still
+queued. ARCH.pl made current same morning (a6c1225a: tsv2 algorithm rows,
+js_conformance_leg flipped done via the sweep, in-flight task rows;
+go 7/7, atlas re-emitted).
 
 **v5 BACKGROUND OPS (overnight 2026-07-27, user asleep)**: daemon swapped to
 current binary (~/.cargo/bin/dl restored from target/release, was missing —
@@ -320,9 +329,19 @@ language finding, not a reason to special-case the spine.
 - **clock_residency = world_fed_bind_not_construct** ("clock bind yes"):
   cadence enters as ordinary bind rows; SWR = rules over latest state joined
   with the clock rel; F2 gap dissolves at zero construct cost.
-  Implementation NOT yet dispatched: needs the one-line rx-shape check
-  (standing plan item 4) — proposed shape: one rx interval per declared
-  clock bind, merged into serveDl's app graph beside effects$.
+  LANDED 2026-07-28 (merge 378a39cf, sonnet agent): `1_binds.ts`
+  BindDef/BindRunner = input twin of HostDef; activation by EDB rel-name
+  match; commits$ merged beside effects$ in runProgram$ so program-swap
+  switchMap kills bind timers; clock bind reads clock_period rows -> one
+  interval per distinct period, bucket = floor(epoch_secs/period)
+  (restart-stable); sprefa:bind tracing channel. Coordinator re-verified:
+  typecheck clean, dl 90/90 (+4), ratchet 1, endurance PASS. Known limits
+  (1_binds.ts header): clock_period config read once at subscribe (mid-run
+  row needs reload to spin a new interval); no input-side dedupe cache
+  (cadence has no witness — real asymmetry vs effect_cache). Agent side
+  finding: bare fact `clock_period(2).` compiles to an IDB rule over a
+  minted __lit_0 seed, not EDB. Follow-up open: ghcacher.dl gains real SWR
+  via a clock_period row.
 - **MERGED TO MAIN**: main fast-forwarded to the cleanup tip (aed4c155 ->
   9f8b6edc, 92 commits).
 
