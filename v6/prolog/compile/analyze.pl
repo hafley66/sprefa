@@ -23,7 +23,10 @@
             body_ref_uses/2, rel_columns/4, rel_columns/5,
             rel_column_types/5, rel_column_types/7, snake_name/2,
             check_supported_subset/1, edge_trigger_shape/2,
-            conjunction_goals/2, check_edge_head_column_types/2 ]).
+            conjunction_goals/2, check_edge_head_column_types/2,
+            aggregate_head_template/2, rule_is_aggregate/1,
+            body_guard_goals/2, guard_goal/1, bind_goal/3,
+            program_column_types/7 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -120,9 +123,33 @@ body_ref_uses_list([Body | Rest], Uses) :-
 
 atom_ref_args(Atom, Ref, Args) :- rel_ref(Atom, Ref), Atom =.. [_ | Args].
 
-comparison_goal(Goal) :-
-    body_surface_for_term(Goal, _, guard, no_refs,
-                          infix(refuse(comparison)), refused).
+% ═══ guard / bind goal classification (EXPRESSION LIFT) ═════════════════════
+% Both keyed off the registry axis, never a local functor list: `guard` is
+% the comparison family, `bind` is := / is. A goal in either family
+% contributes zero rel uses (body_ref_uses/2's no_refs role above) and is
+% compiled by lower.pl into a WHERE condition or a SELECT-expression binding.
+
+guard_goal(Goal) :-
+    body_surface_for_term(Goal, _, guard, no_refs, infix(_), _).
+
+bind_goal(Goal, Variable, Expr) :-
+    body_surface_for_term(Goal, _, bind, no_refs, infix(_), _),
+    arg(1, Goal, Variable),
+    arg(2, Goal, Expr).
+
+% Every guard/bind goal a rule body reaches, LEFT TO RIGHT (engine.pl
+% solve/2 resolves a conjunction left to right, so a bind must be able to
+% read a variable an earlier bind introduced -- lower.pl folds the same
+% order). not/1 is NOT descended into: a comparison under negation is
+% refused by name in check_level_rule_shape/1 below, since compile_negative_
+% uses/4 emits a bare NOT EXISTS over rel atoms and would silently drop the
+% condition.
+body_guard_goals(Body, Goals) :-
+    conjunction_goals(Body, AllGoals),
+    include(guard_or_bind_goal, AllGoals, Goals).
+
+guard_or_bind_goal(Goal) :- guard_goal(Goal), !.
+guard_or_bind_goal(Goal) :- bind_goal(Goal, _, _).
 
 % ═══ program-wide ref inventory ═════════════════════════════════════════════
 % declared_refs/2: every kind(Ref, _) declaration, regardless of whether any
@@ -299,6 +326,233 @@ column_type_at(Rules, Initial, Schedule, Ref, Position, Type) :-
     ;  Type = text
     ).
 
+% ═══ program-wide column typing (EXPRESSION + AGGREGATE LIFT) ══════════════
+% PHASE C2 RULING 1 types each column from ITS OWN literal witnesses alone,
+% which is exactly right while every value in a column arrives as a literal
+% somewhere. An expression column does not: union_size/3's third column is
+% only ever written by the head expression `LeftSize + RightSize - Shared`
+% and only ever read into jaccard's body variable `Union`, so it has ZERO
+% literal witnesses and falls to the "no witness -> text" default while the
+% value crossing it is the integer 12. Stored TEXT, the tick-log and
+% final-state encoders print "12" where the oracle prints 12, and `Union > 0`
+% compares TEXT affinity against an integer literal. That is fail-first check
+% (a), the TEXT-collapse class, and this pass is the fix.
+%
+% One fixpoint over LEVEL rule heads only (edge heads keep the literal-
+% witness-only rule this arc did not touch, so check_edge_head_column_types/2
+% keeps refusing the same two fixtures):
+%   1. seed every column from its literal witnesses, keeping "no witness"
+%      DISTINCT from "text witness" (contribution `none` vs `text`);
+%   2. for each level rule, build a variable -> type environment from its
+%      positive body atoms (using the CURRENT type map) plus its left-to-
+%      right binds, then type each head argument expression;
+%   3. a column's type is `text` if ANY contributor says text, else `int` if
+%      any says int, else `none`;
+%   4. iterate until nothing moves (types flow producer -> consumer, e.g.
+%      union_size col3 -> jaccard's Union -> jaccard col3), then `none`
+%      becomes `text`, the unchanged default.
+% A DECLARED col_type/3 always wins and is never revised, so the declaration
+% stays the authority the wave-2 spelling ruling made it.
+program_column_types(Decls, Rules, Initial, Schedule, Bindings, Refs, RefTypes) :-
+    findall(Ref-Columns,
+            ( member(Ref, Refs), rel_columns(Decls, Rules, Bindings, Ref, Columns) ),
+            RefColumns),
+    findall(Ref-Seeds,
+            ( member(Ref, Refs),
+              memberchk(Ref-Columns, RefColumns),
+              seed_column_contributions(Decls, Rules, Initial, Schedule, Ref,
+                                        Columns, Seeds) ),
+            SeedMap),
+    include(rule_is_level, Rules, LevelRules),
+    column_type_fixpoint(LevelRules, RefColumns, SeedMap, SeedMap, Settled),
+    findall(Ref-Types,
+            ( member(Ref-Contributions, Settled),
+              maplist(contribution_to_type, Contributions, Types) ),
+            RefTypes).
+
+contribution_to_type(frozen(Type), Type) :- !.
+contribution_to_type(open(none), text) :- !.
+contribution_to_type(open(Type), Type).
+
+raw_contribution(frozen(Type), Type) :- !.
+raw_contribution(open(Type), Type).
+
+% frozen(Type) = a declared col_type/3, the authority no rule contribution
+% may revise (the wave-2 spelling ruling). open(Contribution) = inferred,
+% still widenable.
+seed_column_contributions(Decls, Rules, Initial, Schedule, Ref, Columns, Seeds) :-
+    Ref = _Name/Arity,
+    numlist(1, Arity, Positions),
+    maplist(seed_column_contribution(Decls, Rules, Initial, Schedule, Ref, Columns),
+            Positions, Seeds).
+
+seed_column_contribution(Decls, Rules, Initial, Schedule, Ref, Columns, Position, Seed) :-
+    nth1(Position, Columns, Column),
+    ( memberchk(col_type(Ref, Column, _), Decls)
+    -> column_type_at_decl(Decls, Rules, Initial, Schedule, Ref, Columns,
+                           Position, DeclaredType),
+       Seed = frozen(DeclaredType)
+    ;  findall(Witness,
+               ( column_source_args(Rules, Initial, Schedule, Ref, Args),
+                 nth1(Position, Args, Witness),
+                 atomic(Witness)
+               ), AtomicWitnesses),
+       ( AtomicWitnesses == []
+       -> Seed = open(none)
+       ;  forall(member(Witness, AtomicWitnesses), integer(Witness))
+       -> Seed = open(int)
+       ;  Seed = open(text)
+       )
+    ).
+
+% TypeMap carries the RAW contribution per position (int | text | none), NOT
+% the resolved storage type. Resolving `none` to its TEXT default before the
+% fixpoint settles is wrong and was measured wrong: a rel with no literal
+% witness anywhere (waiver_block_comment/2, present in timeless_rail's rules
+% but with zero Initial rows in most of its fixtures) would enter the
+% environment as `text`, text dominates the merge, and the genuinely-integer
+% column it feeds (eprintln_waiver_line/2's line number, which a SIBLING
+% clause types int from a real witness) collapsed to text -- taking all nine
+% timeless_rail fixtures out with comparison_operand_not_int. `none` means
+% "contributes nothing" all the way to the end; only contribution_to_type/2,
+% after the fixpoint, turns a still-unknown column into TEXT.
+column_type_fixpoint(LevelRules, RefColumns, SeedMap, Current, Settled) :-
+    findall(Ref-TypeList,
+            ( member(Ref-Contributions, Current),
+              maplist(raw_contribution, Contributions, TypeList) ),
+            TypeMap),
+    findall(Ref-Merged,
+            ( member(Ref-Seeds, SeedMap),
+              rule_head_contributions(LevelRules, RefColumns, TypeMap, Ref,
+                                      RuleContributions),
+              merge_contribution_lists(Seeds, RuleContributions, Merged) ),
+            Next),
+    ( Next == Current
+    -> Settled = Current
+    ;  column_type_fixpoint(LevelRules, RefColumns, SeedMap, Next, Settled)
+    ).
+
+rule_head_contributions(LevelRules, RefColumns, TypeMap, Ref, Contributions) :-
+    findall(HeadTypes,
+            ( member(Rule, LevelRules),
+              rule_head_ref(Rule, Ref),
+              rule_head_contribution(RefColumns, TypeMap, Rule, HeadTypes) ),
+            Contributions).
+
+rule_head_contribution(RefColumns, TypeMap, (Head <- Body), HeadTypes) :-
+    body_type_environment(RefColumns, TypeMap, Body, Environment),
+    Head =.. [_ | Args],
+    maplist(head_arg_contribution(Environment), Args, HeadTypes).
+
+head_arg_contribution(Environment, Arg, Type) :-
+    ( aggregate_arg_contribution(Environment, Arg, AggType)
+    -> Type = AggType
+    ;  expression_type(Arg, Environment, Type)
+    ).
+
+% count is always an integer count; sum/min/max carry their argument's type
+% (min_list/max_list in the oracle only accept numbers, so a non-int there is
+% refused at lowering time, not silently retyped).
+aggregate_arg_contribution(_, Arg, int) :-
+    nonvar(Arg), surface_for_term(Arg, count/1, aggregate, _, _, _), !.
+aggregate_arg_contribution(Environment, Arg, Type) :-
+    nonvar(Arg),
+    surface_for_term(Arg, Kind/1, aggregate, _, _, _),
+    memberchk(Kind, [sum, min, max]), !,
+    arg(1, Arg, Inner),
+    expression_type(Inner, Environment, Type).
+
+% Variable -> type, from the rule's positive body atoms then its binds, in
+% body order. A variable an atom already bound is NOT rebound by a later
+% bind (that is an equality check, not a fresh binding -- same rule
+% lower.pl's guard walk applies).
+body_type_environment(RefColumns, Current, Body, Environment) :-
+    body_ref_uses(Body, Uses),
+    include(use_is_positive, Uses, PositiveUses),
+    foldl(atom_use_bindings(RefColumns, Current), PositiveUses, [], AtomEnvironment),
+    body_guard_goals(Body, GuardGoals),
+    foldl(bind_goal_binding, GuardGoals, AtomEnvironment, Environment).
+
+use_is_positive(use(_, _, pos, _)).
+
+atom_use_bindings(RefColumns, Current, use(Ref, Args, _, _), Environment0, Environment) :-
+    ( memberchk(Ref-Columns, RefColumns), memberchk(Ref-Types, Current)
+    -> length(Columns, Arity),
+       numlist(1, Arity, Positions),
+       foldl(atom_arg_binding(Args, Types), Positions, Environment0, Environment)
+    ;  Environment = Environment0
+    ).
+
+% A variable already bound to `none` (an as-yet-untyped column) is UPGRADED
+% when a later atom in the same body binds it to a real type: `p(X), q(X)`
+% where p's column has no witness yet and q's is int must give X int, not
+% none. Only none is overwritten; a real type stays put, so the FIRST typed
+% binding wins and the environment is order-stable.
+atom_arg_binding(Args, Types, Position, Environment0, Environment) :-
+    ( nth1(Position, Args, Arg), var(Arg), nth1(Position, Types, Type)
+    -> ( environment_lookup(Environment0, Arg, Existing)
+       -> ( Existing == none, Type \== none
+          -> environment_replace(Environment0, Arg, Type, Environment)
+          ;  Environment = Environment0 )
+       ;  Environment = [Arg-Type | Environment0]
+       )
+    ;  Environment = Environment0
+    ).
+
+environment_replace([Variable-Existing | Rest], Target, Type, Out) :-
+    ( Variable == Target
+    -> Out = [Variable-Type | Rest]
+    ;  Out = [Variable-Existing | More], environment_replace(Rest, Target, Type, More)
+    ).
+
+bind_goal_binding(Goal, Environment0, Environment) :-
+    ( bind_goal(Goal, Variable, Expr), var(Variable),
+      \+ environment_lookup(Environment0, Variable, _)
+    -> expression_type(Expr, Environment0, Type),
+       Environment = [Variable-Type | Environment0]
+    ;  Environment = Environment0
+    ).
+
+environment_lookup([Variable-Type | Rest], Target, Found) :-
+    ( Variable == Target -> Found = Type ; environment_lookup(Rest, Target, Found) ).
+
+% expression_type/3 mirrors engine.pl:eval_expr/2's own result kinds:
+% arithmetic is Int-only, concat produces text, a braces/compound value is
+% stored as text, and an unknown variable contributes nothing (`none`).
+expression_type(Expr, Environment, Type) :-
+    var(Expr), !,
+    ( environment_lookup(Environment, Expr, Type) -> true ; Type = none ).
+expression_type(Expr, _, int) :- integer(Expr), !.
+expression_type(Expr, _, text) :- atomic(Expr), !.
+expression_type(concat(_), _, text) :- !.
+expression_type(Expr, Environment, Type) :-
+    arithmetic_expression(Expr, Left, Right), !,
+    expression_type(Left, Environment, LeftType),
+    expression_type(Right, Environment, RightType),
+    ( ( LeftType == text ; RightType == text ) -> Type = text ; Type = int ).
+expression_type(_, _, text).
+
+arithmetic_expression(Expr, Left, Right) :-
+    compound(Expr), Expr =.. [Functor, Left, Right],
+    memberchk(Functor, ['+', '-', '*', '/', mod]).
+
+% Positionwise combine, only where the seed is open/1: text dominates, then
+% int, then none. A frozen(Type) position is returned unchanged.
+merge_contribution_lists(Seeds, RuleContributions, Merged) :-
+    foldl(merge_one_rule_contribution, RuleContributions, Seeds, Merged).
+
+merge_one_rule_contribution(Types, Acc0, Acc) :- maplist(merge_contribution, Types, Acc0, Acc).
+
+merge_contribution(_, frozen(Type), frozen(Type)) :- !.
+merge_contribution(Contribution, open(Existing), open(Merged)) :-
+    merge_type(Contribution, Existing, Merged).
+
+merge_type(text, _, text) :- !.
+merge_type(_, text, text) :- !.
+merge_type(int, _, int) :- !.
+merge_type(_, int, int) :- !.
+merge_type(_, _, none).
+
 % Every place a ground literal for Ref can appear: a rule head/body atom
 % occurrence, an Initial seed row, or one Schedule tick's arrival row.
 column_source_args(Rules, _Initial, _Schedule, Ref, Args) :- ref_occurrence_args(Rules, Ref, Args).
@@ -361,11 +615,16 @@ edge_goal_refusal(Goal, Body, 4, edge_body_needs_now(Body)) :-
 edge_goal_refusal(Goal, Body, 5, edge_body_needs_negation(Body)) :-
     body_surface_for_term(Goal, _, sign, arm(neg),
                           wrapper(body_item, lower), live).
+% Binds and comparisons are LIVE in a level body as of the expression lift,
+% and still refused in an EDGE body: an edge arm projects ONE arrival row
+% through numbered placeholders and joins the other atoms against their
+% current tables (edge_statement_single/5), a shape the guard walk has no
+% seam in yet. Refused by the precise name rather than falling through to the
+% blanket edge_body_shape, so the scoreboard tally stays readable.
 edge_goal_refusal(Goal, Body, 6, edge_body_needs_bind(Body)) :-
-    body_surface_for_term(Goal, _, bind, no_refs, infix(refuse(goal)), refused).
+    bind_goal(Goal, _, _).
 edge_goal_refusal(Goal, Body, 7, edge_body_needs_comparison(Body)) :-
-    body_surface_for_term(Goal, _, guard, no_refs,
-                          infix(refuse(comparison)), refused).
+    guard_goal(Goal).
 edge_goal_refusal(Goal, Body, 8, edge_body_needs_json_destructure(Body)) :-
     body_surface_for_term(Goal, _, guard, no_refs,
                           wrapper(expr_pair, refuse(goal)), refused).
@@ -553,17 +812,75 @@ check_no_edge_head_conflict_risk(Decls, Rules) :-
            throw(unsupported_construct(edge_head_conflict_risk(HeadRef, Shared)))).
 
 check_level_rule_shape((Head <- Body)) :-
-    ( aggregate_head_shape(Head)
-    -> throw(unsupported_construct(aggregate_head(Head)))
-    ; true ),
-    ( head_arithmetic_shape(Head, ArithExpr)
-    -> throw(unsupported_construct(head_arithmetic(Head, ArithExpr)))
+    ( refused_aggregate_head_shape(Head, RefusedAgg)
+    -> throw(unsupported_construct(aggregate_head(RefusedAgg)))
     ; true ),
     ( body_forbidden_goal(Body, Forbidden)
     -> throw(unsupported_construct(level_body_goal(Head, Forbidden)))
+    ; true ),
+    ( negated_guard_goal(Body, NegatedGuard)
+    -> throw(unsupported_construct(negated_guard_goal(Head, NegatedGuard)))
+    ; true ),
+    ( aggregate_head_template(Head, _)
+    -> check_aggregate_rule_shape(Head, Body)
     ; true ).
 
-aggregate_head_shape(Head) :-
+% A comparison or bind nested under not/1. compile_negative_uses/4 renders a
+% negated atom as a bare NOT EXISTS over rel columns and never sees the
+% conjunction's other goals, so a guard inside the negation would be SILENTLY
+% DROPPED (the exact silent-filter-loss class the phase-C sweep found for
+% un-negated comparisons). No corpus fixture writes one; refused by name
+% rather than left to miscompile.
+negated_guard_goal(Body, Goal) :-
+    conjunction_goals(Body, Goals),
+    member(NegatedGoal, Goals),
+    NegatedGoal = not(Inner),
+    body_guard_goals(Inner, InnerGuards),
+    InnerGuards = [Goal | _].
+
+% An aggregate head column whose body reads the head's OWN rel: engine.pl
+% stratifies an aggregate strictly above every rel its body reads
+% (level_eval.pl rule_body_constraint/4, Gap=1 for EVERY body ref of an
+% aggregate head), so a self-reading aggregate is not_stratified there and
+% has no SQL shape here either.
+check_aggregate_rule_shape(Head, Body) :-
+    rel_ref(Head, HeadRef),
+    body_ref_uses(Body, Uses),
+    ( member(use(HeadRef, _, _, _), Uses)
+    -> throw(unsupported_construct(aggregate_head_reads_itself(HeadRef)))
+    ; true ),
+    ( member(use(_, _, pos, _), Uses)
+    -> true
+    ; throw(unsupported_construct(aggregate_head_no_positive_body(HeadRef)))
+    ).
+
+% aggregate_head_template(+Head, -Template): the same classification
+% level_eval.pl:aggregate_head/3 performs, projected off the registry's
+% `aggregate` axis instead of a local functor list. Template is one entry per
+% head argument, plain(Expr) or agg(Kind, Expr); it is an aggregate head only
+% when at least one entry is agg(_, _), matching the oracle exactly.
+aggregate_head_template(Head, Template) :-
+    compound(Head),
+    Head =.. [_ | Args],
+    Args \== [],
+    maplist(classify_head_arg, Args, Template),
+    memberchk(agg(_, _), Template).
+
+classify_head_arg(Arg, agg(json_object, KeyExpr-ValueExpr)) :-
+    nonvar(Arg), Arg = json_object(KeyExpr, ValueExpr), !.
+classify_head_arg(Arg, agg(Kind, Expr)) :-
+    nonvar(Arg),
+    surface_for_term(Arg, Kind/1, aggregate, no_refs, head(_), _), !,
+    arg(1, Arg, Expr).
+classify_head_arg(Arg, plain(Arg)).
+
+rule_is_aggregate((Head <- _)) :- aggregate_head_template(Head, _).
+
+% Only the aggregate kinds whose registry row still says refuse(aggregate)
+% block the rule (json_array/json_object -- see registry.pl for the cons-text
+% encoding crack). count/sum/min/max lower.
+refused_aggregate_head_shape(Head, Arg) :-
+    compound(Head),
     Head =.. [_ | Args],
     member(Arg, Args),
     surface_for_term(Arg, _, aggregate, no_refs,

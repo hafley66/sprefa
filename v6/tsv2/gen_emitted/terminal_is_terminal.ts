@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -102,6 +102,12 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   });
 }
 
+const finalSelect: Record<string, string> = {
+  stream_end: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' THEN json_extract("args", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("args", '$.args')) || ')' ELSE "args" END AS "args", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' THEN json_extract("col2", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col2", '$.args')) || ')' ELSE "col2" END AS "col2" FROM "stream_end"`,
+  stream_item: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' THEN json_extract("args", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("args", '$.args')) || ')' ELSE "args" END AS "args", "col2", CASE WHEN json_valid("col3") AND json_type("col3") = 'object' THEN json_extract("col3", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col3", '$.args')) || ')' ELSE "col3" END AS "col3" FROM "stream_item"`,
+  stream_status: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' THEN json_extract("args", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("args", '$.args')) || ')' ELSE "args" END AS "args", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' THEN json_extract("col2", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col2", '$.args')) || ')' ELSE "col2" END AS "col2" FROM "stream_status"`,
+};
+
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   stream_end: { kind: "log", addSql: `INSERT INTO "stream_end" ("args", "col2") VALUES (?, ?)`, delSql: null },
   stream_item: { kind: "log", addSql: `INSERT INTO "stream_item" ("args", "col2", "col3") VALUES (?, ?, ?)`, delSql: null },
@@ -139,7 +145,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "stream_status", headDeltaTableName: "__delta_stream_status", headColumns: ["args", "col2"], insertSql: `INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT DISTINCT d0."args", 'running' FROM "__frontier_stream_item" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = d0."args") UNION ALL SELECT DISTINCT d0."args", 'done' FROM "__frontier_stream_end" d0 WHERE d0."_phase" >= 0 RETURNING "args", "col2"`, selectSql: `SELECT "args", "col2" FROM "stream_status"`, recomputeSql: `DELETE FROM "stream_status";\nINSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", 'running' FROM "stream_item" b0 WHERE NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = b0."args");\nINSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", 'done' FROM "stream_end" b0`, supportSql: [`DELETE FROM "__support_next_stream_status"`, `INSERT INTO "__support_next_stream_status" ("args", "col2", "__support_count") SELECT "args", "col2", sum("__support_count") FROM (SELECT b0."args" AS "args", 'running' AS "col2", count(*) AS "__support_count" FROM "stream_item" b0 WHERE NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = b0."args") GROUP BY b0."args", 'running' UNION ALL SELECT b0."args" AS "args", 'done' AS "col2", count(*) AS "__support_count" FROM "stream_end" b0 GROUP BY b0."args", 'done') GROUP BY "args", "col2"`, `UPDATE "stream_status" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_stream_status" n WHERE n."args" = h."args" AND n."col2" = h."col2"), 0))`, `DELETE FROM "stream_status" WHERE "__support_count" <= 0 RETURNING "args", "col2"`, `INSERT INTO "stream_status" ("args", "col2", "__support_count") SELECT "args", "col2", n."__support_count" FROM "__support_next_stream_status" n WHERE NOT EXISTS (SELECT 1 FROM "stream_status" h WHERE n."args" = h."args" AND n."col2" = h."col2") RETURNING "args", "col2"`] },
+  { headRel: "stream_status", headDeltaTableName: "__delta_stream_status", headColumns: ["args", "col2"], insertSql: `INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT DISTINCT d0."args", 'running' FROM "__frontier_stream_item" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = d0."args") UNION ALL SELECT DISTINCT d0."args", 'done' FROM "__frontier_stream_end" d0 WHERE d0."_phase" >= 0 RETURNING "args", "col2"`, selectSql: `SELECT "args", "col2" FROM "stream_status"`, recomputeSql: `DELETE FROM "stream_status";\nINSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", 'running' FROM "stream_item" b0 WHERE NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = b0."args");\nINSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", 'done' FROM "stream_end" b0`, supportSql: [`DELETE FROM "__support_next_stream_status"`, `INSERT INTO "__support_next_stream_status" ("args", "col2", "__support_count") SELECT "args", "col2", sum("__support_count") FROM (SELECT b0."args" AS "args", 'running' AS "col2", count(*) AS "__support_count" FROM "stream_item" b0 WHERE NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = b0."args") GROUP BY b0."args", 'running' UNION ALL SELECT b0."args" AS "args", 'done' AS "col2", count(*) AS "__support_count" FROM "stream_end" b0 GROUP BY b0."args", 'done') GROUP BY "args", "col2"`, `UPDATE "stream_status" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_stream_status" n WHERE n."args" = h."args" AND n."col2" = h."col2"), 0))`, `DELETE FROM "stream_status" WHERE "__support_count" <= 0 RETURNING "args", "col2"`, `INSERT INTO "stream_status" ("args", "col2", "__support_count") SELECT "args", "col2", n."__support_count" FROM "__support_next_stream_status" n WHERE NOT EXISTS (SELECT 1 FROM "stream_status" h WHERE n."args" = h."args" AND n."col2" = h."col2") RETURNING "args", "col2"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {
@@ -211,5 +217,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

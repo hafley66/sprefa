@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -136,6 +136,13 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   });
 }
 
+const finalSelect: Record<string, string> = {
+  current_tree: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' THEN json_extract("digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("digest", '$.args')) || ')' ELSE "digest" END AS "digest" FROM "current_tree"`,
+  head: `SELECT "repo_id", "rev_id" FROM "head"`,
+  head_move: `SELECT "repo_id", "rev_id" FROM "head_move"`,
+  tree_file: `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' THEN json_extract("digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("digest", '$.args')) || ')' ELSE "digest" END AS "digest" FROM "tree_file"`,
+};
+
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   head_move: { kind: "log", addSql: `INSERT INTO "head_move" ("repo_id", "rev_id") VALUES (?, ?)`, delSql: null },
   tree_file: { kind: "set", addSql: `INSERT OR IGNORE INTO "tree_file" ("rev_id", "path", "digest") VALUES (?, ?, ?)`, delSql: `DELETE FROM "tree_file" WHERE "rev_id" = ? AND "path" = ? AND "digest" = ?` },
@@ -175,7 +182,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "current_tree", headDeltaTableName: "__delta_current_tree", headColumns: ["path", "digest"], insertSql: `INSERT OR IGNORE INTO "current_tree" ("path", "digest") SELECT DISTINCT b0."path", b0."digest" FROM "__frontier_head" d0, "tree_file" b0 WHERE d0."_phase" >= 0 AND b0."rev_id" = d0."rev_id" UNION ALL SELECT DISTINCT d0."path", d0."digest" FROM "__frontier_tree_file" d0, "head" b0 WHERE d0."_phase" >= 0 AND b0."rev_id" = d0."rev_id" RETURNING "path", "digest"`, selectSql: `SELECT "path", "digest" FROM "current_tree"`, recomputeSql: `DELETE FROM "current_tree";\nINSERT OR IGNORE INTO "current_tree" ("path", "digest") SELECT b1."path", b1."digest" FROM "head" b0, "tree_file" b1 WHERE b1."rev_id" = b0."rev_id"`, supportSql: [`DELETE FROM "__support_next_current_tree"`, `INSERT INTO "__support_next_current_tree" ("path", "digest", "__support_count") SELECT "path", "digest", sum("__support_count") FROM (SELECT b1."path" AS "path", b1."digest" AS "digest", count(*) AS "__support_count" FROM "head" b0, "tree_file" b1 WHERE b1."rev_id" = b0."rev_id" GROUP BY b1."path", b1."digest") GROUP BY "path", "digest"`, `UPDATE "current_tree" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_current_tree" n WHERE n."path" = h."path" AND n."digest" = h."digest"), 0))`, `DELETE FROM "current_tree" WHERE "__support_count" <= 0 RETURNING "path", "digest"`, `INSERT INTO "current_tree" ("path", "digest", "__support_count") SELECT "path", "digest", n."__support_count" FROM "__support_next_current_tree" n WHERE NOT EXISTS (SELECT 1 FROM "current_tree" h WHERE n."path" = h."path" AND n."digest" = h."digest") RETURNING "path", "digest"`] },
+  { headRel: "current_tree", headDeltaTableName: "__delta_current_tree", headColumns: ["path", "digest"], insertSql: `INSERT OR IGNORE INTO "current_tree" ("path", "digest") SELECT DISTINCT b0."path", b0."digest" FROM "__frontier_head" d0, "tree_file" b0 WHERE d0."_phase" >= 0 AND b0."rev_id" = d0."rev_id" UNION ALL SELECT DISTINCT d0."path", d0."digest" FROM "__frontier_tree_file" d0, "head" b0 WHERE d0."_phase" >= 0 AND b0."rev_id" = d0."rev_id" RETURNING "path", "digest"`, selectSql: `SELECT "path", "digest" FROM "current_tree"`, recomputeSql: `DELETE FROM "current_tree";\nINSERT OR IGNORE INTO "current_tree" ("path", "digest") SELECT b1."path", b1."digest" FROM "head" b0, "tree_file" b1 WHERE b1."rev_id" = b0."rev_id"`, supportSql: [`DELETE FROM "__support_next_current_tree"`, `INSERT INTO "__support_next_current_tree" ("path", "digest", "__support_count") SELECT "path", "digest", sum("__support_count") FROM (SELECT b1."path" AS "path", b1."digest" AS "digest", count(*) AS "__support_count" FROM "head" b0, "tree_file" b1 WHERE b1."rev_id" = b0."rev_id" GROUP BY b1."path", b1."digest") GROUP BY "path", "digest"`, `UPDATE "current_tree" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_current_tree" n WHERE n."path" = h."path" AND n."digest" = h."digest"), 0))`, `DELETE FROM "current_tree" WHERE "__support_count" <= 0 RETURNING "path", "digest"`, `INSERT INTO "current_tree" ("path", "digest", "__support_count") SELECT "path", "digest", n."__support_count" FROM "__support_next_current_tree" n WHERE NOT EXISTS (SELECT 1 FROM "current_tree" h WHERE n."path" = h."path" AND n."digest" = h."digest") RETURNING "path", "digest"`], aggregateSql: null },
 ];
 
 const EDGE_HEAD_0_PROJECT_SQL = `SELECT ?1 AS "repo_id", ?2 AS "rev_id"`;
@@ -278,5 +285,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

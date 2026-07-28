@@ -229,6 +229,38 @@ fixture(arithmetic_rejects_non_int_operand_at_runtime,
   [],
   [ throws(arith_on_non_int(not_a_number, 1)) ]).
 
+% ═══ the TEXT-collapse boundary, stated as a positive property ══════════════
+% Q4 P1.2 / P1.8 of plans/2026-07-29-sqlite-udf-graft-verdict.md ("text `1`
+% and numeric `1` remain distinct", "comparison and arithmetic use typed
+% SQLite values, not rendered text"). The corpus had no fixture that quotes a
+% digit string at all (analyze.pl:column_type_at/6's own note), so the
+% distinction was never graded on either side.
+%
+% engine.pl joins body atoms by UNIFICATION (body.pl solve/2's last clause is
+% member(Atom, Visible)), and '1' and 1 are different Prolog terms, so the
+% shared variable can never bind both: no row. A SQL lowering that renders the
+% join as a plain column equality across a TEXT column and an INTEGER one gets
+% the OPPOSITE answer, because SQLite applies affinity conversion to the text
+% operand -- measured, one row where the oracle has none. The compiler refuses
+% that shape by name (lower.pl join_column_types_agree/4); this fixture is the
+% oracle half of the receipt.
+fixture(text_one_and_numeric_one_never_join,
+  prog([ col_type(label/1, value, text), col_type(number/1, value, int) ],
+       [ (both(Value) <- label(Value), number(Value)) ]),
+  [ label('1'), number(1) ],
+  [],
+  [ final(both/1, []) ]).
+
+% The same boundary in comparison position rather than join position. `==` is
+% eval_expr then Prolog ==/2, term identity, so an atom never equals an
+% integer; SQLite's `=` would apply affinity and answer true.
+fixture(text_one_and_numeric_one_are_not_equal,
+  prog([ col_type(label/1, value, text), col_type(number/1, value, int) ],
+       [ (matched(Text, Numeric) <- label(Text), number(Numeric), Text == Numeric) ]),
+  [ label('1'), number(1) ],
+  [],
+  [ final(matched/2, []) ]).
+
 % Wave 2 declaration typing: the compiler has no literal witness for this
 % relation, so the declaration is the source of its INTEGER storage type.
 fixture(typed_int_without_literal_witness,

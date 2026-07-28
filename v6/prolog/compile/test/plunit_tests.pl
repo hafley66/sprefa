@@ -176,7 +176,7 @@ ddl_for_table(Table, Ddl) :-
 test(switch_as_keyed_replace_level_sql) :-
     lowered_for(switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    LevelStatements = [levelstmt(demanded/2, DemandedDelete, [DemandedInsert], _, _), levelstmt(route_view/2, RouteViewDelete, [RouteViewInsert], _, _)],
+    LevelStatements = [levelstmt(demanded/2, DemandedDelete, [DemandedInsert], _, _, none), levelstmt(route_view/2, RouteViewDelete, [RouteViewInsert], _, _, none)],
     DemandedDelete == 'DELETE FROM "demanded"',
     DemandedInsert == 'INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_scope" b0',
     RouteViewDelete == 'DELETE FROM "route_view"',
@@ -198,7 +198,7 @@ test(demand_laziness_incremental_arrival_is_one_batch_statement) :-
 test(demand_laziness_level_sql) :-
     lowered_for(demand_laziness_effect_rows, Lowered),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    LevelStatements = [levelstmt(demanded/2, _, [DemandedInsert], DemandedDeltaInsert, _), levelstmt(effect_call/1, _, [EffectCallInsert], EffectCallDeltaInsert, _)],
+    LevelStatements = [levelstmt(demanded/2, _, [DemandedInsert], DemandedDeltaInsert, _, none), levelstmt(effect_call/1, _, [EffectCallInsert], EffectCallDeltaInsert, _, none)],
     DemandedInsert == 'INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_feed" b0',
     EffectCallInsert == 'INSERT OR IGNORE INTO "effect_call" ("target") SELECT b0."target" FROM "demanded" b0',
     DemandedDeltaInsert ==
@@ -267,7 +267,8 @@ test(acyclic_support_count_statements_are_emitted) :-
     memberchk('CREATE TEMP TABLE "__support_next_effect_call" ("target" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("target")) WITHOUT ROWID', Ddl),
     memberchk(levelstmt(effect_call/1, _, _, _,
                         supportsql(ClearSql, SeedSql, UpdateSql,
-                                   CollectZeroSql, InsertNewSql)),
+                                   CollectZeroSql, InsertNewSql),
+                        none),
               LevelStatements),
     ClearSql == 'DELETE FROM "__support_next_effect_call"',
     once(sub_atom(SeedSql, _, _, _, 'count(*) AS "__support_count"')),
@@ -311,8 +312,43 @@ test(set_delete_arrival_is_one_json_batch_statement) :-
 % lower yet, with a specific term rather than a generic failure -- verify the
 % guard itself fires rather than silently passing through.
 
-test(rejects_aggregate_head, [throws(unsupported_construct(aggregate_head(_)))]) :-
+% EXPRESSION + AGGREGATE LIFT: count/sum/min/max are LOWERED now, so the
+% blanket aggregate refusal is gone and the gate must accept them.
+test(accepts_count_aggregate_head) :-
     Prog = prog([], [ (total(count(X)) <- item(X)) ]),
+    check_supported_subset(Prog).
+
+% json_array/json_object stay refused, and the reason is NOT "not implemented
+% yet": a Prolog list value renders through the shared tick-log encoder
+% (ticklog.pl term_text/2) as right-nested cons text -- [|](4,[|](4,[|](9,[])))
+% -- and json_object as obj([|](-(k,v),[])). Neither is what
+% json_group_array/json_group_object produce, so no ORDER BY pinning makes
+% them byte-identical. Same encoding gap braces_in_head_position already
+% fails on in the final-state leg, which predates this arc.
+test(rejects_json_array_aggregate_head,
+     [throws(unsupported_construct(aggregate_head(_)))]) :-
+    Prog = prog([], [ (bag(json_array(X)) <- item(X)) ]),
+    check_supported_subset(Prog).
+
+test(rejects_json_object_aggregate_head,
+     [throws(unsupported_construct(aggregate_head(_)))]) :-
+    Prog = prog([], [ (doc(json_object(Key, Value)) <- pair(Key, Value)) ]),
+    check_supported_subset(Prog).
+
+% An aggregate whose body reads its own head: engine.pl forces Gap=1 for
+% every body ref of an aggregate head (level_eval.pl rule_body_constraint/4),
+% so the oracle throws not_stratified. Refused by a precise name here.
+test(rejects_self_reading_aggregate_head,
+     [throws(unsupported_construct(aggregate_head_reads_itself(total/1)))]) :-
+    Prog = prog([], [ (total(count(X)) <- total(X)) ]),
+    check_supported_subset(Prog).
+
+% A comparison under not/1 would be silently dropped: compile_negative_uses/4
+% renders a negated atom as a bare NOT EXISTS over rel columns and never sees
+% the conjunction's other goals.
+test(rejects_guard_under_negation,
+     [throws(unsupported_construct(negated_guard_goal(_, _)))]) :-
+    Prog = prog([], [ (flagged(Name) <- item(Name, Size), not((budget(Name, Cap), Size > Cap))) ]),
     check_supported_subset(Prog).
 
 % PHASE C2 RULING 2 renamed this refusal from the blanket edge_body_shape to
@@ -329,6 +365,146 @@ test(rejects_pre_in_level_body, [throws(unsupported_construct(level_body_goal(_,
     check_supported_subset(Prog).
 
 :- end_tests(supported_subset_gate).
+
+:- begin_tests(expression_miscompile_guards).
+
+% ═══ FAIL-FIRST CHECK (a): TEXT-collapse "1" vs 1 ═══════════════════════════
+% Written BEFORE the expression lift, per the arc contract, and red at three
+% distinct stages on the way in:
+%
+%   RED 1 (pre-lift)  : program_plan/2 throws
+%                       unsupported_construct(head_arithmetic(...)) -- the
+%                       phase-C guard that turned this exact miscompile into
+%                       a refusal.
+%   RED 2 (naive lift): the guard is gone and the arithmetic fuses into SQL,
+%                       but union_size/3's third column has NO literal
+%                       witness of its own (its only occurrences are the
+%                       head's `LeftSize + RightSize - Shared` compound and
+%                       jaccard's body variable `Union`), so PHASE C2 RULING
+%                       1's "zero witnesses -> text" default stores the
+%                       computed 12 in a TEXT column. The tick-log/final-state
+%                       encoder then prints "12" where the oracle prints 12,
+%                       AND `Union > 0` compares a TEXT-affinity column
+%                       against an integer literal.
+%   GREEN             : the level-head expression type reaches the column
+%                       (analyze.pl program_column_types/7), union_size col3
+%                       is INTEGER, and 12 crosses the boundary as 12.
+%
+% The type list, not the DDL text, is the assertion: lower.pl:column_def/3 is
+% the single reader of it, so a wrong type here is a wrong CREATE TABLE by
+% construction.
+
+test(head_arithmetic_column_is_int_not_text_collapse) :-
+    expressions_fixture_file(File),
+    once(( read_fixture_term(File, head_expression_evaluates_derived_column, Term, Bindings),
+           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _)) )),
+    memberchk(relplan(union_size/3, _, _, _, UnionTypes), RelPlans),
+    assertion(UnionTypes == [text, text, int]),
+    memberchk(relplan(callee_set_size/2, _, _, _, CalleeTypes), RelPlans),
+    assertion(CalleeTypes == [text, int]).
+
+% Same collapse one hop further out: `Sum := Base + Extra` binds a variable
+% the head then reads. The bind's own type has to reach over_budget/2's second
+% column or the comparison `Sum > 10` runs against TEXT affinity.
+test(bind_result_column_is_int_not_text_collapse) :-
+    expressions_fixture_file(File),
+    once(( read_fixture_term(File, bind_computes_derived_value_then_comparison_filters,
+                             Term, Bindings),
+           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _)) )),
+    memberchk(relplan(over_budget/2, _, _, _, Types), RelPlans),
+    assertion(Types == [text, int]).
+
+% concat/1 is the other direction of the same boundary: an Int piece
+% auto-converts to text inside the interpolation lowering target
+% (engine.pl:eval_expr concat -> atomic_list_concat), so the head column that
+% receives it must stay TEXT even though one of its inputs is an integer
+% column. A naive "any arithmetic-ish expression is int" rule would collapse
+% it the other way.
+test(concat_result_column_stays_text) :-
+    expressions_fixture_file(File),
+    once(( read_fixture_term(File, interpolation_desugars_to_concat, Term, Bindings),
+           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _)) )),
+    memberchk(relplan(message/3, _, _, _, Types), RelPlans),
+    assertion(Types == [text, int, text]).
+
+% ═══ Q4 reconciliation (plans/2026-07-29-sqlite-udf-graft-verdict.md) ═══════
+% The assertions from the sqlite_udf verdict's expression-lift set that bind
+% on THIS arc. The UDF-specific ones (P1.5 NULL behavior, P1.7 registration on
+% every connection, P3.3/P3.4 sprf_sym staging) do not apply: no UDF is
+% grafted here, and LIBSQL_UDF_API is still an unresolved slot in that verdict.
+
+% Q4 P1.1 / P2.1: typed columns carry explicit INTEGER or TEXT affinity, and
+% the __delta_ / __frontier_ / __next_frontier_ TEMP tables repeat the SAME
+% types rather than defaulting to no affinity -- a delta row that lost its
+% affinity would compare differently from the base row it mirrors.
+test(delta_and_frontier_tables_repeat_column_affinity) :-
+    expressions_fixture_file(File),
+    once(( read_fixture_term(File, head_expression_evaluates_derived_column, Term, Bindings),
+           program_plan(Term-Bindings, Plan),
+           lower_program(Plan, Lowered) )),
+    Lowered = lowered(_, Ddl, _, _, _, _, _, _),
+    forall(member(Prefix, ['', '__delta_', '__frontier_', '__next_frontier_']),
+           ( atomic_list_concat(['CREATE TEMP TABLE "', Prefix, 'callee_set_size"'], TempHead),
+             atomic_list_concat(['CREATE TABLE "', Prefix, 'callee_set_size"'], BaseHead),
+             once(( member(Sql, Ddl),
+                    ( sub_atom(Sql, 0, _, _, TempHead) ; sub_atom(Sql, 0, _, _, BaseHead) ),
+                    sub_atom(Sql, _, _, _, '"left" TEXT NOT NULL'),
+                    sub_atom(Sql, _, _, _, '"left_size" INTEGER NOT NULL') )) )).
+
+% Q4 P1.8: a comparison compiles to typed SQLite values, never to rendered
+% text, and a cross-type comparison is REFUSED rather than answered under
+% affinity conversion. Prolog ==/2 is term identity, so '1' never equals 1.
+test(cross_type_comparison_is_refused,
+     [throws(unsupported_construct(comparison_type_mismatch(_, _, _)))]) :-
+    expressions_fixture_file(File),
+    once(( read_fixture_term(File, text_one_and_numeric_one_are_not_equal, Term, Bindings),
+           program_plan(Term-Bindings, Plan),
+           lower_program(Plan, _) )).
+
+% Q4 P1.2: text "1" and numeric 1 stay distinct. The same boundary in JOIN
+% position: engine.pl joins by unification, SQLite joins under affinity
+% conversion and would answer the opposite (measured, see
+% lower.pl:join_column_types_agree/4).
+test(cross_type_join_is_refused,
+     [throws(unsupported_construct(join_column_type_mismatch(_, _, _, _)))]) :-
+    expressions_fixture_file(File),
+    once(( read_fixture_term(File, text_one_and_numeric_one_never_join, Term, Bindings),
+           program_plan(Term-Bindings, Plan),
+           lower_program(Plan, _) )).
+
+% Q4 P1.4: every expression carries a declared result type that reaches the
+% destination column. head_arithmetic_column_is_int_not_text_collapse above
+% asserts the type; this asserts it survives into the DDL that stores it,
+% since column_def/3 is the only reader.
+test(expression_result_type_reaches_the_ddl) :-
+    expressions_fixture_file(File),
+    once(( read_fixture_term(File, head_expression_evaluates_derived_column, Term, Bindings),
+           program_plan(Term-Bindings, Plan),
+           lower_program(Plan, Lowered) )),
+    Lowered = lowered(_, Ddl, _, _, _, _, _, _),
+    once(( member(Sql, Ddl),
+           sub_atom(Sql, 0, _, _, 'CREATE TABLE "union_size"'),
+           sub_atom(Sql, _, _, _, '"col3" INTEGER NOT NULL') )).
+
+% engine.pl's `mod` is FLOORED (sign of the divisor); SQLite's `%` is C's
+% (sign of the dividend). The emitted text must be the floored correction, not
+% a bare `%`, or division_truncates_toward_zero_mod_follows_divisor_sign gets
+% two of its four rows wrong.
+test(mod_lowers_to_the_floored_correction) :-
+    expressions_fixture_file(File),
+    once(( read_fixture_term(File, division_truncates_toward_zero_mod_follows_divisor_sign,
+                             Term, Bindings),
+           program_plan(Term-Bindings, Plan),
+           lower_program(Plan, Lowered) )),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    memberchk(levelstmt(probe/3, _, [InsertSql], _, _, _), LevelStatements),
+    once(sub_atom(InsertSql, _, _, _, '% b0."denominator") + b0."denominator") % b0."denominator")')).
+
+expressions_fixture_file(File) :-
+    test_dir_fact(Here),
+    atomic_list_concat([Here, '/../../conformance/fixtures/expressions.pl'], File).
+
+:- end_tests(expression_miscompile_guards).
 
 :- begin_tests(enum_decl_expansion).
 

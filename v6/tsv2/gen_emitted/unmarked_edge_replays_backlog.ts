@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -116,6 +116,12 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
     subscriber: selectRows(seam, `SELECT CASE WHEN json_valid("client") AND json_type("client") = 'object' THEN json_extract("client", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("client", '$.args')) || ')' ELSE "client" END AS "client" FROM "subscriber"`, relColumns.subscriber!),
   });
 }
+
+const finalSelect: Record<string, string> = {
+  change_ev: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' THEN json_extract("item", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item", '$.args')) || ')' ELSE "item" END AS "item" FROM "change_ev"`,
+  sent: `SELECT CASE WHEN json_valid("client") AND json_type("client") = 'object' THEN json_extract("client", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("client", '$.args')) || ')' ELSE "client" END AS "client", CASE WHEN json_valid("item") AND json_type("item") = 'object' THEN json_extract("item", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item", '$.args')) || ')' ELSE "item" END AS "item" FROM "sent"`,
+  subscriber: `SELECT CASE WHEN json_valid("client") AND json_type("client") = 'object' THEN json_extract("client", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("client", '$.args')) || ')' ELSE "client" END AS "client" FROM "subscriber"`,
+};
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   change_ev: { kind: "log", addSql: `INSERT INTO "change_ev" ("item") VALUES (?)`, delSql: null },
@@ -275,5 +281,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

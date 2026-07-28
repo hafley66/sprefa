@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -116,6 +116,12 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
     latest: selectRows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value" FROM "latest"`, relColumns.latest!),
   });
 }
+
+const finalSelect: Record<string, string> = {
+  from_poll: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value" FROM "from_poll"`,
+  from_push: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value" FROM "from_push"`,
+  latest: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value" FROM "latest"`,
+};
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   from_poll: { kind: "log", addSql: `INSERT INTO "from_poll" ("key", "value") VALUES (?, ?)`, delSql: null },
@@ -279,5 +285,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

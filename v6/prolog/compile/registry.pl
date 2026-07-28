@@ -32,20 +32,35 @@ surface(decode/2,       guard,     no_refs,                      wrapper(expr_pa
 surface(json_each/2,    guard,     no_refs,                      wrapper(expr_pair, refuse(goal)),      refused).
 surface(true/0,         guard,     no_refs,                      word(lower),                           live).
 
-surface(':='/2,         bind,      no_refs,                      infix(refuse(goal)),                   refused).
-surface(is/2,           bind,      no_refs,                      infix(refuse(goal)),                   refused).
+% EXPRESSION + AGGREGATE LIFT (ruling expression_residency,
+% fuse_to_sql_deltas_ts_deopt_last): binds, comparisons and the decomposable
+% aggregate heads lower into the emitted SQL rather than being refused. The
+% LowerRole gate word is what analyze.pl's supported-subset checks read, so
+% flipping refuse(...) to lower(...) here is what un-refuses them; the
+% textual shape word (infix/head) is unchanged, so parse_dl.pl and
+% print_dl.pl project exactly as before.
+surface(':='/2,         bind,      no_refs,                      infix(lower),                          live).
+surface(is/2,           bind,      no_refs,                      infix(lower),                          live).
 
-surface('<'/2,          guard,     no_refs,                      infix(refuse(comparison)),             refused).
-surface('=<'/2,         guard,     no_refs,                      infix(refuse(comparison)),             refused).
-surface('>'/2,          guard,     no_refs,                      infix(refuse(comparison)),             refused).
-surface('>='/2,         guard,     no_refs,                      infix(refuse(comparison)),             refused).
-surface('=='/2,         guard,     no_refs,                      infix(refuse(comparison)),             refused).
-surface('\\=='/2,       guard,     no_refs,                      infix(refuse(comparison)),             refused).
+surface('<'/2,          guard,     no_refs,                      infix(lower),                          live).
+surface('=<'/2,         guard,     no_refs,                      infix(lower),                          live).
+surface('>'/2,          guard,     no_refs,                      infix(lower),                          live).
+surface('>='/2,         guard,     no_refs,                      infix(lower),                          live).
+surface('=='/2,         guard,     no_refs,                      infix(lower),                          live).
+surface('\\=='/2,       guard,     no_refs,                      infix(lower),                          live).
 
-surface(count/1,        aggregate, no_refs,                      head(refuse(aggregate)),               refused).
-surface(sum/1,          aggregate, no_refs,                      head(refuse(aggregate)),               refused).
-surface(min/1,          aggregate, no_refs,                      head(refuse(aggregate)),               refused).
-surface(max/1,          aggregate, no_refs,                      head(refuse(aggregate)),               refused).
+surface(count/1,        aggregate, no_refs,                      head(lower),                           live).
+surface(sum/1,          aggregate, no_refs,                      head(lower),                           live).
+surface(min/1,          aggregate, no_refs,                      head(lower),                           live).
+surface(max/1,          aggregate, no_refs,                      head(lower),                           live).
+% json_array/json_object stay REFUSED and the crack is named, not papered
+% over: a Prolog list value renders through the SHARED tick-log encoder
+% (ticklog.pl term_text/2) as right-nested cons text --
+% [|](4,[|](4,[|](9,[]))) -- and json_object as obj([|](-(k,v),[])). That is
+% not json_group_array/json_group_object's own output text, so those two
+% sqlite builtins do not reach byte identity no matter how their ORDER BY is
+% pinned. Same encoding gap braces_in_head_position already fails on in the
+% final-state leg, which predates this arc.
 surface(json_array/1,   aggregate, no_refs,                      head(refuse(aggregate)),               refused).
 surface(json_object/2,  aggregate, no_refs,                      head(refuse(aggregate)),               refused).
 

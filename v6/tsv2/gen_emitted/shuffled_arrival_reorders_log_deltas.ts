@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -91,6 +91,11 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   });
 }
 
+const finalSelect: Record<string, string> = {
+  line: `SELECT "_stream_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("_name") AND json_type("_name") = 'object' THEN json_extract("_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("_name", '$.args')) || ')' ELSE "_name" END AS "_name" FROM "line"`,
+  seen: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path" FROM "seen"`,
+};
+
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   line: { kind: "log", addSql: `INSERT INTO "line" ("_stream_id", "path", "_name") VALUES (?, ?, ?)`, delSql: null },
 };
@@ -126,7 +131,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "seen", headDeltaTableName: "__delta_seen", headColumns: ["path"], insertSql: `INSERT OR IGNORE INTO "seen" ("path") SELECT DISTINCT d0."path" FROM "__frontier_line" d0 WHERE d0."_phase" >= 0 RETURNING "path"`, selectSql: `SELECT "path" FROM "seen"`, recomputeSql: `DELETE FROM "seen";\nINSERT OR IGNORE INTO "seen" ("path") SELECT b0."path" FROM "line" b0`, supportSql: [`DELETE FROM "__support_next_seen"`, `INSERT INTO "__support_next_seen" ("path", "__support_count") SELECT "path", sum("__support_count") FROM (SELECT b0."path" AS "path", count(*) AS "__support_count" FROM "line" b0 GROUP BY b0."path") GROUP BY "path"`, `UPDATE "seen" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_seen" n WHERE n."path" = h."path"), 0))`, `DELETE FROM "seen" WHERE "__support_count" <= 0 RETURNING "path"`, `INSERT INTO "seen" ("path", "__support_count") SELECT "path", n."__support_count" FROM "__support_next_seen" n WHERE NOT EXISTS (SELECT 1 FROM "seen" h WHERE n."path" = h."path") RETURNING "path"`] },
+  { headRel: "seen", headDeltaTableName: "__delta_seen", headColumns: ["path"], insertSql: `INSERT OR IGNORE INTO "seen" ("path") SELECT DISTINCT d0."path" FROM "__frontier_line" d0 WHERE d0."_phase" >= 0 RETURNING "path"`, selectSql: `SELECT "path" FROM "seen"`, recomputeSql: `DELETE FROM "seen";\nINSERT OR IGNORE INTO "seen" ("path") SELECT b0."path" FROM "line" b0`, supportSql: [`DELETE FROM "__support_next_seen"`, `INSERT INTO "__support_next_seen" ("path", "__support_count") SELECT "path", sum("__support_count") FROM (SELECT b0."path" AS "path", count(*) AS "__support_count" FROM "line" b0 GROUP BY b0."path") GROUP BY "path"`, `UPDATE "seen" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_seen" n WHERE n."path" = h."path"), 0))`, `DELETE FROM "seen" WHERE "__support_count" <= 0 RETURNING "path"`, `INSERT INTO "seen" ("path", "__support_count") SELECT "path", n."__support_count" FROM "__support_next_seen" n WHERE NOT EXISTS (SELECT 1 FROM "seen" h WHERE n."path" = h."path") RETURNING "path"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {
@@ -196,5 +201,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

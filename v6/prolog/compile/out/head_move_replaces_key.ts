@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -107,6 +107,11 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
     head_move: selectRows(seam, `SELECT "repo_id", "rev_id" FROM "head_move"`, relColumns.head_move!),
   });
 }
+
+const finalSelect: Record<string, string> = {
+  head: `SELECT "repo_id", "rev_id" FROM "head"`,
+  head_move: `SELECT "repo_id", "rev_id" FROM "head_move"`,
+};
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   head_move: { kind: "log", addSql: `INSERT INTO "head_move" ("repo_id", "rev_id") VALUES (?, ?)`, delSql: null },
@@ -242,5 +247,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

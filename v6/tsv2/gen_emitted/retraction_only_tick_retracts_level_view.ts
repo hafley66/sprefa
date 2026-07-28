@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -91,6 +91,11 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   });
 }
 
+const finalSelect: Record<string, string> = {
+  mirror: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' THEN json_extract("item", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item", '$.args')) || ')' ELSE "item" END AS "item" FROM "mirror"`,
+  source_row: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' THEN json_extract("item", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item", '$.args')) || ')' ELSE "item" END AS "item" FROM "source_row"`,
+};
+
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   source_row: { kind: "set", addSql: `INSERT OR IGNORE INTO "source_row" ("item") VALUES (?)`, delSql: `DELETE FROM "source_row" WHERE "item" = ?` },
 };
@@ -126,7 +131,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "mirror", headDeltaTableName: "__delta_mirror", headColumns: ["item"], insertSql: `INSERT OR IGNORE INTO "mirror" ("item") SELECT DISTINCT d0."item" FROM "__frontier_source_row" d0 WHERE d0."_phase" >= 0 RETURNING "item"`, selectSql: `SELECT "item" FROM "mirror"`, recomputeSql: `DELETE FROM "mirror";\nINSERT OR IGNORE INTO "mirror" ("item") SELECT b0."item" FROM "source_row" b0`, supportSql: [`DELETE FROM "__support_next_mirror"`, `INSERT INTO "__support_next_mirror" ("item", "__support_count") SELECT "item", sum("__support_count") FROM (SELECT b0."item" AS "item", count(*) AS "__support_count" FROM "source_row" b0 GROUP BY b0."item") GROUP BY "item"`, `UPDATE "mirror" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_mirror" n WHERE n."item" = h."item"), 0))`, `DELETE FROM "mirror" WHERE "__support_count" <= 0 RETURNING "item"`, `INSERT INTO "mirror" ("item", "__support_count") SELECT "item", n."__support_count" FROM "__support_next_mirror" n WHERE NOT EXISTS (SELECT 1 FROM "mirror" h WHERE n."item" = h."item") RETURNING "item"`] },
+  { headRel: "mirror", headDeltaTableName: "__delta_mirror", headColumns: ["item"], insertSql: `INSERT OR IGNORE INTO "mirror" ("item") SELECT DISTINCT d0."item" FROM "__frontier_source_row" d0 WHERE d0."_phase" >= 0 RETURNING "item"`, selectSql: `SELECT "item" FROM "mirror"`, recomputeSql: `DELETE FROM "mirror";\nINSERT OR IGNORE INTO "mirror" ("item") SELECT b0."item" FROM "source_row" b0`, supportSql: [`DELETE FROM "__support_next_mirror"`, `INSERT INTO "__support_next_mirror" ("item", "__support_count") SELECT "item", sum("__support_count") FROM (SELECT b0."item" AS "item", count(*) AS "__support_count" FROM "source_row" b0 GROUP BY b0."item") GROUP BY "item"`, `UPDATE "mirror" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_mirror" n WHERE n."item" = h."item"), 0))`, `DELETE FROM "mirror" WHERE "__support_count" <= 0 RETURNING "item"`, `INSERT INTO "mirror" ("item", "__support_count") SELECT "item", n."__support_count" FROM "__support_next_mirror" n WHERE NOT EXISTS (SELECT 1 FROM "mirror" h WHERE n."item" = h."item") RETURNING "item"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {
@@ -196,5 +201,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

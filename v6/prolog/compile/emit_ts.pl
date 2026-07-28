@@ -159,7 +159,7 @@ local_types_lines(
       '  params: readonly (string | number)[];',
       '}',
       '',
-      'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };'
+      'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };'
     ]).
 
 % ═══ integer bind helper (phase C sweep finding) ═══════════════════════════
@@ -298,6 +298,22 @@ snapshot_read_entry_line(deltastmt(Ref, SelectSql, _DeltaTable, _BoundarySql), L
     js_template(SelectSql, Template),
     format(atom(Line), '    ~w: selectRows(seam, ~w, relColumns.~w!),', [Name, Template, Name]).
 
+% ═══ finalSelect (EXPRESSION + AGGREGATE LIFT arc, final-state grading leg) ══
+% The SAME per-rel "read every row" SQL readSnapshot uses (deltastmt's
+% SelectAllSql, canonical-text rendered), exported by rel name so a grader
+% can compare the program's END state against the oracle's FinalAll. This is
+% NOT part of the tick path -- nothing inside tick() reads it, so the
+% host_residency criterion (zero full-table reads into JS per tick) is
+% untouched; it runs exactly once, after the fold, in the sweep harness.
+final_select_lines(DeltaStatements, Lines) :-
+    maplist(final_select_entry_line, DeltaStatements, EntryLines),
+    append([ ['const finalSelect: Record<string, string> = {'], EntryLines, ['};'] ], Lines).
+
+final_select_entry_line(deltastmt(Ref, SelectSql, _DeltaTable, _BoundarySql), Line) :-
+    ref_name(Ref, Name),
+    js_template(SelectSql, Template),
+    format(atom(Line), '  ~w: ~w,', [Name, Template]).
+
 % ═══ arrivals ════════════════════════════════════════════════════════════════
 
 arrival_statements_lines(ArrivalStatements, Lines) :-
@@ -414,29 +430,54 @@ incremental_level_statement_lines(LevelStatements, RelPlans, Lines) :-
         ], Lines).
 
 incremental_level_statement_entry_line(RelPlans,
-        levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
-                  supportsql(ClearSql, SeedSql, UpdateSql, CollectZeroSql,
-                             InsertNewSql)), Line) :-
+        levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql, SupportSql,
+                  AggregateSql), Line) :-
     ref_name(HeadRef, HeadName),
     format(atom(DeltaTable), '__delta_~w', [HeadName]),
     memberchk(relplan(HeadRef, _, HeadColumns, _, _), RelPlans),
     quoted_string_array_text(HeadColumns, ColumnsText),
-    js_template(DeltaInsertSql, DeltaInsertTemplate),
+    optional_sql_template(DeltaInsertSql, DeltaInsertTemplate),
     maplist(quote_ident_local, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
     format(atom(SelectSql), 'SELECT ~w FROM "~w"', [HeadColumnsSql, HeadName]),
     js_template(SelectSql, SelectTemplate),
     atomic_list_concat([DeleteSql | InsertSqls], ';\\n', RecomputeSql),
     js_template(RecomputeSql, RecomputeTemplate),
+    support_sql_text(SupportSql, SupportText),
+    aggregate_sql_text(AggregateSql, AggregateText),
+    format(atom(Line),
+           '  { headRel: "~w", headDeltaTableName: "~w", headColumns: ~w, insertSql: ~w, selectSql: ~w, recomputeSql: ~w, supportSql: ~w, aggregateSql: ~w },',
+           [HeadName, DeltaTable, ColumnsText, DeltaInsertTemplate,
+            SelectTemplate, RecomputeTemplate, SupportText, AggregateText]).
+
+optional_sql_template(none, null) :- !.
+optional_sql_template(Sql, Template) :- js_template(Sql, Template).
+
+support_sql_text(none, null) :- !.
+support_sql_text(supportsql(ClearSql, SeedSql, UpdateSql, CollectZeroSql, InsertNewSql),
+                 Text) :-
     maplist(js_template,
             [ClearSql, SeedSql, UpdateSql, CollectZeroSql, InsertNewSql],
-            [ClearTemplate, SeedTemplate, UpdateTemplate, CollectZeroTemplate,
-             InsertNewTemplate]),
-    format(atom(Line),
-           '  { headRel: "~w", headDeltaTableName: "~w", headColumns: ~w, insertSql: ~w, selectSql: ~w, recomputeSql: ~w, supportSql: [~w, ~w, ~w, ~w, ~w] },',
-           [HeadName, DeltaTable, ColumnsText, DeltaInsertTemplate,
-            SelectTemplate, RecomputeTemplate, ClearTemplate, SeedTemplate,
-            UpdateTemplate, CollectZeroTemplate, InsertNewTemplate]).
+            Templates),
+    atomic_list_concat(Templates, ', ', Joined),
+    format(atom(Text), '[~w]', [Joined]).
+
+% The group-scoped aggregate plan (lower.pl level_aggregate_sql/4): clear the
+% scope, seed it from this tick's staged deltas, delete the scoped groups
+% (RETURNING the -1 events), re-derive them (RETURNING the +1 events).
+aggregate_sql_text(none, null) :- !.
+aggregate_sql_text(aggsql(_ScopeColumns, _ScopeTypes, ScopeClearSql, ScopeSeedSqls,
+                          DeleteScopedSql, InsertScopedSqls), Text) :-
+    js_template(ScopeClearSql, ScopeClearTemplate),
+    maplist(js_template, ScopeSeedSqls, ScopeSeedTemplates),
+    atomic_list_concat(ScopeSeedTemplates, ', ', ScopeSeedJoined),
+    js_template(DeleteScopedSql, DeleteScopedTemplate),
+    maplist(js_template, InsertScopedSqls, InsertScopedTemplates),
+    atomic_list_concat(InsertScopedTemplates, ', ', InsertScopedJoined),
+    format(atom(Text),
+           '{ scopeClearSql: ~w, scopeSeedSql: [~w], deleteScopedSql: ~w, insertScopedSql: [~w] }',
+           [ScopeClearTemplate, ScopeSeedJoined, DeleteScopedTemplate,
+            InsertScopedJoined]).
 
 quote_ident_local(Name, Quoted) :- format(atom(Quoted), '"~w"', [Name]).
 
@@ -605,7 +646,7 @@ recompute_levels_fn_lines(LevelStatements, Lines) :-
     % INSERT after exactly one DELETE, never one DELETE per clause); flattens
     % to the identical [Delete, Insert] sequence as before for the common
     % single-clause case.
-    findall(Sql, ( member(levelstmt(_, DeleteSql, InsertSqls, _, _), LevelStatements), ( Sql = DeleteSql ; member(Sql, InsertSqls) ) ), Sqls),
+    findall(Sql, ( member(levelstmt(_, DeleteSql, InsertSqls, _, _, _), LevelStatements), ( Sql = DeleteSql ; member(Sql, InsertSqls) ) ), Sqls),
     atomic_list_concat(Sqls, ';\\n', JoinedSql),
     js_template(JoinedSql, SqlTemplate),
     format(atom(SqlLine), '  const sql = ~w;', [SqlTemplate]),
@@ -821,6 +862,7 @@ program_export_lines(Name,
       '  relColumns,',
       '  arrivalTargets,',
       '  boot,',
+      '  finalSelect,',
       '  tick: runTick,',
       '};'
     ]) :-
@@ -842,6 +884,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     boot_lines(BootStatements, BootLines),
     snapshot_type_lines(RelPlans, SnapshotTypeLines),
     read_snapshot_fn_lines(DeltaStatements, ReadSnapshotFnLines),
+    final_select_lines(DeltaStatements, FinalSelectLines),
     arrival_statements_lines(ArrivalStatements, ArrivalStatementsLines),
     arrival_statement_fn_lines(Name, ArrivalStatementFnLines),
     incremental_relation_lines(RelPlans, ArrivalStatements, DeltaStatements, IncrementalRelationLines),
@@ -865,7 +908,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     Sections0 =
     [ HeaderLines, ImportLines, LocalTypeLines, BindArgsHelperLines, TriggerOccurrencesHelperLines,
       DdlLines, RelColumnsLines, ArrivalTargetsLines,
-      BootLines, SnapshotTypeLines, ReadSnapshotFnLines,
+      BootLines, SnapshotTypeLines, ReadSnapshotFnLines, FinalSelectLines,
       ArrivalStatementsLines, ArrivalStatementFnLines,
       IncrementalRelationLines, IncrementalEdgeStatementLines, IncrementalLevelStatementLines,
       EdgeConstLines, EdgeFnLines,

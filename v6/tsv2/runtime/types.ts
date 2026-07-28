@@ -134,20 +134,45 @@ export interface IIncrementalEdgeStatement {
   readonly projectSql: string;
 }
 
+/**
+ * The group-scoped maintenance plan for an AGGREGATE level head
+ * (count/sum/min/max). An aggregate row CHANGES rather than only arriving,
+ * so neither the monotone delta-join insert nor refCount reconciliation
+ * applies; `insertSql` and `supportSql` are null on such a statement and this
+ * runs instead.
+ *
+ * Four steps, all SQL-side: clear the scope table, seed it with the group
+ * keys this tick's staged deltas touched (both signs), DELETE the head's rows
+ * for those groups RETURNING them (the -1 events), re-derive those groups
+ * and INSERT RETURNING them (the +1 events). A group whose value did not move
+ * emits a -1/+1 pair for the identical row, which `boundaryDelta` cancels to
+ * weight zero, so over-approximating the scope is free and only
+ * under-approximating would be wrong.
+ */
+export interface IAggregateLevelPlan {
+  readonly scopeClearSql: string;
+  readonly scopeSeedSql: readonly string[];
+  readonly deleteScopedSql: string;
+  readonly insertScopedSql: readonly string[];
+}
+
 export interface IIncrementalLevelStatement {
   readonly headRel: string;
   readonly headDeltaTableName: string;
   readonly headColumns: readonly string[];
-  readonly insertSql: string;
+  /** null exactly when `aggregateSql` is present. */
+  readonly insertSql: string | null;
   readonly selectSql: string;
   readonly recomputeSql: string;
+  /** null exactly when `aggregateSql` is present. */
   readonly supportSql: readonly [
     clear: string,
     seed: string,
     update: string,
     collectZero: string,
     insertNew: string,
-  ];
+  ] | null;
+  readonly aggregateSql: IAggregateLevelPlan | null;
 }
 
 export interface IIncrementalProgramPlan {
@@ -216,6 +241,34 @@ export interface IGenProgram {
 // ─────────────────────────────────────────────────────────────────────────────
 // The scratch store (boot the seam, run a program's DDL once).
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Boot statements (seeding Initial rows before tick 1).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One emitted boot statement: SQL plus the row values it binds. `boot` is an
+ * extra field beyond IGenProgram's five pinned names ("extend by adding
+ * fields, never renaming"); every harness that seeds a compiled program runs
+ * these after DDL and before the tick fold.
+ */
+export interface IBootStatement {
+  readonly sql: string;
+  readonly params: readonly (string | number)[];
+}
+
+export interface IBootRunner {
+  /**
+   * Run every boot statement in order. Integer params cross the driver seam
+   * as bigint, never as a plain JS `number`: `@libsql/client` binds a JS
+   * number as SQLite REAL, so a bound `1` lands in a TEXT-affinity column as
+   * the text "1.0" while `1n` lands as "1" (measured, not assumed --
+   * v6/tsv2/tests/bootBind.test.ts is the receipt). Same rule the emitted
+   * `bindArgs` helper and 1_incremental.ts already apply on every other bind
+   * path; the boot path was the one seam that bound raw.
+   */
+  run(seam: ISqlSeam, statements: readonly IBootStatement[]): Observable<void>;
+}
 
 export interface IScratchStore {
   /** Open a fresh SQLite connection (`:memory:` or `file:...`) and wrap it

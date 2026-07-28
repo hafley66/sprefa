@@ -101,11 +101,19 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     append(RuleRefs, DeclaredRefs, AllRefs0), sort(AllRefs0, AllRefs),
     derived_refs(Rules, DerivedRefs),
     subtract(AllRefs, DerivedRefs, ArrivalTargets),
+    % EXPRESSION + AGGREGATE LIFT: one program-wide typing fixpoint replaces
+    % the per-ref rel_column_types/7 call. Same answer for every column that
+    % has a literal witness or a declaration (so every pre-lift fixture keeps
+    % its exact types); the difference is a column written ONLY by a level
+    % rule's head expression, which now inherits that expression's type
+    % instead of falling to the no-witness TEXT default. That default was the
+    % TEXT-collapse ("12" vs 12) fail-first check (a) names.
+    program_column_types(Decls, Rules, Initial, Schedule, Bindings, AllRefs, RefTypes),
     findall(relplan(Ref, Kind, Columns, KeyOrNone, ColumnTypes),
             ( member(Ref, AllRefs),
               rel_kind(Decls, Ref, Kind),
               rel_columns(Decls, Rules, Bindings, Ref, Columns),
-              rel_column_types(Decls, Rules, Initial, Schedule, Bindings, Ref, ColumnTypes),
+              memberchk(Ref-ColumnTypes, RefTypes),
               ( decl_key(Decls, Ref, Positions) -> KeyOrNone = key(Positions) ; KeyOrNone = none )
             ), RelPlans),
     % PHASE C2 RULING 1 x RULING 2: this needs RelPlans (ColumnTypes), so it

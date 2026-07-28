@@ -2,171 +2,421 @@
   {
     "name": "enum_decl_variant_rows_round_trip_through_tag_view",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "enum_decl_two_variants_union_in_tag_view",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "retention_count_prunes_oldest",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_wrong",
+    "finalDetail": "actual={\"final\":{\"event\":[[\"one\"],[\"three\"],[\"two\"]]}} oracle={\"final\":{\"event\":[[\"three\"],[\"two\"]]}}"
   },
   {
     "name": "log_without_retention_rejected",
     "bucket": "no_oracle_log",
-    "detail": "oracle run threw (see oracle_dump.pl ORACLE_THROW output); nothing to diff"
+    "detail": "oracle run threw (see oracle_dump.pl ORACLE_THROW output); nothing to diff",
+    "finalBucket": "no_oracle_final",
+    "finalDetail": "oracle run threw; no final state to diff"
   },
   {
     "name": "log_retraction_rejected",
     "bucket": "run_error",
-    "detail": "retract from log rel 'event'"
+    "detail": "log_retraction_rejected: retract from log rel 'event' (engine.pl retract_from_log)",
+    "finalBucket": "final_wrong",
+    "finalDetail": "run threw before the final state could be read"
   },
   {
     "name": "unmarked_edge_replays_backlog",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "retraction_only_tick_retracts_level_view",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "set_dedups_log_stacks",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "head_expression_evaluates_derived_column",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "comparison_filters_rows",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "range_join_over_arithmetic",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "bind_computes_derived_value_then_comparison_filters",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "interpolation_desugars_to_concat",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "division_truncates_toward_zero_mod_follows_divisor_sign",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "typed_int_without_literal_witness",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
-    "name": "braces_in_head_position",
+    "name": "count_is_bag_of_derivations",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "sum_min_max_group_by_plain_columns",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "aggregate_count_min_max_track_arrivals_and_retraction",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "aggregate_min_recomputes_when_the_minimum_is_retracted",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "aggregate_sum_tracks_a_growing_and_shrinking_group",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "merge_batches_per_tick",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "merge_never_retracts",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "key_last_write_wins",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "key_identical_write_is_silent",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "key_same_tick_ordered_not_conflict",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "log_deltas_follow_arrival_order",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "shuffled_arrival_reorders_log_deltas",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "level_view_reads_set_projection_not_occurrences",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "log_stacks_within_tick_and_across_ticks",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "filter_map_is_a_level_rule",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "fork_join_is_a_conjunctive_body",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "fork_join_error_arm_is_a_value",
     "bucket": "run_error",
-    "detail": "SQLITE_ERROR: malformed JSON"
+    "detail": "SQLITE_ERROR: malformed JSON",
+    "finalBucket": "final_wrong",
+    "finalDetail": "run threw before the final state could be read"
   },
   {
     "name": "switch_as_keyed_replace",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "merge_policy",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "fill_as_cache_update_swr",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "demand_laziness_effect_rows",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "shared_demand_refcount",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "zombie_scope_negative_case_a2b",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "new_salt_refires_fresh_stream",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "terminal_is_terminal",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "live_nonzero_exit_keeps_rows",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "worktree_edit_replaces_digest_and_flips_kind_view",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "worktree_edit_identical_resave_is_silent",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "dirty_derives_from_digest_mismatch",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "dirty_retracts_on_matching_commit",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "head_move_replaces_key",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "head_move_flips_current_tree_in_one_tick",
     "bucket": "identical",
-    "detail": ""
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "clean_state_no_diags",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "clean_state_gate_and_exit_zero",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "waiver_range_join_exact_rows",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "over_baseline_diag_exact_rows",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "over_baseline_count_row",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "over_baseline_gate_blocks_commit_only",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "fix_by_waiver_returns_to_clean",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "new_file_diag_at_hit_line_exact_rows",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "new_file_no_exceeded_diag",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "unwrap_aggregate_and_interpolation",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "unwrap_unchanged_file_silent",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "unwrap_below_budget_silent",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "tightened_baseline_catches_regrowth",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   }
 ]

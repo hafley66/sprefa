@@ -1,0 +1,1 @@
+{"final":{"alert":[["cli",420]],"demand_row":[["cli","fresh(tag_w1,body1)"]],"every_300":[["bucket1"]],"fetch":[["cli","no_tag","bucket1","fresh(tag_w1,body1)"]],"stars_of":[["body1",420]],"watch":[["cli"]]}}

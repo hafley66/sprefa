@@ -1,0 +1,1 @@
+{"final":{"known_repo":[[2]],"pin_extracted":[[10,2,501,"vendor/lib.rs","import"],[11,3,602,"shared/proto.rs","import"]],"repo_candidate":[[3]],"xref":[[10,2,501,"vendor/lib.rs","none","import"],[11,3,602,"shared/proto.rs","none","import"]]}}

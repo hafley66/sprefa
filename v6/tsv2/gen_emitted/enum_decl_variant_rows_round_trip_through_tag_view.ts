@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -102,6 +102,12 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   });
 }
 
+const finalSelect: Record<string, string> = {
+  body_page: `SELECT "id", "view" FROM "body_page"`,
+  body_redirect: `SELECT "id", CASE WHEN json_valid("to") AND json_type("to") = 'object' THEN json_extract("to", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to", '$.args')) || ')' ELSE "to" END AS "to" FROM "body_redirect"`,
+  body_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag" FROM "body_tag"`,
+};
+
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   body_page: { kind: "set", addSql: `INSERT OR IGNORE INTO "body_page" ("id", "view") VALUES (?, ?)`, delSql: `DELETE FROM "body_page" WHERE "id" = ? AND "view" = ?` },
   body_redirect: { kind: "set", addSql: `INSERT OR IGNORE INTO "body_redirect" ("id", "to") VALUES (?, ?)`, delSql: `DELETE FROM "body_redirect" WHERE "id" = ? AND "to" = ?` },
@@ -139,7 +145,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "body_tag", headDeltaTableName: "__delta_body_tag", headColumns: ["id", "tag"], insertSql: `INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT DISTINCT d0."id", 'page' FROM "__frontier_body_page" d0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT d0."id", 'redirect' FROM "__frontier_body_redirect" d0 WHERE d0."_phase" >= 0 RETURNING "id", "tag"`, selectSql: `SELECT "id", "tag" FROM "body_tag"`, recomputeSql: `DELETE FROM "body_tag";\nINSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", 'page' FROM "body_page" b0;\nINSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", 'redirect' FROM "body_redirect" b0`, supportSql: [`DELETE FROM "__support_next_body_tag"`, `INSERT INTO "__support_next_body_tag" ("id", "tag", "__support_count") SELECT "id", "tag", sum("__support_count") FROM (SELECT b0."id" AS "id", 'page' AS "tag", count(*) AS "__support_count" FROM "body_page" b0 GROUP BY b0."id", 'page' UNION ALL SELECT b0."id" AS "id", 'redirect' AS "tag", count(*) AS "__support_count" FROM "body_redirect" b0 GROUP BY b0."id", 'redirect') GROUP BY "id", "tag"`, `UPDATE "body_tag" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_body_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0))`, `DELETE FROM "body_tag" WHERE "__support_count" <= 0 RETURNING "id", "tag"`, `INSERT INTO "body_tag" ("id", "tag", "__support_count") SELECT "id", "tag", n."__support_count" FROM "__support_next_body_tag" n WHERE NOT EXISTS (SELECT 1 FROM "body_tag" h WHERE n."id" = h."id" AND n."tag" = h."tag") RETURNING "id", "tag"`] },
+  { headRel: "body_tag", headDeltaTableName: "__delta_body_tag", headColumns: ["id", "tag"], insertSql: `INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT DISTINCT d0."id", 'page' FROM "__frontier_body_page" d0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT d0."id", 'redirect' FROM "__frontier_body_redirect" d0 WHERE d0."_phase" >= 0 RETURNING "id", "tag"`, selectSql: `SELECT "id", "tag" FROM "body_tag"`, recomputeSql: `DELETE FROM "body_tag";\nINSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", 'page' FROM "body_page" b0;\nINSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", 'redirect' FROM "body_redirect" b0`, supportSql: [`DELETE FROM "__support_next_body_tag"`, `INSERT INTO "__support_next_body_tag" ("id", "tag", "__support_count") SELECT "id", "tag", sum("__support_count") FROM (SELECT b0."id" AS "id", 'page' AS "tag", count(*) AS "__support_count" FROM "body_page" b0 GROUP BY b0."id", 'page' UNION ALL SELECT b0."id" AS "id", 'redirect' AS "tag", count(*) AS "__support_count" FROM "body_redirect" b0 GROUP BY b0."id", 'redirect') GROUP BY "id", "tag"`, `UPDATE "body_tag" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_body_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0))`, `DELETE FROM "body_tag" WHERE "__support_count" <= 0 RETURNING "id", "tag"`, `INSERT INTO "body_tag" ("id", "tag", "__support_count") SELECT "id", "tag", n."__support_count" FROM "__support_next_body_tag" n WHERE NOT EXISTS (SELECT 1 FROM "body_tag" h WHERE n."id" = h."id" AND n."tag" = h."tag") RETURNING "id", "tag"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {
@@ -211,5 +217,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

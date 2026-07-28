@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -102,6 +102,12 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   });
 }
 
+const finalSelect: Record<string, string> = {
+  result_error: `SELECT "id", CASE WHEN json_valid("message") AND json_type("message") = 'object' THEN json_extract("message", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("message", '$.args')) || ')' ELSE "message" END AS "message" FROM "result_error"`,
+  result_ok: `SELECT "id", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value" FROM "result_ok"`,
+  result_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag" FROM "result_tag"`,
+};
+
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   result_error: { kind: "set", addSql: `INSERT OR IGNORE INTO "result_error" ("id", "message") VALUES (?, ?)`, delSql: `DELETE FROM "result_error" WHERE "id" = ? AND "message" = ?` },
   result_ok: { kind: "set", addSql: `INSERT OR IGNORE INTO "result_ok" ("id", "value") VALUES (?, ?)`, delSql: `DELETE FROM "result_ok" WHERE "id" = ? AND "value" = ?` },
@@ -139,7 +145,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "result_tag", headDeltaTableName: "__delta_result_tag", headColumns: ["id", "tag"], insertSql: `INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT DISTINCT d0."id", 'ok' FROM "__frontier_result_ok" d0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT d0."id", 'error' FROM "__frontier_result_error" d0 WHERE d0."_phase" >= 0 RETURNING "id", "tag"`, selectSql: `SELECT "id", "tag" FROM "result_tag"`, recomputeSql: `DELETE FROM "result_tag";\nINSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'ok' FROM "result_ok" b0;\nINSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'error' FROM "result_error" b0`, supportSql: [`DELETE FROM "__support_next_result_tag"`, `INSERT INTO "__support_next_result_tag" ("id", "tag", "__support_count") SELECT "id", "tag", sum("__support_count") FROM (SELECT b0."id" AS "id", 'ok' AS "tag", count(*) AS "__support_count" FROM "result_ok" b0 GROUP BY b0."id", 'ok' UNION ALL SELECT b0."id" AS "id", 'error' AS "tag", count(*) AS "__support_count" FROM "result_error" b0 GROUP BY b0."id", 'error') GROUP BY "id", "tag"`, `UPDATE "result_tag" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_result_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0))`, `DELETE FROM "result_tag" WHERE "__support_count" <= 0 RETURNING "id", "tag"`, `INSERT INTO "result_tag" ("id", "tag", "__support_count") SELECT "id", "tag", n."__support_count" FROM "__support_next_result_tag" n WHERE NOT EXISTS (SELECT 1 FROM "result_tag" h WHERE n."id" = h."id" AND n."tag" = h."tag") RETURNING "id", "tag"`] },
+  { headRel: "result_tag", headDeltaTableName: "__delta_result_tag", headColumns: ["id", "tag"], insertSql: `INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT DISTINCT d0."id", 'ok' FROM "__frontier_result_ok" d0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT d0."id", 'error' FROM "__frontier_result_error" d0 WHERE d0."_phase" >= 0 RETURNING "id", "tag"`, selectSql: `SELECT "id", "tag" FROM "result_tag"`, recomputeSql: `DELETE FROM "result_tag";\nINSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'ok' FROM "result_ok" b0;\nINSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'error' FROM "result_error" b0`, supportSql: [`DELETE FROM "__support_next_result_tag"`, `INSERT INTO "__support_next_result_tag" ("id", "tag", "__support_count") SELECT "id", "tag", sum("__support_count") FROM (SELECT b0."id" AS "id", 'ok' AS "tag", count(*) AS "__support_count" FROM "result_ok" b0 GROUP BY b0."id", 'ok' UNION ALL SELECT b0."id" AS "id", 'error' AS "tag", count(*) AS "__support_count" FROM "result_error" b0 GROUP BY b0."id", 'error') GROUP BY "id", "tag"`, `UPDATE "result_tag" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_result_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0))`, `DELETE FROM "result_tag" WHERE "__support_count" <= 0 RETURNING "id", "tag"`, `INSERT INTO "result_tag" ("id", "tag", "__support_count") SELECT "id", "tag", n."__support_count" FROM "__support_next_result_tag" n WHERE NOT EXISTS (SELECT 1 FROM "result_tag" h WHERE n."id" = h."id" AND n."tag" = h."tag") RETURNING "id", "tag"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {
@@ -211,5 +217,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

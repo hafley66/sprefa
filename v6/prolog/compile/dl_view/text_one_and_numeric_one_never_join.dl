@@ -1,0 +1,4 @@
+rel label(value: text).
+rel number(value: int).
+
+both(Value) <- label(Value), number(Value).

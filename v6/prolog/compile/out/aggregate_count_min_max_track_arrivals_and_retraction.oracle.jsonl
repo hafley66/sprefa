@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"star_row":{"add":[["cli",4],["shell",7]],"del":[]},"stat":{"add":[["cli",1,4,4],["shell",1,7,7]],"del":[]}}}
+{"tick":2,"deltas":{"star_row":{"add":[["cli",10],["docs",2]],"del":[]},"stat":{"add":[["cli",2,4,10],["docs",1,2,2]],"del":[["cli",1,4,4]]}}}
+{"tick":3,"deltas":{"star_row":{"add":[],"del":[["shell",7]]},"stat":{"add":[],"del":[["shell",1,7,7]]}}}

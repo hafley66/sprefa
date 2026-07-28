@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"budget":{"add":[["core",22]],"del":[["core",15]]},"spend":{"add":[["core","net",7]],"del":[]}}}
+{"tick":2,"deltas":{"budget":{"add":[["core",12]],"del":[["core",22]]},"spend":{"add":[],"del":[["core","disk",10]]}}}

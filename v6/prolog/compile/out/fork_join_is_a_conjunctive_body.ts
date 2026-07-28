@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -101,6 +101,12 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   });
 }
 
+const finalSelect: Record<string, string> = {
+  combined: `SELECT CASE WHEN json_valid("value_a") AND json_type("value_a") = 'object' THEN json_extract("value_a", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value_a", '$.args')) || ')' ELSE "value_a" END AS "value_a", CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' THEN json_extract("value_b", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')) || ')' ELSE "value_b" END AS "value_b" FROM "combined"`,
+  result_a: `SELECT CASE WHEN json_valid("value_a") AND json_type("value_a") = 'object' THEN json_extract("value_a", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value_a", '$.args')) || ')' ELSE "value_a" END AS "value_a" FROM "result_a"`,
+  result_b: `SELECT CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' THEN json_extract("value_b", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')) || ')' ELSE "value_b" END AS "value_b" FROM "result_b"`,
+};
+
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   result_a: { kind: "set", addSql: `INSERT OR IGNORE INTO "result_a" ("value_a") VALUES (?)`, delSql: `DELETE FROM "result_a" WHERE "value_a" = ?` },
   result_b: { kind: "set", addSql: `INSERT OR IGNORE INTO "result_b" ("value_b") VALUES (?)`, delSql: `DELETE FROM "result_b" WHERE "value_b" = ?` },
@@ -138,7 +144,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "combined", headDeltaTableName: "__delta_combined", headColumns: ["value_a", "value_b"], insertSql: `INSERT OR IGNORE INTO "combined" ("value_a", "value_b") SELECT DISTINCT d0."value_a", b0."value_b" FROM "__frontier_result_a" d0, "result_b" b0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT b0."value_a", d0."value_b" FROM "__frontier_result_b" d0, "result_a" b0 WHERE d0."_phase" >= 0 RETURNING "value_a", "value_b"`, selectSql: `SELECT "value_a", "value_b" FROM "combined"`, recomputeSql: `DELETE FROM "combined";\nINSERT OR IGNORE INTO "combined" ("value_a", "value_b") SELECT b0."value_a", b1."value_b" FROM "result_a" b0, "result_b" b1`, supportSql: [`DELETE FROM "__support_next_combined"`, `INSERT INTO "__support_next_combined" ("value_a", "value_b", "__support_count") SELECT "value_a", "value_b", sum("__support_count") FROM (SELECT b0."value_a" AS "value_a", b1."value_b" AS "value_b", count(*) AS "__support_count" FROM "result_a" b0, "result_b" b1 GROUP BY b0."value_a", b1."value_b") GROUP BY "value_a", "value_b"`, `UPDATE "combined" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_combined" n WHERE n."value_a" = h."value_a" AND n."value_b" = h."value_b"), 0))`, `DELETE FROM "combined" WHERE "__support_count" <= 0 RETURNING "value_a", "value_b"`, `INSERT INTO "combined" ("value_a", "value_b", "__support_count") SELECT "value_a", "value_b", n."__support_count" FROM "__support_next_combined" n WHERE NOT EXISTS (SELECT 1 FROM "combined" h WHERE n."value_a" = h."value_a" AND n."value_b" = h."value_b") RETURNING "value_a", "value_b"`] },
+  { headRel: "combined", headDeltaTableName: "__delta_combined", headColumns: ["value_a", "value_b"], insertSql: `INSERT OR IGNORE INTO "combined" ("value_a", "value_b") SELECT DISTINCT d0."value_a", b0."value_b" FROM "__frontier_result_a" d0, "result_b" b0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT b0."value_a", d0."value_b" FROM "__frontier_result_b" d0, "result_a" b0 WHERE d0."_phase" >= 0 RETURNING "value_a", "value_b"`, selectSql: `SELECT "value_a", "value_b" FROM "combined"`, recomputeSql: `DELETE FROM "combined";\nINSERT OR IGNORE INTO "combined" ("value_a", "value_b") SELECT b0."value_a", b1."value_b" FROM "result_a" b0, "result_b" b1`, supportSql: [`DELETE FROM "__support_next_combined"`, `INSERT INTO "__support_next_combined" ("value_a", "value_b", "__support_count") SELECT "value_a", "value_b", sum("__support_count") FROM (SELECT b0."value_a" AS "value_a", b1."value_b" AS "value_b", count(*) AS "__support_count" FROM "result_a" b0, "result_b" b1 GROUP BY b0."value_a", b1."value_b") GROUP BY "value_a", "value_b"`, `UPDATE "combined" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_combined" n WHERE n."value_a" = h."value_a" AND n."value_b" = h."value_b"), 0))`, `DELETE FROM "combined" WHERE "__support_count" <= 0 RETURNING "value_a", "value_b"`, `INSERT INTO "combined" ("value_a", "value_b", "__support_count") SELECT "value_a", "value_b", n."__support_count" FROM "__support_next_combined" n WHERE NOT EXISTS (SELECT 1 FROM "combined" h WHERE n."value_a" = h."value_a" AND n."value_b" = h."value_b") RETURNING "value_a", "value_b"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {
@@ -210,5 +216,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

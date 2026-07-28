@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -77,6 +77,10 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
     typed_input: selectRows(seam, `SELECT "value" FROM "typed_input"`, relColumns.typed_input!),
   });
 }
+
+const finalSelect: Record<string, string> = {
+  typed_input: `SELECT "value" FROM "typed_input"`,
+};
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   typed_input: { kind: "set", addSql: `INSERT OR IGNORE INTO "typed_input" ("value") VALUES (?)`, delSql: `DELETE FROM "typed_input" WHERE "value" = ?` },
@@ -179,5 +183,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

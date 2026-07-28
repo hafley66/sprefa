@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -120,6 +120,12 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   });
 }
 
+const finalSelect: Record<string, string> = {
+  rust_file: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path" FROM "rust_file"`,
+  worktree_edit: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' THEN json_extract("digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("digest", '$.args')) || ')' ELSE "digest" END AS "digest", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind" FROM "worktree_edit"`,
+  worktree_file: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' THEN json_extract("digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("digest", '$.args')) || ')' ELSE "digest" END AS "digest", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind" FROM "worktree_file"`,
+};
+
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   worktree_edit: { kind: "log", addSql: `INSERT INTO "worktree_edit" ("path", "digest", "kind") VALUES (?, ?, ?)`, delSql: null },
 };
@@ -157,7 +163,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "rust_file", headDeltaTableName: "__delta_rust_file", headColumns: ["path"], insertSql: `INSERT OR IGNORE INTO "rust_file" ("path") SELECT DISTINCT d0."path" FROM "__frontier_worktree_file" d0 WHERE d0."_phase" >= 0 AND d0."kind" = 'rust' RETURNING "path"`, selectSql: `SELECT "path" FROM "rust_file"`, recomputeSql: `DELETE FROM "rust_file";\nINSERT OR IGNORE INTO "rust_file" ("path") SELECT b0."path" FROM "worktree_file" b0 WHERE b0."kind" = 'rust'`, supportSql: [`DELETE FROM "__support_next_rust_file"`, `INSERT INTO "__support_next_rust_file" ("path", "__support_count") SELECT "path", sum("__support_count") FROM (SELECT b0."path" AS "path", count(*) AS "__support_count" FROM "worktree_file" b0 WHERE b0."kind" = 'rust' GROUP BY b0."path") GROUP BY "path"`, `UPDATE "rust_file" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_rust_file" n WHERE n."path" = h."path"), 0))`, `DELETE FROM "rust_file" WHERE "__support_count" <= 0 RETURNING "path"`, `INSERT INTO "rust_file" ("path", "__support_count") SELECT "path", n."__support_count" FROM "__support_next_rust_file" n WHERE NOT EXISTS (SELECT 1 FROM "rust_file" h WHERE n."path" = h."path") RETURNING "path"`] },
+  { headRel: "rust_file", headDeltaTableName: "__delta_rust_file", headColumns: ["path"], insertSql: `INSERT OR IGNORE INTO "rust_file" ("path") SELECT DISTINCT d0."path" FROM "__frontier_worktree_file" d0 WHERE d0."_phase" >= 0 AND d0."kind" = 'rust' RETURNING "path"`, selectSql: `SELECT "path" FROM "rust_file"`, recomputeSql: `DELETE FROM "rust_file";\nINSERT OR IGNORE INTO "rust_file" ("path") SELECT b0."path" FROM "worktree_file" b0 WHERE b0."kind" = 'rust'`, supportSql: [`DELETE FROM "__support_next_rust_file"`, `INSERT INTO "__support_next_rust_file" ("path", "__support_count") SELECT "path", sum("__support_count") FROM (SELECT b0."path" AS "path", count(*) AS "__support_count" FROM "worktree_file" b0 WHERE b0."kind" = 'rust' GROUP BY b0."path") GROUP BY "path"`, `UPDATE "rust_file" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_rust_file" n WHERE n."path" = h."path"), 0))`, `DELETE FROM "rust_file" WHERE "__support_count" <= 0 RETURNING "path"`, `INSERT INTO "rust_file" ("path", "__support_count") SELECT "path", n."__support_count" FROM "__support_next_rust_file" n WHERE NOT EXISTS (SELECT 1 FROM "rust_file" h WHERE n."path" = h."path") RETURNING "path"`], aggregateSql: null },
 ];
 
 const EDGE_WORKTREE_FILE_0_PROJECT_SQL = `SELECT ?1 AS "path", ?2 AS "digest", ?3 AS "kind"`;
@@ -258,5 +264,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };
