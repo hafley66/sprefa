@@ -105,6 +105,18 @@ interface IGenProgram {
   phase C entry bar; whichever side reads better wins the formatting argument,
   user taste decides ties.
 
+## ADDENDUM 2 (user, overnight): TS is backend #1, rust is coming
+
+"the technique of direct to ts is also partly one day gonna be to rust so
+dont get too hamstrung on pl and ts being 1-1." Binding consequence: the
+compiler middle (analyze/strat/lower) produces a TARGET-NEUTRAL plan term
+(rel schemas + DDL intent, stratum order, per-rule SQL text, arrival/keyed/
+retention semantics, diff-and-log spec) with zero TS idioms; emit_ts.pl is
+one backend over that plan and a future emit_rust.pl consumes the same plan
+unchanged. SQL text is shared middle content (both targets speak SQLite).
+The tick-log envelope is already the cross-target grade. Relayed to the
+phase B agent mid-flight.
+
 ## Named slots
 
 - SLOT-TERMFORM: phase A-C consume the fixture term form (prog(Decls, Rules))
