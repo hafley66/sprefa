@@ -1,0 +1,7 @@
+rel worktree_edit(path, digest) log keep(all).
+rel worktree_file(path, digest) key(1).
+rel tree_file(rev_id, path, tree_digest) key(1, 2).
+rel head(_repo_id, rev_id) key(1).
+
+worktree_file(Path, Digest) <+ worktree_edit(Path, Digest).
+dirty(Path) <- worktree_file(Path, WorktreeDigest), head(_RepoId, RevId), tree_file(RevId, Path, TreeDigest), WorktreeDigest \== TreeDigest.

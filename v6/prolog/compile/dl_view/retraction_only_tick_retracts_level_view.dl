@@ -1,0 +1,3 @@
+rel source_row(item) set.
+
+mirror(Item) <- source_row(Item).
