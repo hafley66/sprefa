@@ -46,6 +46,7 @@
 | [plans/2026-07-24-v6-dl-mvp-slice.md](plans/2026-07-24-v6-dl-mvp-slice.md) | 664 | v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24) |
 | [plans/2026-07-25-sql-builder-build-vs-buy.md](plans/2026-07-25-sql-builder-build-vs-buy.md) | 322 | SQL query-builder / templating: build-vs-buy for `lowerSql.ts` |
 | [prolog/LANG.md](prolog/LANG.md) | 95 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
+| [prolog/compile/PIPELINE.md](prolog/compile/PIPELINE.md) | 153 | The tsv2 compiler pipeline, stage by stage |
 | [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 309 | TSV2 Phase C scoreboard |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
@@ -634,6 +635,19 @@
 67:## Known open questions (find more; do not silently resolve)
 75:## Context files (read before working)
 83:## Lab style laws (non-negotiable)
+```
+
+### prolog/compile/PIPELINE.md
+```
+1:# The tsv2 compiler pipeline, stage by stage
+14:## Shape of the whole thing
+32:## Stage 1 -- read the program (compile.pl)
+45:## Stage 2 -- analysis (analyze.pl)
+68:## Stage 3 -- ordering (strat.pl)
+80:## Stage 4 -- lowering (lower.pl), target-neutral by construction
+116:## Stage 5 -- emission (emit_ts.pl)
+125:## Stage 6 -- grading
+135:## Worked example (smallest fixture, demand_laziness_effect_rows)
 ```
 
 ### prolog/compile/SCOREBOARD.md
