@@ -93,7 +93,10 @@ regression number, full corpus for the headline run.
 
 ## Ambiguity slots (named, per lab protocol)
 
-- SLOT-LIB: tracing library (research verdict pending).
+- SLOT-LIB: FILLED 2026-07-27 late (plans/2026-07-27-perf-tracing-buy-verdict.md):
+  node:diagnostics_channel tracingChannel spine + pino JSONL emit; perf_hooks
+  as innermost primitive; tinybench/mitata bench-side; --cpu-prof ad-hoc; OTel
+  as the item-9 escalation path. Pino dependency awaits user word.
 - SLOT-ENVELOPE: tick-log envelope (own header, item 9 keystone, next to write).
 - SLOT-SWR: SWR spelling under content salts.
 - SLOT-CORPUS: bench corpus pinning.
