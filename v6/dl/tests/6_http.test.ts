@@ -12,18 +12,39 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { test } from "node:test";
 
-import { startServer, type DlServer } from "../src/6_http.ts";
+import type { Subscription } from "rxjs";
+
+import { serveDl, type DlServer } from "../src/6_http.ts";
 import { cleanupDbFile, freshDbPath } from "./1_helpers_db.ts";
 import { waitUntil } from "./2_helpers_hosts.ts";
 
-async function bootTestServer(): Promise<{ readonly server: DlServer; readonly dbPath: string; readonly base: string }> {
-  const dbPath = freshDbPath();
-  const server = await startServer({ dbPath, port: 0 });
-  return { server, dbPath, base: `http://127.0.0.1:${server.port}` };
+interface ServerFixture {
+  readonly server: DlServer;
+  readonly dbPath: string;
+  readonly base: string;
+  readonly running: Subscription;
 }
 
-async function teardownTestServer(fixture: { readonly server: DlServer; readonly dbPath: string }): Promise<void> {
+/** serveDl is cold: this subscription is the test's stand-in for main.ts's terminal
+ *  one, and the handle arrives on it as the "listening" event. `firstValueFrom` is not
+ *  usable here -- it unsubscribes on the first value, which would close the server. */
+async function bootTestServer(): Promise<ServerFixture> {
+  const dbPath = freshDbPath();
+  let running: Subscription | undefined;
+  const server = await new Promise<DlServer>((resolve, reject) => {
+    running = serveDl({ dbPath, port: 0 }).subscribe({
+      next: (event) => {
+        if (event.kind === "listening") resolve(event.server);
+      },
+      error: reject,
+    });
+  });
+  return { server, dbPath, base: `http://127.0.0.1:${server.port}`, running: running! };
+}
+
+async function teardownTestServer(fixture: ServerFixture): Promise<void> {
   await fixture.server.close();
+  fixture.running.unsubscribe();
   cleanupDbFile(fixture.dbPath);
 }
 
