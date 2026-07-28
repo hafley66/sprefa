@@ -208,3 +208,18 @@ ruling(spine_residency, stdlib_rels_and_binds_not_kernel, user,
 % above. Lifetimes stay matches; no bespoke freshness machinery.
 ruling(clock_residency, world_fed_bind_not_construct, user,
        'user 2026-07-28 AM: "clock bind yes"; ghcacher findings F2 + the SWR-as-latest-state exchange').
+
+% 2026-07-28 PM, after the match-frontier lab verdict. The lab priced the
+% SQL trigger family (inserted/deleted/OLD/NEW) first; the user overruled:
+% the arm vocabulary is the rx Observer lifecycle, verbatim. "lifecycle
+% must be next/finalize/unsubscribe/complete/subscribe/error etc. they are
+% match arms in theory or built ins." Error-arm semantics stay subordinate
+% to the failure-is-a-value envelope ruling (an error arm must not become
+% a second failure channel); that reconciliation is design work, not ruled.
+ruling(lifecycle_arm_vocabulary, rx_observer_words, user,
+       'user 2026-07-28 PM: next/finalize/unsubscribe/complete/subscribe/error are the arm names; SQL trigger family rejected').
+
+% Same sitting. Lab priced partition/groupBy above match for the block
+% word; user overruled: the block word is match.
+ruling(match_block_word, match, user,
+       'user 2026-07-28 PM: "match" over partition/groupBy').
