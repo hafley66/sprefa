@@ -634,6 +634,19 @@ language finding, not a reason to special-case the spine.
 - **MERGED TO MAIN**: main fast-forwarded to the cleanup tip (aed4c155 ->
   9f8b6edc, 92 commits).
 
+### Hands-on findings 2026-07-29 (coordinator wrote+ran a cold program; scratch fixture, receipts in chat)
+- **keyed() on a level-rule head is SILENTLY INERT** (F8/retention-inert
+  defect class): keyed(current/2,[1]) + `current(Id,Tag) <- door_tag(Id,Tag)`
+  accumulated BOTH rows for key 1, no replace, no refusal (oracle
+  engine.pl: decl_key consulted only in apply_edge_writes). Needs either
+  a named refusal or defined replace semantics -- user call which.
+- **edge_trigger_is_derived now blocks the flagship enum idiom**: the
+  natural state machine `current(Id,Tag) <+ door_tag(Id,Tag)` runs in the
+  oracle but REFUSES in tsv2 (banked C2 refusal), and the enum tag view is
+  derived BY CONSTRUCTION, so enums + edge rules never compose in compiled
+  programs. The banked refusal just got a lot more central; the fix is the
+  tickLoop carry seam the C2 agent declined for ownership reasons.
+
 ### v6 still awaiting user word (small, none blocking the absorption arc)
 - **Q8 residual**: confirm left-of-arrow = demand key on effect rels, `Key()` never
   appears there (the shipped TS reading; extraction lab's preference).
