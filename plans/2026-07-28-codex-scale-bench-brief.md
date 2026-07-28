@@ -86,3 +86,18 @@ as ANOTHER ENGINE THERE:
 - The oracle cross-check rail stays exactly as specified.
 - scale-gen.pl may live in bench/ beside swi_reach.pl (the precedent for
   prolog helpers in the bench dir) instead of v6/tsv2/scripts/.
+
+## AMENDMENT 2 (user, mid-run): baseline = the OLD TS engine, same matrix
+
+The report must contain side-by-side rows: every matrix cell run through
+BOTH (a) the tsv2 A-runtime path (tsv2_gen.sh) and (b) the existing v1
+TS engine path that the harness already drives (the swi_emit.sh /
+swi_ts.sh lineage: prolog emits the program, node runs it through the
+v1 evalProgramSql seam -- the lowerSql DatalogEvaluator, i.e. the KNOWN
+TS baseline). Both are recompute-per-tick engines (store-adoption
+findings, plans/2026-07-28-store-adoption-findings.md), so this is a
+fair same-class comparison; the delta isolates runtime overhead, not
+algorithm class. If the v1 seam cannot host a matrix shape, record
+N/A-with-reason for that cell rather than bending the shape.
+(Queued for a codex resume if the first run lands before this
+amendment is seen; the runner and matrix stay as specified.)
