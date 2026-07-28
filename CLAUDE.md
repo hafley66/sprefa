@@ -326,11 +326,16 @@ coordinator verified: conformance 112 (+2 fixtures), roundtrip G1
 6/6, gate): 53 kind(Ref,set) entries deleted, `set` = named refusal
 removed_word(set), colon types live (col_type(Ref, Column, Type)
 term form, decl type is authority over C2a inference, contradiction
-= decl_type_conflicts_witness), 2 new fixtures. ENUM ARC IN FLIGHT
-(codex sol, brief plans/2026-07-29-codex-enum-brief.md, worktree
-../sprefa-codex-enum base 61817999): semicolon variants desugar to
-plain variant rels + derived tag view via ONE shared expansion, term
-form keeps the sugar for G1. P2+P3 HEADER SEEDED
+= decl_type_conflicts_witness), 2 new fixtures. ENUM ARC LANDED
+(merge after 61817999, codex sol no-commit flow, coordinator verified:
+conformance 115 (+3), roundtrip G1 115/115, sweep 34/31/0 existing
+movement zero, plunit 21/21, tsv2 6/6, gate): semicolon variant decls
+retained as sugar in term form (enum_decl/2), ONE shared expansion
+expand_enum_program/2 (v6/prolog/0_enum_expand.pl) consumed by BOTH
+the oracle engine and compile.pl -- variants become typed variant rels
+(body_page/body_redirect) + derived body_tag view, reference columns
+INTEGER, collision refusal named. SCOREBOARD.md noted stale (110-era)
+by the agent, regen rides the next sweep-touching arc. P2+P3 HEADER SEEDED
 (plans/2026-07-29-emitter-p2-p3-header.md): the 1M-competition entry
 -- recursive strata across ticks, retraction as emitted support-count
 SQL with the MANDATORY cycle guard, graded through the EXISTING
