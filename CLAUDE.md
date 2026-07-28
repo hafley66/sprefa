@@ -129,9 +129,23 @@ coordinator. Round 2's finding: the tick-number dependency did not survive
 the real seam (plan term converged to snapshot-diff deltas +
 arrival-projected upserts). Round 3: compound columns render canonical term
 text at read via CASE json_valid+json_type in lower.pl SQL (shared with the
-future rust backend). gen_emitted back in the type graph. NEXT: phase C
-(fixture-corpus sweep, entry bar = byte-identity emitter-vs-exemplar,
-formatting = user taste on ties) and phase D (.dl DCG + hosts).
+future rust backend). gen_emitted back in the type graph. PHASE C SWEEP LANDED
+(v6/prolog/compile/SCOREBOARD.md, regenerable via v6/tsv2/scripts/sweep.sh):
+109 fixtures = 92 UNSUPPORTED (named constructs) / 9 IDENTICAL / 8 WRONG.
+Ranked backlog: unmarked edge trigger 48 (needs real backlog-replay design,
+not a quick widen) > comparison ops 12 > only+guard 9 > aggregates 9 >
+arithmetic bind 5 > json destructure 4. All 8 WRONGs diagnosed: 5 = the
+TEXT-only column model loses int/string distinction ("1" vs 1, structural);
+1 = compound arrival text vs json1 match mismatch; 2 = rejection-semantics
+fixtures with no comparable log. Sweep also fixed 4 real compiler bugs
+(declared_refs union, multi-clause head DELETE wipe, @libsql number->REAL
+integer corruption via bigint binds) and added a safety gate that caught 3
+silently-miscompiled "identical" results (comparison/bind/head-arith now
+refuse instead). Open: retention keep(count) not lowered AND invisible to
+tick-log-only grading (needs final-state in the grade); 4 empty-schedule
+fixtures pass vacuously. MORNING DESIGN CALLS: column typing (int columns
+in storage vs TEXT-only), unmarked-trigger semantics, final-state grading
+leg. Phase D (.dl DCG + hosts) unstarted.
 
 **v5 BACKGROUND OPS (overnight 2026-07-27, user asleep)**: daemon swapped to
 current binary (~/.cargo/bin/dl restored from target/release, was missing —
