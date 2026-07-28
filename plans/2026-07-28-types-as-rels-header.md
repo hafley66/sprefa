@@ -98,12 +98,54 @@ domination spelling), SLOT-ENUM-SHAPE (sum-type table layout),
 SLOT-INTERN-SCOPE (intern per rel, per type, or global),
 SLOT-JSON1-FATE (fast path, cache, or removed).
 
+## RESHAPED TO A LAB (user, same afternoon): "this needs a lab to explore
+## what combo is the most compact and makes sense, we want beautiful/
+## harmonious unity here bc js and json have it, so type could literally be
+## a shorthand? enum is a shorthand?"
+
+THE UNIFICATION HYPOTHESIS (primary thing the lab grades): struct/enum/
+type are SHORTHANDS over rel. A struct decl = a rel decl with the policy
+bundle pre-pinned: identity = content-addressed surrogate, mutation =
+never (new value = new id), lifetime = refcount via IVM support. An enum
+= N variant rels sharing one id space. Nesting is NEVER physical: a
+nested position is a ref column; the tree exists only in the printer
+(json view) and the matcher (dot-path = join path). If the hypothesis
+holds, the decl surface needs ONE construct plus policy words; if it
+cracks, the lab names the row/scenario where a struct cannot be a rel.
+
+Lab checks (self-loading .pl, PASS lines only, lab protocol as in the
+match_frontier lab; files in v6/prolog/labs/types_as_rels/, die on
+landing):
+- JSON ROUND-TRIP: a model json value (nested objects, arrays, enum-
+  tagged variants) lowers to term-form tables (type tables + ref columns)
+  and prints back BYTE-IDENTICAL. Include a shared-substructure value
+  (same subtree referenced twice) proving intern sharing, and the
+  round-trip of it (tree view duplicates, graph stores once).
+- POLICY-BUNDLE DERIVATION: express one struct table purely as existing
+  rel machinery (interned set rel + support-refcount lifetime) in the
+  model; grade that its behavior under insert/share/release matches the
+  hypothesis table (no new construct needed = PASS).
+- DOMINATION SCENARIO: parent dies; (a) shared child (refcount > 0)
+  survives, (b) solely-owned child cascades via support-zero. Tick logs
+  hand-computed and graded. If cascade needs anything beyond support
+  counting, that is a finding, not an assumption.
+- MATCH-PATH LOWERING: dot-path patterns at depth 1/2/3 emit join SQL in
+  the model; each with its rx lowering string (snippet law); depth-cost
+  table.
+- COMPACTNESS PRICING: at least 3 decl-surface spellings for the
+  shorthand family (js/json-flavored braces, prolog-flavored, sql-
+  flavored), each shown on the SAME worked example (route tree with enum
+  body), scored on: chars, number of distinct constructs, distance from
+  json, distance from current rel decls. No @ symbols. The lab prices,
+  the user picks.
+
 ## Deliverable
 
-plans/2026-07-28-types-as-rels-plan.md: verdict-first summary, per-question
-priced tables, recommendation ordering, the slots filled-or-open, and a
-worked example: one small program (a route tree with an enum body) shown
-in (a) proposed decl surface, (b) generated DDL including edge tables,
-(c) two rules matching into it with their SQL and rx lowerings, (d) the
-tick log when a dominated parent dies vs a shared child surviving.
-No implementation, no fixture edits, no engine claims without file:line.
+v6/prolog/labs/types_as_rels/*.pl (self-loading, PASS-only) +
+plans/2026-07-28-types-as-rels-verdict.md: verdict line first (hypothesis
+holds / cracks where), the Q1-Q8 priced tables, the five check results,
+slots filled-or-open, and the worked example in all three candidate
+spellings with (a) decl surface, (b) generated DDL incl. edge tables,
+(c) two rules matching into it with SQL + rx lowerings, (d) tick logs for
+the domination scenario pair. No implementation outside the lab dir, no
+fixture edits, no engine claims without file:line.
