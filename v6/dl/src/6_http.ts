@@ -55,6 +55,7 @@ import * as http from "node:http";
 import path from "node:path";
 
 import {
+  EMPTY,
   Observable,
   catchError,
   concatMap,
@@ -268,7 +269,17 @@ function runProgram$(
   config: { readonly dbPath: string },
   load: ProgramLoad,
 ): Observable<DlAppEvent> {
-  return from(bootProgram(state, config, load)).pipe(
+  // Only a BOOT failure is caught here (answer 500, no program runs). A fault raised
+  // later by the tick loop or by a host effect stays on the stream and reaches main.ts,
+  // which is fatal — the same loudness the old keepAlive's rethrow had.
+  const booted$ = from(bootProgram(state, config, load)).pipe(
+    catchError((failure: unknown) => {
+      serveFailure(load.response, "POST", "/edb/program", failure);
+      return EMPTY;
+    }),
+  );
+
+  return booted$.pipe(
     concatMap(({ runtime, hostRunner }) =>
       merge(
         runtime.deltas$.pipe(map((delta): DlAppEvent => ({ kind: "delta", delta }))),
@@ -283,7 +294,6 @@ function runProgram$(
         }),
       ),
     ),
-    catchError((failure: unknown) => of(serveFailure(load.response, "POST", "/edb/program", failure))),
   );
 }
 

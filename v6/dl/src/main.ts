@@ -25,8 +25,11 @@ serveDl({ dbPath, port }).subscribe({
     console.log(`dl serve: listening on :${event.server.port} (db ${dbPath})`);
     for (const route of ROUTE_LIST) console.log(`  ${route}`);
   },
+  // Nothing above survives a fault at the top of the graph: the subscription is gone,
+  // which closes the listener, so the process must go too rather than sit there
+  // listening with nothing wired behind it.
   error: (failure: unknown) => {
-    console.error(`dl serve: ${failure instanceof Error ? failure.message : String(failure)}`);
-    process.exitCode = 1;
+    console.error(`dl serve: ${failure instanceof Error ? (failure.stack ?? failure.message) : String(failure)}`);
+    process.exit(1);
   },
 });
