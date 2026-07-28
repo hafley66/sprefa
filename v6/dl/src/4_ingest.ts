@@ -42,6 +42,7 @@ import { edbRel, type RelDecl } from "sprefa-store-engine/src/lower/ast.ts";
 import type { FactLine } from "sprefa-store-engine/src/engine/ingest.ts";
 
 import { PerfTrace } from "./0_trace.ts";
+import { DlRuntime } from "./3_runtime.ts";
 import type {
   AssertTrue,
   ExtractRecord,
@@ -246,7 +247,14 @@ export function toFactLines(records: readonly ExtractRecord[], filePath: string)
 // ─────────────────────────────────────────────────────────────────────────────
 // ingestFile: drain extractFile -> toFactLines -> group into named Rows per spine rel ->
 // diff against the current per-path rows -> ONE rt.commit. N+1 law: each spine rel's
-// current rows are read exactly once (rt.rows(relName)), never per row.
+// current rows for THIS PATH are read exactly once per file, via a WHERE-scoped SQL
+// read on the indexed `path` column (DlRuntime.rowsForPath, 3_runtime.ts) rather than
+// `rt.rows(relName)`'s whole-table read + JS filter -- the table no longer grows the
+// cost of ingesting one file. `rowsForPath` is not on IDlRuntime (0_types.ts is out of
+// scope for this arc), so the `instanceof DlRuntime` check below falls back to the
+// unscoped rows()+filter for any other IDlRuntime implementation; every real and test
+// caller in this repo boots a concrete DlRuntime, so the fallback is never exercised
+// today but keeps ingestFile's exported type honestly `(rt: IDlRuntime, ...)`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function namedRowFromFactLine(factLine: Extract<FactLine, { t: "rel" }>): Row {
@@ -318,7 +326,10 @@ export async function ingestFile(rt: IDlRuntime, filePath: string): Promise<Tick
 
   for (const { name: relName } of SPINE_REL_SCHEMA) {
     const newRows = (newRowsByRel.get(relName) ?? []) as Row[];
-    const oldRows = (await rt.rows(relName)).filter((row) => row.path === relPath);
+    const oldRows =
+      rt instanceof DlRuntime
+        ? await rt.rowsForPath(relName, relPath)
+        : (await rt.rows(relName)).filter((row) => row.path === relPath);
 
     const toInsert = differenceWith(newRows, oldRows, isEqual);
     const toRetract = differenceWith(oldRows, newRows, isEqual);

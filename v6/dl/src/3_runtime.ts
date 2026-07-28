@@ -362,6 +362,47 @@ function selectAll(db: Db, relName: string, columns: readonly string[]): Observa
   );
 }
 
+/** WHERE-scoped read on one text column, pushed into SQL against the interned
+ *  `relbase_*` table instead of `selectAll`'s unscoped `SELECT * FROM rel_<name>`
+ *  (which decodes every text column of every row through a per-row correlated
+ *  subquery, then relies on the caller to JS-filter). `value`'s dictionary id is
+ *  resolved ONCE here, via the resident interner (`store.intern`, an in-memory hash
+ *  lookup, no DB round trip), so the WHERE predicate compares two integers and can use
+ *  an index with `columnName` as its leading column (every `relbase_*` table carries
+ *  `UNIQUE(<its declared columns>)`, `columnName` first for every spine rel). Throws if
+ *  `relName` has no `columnName` column, or if that column is not text (an int column
+ *  has no dictionary id to resolve). */
+function selectByColumn(
+  db: Db,
+  store: Store,
+  columnTypes: ReadonlyMap<string, readonly ColumnType[]>,
+  relName: string,
+  columns: readonly string[],
+  columnName: string,
+  value: string,
+): Observable<Row[]> {
+  const columnIndex = columns.indexOf(columnName);
+  if (columnIndex === -1) throw new Error(`selectByColumn: rel '${relName}' has no column '${columnName}'`);
+  const types = columnTypes.get(relName);
+  if (!types || types.length !== columns.length) {
+    throw new Error(`selectByColumn: missing column types for rel '${relName}'`);
+  }
+  if (types[columnIndex] !== "text") {
+    throw new Error(`selectByColumn: column '${columnName}' on rel '${relName}' is not text`);
+  }
+  const valueId = store.intern(value);
+  const selectList = columns
+    .map((column, index) =>
+      types[index] === "int"
+        ? column
+        : `CASE WHEN ${column} = -1 THEN NULL ELSE (SELECT content FROM strings WHERE string_id = ${column}) END AS ${column}`,
+    )
+    .join(", ");
+  return execute$(db, `SELECT ${selectList} FROM relbase_${relName} WHERE ${columnName} = ${valueId}`).pipe(
+    map((result) => result.rows.map((rawRow) => RowCodec.rowFromRaw(rawRow, columns))),
+  );
+}
+
 /** One SELECT over the candidate tuples, never a per-row existence check. */
 function preCheckExistingKeys(
   db: Db,
@@ -1001,6 +1042,22 @@ export class DlRuntime implements IDlRuntime {
     const decl = this.state.relDecls.get(rel);
     if (!decl) throw new Error(`DlRuntime.rows: unknown rel '${rel}'`);
     return selectAll(this.state.db, rel, decl.columns);
+  }
+
+  async rowsForPath(rel: string, path: string): Promise<Row[]> {
+    return firstValueFrom(this.rowsForPath$(rel, path));
+  }
+
+  /** Path-scoped read (see `selectByColumn` above): WHERE-pushed on the interned
+   *  `path` column instead of a whole-table scan through `rows$`'s decode view.
+   *  NOT part of IDlRuntime (0_types.ts) -- it is additive on the concrete class, so a
+   *  caller typed only against IDlRuntime cannot see it and keeps using `rows()`.
+   *  4_ingest.ts's ingestFile detects this method with `instanceof DlRuntime` and uses
+   *  it when available. Throws if `rel` has no `path` column. */
+  rowsForPath$(rel: string, path: string): Observable<Row[]> {
+    const decl = this.state.relDecls.get(rel);
+    if (!decl) throw new Error(`DlRuntime.rowsForPath: unknown rel '${rel}'`);
+    return selectByColumn(this.state.db, this.state.store, this.state.columnTypes, rel, decl.columns, "path", path);
   }
 
   /** Completing commits$ ends the tick chain, which completes deltas$, which ends the
