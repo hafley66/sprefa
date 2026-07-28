@@ -71,7 +71,7 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    line: selectRows(seam, `SELECT CASE WHEN json_valid("_stream_id") AND json_type("_stream_id") = 'object' THEN json_extract("_stream_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("_stream_id", '$.args')) || ')' ELSE "_stream_id" END AS "_stream_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("_name") AND json_type("_name") = 'object' THEN json_extract("_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("_name", '$.args')) || ')' ELSE "_name" END AS "_name" FROM "line"`, relColumns.line!),
+    line: selectRows(seam, `SELECT "_stream_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("_name") AND json_type("_name") = 'object' THEN json_extract("_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("_name", '$.args')) || ')' ELSE "_name" END AS "_name" FROM "line"`, relColumns.line!),
     seen: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path" FROM "seen"`, relColumns.seen!),
   });
 }
