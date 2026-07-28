@@ -499,11 +499,11 @@ test("commit's guard rejects a non-finite number before it reaches SQL text, nam
   // Booted by hand rather than bootFixture: an exception raised inside the tick
   // pipeline is architecturally FATAL to the shared deltas$ stream (main.ts's own
   // documented behavior -- "a fault raised later by the tick loop... stays on the
-  // stream," confirmed in the F7 incident), and commit()'s own promise settles through
-  // a SEPARATE channel (reportsSubject) that a pipeline fault never reaches, so it
-  // never resolves OR rejects on this path -- it hangs, same as any other
-  // tick-processing exception. The guard's descriptive error is observed the same way
-  // any of those would be: on deltas$ itself.
+  // stream," confirmed in the F7 incident). Since the F2 fix (see the dedicated F2
+  // test below) the SAME fault also settles the in-flight commit() as a rejection,
+  // via reportsSubject keyed by commit id -- this test still asserts the guard's
+  // message off deltas$ directly, which is the distinct thing it was written to pin
+  // (the error text itself, independent of which channel delivers it).
   const dbPath = freshDbPath();
   const bridgeOk = fakeBridgeOk(singleEdbRelProgram("status_rel", ["status"]), undefined, undefined, {
     status_rel: ["int"],
@@ -516,8 +516,7 @@ test("commit's guard rejects a non-finite number before it reaches SQL text, nam
     },
   });
   try {
-    // Never settles on its own (see above); rt.dispose() below completes
-    // reportsSubject, which then rejects this with an unrelated EmptyError -- swallowed
+    // commit()'s own promise now also rejects with this same error (F2); swallowed
     // here since the guard's error (asserted below, off deltas$) is what this test is
     // actually about.
     rt.commit(edbBatch({ status_rel: [{ status: Number.NaN }] })).catch(() => {});
@@ -525,6 +524,61 @@ test("commit's guard rejects a non-finite number before it reaches SQL text, nam
     assert.ok(failure instanceof Error);
     assert.match(failure.message, /status_rel/);
     assert.match(failure.message, /column 'status'/);
+  } finally {
+    subscription.unsubscribe();
+    await rt.dispose();
+    cleanupDbFile(dbPath);
+  }
+});
+
+/** Races `promise` against a short timeout so a regression (the pending commit()
+ *  hangs forever, per the F2 incident's 600s manual probe) fails this test fast
+ *  instead of stalling the whole suite. */
+async function withTimeout<Value>(promise: Promise<Value>, ms: number, label: string): Promise<Value> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label}: timed out after ${ms}ms`)), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
+test("F2: a tick-pipeline fault rejects the in-flight commit() with the original error, instead of hanging forever", async () => {
+  // Same fault shape as the guard test above (a non-finite number reaching
+  // encodeSurfaceRowByColumns), but this time the assertion is on commit()'s OWN
+  // promise, not on a side-channel deltas$ subscription: the failing mode this
+  // guards is a commit() call that neither resolves NOR rejects, because the
+  // fault travelled on deltas$ and reportsSubject never heard about it (F2,
+  // docs/failure-modes.md-shaped incident, 3_runtime.ts:969-1000). Pre-fix this
+  // test times out at the withTimeout ceiling instead of passing; the audit's
+  // manual probe hung a full 600s on the same shape.
+  const dbPath = freshDbPath();
+  const bridgeOk = fakeBridgeOk(singleEdbRelProgram("status_rel", ["status"]), undefined, undefined, {
+    status_rel: ["int"],
+  });
+  const rt = await DlRuntime.boot({ dbPath, bridge: bridgeOk });
+  // The tick loop only turns while something subscribes deltas$ (class header law); the
+  // pipeline fault also terminates deltas$ itself, so swallow that terminal error here --
+  // it is asserted through commit()'s rejection below, not through this subscription.
+  const subscription = rt.deltas$.subscribe({ error: () => {} });
+  try {
+    await assert.rejects(
+      () =>
+        withTimeout(
+          rt.commit(edbBatch({ status_rel: [{ status: Number.NaN }] })),
+          5_000,
+          "commit() after a tick-pipeline fault",
+        ),
+      (failure: unknown) => {
+        assert.ok(failure instanceof Error);
+        assert.match(failure.message, /status_rel/);
+        assert.match(failure.message, /column 'status'/);
+        return true;
+      },
+    );
   } finally {
     subscription.unsubscribe();
     await rt.dispose();

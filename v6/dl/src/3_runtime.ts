@@ -97,7 +97,7 @@ export interface RuntimeState {
    *  the tick publishes is taken against this, which is what makes a derived row's
    *  disappearance a weight -1 delta rather than a silent overwrite. */
   readonly derivedTableMirror: Map<string, Row[]>;
-  readonly reportsSubject: Subject<{ readonly id: number; readonly report: TickReport }>;
+  readonly reportsSubject: Subject<CommitSettlement>;
   /** Rows the previous tick physically deleted for retention-0 rels. Non-zero means the
    *  EDB moved since the last fixpoint even though THIS tick's batch may be empty, so
    *  the recompute-skip below must not fire. */
@@ -107,6 +107,23 @@ export interface RuntimeState {
 interface CommitRequest {
   readonly id: number;
   readonly batch: EdbBatch;
+}
+
+/** What `reportsSubject` carries for one commit id (F2 fix). `commit()` filters this
+ *  stream by id and settles its promise from whichever variant arrives:
+ *  - `ok: true`  the tick pipeline settled normally; resolve with the report.
+ *  - `ok: false` a fault (host effect, EDB guard, SQL failure, ...) was raised somewhere
+ *    in the `applyEdbTxn -> applyDerivedTxn` chain for THIS commit id; reject with the
+ *    original error. Before this type existed a mid-tick fault travelled on `deltas$`
+ *    only, so the matching `reportsSubject` entry never arrived and the pending
+ *    commit() neither resolved nor rejected (docs/failure-modes.md-shaped incident,
+ *    3_runtime.ts F2: a 600s manual probe hung on exactly this shape). */
+type CommitSettlement =
+  | { readonly id: number; readonly ok: true; readonly report: TickReport }
+  | { readonly id: number; readonly ok: false; readonly error: Error };
+
+function toError(fault: unknown): Error {
+  return fault instanceof Error ? fault : new Error(String(fault));
 }
 
 interface EdbTickOutcome {
@@ -631,7 +648,7 @@ export function clearScratchRels(state: RuntimeState, outcome: SettledOutcome): 
     if (!decl || decl.origin === "EDB") continue;
     state.derivedTableMirror.set(relName, []);
   }
-  state.reportsSubject.next({ id: outcome.id, report: outcome.report });
+  state.reportsSubject.next({ id: outcome.id, ok: true, report: outcome.report });
   PerfTrace.tickSettled(outcome.report.tick);
 }
 
@@ -851,9 +868,35 @@ export class DlRuntime implements IDlRuntime {
     this.commits$ = new Subject<CommitRequest>();
     this.nextCommitId = 1;
 
-    const tick$ = this.commits$.pipe(concatMap((request) => applyEdbTxn(state, request)));
+    // F2 fix: a fault anywhere in applyEdbTxn/applyDerivedTxn used to travel on
+    // deltas$ ONLY, so the in-flight commit()'s reportsSubject wait never heard about
+    // it and hung forever. `defer` catches a SYNCHRONOUS throw too (applyEdbTxn's
+    // encodeBatchSide guard runs before any Observable exists), and catchError routes
+    // the fault to reportsSubject, keyed by this stage's own commit id, before
+    // rethrowing so the existing loop-stop semantics are unchanged: the error still
+    // propagates to deltas$ and still ends the tick chain (commits$.observed goes
+    // false, so a LATER commit() still throws its own loud refusal, unchanged).
+    const tick$ = this.commits$.pipe(
+      concatMap((request) =>
+        defer(() => applyEdbTxn(state, request)).pipe(
+          catchError((fault: unknown) => {
+            state.reportsSubject.next({ id: request.id, ok: false, error: toError(fault) });
+            return throwError(() => fault);
+          }),
+        ),
+      ),
+    );
 
-    const derived$ = tick$.pipe(concatMap((outcome) => applyDerivedTxn(state, outcome)));
+    const derived$ = tick$.pipe(
+      concatMap((outcome) =>
+        defer(() => applyDerivedTxn(state, outcome)).pipe(
+          catchError((fault: unknown) => {
+            state.reportsSubject.next({ id: outcome.id, ok: false, error: toError(fault) });
+            return throwError(() => fault);
+          }),
+        ),
+      ),
+    );
 
     const settled$ = derived$.pipe(tap((outcome) => clearScratchRels(state, outcome)));
 
@@ -976,7 +1019,12 @@ export class DlRuntime implements IDlRuntime {
     const pending = firstValueFrom(
       this.state.reportsSubject.pipe(
         filter((entry) => entry.id === id),
-        map((entry) => entry.report),
+        map((entry) => {
+          // F2: a tick-pipeline fault for THIS commit id settles here as a rejection
+          // carrying the original error, instead of never emitting at all.
+          if (!entry.ok) throw entry.error;
+          return entry.report;
+        }),
       ),
     );
     this.commits$.next({ id, batch });
