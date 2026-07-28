@@ -8,7 +8,7 @@
 % from the fixture source text, never invented here.
 %
 % Compiles the SUBSET engine.pl semantics that the two Phase B target
-% fixtures use: edge rule bodies are `only(TriggerAtom)` alone (no extra
+% fixtures use: edge rule bodies are `TriggerAtom` alone (no extra
 % joined goal, no pre/1, no departed/1, no guard); level rules are acyclic
 % (no self-recursion), non-aggregate, with `not/1` allowed. Anything wider
 % throws unsupported_construct(What) at analysis time -- a compiler finding,
@@ -73,10 +73,10 @@ derived_refs(Rules, Refs) :-
     append(EdgeRefs, LevelRefs, All), sort(All, Refs).
 
 % ═══ body walking ════════════════════════════════════════════════════════════
-% body_ref_uses(Body, Uses): Uses = list of use(Ref, Args, Sign, Marked) for
+% body_ref_uses(Body, Uses): Uses = list of use(Ref, Args, Sign, Marking) for
 % every relation atom the body reaches, Sign = pos|neg (neg = under not/1,
-% which is a strictly-lower-stratum read, never a trigger source), Marked =
-% marked|unmarked (only/1 wrapped or not). Recurses into not/1 (unlike
+% which is a strictly-lower-stratum read, never a trigger source), Marking =
+% trigger|sampled. Recurses into not/1 (unlike
 % body.pl's body_atoms/2, which the engine deliberately keeps shallow there
 % because a negated atom is never a trigger candidate; here we want it for
 % stratification and column-name mining, both of which DO care about a
@@ -85,13 +85,11 @@ derived_refs(Rules, Refs) :-
 body_ref_uses((Left, Right), Uses) :- !,
     body_ref_uses(Left, LeftUses), body_ref_uses(Right, RightUses),
     append(LeftUses, RightUses, Uses).
-body_ref_uses(only(departed(Atom)), [use(Ref, Args, pos, marked)]) :- !,
+body_ref_uses(departed(Atom), [use(Ref, Args, pos, trigger)]) :- !,
     atom_ref_args(Atom, Ref, Args).
-body_ref_uses(only(Atom), [use(Ref, Args, pos, marked)]) :- !,
+body_ref_uses(latest(Atom), [use(Ref, Args, pos, sampled)]) :- !,
     atom_ref_args(Atom, Ref, Args).
-body_ref_uses(departed(Atom), [use(Ref, Args, pos, unmarked)]) :- !,
-    atom_ref_args(Atom, Ref, Args).
-body_ref_uses(pre(Atom), [use(Ref, Args, pos, unmarked)]) :- !,
+body_ref_uses(pre(Atom), [use(Ref, Args, pos, sampled)]) :- !,
     atom_ref_args(Atom, Ref, Args).
 body_ref_uses(not(Goal), Uses) :- !,
     body_ref_uses(Goal, InnerUses),
@@ -103,7 +101,7 @@ body_ref_uses(_ is _, []) :- !.
 body_ref_uses(decode(_, _), []) :- !.
 body_ref_uses(json_each(_, _), []) :- !.
 body_ref_uses(Goal, []) :- comparison_goal(Goal), !.
-body_ref_uses(Atom, [use(Ref, Args, pos, unmarked)]) :-
+body_ref_uses(Atom, [use(Ref, Args, pos, trigger)]) :-
     atom_ref_args(Atom, Ref, Args).
 
 flip_to_neg(use(Ref, Args, _, Marked), use(Ref, Args, neg, Marked)).
@@ -249,15 +247,13 @@ column_source_args(_Rules, _Initial, Schedule, Ref, Args) :-
     ( Signed = +Atom ; Signed = -Atom ),
     rel_ref(Atom, Ref), Atom =.. [_ | Args].
 
-% ═══ edge trigger shape (PHASE C2 RULING 2: unmarked edge triggers) ═════════
-% Grounded in engine.pl's own trigger_items/2 (marked_items/2 if nonempty,
-% else unmarked_items/2 -- engine.pl:136-145) and body.pl's body_atoms/2
+% ═══ edge trigger shape (bare trigger atoms) ════════════════════════════════
+% Grounded in engine.pl's trigger_items/2: bare positive atoms are triggers,
+% latest/1 and the special body forms are sampled or non-trigger reads.
 % (:112-126, the exact goal classification engine.pl's unmarked fallback
 % walks). Two ACCEPTED shapes, everything else a NAMED refusal:
-%   marked_single(Atom)      -- Body = only(Atom), not departed. UNCHANGED
-%     from before this ruling; only/1 makes Atom the SOLE trigger source
-%     (engine.pl marked_items/2), no other body goal is ever a trigger.
-%   unmarked_conjunction(Atoms) -- Body has NO only/1 anywhere and is a plain
+%   marked_single(Atom)      -- Body = Atom, the single trigger source.
+%   unmarked_conjunction(Atoms) -- Body is a plain
 %     comma-conjunction of one or more ordinary positive rel atoms (arity
 %     >= 1), nothing else: engine.pl's unmarked_items/2 wraps EVERY body
 %     atom as its own arrival(...) trigger item when no only/1 is present,
@@ -271,16 +267,17 @@ column_source_args(_Rules, _Initial, Schedule, Ref, Args) :-
 % Everything else names the SPECIFIC blocking construct instead of a
 % blanket edge_body_shape reason, so the scoreboard's per-construct tally
 % stays precise as this widens further.
-edge_trigger_shape(only(departed(Atom)), unsupported(edge_body_needs_departed(departed(Atom)))) :- !.
-edge_trigger_shape(only(Atom), marked_single(Atom)) :- !.
+edge_trigger_shape(Body, unsupported(edge_body_with_latest(Body))) :-
+    conjunction_goals(Body, Goals), member(latest(_), Goals), !.
+edge_trigger_shape(departed(Atom), unsupported(edge_body_needs_departed(departed(Atom)))) :- !.
 edge_trigger_shape(Body, unmarked_conjunction(Atoms)) :-
     conjunction_goals(Body, Goals),
-    \+ member(only(_), Goals),
+    \+ member(latest(_), Goals),
     maplist(plain_positive_atom, Goals),
     !, Atoms = Goals.
 edge_trigger_shape(Body, unsupported(Reason)) :-
     conjunction_goals(Body, Goals),
-    ( member(only(_), Goals) -> Reason = edge_marked_with_extra_goal(Body)
+    ( member(latest(_), Goals) -> Reason = edge_body_with_latest(Body)
     ; member(G1, Goals), G1 = departed(_) -> Reason = edge_body_needs_departed(Body)
     ; member(G2, Goals), G2 = pre(_) -> Reason = edge_body_needs_pre(Body)
     ; member(G3, Goals), G3 = now(_) -> Reason = edge_body_needs_now(Body)
@@ -298,7 +295,7 @@ conjunction_goals(Goal, [Goal]).
 
 plain_positive_atom(Goal) :-
     compound(Goal),
-    Goal \= only(_), Goal \= departed(_), Goal \= pre(_), Goal \= now(_), Goal \= not(_),
+    Goal \= latest(_), Goal \= departed(_), Goal \= pre(_), Goal \= now(_), Goal \= not(_),
     Goal \= (_ := _), Goal \= (_ is _), Goal \= decode(_, _), Goal \= json_each(_, _),
     \+ comparison_goal(Goal).
 
@@ -403,7 +400,7 @@ check_edge_rule_shape((Head <+ Body)) :-
 %       so a marked_single or unmarked_conjunction trigger firing off
 %       ANOTHER edge rule's head can never see it -- confirmed WRONG, not
 %       theorized: engine_core.pl's edge_chain_hops_tick_per_stage
-%       (`stage_two(Item) <+ only(stage_one(Item))`, stage_one itself
+%       (`stage_two(Item) <+ stage_one(Item)`, stage_one itself
 %       `<+ source_ev(Item)`) compiled clean and produced an empty tick 2
 %       where the oracle shows `+stage_two(alpha)`, once PHASE C2 RULING 2
 %       lifted the unmarked-shape refusal that had masked this the whole

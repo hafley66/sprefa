@@ -15,9 +15,8 @@
 % 2. Trigger occurrences for edge rules = carry-in from the previous tick
 %    (q4 next_tick), then outside arrivals, then level rows newly true after
 %    arrivals. Each occurrence fires edge rules ONE AT A TIME in order.
-% 3. A body with only/1 markers fires on marked atoms only; an unmarked body
-%    keeps the any-atom rule (q6 explicit_marker; the first stage of every
-%    chain keeps any-atom).
+% 3. Bare positive body atoms are trigger sources; latest/1 samples the
+%    current visible relation without becoming a trigger source.
 % 4. pre(Atom) reads the EVOLVING pre-state: the persistent store as writes
 %    so far this tick left it, previous tick's level rows frozen. First
 %    occurrence therefore reads T-1; later occurrences chain (r1 rider).
@@ -129,30 +128,29 @@ log_stamps(Store, Ref, Stamps) :-
             ( member(lrow(Stamp, Row), Store), rel_ref(Row, Ref) ), Stamps0),
     msort(Stamps0, Stamps).
 
-% q6: markers narrow the trigger set; an unmarked body keeps any-atom.
+% Bare positive atoms are trigger sources; latest(Atom) is a sampled read.
 % r4: departed(Atom) is a DEPARTURE trigger position; it fires on a Set/level
 % row's -delta arriving as a next-tick occurrence, and is never satisfiable
 % as a read (the row is gone). Items are arrival(Atom) | departure(Atom).
 trigger_items(Body, Items) :-
-    marked_items(Body, Marked),
-    ( Marked == [] -> unmarked_items(Body, Items) ; Items = Marked ).
+    trigger_items_(Body, Items).
 
-marked_items((Left, Right), Items) :- !,
-    marked_items(Left, LeftItems), marked_items(Right, RightItems),
+trigger_items_((Left, Right), Items) :- !,
+    trigger_items_(Left, LeftItems), trigger_items_(Right, RightItems),
     append(LeftItems, RightItems, Items).
-marked_items(only(departed(Atom)), [departure(Atom)]) :- !.
-marked_items(only(Atom), [arrival(Atom)]) :- !.
-marked_items(_, []).
-
-unmarked_items((Left, Right), Items) :- !,
-    unmarked_items(Left, LeftItems), unmarked_items(Right, RightItems),
-    append(LeftItems, RightItems, Items).
-unmarked_items(departed(Atom), [departure(Atom)]) :- !.
+trigger_items_(departed(Atom), [departure(Atom)]) :- !.
+trigger_items_(latest(_), []) :- !.
+trigger_items_(not(_), []) :- !.
+trigger_items_(pre(_), []) :- !.
+trigger_items_(now(_), []) :- !.
+trigger_items_(true, []) :- !.
+trigger_items_(_ := _, []) :- !.
+trigger_items_(_ is _, []) :- !.
+trigger_items_(decode(_, _), []) :- !.
+trigger_items_(json_each(_, _), []) :- !.
 % maplist, NEVER findall: findall copies its template, which would sever the
 % trigger atom from the body and let solve rejoin over the whole store.
-unmarked_items(Atom, Items) :-
-    body_atoms(Atom, Atoms),
-    maplist(wrap_arrival, Atoms, Items).
+trigger_items_(Atom, [arrival(Atom)]).
 
 wrap_arrival(Atom, arrival(Atom)).
 
@@ -173,7 +171,6 @@ listened_departure_refs(Rules, Refs) :-
 
 body_departed_ref((Left, Right), Ref) :-
     ( body_departed_ref(Left, Ref) ; body_departed_ref(Right, Ref) ).
-body_departed_ref(only(departed(Atom)), Ref) :- rel_ref(Atom, Ref).
 body_departed_ref(departed(Atom), Ref) :- rel_ref(Atom, Ref).
 
 % ═══ arrivals ═══════════════════════════════════════════════════════════════

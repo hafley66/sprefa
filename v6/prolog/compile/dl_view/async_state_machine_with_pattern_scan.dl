@@ -4,12 +4,12 @@ rel phase(endpoint, col2) key(1).
 rel cache(endpoint, tag, body) key(1).
 rel retries(endpoint, next) key(1).
 
-phase(Endpoint, 'fetching') <+ only(poll_due(Endpoint)), pre(phase(Endpoint, 'idle')).
-phase(Endpoint, 'idle') <+ only(fetch_result(Endpoint, fresh(_, _))), pre(phase(Endpoint, 'fetching')).
-phase(Endpoint, 'idle') <+ only(fetch_result(Endpoint, 'unchanged')), pre(phase(Endpoint, 'fetching')).
-phase(Endpoint, 'idle') <+ only(fetch_result(Endpoint, error(_))), pre(phase(Endpoint, 'fetching')).
-cache(Endpoint, Tag, Body) <+ only(fetch_result(Endpoint, fresh(Tag, Body))).
-retries(Endpoint, Next) <+ only(fetch_result(Endpoint, error(_))), pre(retries(Endpoint, SoFar)), Next := SoFar + 1.
-retries(Endpoint, 0) <+ only(fetch_result(Endpoint, fresh(_, _))).
+phase(Endpoint, 'fetching') <+ poll_due(Endpoint), pre(phase(Endpoint, 'idle')).
+phase(Endpoint, 'idle') <+ fetch_result(Endpoint, fresh(_, _)), pre(phase(Endpoint, 'fetching')).
+phase(Endpoint, 'idle') <+ fetch_result(Endpoint, 'unchanged'), pre(phase(Endpoint, 'fetching')).
+phase(Endpoint, 'idle') <+ fetch_result(Endpoint, error(_)), pre(phase(Endpoint, 'fetching')).
+cache(Endpoint, Tag, Body) <+ fetch_result(Endpoint, fresh(Tag, Body)).
+retries(Endpoint, Next) <+ fetch_result(Endpoint, error(_)), pre(retries(Endpoint, SoFar)), Next := SoFar + 1.
+retries(Endpoint, 0) <+ fetch_result(Endpoint, fresh(_, _)).
 fetch_wanted(Endpoint) <- phase(Endpoint, 'fetching').
 gave_up(Endpoint) <- retries(Endpoint, Count), Count >= 2.

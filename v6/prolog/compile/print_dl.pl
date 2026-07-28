@@ -10,7 +10,7 @@
 % already-owned module, not a duplicate implementation -- the repo style law
 % against reinventing a mining pass that already exists elsewhere).
 %
-% Syntax choices here are canonical per SYNTAX.md: `<-`/`<+` arrows, only/
+% Syntax choices here are canonical per SYNTAX.md: `<-`/`<+` arrows, latest/
 % pre/departed/now/decode/json_each/:= as function-call-shaped body items,
 % infix arithmetic (precedence-safe, parens added only where flattening
 % would change meaning), atom literals single-quoted (every bare identifier
@@ -123,12 +123,9 @@ print_body((Left, Right), Bindings, Text) :- !,
 print_body(Item, Bindings, Text) :-
     print_body_item(Item, Bindings, Text).
 
-print_body_item(only(departed(Atom)), Bindings, Text) :- !,
+print_body_item(latest(Atom), Bindings, Text) :- !,
     print_term(Atom, Bindings, 0, top, AtomText),
-    format(atom(Text), "only(departed(~w))", [AtomText]).
-print_body_item(only(Atom), Bindings, Text) :- !,
-    print_term(Atom, Bindings, 0, top, AtomText),
-    format(atom(Text), "only(~w)", [AtomText]).
+    format(atom(Text), "latest(~w)", [AtomText]).
 print_body_item(departed(Atom), Bindings, Text) :- !,
     print_term(Atom, Bindings, 0, top, AtomText),
     format(atom(Text), "departed(~w)", [AtomText]).

@@ -50,8 +50,8 @@
 
 % ═══ the ghcacher chain, hand written ═══════════════════════════════════════
 % demand_row(Endpoint, Result)  <+ watch, cache_tag, every_300, fetch
-% folded_row(Endpoint, Stars)   <+ only(demand_row), decode, stars_of
-% change_log(Endpoint, Stars, Client) <+ only(folded_row), subscribed_to
+% folded_row(Endpoint, Stars)   <+ demand_row, decode, stars_of
+% change_log(Endpoint, Stars, Client) <+ folded_row, latest(subscribed_to)
 %
 % Stage 1 carries no marker: it fires on ANY of its four body atoms, which is
 % the documented default and the lab's ambiguity 9 (the pipe buys a single
@@ -71,10 +71,10 @@ fixture(desugared_trace_equals_hand_written,
              watch(Endpoint), cache_tag(Endpoint, PrevTag), every_300(Bucket),
              fetch(Endpoint, PrevTag, Bucket, Result) ),
          ( folded_row(Endpoint, Stars) <+
-             only(demand_row(Endpoint, Response)),
+             demand_row(Endpoint, Response),
              decode(Response, fresh(_Tag, Body)), stars_of(Body, Stars) ),
          ( change_log(Endpoint, Stars, Client) <+
-             only(folded_row(Endpoint, Stars)), subscribed_to(Client, Endpoint) ) ]),
+             folded_row(Endpoint, Stars), latest(subscribed_to(Client, Endpoint)) ) ]),
   [],
   [ [ +watch(cli), +cache_tag(cli, no_tag), +stars_of(body1, 42),
       +subscribed_to(alice, cli), +subscribed_to(bob, other) ],
@@ -116,10 +116,10 @@ fixture(trigger_marker_is_what_stops_backlog_replay,
              watch(Endpoint), cache_tag(Endpoint, PrevTag), every_300(Bucket),
              fetch(Endpoint, PrevTag, Bucket, Result) ),
          ( folded_row(Endpoint, Stars) <+
-             only(demand_row(Endpoint, Response)),
+             demand_row(Endpoint, Response),
              decode(Response, fresh(_Tag, Body)), stars_of(Body, Stars) ),
          ( change_log(Endpoint, Stars, Client) <+
-             only(folded_row(Endpoint, Stars)), subscribed_to(Client, Endpoint) ) ]),
+             folded_row(Endpoint, Stars), latest(subscribed_to(Client, Endpoint)) ) ]),
   [],
   [ [ +watch(cli), +cache_tag(cli, no_tag), +stars_of(body1, 42),
       +subscribed_to(alice, cli), +subscribed_to(bob, other) ],
@@ -188,10 +188,10 @@ fixture(unmarked_first_stage_refires_on_late_watch,
              watch(Endpoint), cache_tag(Endpoint, PrevTag), every_300(Bucket),
              fetch(Endpoint, PrevTag, Bucket, Result) ),
          ( folded_row(Endpoint, Stars) <+
-             only(demand_row(Endpoint, Response)),
+             demand_row(Endpoint, Response),
              decode(Response, fresh(_Tag, Body)), stars_of(Body, Stars) ),
          ( change_log(Endpoint, Stars, Client) <+
-             only(folded_row(Endpoint, Stars)), subscribed_to(Client, Endpoint) ) ]),
+             folded_row(Endpoint, Stars), latest(subscribed_to(Client, Endpoint)) ) ]),
   [],
   [ [ +watch(cli), +cache_tag(cli, no_tag), +cache_tag(other, no_tag),
       +stars_of(body1, 42), +subscribed_to(alice, cli), +subscribed_to(dave, other) ],
@@ -235,10 +235,10 @@ fixture(pipe_stage_costs_one_tick,
              watch(Endpoint), cache_tag(Endpoint, PrevTag), every_300(Bucket),
              fetch(Endpoint, PrevTag, Bucket, Result) ),
          ( folded_row(Endpoint, Stars) <+
-             only(demand_row(Endpoint, Response)),
+             demand_row(Endpoint, Response),
              decode(Response, fresh(_Tag, Body)), stars_of(Body, Stars) ),
          ( change_log(Endpoint, Stars, Client) <+
-             only(folded_row(Endpoint, Stars)), subscribed_to(Client, Endpoint) ) ]),
+             folded_row(Endpoint, Stars), latest(subscribed_to(Client, Endpoint)) ) ]),
   [ watch(cli), cache_tag(cli, no_tag), every_300(bucket1),
     stars_of(body1, 42), subscribed_to(alice, cli) ],
   [ [ +fetch(cli, no_tag, bucket1, fresh(tag_w1, body1)) ] ],
@@ -268,7 +268,7 @@ fixture(chain_into_keyed_head_replaces,
              watch(Endpoint), cache(Endpoint, PrevTag), every_300(Bucket),
              fetch(Endpoint, PrevTag, Bucket, Result) ),
          ( cache(Endpoint, Tag) <+
-             only(demand_row(Endpoint, Response)),
+             demand_row(Endpoint, Response),
              decode(Response, fresh(Tag, _Body)) ) ]),
   [ cache(cli, no_tag) ],
   [ [ +watch(cli) ],
@@ -300,7 +300,7 @@ fixture(guard_stage_fires_on_negation_and_comparison,
              watch(Endpoint), every_300(Bucket),
              fetch(Endpoint, no_tag, Bucket, Result) ),
          ( alert(Endpoint, Stars) <+
-             only(demand_row(Endpoint, Response)),
+             demand_row(Endpoint, Response),
              decode(Response, fresh(_Tag, Body)), stars_of(Body, Stars),
              Stars > 100, not(muted(Endpoint)) ) ]),
   [],
@@ -326,7 +326,7 @@ fixture(guard_stage_silent_when_muted,
              watch(Endpoint), every_300(Bucket),
              fetch(Endpoint, no_tag, Bucket, Result) ),
          ( alert(Endpoint, Stars) <+
-             only(demand_row(Endpoint, Response)),
+             demand_row(Endpoint, Response),
              decode(Response, fresh(_Tag, Body)), stars_of(Body, Stars),
              Stars > 100, not(muted(Endpoint)) ) ]),
   [],
@@ -350,7 +350,7 @@ fixture(guard_stage_silent_below_threshold,
              watch(Endpoint), every_300(Bucket),
              fetch(Endpoint, no_tag, Bucket, Result) ),
          ( alert(Endpoint, Stars) <+
-             only(demand_row(Endpoint, Response)),
+             demand_row(Endpoint, Response),
              decode(Response, fresh(_Tag, Body)), stars_of(Body, Stars),
              Stars > 100, not(muted(Endpoint)) ) ]),
   [],

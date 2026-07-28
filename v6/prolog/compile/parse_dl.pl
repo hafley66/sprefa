@@ -1,7 +1,7 @@
 % parse_dl.pl : phase D parser. Plain SWI-Prolog DCG-and-recursive-descent
 % over codes, .dl TEXT in, the fixture term form out: prog(Decls, Rules) with
 % the SAME operators the conformance fixtures use (<-, <+, :=) and the same
-% wrappers (only/1, not/1, kind/2, keyed/2, keep/2, pre/1, departed/1, now/1,
+% wrappers (latest/1, not/1, kind/2, keyed/2, keep/2, pre/1, departed/1, now/1,
 % decode/2, json_each/2). No consult of generated text, no new deps.
 %
 % Variable identity survives parsing: one Vars accumulator (Name-Var pairs)
@@ -16,7 +16,7 @@
 %
 % TWO SURFACE DIALECTS accepted by ONE grammar (no separate code paths):
 %   (a) the tsv2 "term form made visible" spelling this file's own printer
-%       (print_dl.pl) emits into dl_view/*.dl -- <-/<+ arrows, only/pre/
+%       (print_dl.pl) emits into dl_view/*.dl -- <-/<+ arrows, latest/pre/
 %       departed/now/decode/json_each/:= as function-call-shaped body items,
 %       arithmetic infix, `rel Name(cols) log|set [keep(...)] [key(...)].`
 %       decls.
@@ -502,13 +502,13 @@ body(Body, Vars0, Vars, S0, S) :-
     ).
 
 % ═══ one body item ═══════════════════════════════════════════════════════════
-% Order: keyword-shaped calls first (only/departed/pre/now/decode/json_each/
+% Order: keyword-shaped calls first (latest/departed/pre/now/decode/json_each/
 % not), then bare `true`, then bind (:=/is), then comparison, then dialect-B
 % prefix negation (!rel(args)), then a plain/probe/mutation relation atom.
 
-body_item(only(Inner), Vars0, Vars, S0, S) :-
-    keyword_call(only, InnerCodes, S0, S), !,
-    parse_only_inner(InnerCodes, Inner, Vars0, Vars).
+body_item(latest(Atom), Vars0, Vars, S0, S) :-
+    keyword_call(latest, InnerCodes, S0, S),
+    parse_full(rel_atom_term(Atom, Vars0, Vars), InnerCodes), !.
 body_item(departed(Atom), Vars0, Vars, S0, S) :-
     keyword_call(departed, InnerCodes, S0, S), !,
     parse_full(rel_atom_term(Atom, Vars0, Vars), InnerCodes).
@@ -574,19 +574,6 @@ rel_atom_term(Term, Vars0, Vars, S0, S) :-
     ident(Name, S0, S1), ws0(S1, S2), lit_dcg(`(`, S2, S3),
     args_positional(Args, Vars0, Vars, S3, S4), ws0(S4, S5), lit_dcg(`)`, S5, S),
     Term =.. [Name | Args].
-
-parse_only_inner(Codes, Inner, Vars0, Vars) :-
-    skip_ws(Codes, Codes1),
-    ( try_departed_wrapper(Codes1, InnerCodes, Rest), skip_ws(Rest, [])
-    -> parse_full(rel_atom_term(Atom, Vars0, Vars), InnerCodes), Inner = departed(Atom)
-    ; parse_full(rel_atom_term(Atom, Vars0, Vars), Codes1), Inner = Atom
-    ).
-
-try_departed_wrapper(Codes0, InnerCodes, Rest) :-
-    word(`departed`, Codes0, C1),
-    skip_ws(C1, C2),
-    lit_dcg(`(`, C2, C3),
-    balanced_parens(C3, InnerCodes, Rest).
 
 parse_two_args(Codes, A, B, Vars0, Vars) :-
     skip_ws(Codes, Codes1),

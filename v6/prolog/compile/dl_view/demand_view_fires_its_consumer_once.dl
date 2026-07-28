@@ -3,4 +3,4 @@ rel fetch_demand(endpoint) set.
 rel fetch_call(endpoint) log keep(all).
 
 fetch_demand(Endpoint) <- stale(Endpoint).
-fetch_call(Endpoint) <+ only(fetch_demand(Endpoint)).
+fetch_call(Endpoint) <+ fetch_demand(Endpoint).

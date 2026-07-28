@@ -27,23 +27,23 @@ fixture(async_state_machine_with_pattern_scan,
          keyed(cache/3, [1]),
          keyed(retries/2, [1]) ],
        [ (phase(Endpoint, fetching) <+
-            only(poll_due(Endpoint)), pre(phase(Endpoint, idle))),
+            poll_due(Endpoint), pre(phase(Endpoint, idle))),
 
          (phase(Endpoint, idle) <+
-            only(fetch_result(Endpoint, fresh(_, _))), pre(phase(Endpoint, fetching))),
+            fetch_result(Endpoint, fresh(_, _)), pre(phase(Endpoint, fetching))),
          (phase(Endpoint, idle) <+
-            only(fetch_result(Endpoint, unchanged)), pre(phase(Endpoint, fetching))),
+            fetch_result(Endpoint, unchanged), pre(phase(Endpoint, fetching))),
          (phase(Endpoint, idle) <+
-            only(fetch_result(Endpoint, error(_))), pre(phase(Endpoint, fetching))),
+            fetch_result(Endpoint, error(_)), pre(phase(Endpoint, fetching))),
 
          (cache(Endpoint, Tag, Body) <+
-            only(fetch_result(Endpoint, fresh(Tag, Body)))),
+            fetch_result(Endpoint, fresh(Tag, Body))),
 
          (retries(Endpoint, Next) <+
-            only(fetch_result(Endpoint, error(_))),
+            fetch_result(Endpoint, error(_)),
             pre(retries(Endpoint, SoFar)), Next := SoFar + 1),
          (retries(Endpoint, 0) <+
-            only(fetch_result(Endpoint, fresh(_, _)))),
+            fetch_result(Endpoint, fresh(_, _))),
 
          (fetch_wanted(Endpoint) <- phase(Endpoint, fetching)),
          (gave_up(Endpoint) <- retries(Endpoint, Count), Count >= 2) ]),
@@ -81,12 +81,12 @@ fixture(same_tick_error_then_fresh_chains_arms,
          keyed(cache/3, [1]),
          keyed(retries/2, [1]) ],
        [ (retries(Endpoint, Next) <+
-            only(fetch_result(Endpoint, error(_))),
+            fetch_result(Endpoint, error(_)),
             pre(retries(Endpoint, SoFar)), Next := SoFar + 1),
          (retries(Endpoint, 0) <+
-            only(fetch_result(Endpoint, fresh(_, _)))),
+            fetch_result(Endpoint, fresh(_, _))),
          (cache(Endpoint, Tag, Body) <+
-            only(fetch_result(Endpoint, fresh(Tag, Body)))) ]),
+            fetch_result(Endpoint, fresh(Tag, Body))) ]),
   [ retries(gh_repos, 0) ],
   [ [ +fetch_result(gh_repos, error(500)),
       +fetch_result(gh_repos, fresh(tag_v2, body_two)) ] ],

@@ -53,7 +53,7 @@ this reason -- never Prolog's own `~q` "quote only if necessary" -- see
 | `(Head <- Body)` level rule | `Head <- Body.` | `DlRule` (`dl.langium:66-67`) -- DIRECT MATCH | |
 | `(Head <+ Body)` edge rule | `Head <+ Body.` | GAP(EXT) -- `DlRule` has only one arrow (`<-`); no edge/level distinction exists in the grammar at all | |
 | bare fact (no body) | `Head.` | `DlRule`'s optional body (`dl.langium:66-67`) -- DIRECT MATCH | `Body` becomes `true` |
-| `only(Atom)` / `only(departed(Atom))` | `only(Atom)` / `only(departed(Atom))` | GAP(EXT) -- no marker of this kind exists; the grammar's `?` (`ProbeItem`) is an unrelated construct (effect-firing, not trigger-narrowing) | function-call-shaped, parsed via balanced-paren extraction then a dedicated sub-grammar |
+| bare positive atom / `latest(Atom)` | bare positive atom / `latest(Atom)` | GAP(EXT) -- no trigger/sample distinction exists in the grammar | bare atoms are edge triggers; `latest(Atom)` is a sampled positive read and is never a trigger |
 | `pre(Atom)` | `pre(Atom)` | GAP(EXT) | |
 | `departed(Atom)` (standalone) | `departed(Atom)` | GAP(EXT) | |
 | `now(Var)` | `now(Var)` | GAP(EXT) | |

@@ -106,7 +106,7 @@ goal_rel_refs((Left, Right), Pos, Neg) :- !,
 goal_rel_refs(not(Goal), [], Neg) :- !,
     goal_rel_refs(Goal, InnerPos, InnerNeg),
     append(InnerPos, InnerNeg, Neg).
-goal_rel_refs(only(Atom), [Ref], []) :- !, rel_ref(Atom, Ref).
+goal_rel_refs(latest(Atom), [Ref], []) :- !, rel_ref(Atom, Ref).
 goal_rel_refs(departed(_), [], []) :- !.
 goal_rel_refs(pre(_), [], []) :- !.
 goal_rel_refs(now(_), [], []) :- !.
@@ -211,4 +211,3 @@ agg_compute(json_object, Pairs, obj(Object)) :-
     pairs_keys(Object, Keys),
     ( sort(Keys, DistinctKeys), length(Keys, N), length(DistinctKeys, N)
     -> true ; throw(json_object_dup_key(Keys)) ).
-
