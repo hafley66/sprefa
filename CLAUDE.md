@@ -191,9 +191,16 @@ verified; multisetDiff sabotage flips 2 fixtures red; sweep 31 compiled /
 28 identical; roundtrip 110/110); labs/ DELETED from store (nothing
 imported it; prolog_emit_bench.ts moved to src/bench/, swi_emit.sh
 repointed; store 89->74 tests, last copy at 5d6f8fc5). dl now 92/92.
-STILL OPEN from audit: F3 teardown tests false-positive — SchedulerLike
-agent DISPATCHED (user approved virtual-time seam): BindConfig.scheduler,
-TestScheduler rewrites with sabotage receipts. Endurance-as-gate still
+F3 CLOSED 2026-07-28 PM (merge 656694f1, coordinator re-verified 93/93 +
+ratchet + endurance): BindConfig.scheduler (SchedulerLike, asyncScheduler
+default, prod byte-identical), the only wall-clock rx source was
+1_binds.ts interval(); both teardown tests rewritten on TestScheduler
+asserting scheduler.actions.length (row equality could not discriminate a
+leaked timer re-committing an identical bucket row — that WAS the false
+positive), sabotage receipts red->green recorded in test headers; ~14s of
+real test sleep removed. Two tests deliberately stay real-time (bucketFor
+reads Date.now for VALUES; virtual firings inside one wall second would
+collapse buckets). Endurance-as-gate still
 ungated (open). MATCH LIFECYCLE ARMS: MVP semantics presented (materialize
 framing, next/finalize arms, drain-tick timing, transition rule win);
 awaiting user read before header lands.
