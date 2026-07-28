@@ -15,6 +15,7 @@
 | [DECISIONS.md](DECISIONS.md) | 175 | v6 pinned decisions — STOP re-deriving these |
 | [MAP.md](MAP.md) | 245 | v6 — the living map (algorithms · unification · exploration · DONE) |
 | [README.md](README.md) | 110 | V6 |
+| [dl/fixtures/ghcacher-findings.md](dl/fixtures/ghcacher-findings.md) | 372 | ghcacher expression in v6 dl — findings + grading receipts |
 | [findings/HYPOTHESES.md](findings/HYPOTHESES.md) | 27 | v6 HYPOTHESES — the idea ledger (don't lose a good one) |
 | [findings/INSIGHTS.md](findings/INSIGHTS.md) | 175 | v6 INSIGHTS — SQL · Rust · Graph (one living ledger) |
 | [findings/PINS.md](findings/PINS.md) | 6 | Pins |
@@ -49,7 +50,6 @@
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
-| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
 
 ## Full header index
 
@@ -136,6 +136,26 @@
 71:## Crate map
 88:## Docs
 101:## Agent skills
+```
+
+### dl/fixtures/ghcacher-findings.md
+```
+1:# ghcacher expression in v6 dl — findings + grading receipts
+14:## Grading 1 — parse/accept check
+49:## Grading 2 — marble list (what actually ran)
+86:## Findings
+90:### F1 — no `@async`/`@next` in the grammar at all — verdict: inexpressible as v5 spells it, but subsumed differently
+108:### F2 — no clock/tick builtin, no scheduler — verdict: inexpressible; this is the SLOT-SWR-defining gap
+154:### F3 — no `jsonp`/`json` term-extraction — verdict: inexpressible directly; approximable at a real cost
+170:### F4 — v5's negation-based etag bootstrap is a stratification violation in v6, reproduced
+207:### F5 — `sh` declarations split input/output columns differently than v5
+222:### F6 — content-addressed accumulation covers v5's `change_log` `@next` carry, narrowly
+250:### F7 — the program crashes the live engine on the first real host response (unresolved root cause)
+297:### F8 — `rel(1)` retention is silently inert on a rule-headed rel, and its OWN semantics is a global sweep, not per-key
+317:### F9 — no `effect_log` builtin
+329:## V5 gotchas — mapping
+360:## Cleanup
+366:## Diff scope
 ```
 
 ### findings/HYPOTHESES.md
@@ -658,13 +678,5 @@
 126:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
 139:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
 152:## Breakpoint ramp — tight gun 700 MB
-```
-
-### sprefa-store/bench/out/REPORT.md
-```
-1:# Z-set / IVM head-to-head — feasibility lab
-15:## Charts
-22:## Data
-43:## Takeaways (derived)
 ```
 
