@@ -12,7 +12,10 @@
             match_path_sql/3, inline_json_sql/3,
             spelling/2, spelling_text/2, spelling_constructs/2,
             spelling_tables/2, normalized_tables/1,
-            policy_bundle/2, resolve_policy/2 ]).
+            policy_bundle/2, resolve_policy/2,
+            policy_ddl/3,
+            coexistence_spelling/2, coexistence_text/2,
+            coexistence_assignments/2, coexistence_policy_tokens/2 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -27,6 +30,31 @@ policy_bundle(entity,
 
 resolve_policy(decl(_, Policy), Bundle) :-
     policy_bundle(Policy, Bundle).
+
+% Physical tables differ by policy. Value rows carry a unique semantic hash
+% beside their dense integer key. Entity rows keep current state plus history.
+policy_ddl(value, Type, [CurrentDdl, ContentDdl]) :-
+    struct_type(Type, Fields),
+    maplist(column_def(Type), Fields, FieldDefs),
+    atomic_list_concat(FieldDefs, ', ', FieldSql),
+    format(atom(CurrentDdl),
+           'CREATE TABLE "~w_value" ("id" INTEGER NOT NULL, "semantic" TEXT NOT NULL UNIQUE, ~w, PRIMARY KEY ("id")) WITHOUT ROWID',
+           [Type, FieldSql]),
+    maplist(quoted, Fields, QuotedFields),
+    atomic_list_concat(QuotedFields, ', ', UniqueSql),
+    format(atom(ContentDdl),
+           'CREATE UNIQUE INDEX "~w_value_content" ON "~w_value" (~w)',
+           [Type, Type, UniqueSql]).
+policy_ddl(entity, Type, [CurrentDdl, HistoryDdl]) :-
+    struct_type(Type, Fields),
+    maplist(column_def(Type), Fields, FieldDefs),
+    atomic_list_concat(FieldDefs, ', ', FieldSql),
+    format(atom(CurrentDdl),
+           'CREATE TABLE "~w_entity" ("id" INTEGER NOT NULL, ~w, PRIMARY KEY ("id")) WITHOUT ROWID',
+           [Type, FieldSql]),
+    format(atom(HistoryDdl),
+           'CREATE TABLE "~w_entity_history" ("id" INTEGER NOT NULL, "tick" INTEGER NOT NULL, ~w, PRIMARY KEY ("id", "tick")) WITHOUT ROWID',
+           [Type, FieldSql]).
 
 % ═══ DDL ════════════════════════════════════════════════════════════════════
 % Every value table is (id, content columns...) with the id as PRIMARY KEY and
@@ -179,3 +207,47 @@ spelling_tables(c,
       table(nil,           [id],                       key([1])) ]).
 
 normalized_tables(Tables) :- spelling_tables(c, Tables0), msort(Tables0, Tables).
+
+% ═══ explicit coexistence decompositions ═══════════════════════════════════
+% The same route tree is assigned route=entity and every body/view value
+% table=value. Each surface reaches that assignment without a default.
+
+coexistence_spelling(decl_word, 'declaration word per type').
+coexistence_spelling(use_site, 'body use-site word').
+coexistence_spelling(hybrid, 'declaration plus use-site word').
+
+coexistence_text(decl_word,
+'rel route(id, path, body, children) entity.
+rel body_page(id, view) value.
+rel body_redirect(id, to) value.
+rel view(id, title, tags) value.').
+
+coexistence_text(use_site,
+'rel route(id, path, body, children).
+rel body_page(id, view).
+rel body_redirect(id, to).
+rel view(id, title, tags).
+route(entity, Route, Path, Body, Children) <- route_wanted(Route, Path, Body, Children).
+body_page(value, Body, View) <- page_wanted(Body, View).
+body_redirect(value, Body, To) <- redirect_wanted(Body, To).
+view(value, View, Title, Tags) <- view_wanted(View, Title, Tags).').
+
+coexistence_text(hybrid,
+'rel route(id, path, body, children) policy(entity, value).
+rel body_page(id, view) value.
+rel body_redirect(id, to) value.
+rel view(id, title, tags) value.
+route(entity, Route, Path, Body, Children) <- route_wanted(Route, Path, Body, Children).').
+
+coexistence_assignments(decl_word,
+    [route-entity, body_page-value, body_redirect-value, view-value]).
+coexistence_assignments(use_site,
+    [route-entity, body_page-value, body_redirect-value, view-value]).
+coexistence_assignments(hybrid,
+    [route-entity, body_page-value, body_redirect-value, view-value]).
+
+% Count of policy words in the fully constructed route_tree: three route
+% rows, two page rows, one redirect row, and one shared view row.
+coexistence_policy_tokens(decl_word, 4).
+coexistence_policy_tokens(use_site, 7).
+coexistence_policy_tokens(hybrid, 7).

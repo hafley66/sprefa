@@ -23,6 +23,7 @@
 :- use_module(schema).
 :- use_module(value_model).
 :- use_module('1_entity_model').
+:- use_module('2_mate_model').
 :- use_module(lowering).
 :- use_module(lattice).
 
@@ -486,3 +487,101 @@ check(entity_lifetime_does_not_follow_refcount,
       ( empty_entity_store(Store0),
         create_entity(route, [text('/a')], Store0, Store, _, _),
         entity_row_count(Store, 1) )).
+
+% ═══ FIXPOINT ROUND 2: SURROGATE MATE AND COEXISTENCE ══════════════════════
+% Attack: keep semantic identity content-addressed while replacing the stored
+% ref with a dense integer. Then require all three policy-placement options to
+% assign the worked example identically and without an omitted choice.
+
+mate_pair([FirstContent, SecondContent], Store, Deltas) :-
+    empty_mate_store(Store0),
+    intern_value(view, FirstContent, Store0, Store1, _, _, FirstDeltas),
+    intern_value(view, SecondContent, Store1, Store, _, _, SecondDeltas),
+    append(FirstDeltas, SecondDeltas, Deltas).
+
+check(surrogate_semantic_ids_order_independent,
+      ( semantic_id(view, [text('T')], TitleHash),
+        mate_pair([[text('T')], [text('U')]], Forward, _),
+        mate_pair([[text('U')], [text('T')]], Reverse, _),
+        dense_for(Forward, TitleHash, _),
+        dense_for(Reverse, TitleHash, _) )).
+
+check(surrogate_dense_keys_order_dependent,
+      ( mate_pair([[text('T')], [text('U')]], Forward, _),
+        mate_pair([[text('U')], [text('T')]], Reverse, _),
+        mate_assignments(Forward, ForwardAssignments),
+        mate_assignments(Reverse, ReverseAssignments),
+        ForwardAssignments \== ReverseAssignments )).
+
+check(surrogate_tick_add_prints_value,
+      ( empty_mate_store(Store0),
+        intern_value(view, [text('T')], Store0, _, DenseId, Hash, Deltas),
+        integer(DenseId),
+        atom(Hash),
+        Deltas == [+value(view, [text('T')])] )).
+
+check(surrogate_share_release_refcounts,
+      ( empty_mate_store(Store0),
+        intern_value(view, [text('T')], Store0, Store1, _, Hash, FirstDeltas),
+        intern_value(view, [text('T')], Store1, Store2, _, Hash, ShareDeltas),
+        mate_support(Store2, Hash, 2),
+        release_value(view, [text('T')], Store2, Store3, Hash, FirstRelease),
+        mate_support(Store3, Hash, 1),
+        release_value(view, [text('T')], Store3, _, Hash, LastRelease),
+        FirstDeltas == [+value(view, [text('T')])],
+        ShareDeltas == [],
+        FirstRelease == [],
+        LastRelease == [-value(view, [text('T')])] )).
+
+check(surrogate_reintern_changes_dense_not_semantic,
+      ( empty_mate_store(Store0),
+        intern_value(view, [text('T')], Store0, Store1, FirstDense, Hash, _),
+        release_value(view, [text('T')], Store1, Store2, Hash, _),
+        intern_value(view, [text('U')], Store2, Store3, _, _, _),
+        intern_value(view, [text('T')], Store3, _, SecondDense, Hash, _),
+        FirstDense =\= SecondDense )).
+
+check(parent_semantic_hash_ignores_dense_mate,
+      ( semantic_id(view, [text('T')], ChildHash),
+        mate_pair([[text('T')], [text('U')]], Forward, _),
+        mate_pair([[text('U')], [text('T')]], Reverse, _),
+        dense_for(Forward, ChildHash, ForwardDense),
+        dense_for(Reverse, ChildHash, ReverseDense),
+        ForwardDense =\= ReverseDense,
+        semantic_id(body_page, [ref(ChildHash)], ForwardParentHash),
+        semantic_id(body_page, [ref(ChildHash)], ReverseParentHash),
+        ForwardParentHash == ReverseParentHash )).
+
+check(parent_hash_from_dense_would_be_order_dependent,
+      ( semantic_id(view, [text('T')], ChildHash),
+        mate_pair([[text('T')], [text('U')]], Forward, _),
+        mate_pair([[text('U')], [text('T')]], Reverse, _),
+        dense_for(Forward, ChildHash, ForwardDense),
+        dense_for(Reverse, ChildHash, ReverseDense),
+        semantic_id(body_page, [storage(ForwardDense)], ForwardParentHash),
+        semantic_id(body_page, [storage(ReverseDense)], ReverseParentHash),
+        ForwardParentHash \== ReverseParentHash )).
+
+check(coexistence_spellings_assign_same_policies,
+      ( coexistence_assignments(decl_word, DeclAssignments),
+        coexistence_assignments(use_site, UseAssignments),
+        coexistence_assignments(hybrid, HybridAssignments),
+        DeclAssignments == UseAssignments,
+        UseAssignments == HybridAssignments,
+        forall(coexistence_spelling(Option, _),
+               coexistence_text(Option, _)) )).
+
+check(coexistence_policy_token_counts,
+      ( coexistence_policy_tokens(decl_word, 4),
+        coexistence_policy_tokens(use_site, 7),
+        coexistence_policy_tokens(hybrid, 7) )).
+
+check(policy_specific_ddl_shapes,
+      ( policy_ddl(value, view, ValueDdl),
+        ValueDdl = [ValueCurrent, _],
+        sub_atom(ValueCurrent, _, _, _, '"semantic" TEXT NOT NULL UNIQUE'),
+        policy_ddl(entity, route, EntityDdl),
+        EntityDdl = [EntityCurrent, EntityHistory],
+        sub_atom(EntityCurrent, _, _, _, '"route_entity"'),
+        sub_atom(EntityHistory, _, _, _, '"route_entity_history"'),
+        sub_atom(EntityHistory, _, _, _, 'PRIMARY KEY ("id", "tick")') )).
