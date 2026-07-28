@@ -28,7 +28,7 @@ anywhere in the grammar (`ArgTerm := Var | Literal | Wildcard`,
 real `.dl` files: grepped both, neither ever writes a bareword atom constant;
 every constant is a quoted string (`"repos/cli/cli"`) or an int (`200`).
 
-The 109-fixture term-form corpus needs the opposite in places: a bareword
+The 110-fixture term-form corpus needs the opposite in places: a bareword
 constant-tag match is a real, critical construct:
 `fixtures/state_machine.pl`'s `phase(Endpoint, fetching)` matches the exact
 atom `fetching`, not a fresh variable. Since this parser is now canonical
@@ -44,53 +44,78 @@ this reason -- never Prolog's own `~q` "quote only if necessary" -- see
 
 ## Construct table
 
-| term-form construct | `.dl` spelling | dl.langium rule (or GAP/EXT) | notes |
-|---|---|---|---|
-| `kind(Ref, log\|set)` | `log` / `set` word after the decl's columns | GAP(EXT) -- no rule; `RelDecl` (`dl.langium:28-30`) ends right after `)` `.` | see decl-line row below |
-| `keep(Ref, all\|count(N))` | `keep(all)` / `keep(count(N))` | GAP(EXT) -- no rule | omitted from the printed line only when the ref has literally no `keep/2` entry -- never inferred from `decl_keep/3`'s own `all` fallback, see the round-trip note below |
-| `keyed(Ref, Positions)` | `key(P, P, ...)` | GAP(EXT) -- no rule; closest analog is `WrapperType`'s `Key(text)` (`dl.langium:38,49-50`), a single-column marker with no position-list shape at all | |
-| decl line as a whole | `rel Name(col, ...) [log\|set] [keep(...)] [key(...)]` | EXT widening of `RelDecl` (`dl.langium:28-30`) | modifiers are optional and accepted in ANY order (parsed as a loop, not a fixed kind-then-keep-then-keyed sequence) -- the corpus declares any subset of {kind, keep, keyed} for one ref, including `keyed` alone with no `kind/2` at all, and `kind(Ref,log)` alone with NO `keep/2` (`engine_core.pl:log_without_retention_rejected`, deliberately testing the missing-retention throw) |
-| `(Head <- Body)` level rule | `Head <- Body.` | `DlRule` (`dl.langium:66-67`) -- DIRECT MATCH | |
-| `(Head <+ Body)` edge rule | `Head <+ Body.` | GAP(EXT) -- `DlRule` has only one arrow (`<-`); no edge/level distinction exists in the grammar at all | |
-| bare fact (no body) | `Head.` | `DlRule`'s optional body (`dl.langium:66-67`) -- DIRECT MATCH | `Body` becomes `true` |
-| bare positive atom / `latest(Atom)` | bare positive atom / `latest(Atom)` | GAP(EXT) -- no trigger/sample distinction exists in the grammar | bare atoms are edge triggers; `latest(Atom)` is a sampled positive read and is never a trigger |
-| `combine(A, B, ...)` in an edge body | bare `A, B, ...` | GAP(EXT) | parser sugar; desugars to a comma conjunction before analysis |
-| `next(A)` in an edge body | bare `A` | GAP(EXT) | parser sugar for the ruled default arm |
-| `zip(A, B)` in an edge body | `zip(A, B)` | GAP(EXT) | parses and prints; compiler throws `unsupported_construct(zip)`; future lowering uses the min-ordinal pending-queue pattern in the scopes fixtures |
-| `unsubscribe(A)`, `complete(A)`, `subscribe(A)`, `error(A)` | same wrapper spelling | GAP(EXT) | parses and prints; compiler throws `unsupported_construct(lifecycle_arm(Name))` |
-| `pre(Atom)` | `pre(Atom)` | GAP(EXT) | |
-| `finalize(Atom)` (standalone) | `finalize(Atom)` | GAP(EXT) | departure trigger; the ARCH construct name remains `departure_form` |
-| `now(Var)` | `now(Var)` | GAP(EXT) | |
-| `decode(Expr, Pattern)` | `decode(Expr, Pattern)` | GAP(EXT) | `Pattern` reuses the general term grammar (vars, wildcards, nested compounds, braces) |
-| `json_each(Expr, Elem)` | `json_each(Expr, Elem)` | GAP(EXT) | |
-| `not(Goal)` | `not(Goal)` (canonical print); `!rel(args)` accepted on **input** as a legacy alias | `NegItem` (`dl.langium:112-113`) is the grammar's own negation, but it only wraps a bare relation atom -- it cannot spell `not(pre(X))` or `not(finalize(X))`, both real corpus shapes, so it is SUPERSEDED here rather than extended | printer never emits `!`; parser accepts both spellings |
-| `Var := Expr` | `Var := Expr` | GAP(EXT) -- no assignment operator anywhere in the grammar | |
-| `Var is Expr` | `Var is Expr` | GAP(EXT) | present in the reference evaluator's vocabulary (`expressions.pl` header comment) but zero corpus occurrences; parsed defensively, never exercised by a fixture |
-| comparisons `< =< > >= \==` | same operator text, printed from the term's own functor | GAP(EXT) widening of `CompareItem` (`dl.langium:119-121`), which only allows `Var op Literal` | this grammar allows an arbitrary arithmetic expression on EITHER side (`Shared * 100 / Union >= 40`); alias table below |
-| comparison alias `<=` | accepted on input, never printed | maps to `=<` | `dl.langium:120` spells "less-or-equal" as `<=`; the term-form corpus spells it `=<` (Prolog's own reader); parser accepts both, printer always emits `=<` |
-| comparison alias `!=` | accepted on input, never printed | maps to `\==` | `dl.langium:120` spells "not-equal" `!=`; corpus spells `\==` |
-| comparison alias bare `=` | accepted on input, never printed | maps to `==` | `dl.langium:120`'s only equality spelling; the term form has no bare `=`/2 anywhere in the 109-fixture corpus, so `==` (structural/value equality, already in the reference evaluator's own vocabulary per `analyze.pl:comparison_goal/1`) is the closest existing slot -- a real interpretation call, not a mechanical fact, flagged here rather than asserted quietly |
-| arithmetic `+ - * / mod` | infix, precedence-safe (parens added only where flattening would change meaning) | GAP(EXT) -- `ArgTerm` has zero expression grammar (`dl.langium:150-151`) | |
-| `concat([e1, e2, ...])` | same | GAP(EXT) -- no function-call-over-a-list-literal shape anywhere; list literals themselves are GAP(EXT) too | |
-| `count(X)` / `sum(X)` / `min(X)` / `max(X)` in HEAD position | `count(X)` / `sum(X)` / `min(X)` / `max(X)` | `AggCall` (`dl.langium:83-84`) -- DIRECT MATCH | |
-| `json_array(X)` / `json_object(K, V)` in HEAD position | same call shape | GAP(EXT) widening of `AggCall`'s validated fn set, which the grammar's own comment (`dl.langium:80-82`) limits to exactly `count`/`sum`/`min`/`max` | same production, wider name set |
-| `'{}'(Pairs)` braces literal | `{key: value, ...}` | GAP(EXT) -- no bare `{...}` value production exists anywhere; `Member` (`key: value`, `dl.langium:139-140`) is reused CONCEPTUALLY (same `ident : value` shape) but never as a freestanding grouped value | key is a LABEL (bare, never quoted, never a variable -- the same lexical role as a relation functor name) |
-| list `[e1, e2, ...]` | same | GAP(EXT) -- no list-literal production anywhere | only ever used as `concat/1`'s argument in this corpus |
-| wildcard `_` | `_` | `Wildcard` (`dl.langium:162-163`) -- DIRECT MATCH | fresh anonymous variable per occurrence |
-| named variable | bare identifier | `Var` (`dl.langium:153-154`) -- DIRECT MATCH | one Vars accumulator threads the WHOLE FILE (matches `read_term`'s one-clause scope for a fixture; same name anywhere in the file is the same variable object) |
-| atom-literal constant | `'text'` (always single-quoted) | GAP -- grammar has no unquoted-OR-quoted atom-literal production at all | see the superseding-decision section above |
-| string literal | `"text"` | `StrLit` (`dl.langium:168-169`) -- DIRECT MATCH | SWI string type, not atom |
-| integer literal | `123` / `-123` | `IntLit` (`dl.langium:171-172`) -- DIRECT MATCH | |
-| named args `col: val` | `col: val` at any call site | `Member` (`dl.langium:139-140`) -- DIRECT MATCH | resolved to positional order via the rel's declared column order, silently -- surface sugar, not a term-form gap; handles a genuine MIX of named and positional args in one call (real case: `conformance.dl`'s `proves_group_count(source, fanout: count(target))`) |
-| probe `rel?(args)` | parses; args become an ordinary positional atom, marked as a finding | `ProbeItem` (`dl.langium:102-104`) | `unsupported_surface(probe(Name/Arity))` -- the term form has no wrapper for "this atom is an async host demand" at all |
-| mutation `rel!(args)` | parses; same treatment | `MutationItem` (`dl.langium:108-109`) | `unsupported_surface(mutation(Name/Arity))` |
-| `sh name(cols) = \`template\`.` host decl | parses; produces NO Decls entry | `ShDecl` (`dl.langium:56-58`) | `unsupported_surface(host_decl(Name/Arity))` -- no term-form shape holds a host declaration at all |
-| `? name(args).` query line | parses; produces nothing | `QueryStmt` (`dl.langium:125-126`) | `unsupported_surface(query(Name/Arity))` -- REPL-only concept, not part of `prog(Decls, Rules)` |
-| `rel(N) Name(...)` retention marker | parses; `kind(Ref, set)` is still emitted, retention itself dropped | `RelDecl`'s `'(' retention=INT ')'` (`dl.langium:19-21, 29`) | `unsupported_surface(retention_marker(Ref, N))` -- the grammar's own comment already calls this "semantics land later"; this finding just makes the same gap visible on the tsv2 side |
-| `Key(text)` / `Min(int)` / `Max(int)` column-type wrappers | parses; wrapper name discarded | `WrapperType` (`dl.langium:38-39, 49-50`) | `unsupported_surface(column_type_wrapper(Ref, Column, Wrapper))` -- kind/keyed/keep carry no per-column type info in this term form. **UNTESTED by G2**: grepped both real files, neither uses any of the three; exercised only by a hand-written synthetic check during this build |
-| `true`/`false` BoolLit as a value | not implemented as a value literal | `BoolLit` (`dl.langium:174-175`) | GAP, honestly unimplemented -- a bare `true`/`false` in an ARG position parses as a VARIABLE under this grammar's "bare id = variable" rule instead of the literal. Neither the 109-fixture corpus nor either real file ever uses `true`/`false` as a value (only `true` as a whole rule BODY, a different term-form concept -- see next row), so this was never exercised and is flagged rather than silently claimed as covered |
-| bare `true` as a whole rule body | `true` | no grammar equivalent (a rule always needs a real body per `DlRule`) | matches `analyze.pl:body_ref_uses(true, [])`'s own vocabulary slot; zero corpus occurrences, kept defensively |
-| `null` NullLit | not implemented | `NullLit` (`dl.langium:177-178`) | GAP, honestly unimplemented -- same reasoning as BoolLit. The term-form corpus's "absent value" sentinel is the ordinary atom `none` (single-quoted under this grammar's rule), which is a DIFFERENT vocabulary item than the grammar's `null` keyword; the two were never reconciled because neither real file uses `null` |
+Generated from `registry.pl` by `1_emit_registry_docs.pl`. The row order is
+the compiler inventory order. Edit the registry, then run the emitter.
+
+<!-- BEGIN GENERATED surface/5 TABLE -->
+| signature | axis | analyze role | lower role | status |
+|---|---|---|---|---|
+| `latest/1` | `sample` | `refs_of_arg(1,pos,sampled)` | `wrapper(rel_atom,lower)` | `live` |
+| `finalize/1` | `time` | `refs_of_arg(1,pos,trigger)` | `wrapper(rel_atom,refuse(goal))` | `refused` |
+| `next/1` | `time` | `splice_bare` | `wrapper(rel_atom,lower)` | `live` |
+| `combine/variadic` | `join` | `splice_bare` | `wrapper(atom_list,lower)` | `live` |
+| `zip/2` | `join` | `splice_bare` | `wrapper(atom_list,refuse(functor))` | `reserved` |
+| `unsubscribe/1` | `time` | `refs_of_arg(1,pos,trigger)` | `wrapper(rel_atom,refuse(lifecycle))` | `reserved` |
+| `complete/1` | `time` | `refs_of_arg(1,pos,trigger)` | `wrapper(rel_atom,refuse(lifecycle))` | `reserved` |
+| `subscribe/1` | `time` | `refs_of_arg(1,pos,trigger)` | `wrapper(rel_atom,refuse(lifecycle))` | `reserved` |
+| `error/1` | `time` | `refs_of_arg(1,pos,trigger)` | `wrapper(rel_atom,refuse(lifecycle))` | `reserved` |
+| `not/1` | `sign` | `arm(neg)` | `wrapper(body_item,lower)` | `live` |
+| `pre/1` | `sample` | `refs_of_arg(1,pos,sampled)` | `wrapper(rel_atom,refuse(goal))` | `refused` |
+| `now/1` | `time` | `no_refs` | `wrapper(expr,refuse(goal))` | `refused` |
+| `decode/2` | `guard` | `no_refs` | `wrapper(expr_pair,refuse(goal))` | `refused` |
+| `json_each/2` | `guard` | `no_refs` | `wrapper(expr_pair,refuse(goal))` | `refused` |
+| `true/0` | `guard` | `no_refs` | `word(lower)` | `live` |
+| `:=/2` | `bind` | `no_refs` | `infix(refuse(goal))` | `refused` |
+| `is/2` | `bind` | `no_refs` | `infix(refuse(goal))` | `refused` |
+| `</2` | `guard` | `no_refs` | `infix(refuse(comparison))` | `refused` |
+| `=</2` | `guard` | `no_refs` | `infix(refuse(comparison))` | `refused` |
+| `>/2` | `guard` | `no_refs` | `infix(refuse(comparison))` | `refused` |
+| `>=/2` | `guard` | `no_refs` | `infix(refuse(comparison))` | `refused` |
+| `==/2` | `guard` | `no_refs` | `infix(refuse(comparison))` | `refused` |
+| `\==/2` | `guard` | `no_refs` | `infix(refuse(comparison))` | `refused` |
+| `count/1` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
+| `sum/1` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
+| `min/1` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
+| `max/1` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
+| `json_array/1` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
+| `json_object/2` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
+<!-- END GENERATED surface/5 TABLE -->
+
+### Core grammar and input aliases
+
+These rows describe syntax outside the registered body and aggregate
+construct inventory.
+
+| term-form shape | `.dl` spelling | parser treatment |
+|---|---|---|
+| `kind(Ref, log\|set)` | `log` / `set` after columns | declaration modifier |
+| `keep(Ref, all\|count(N))` | `keep(all)` / `keep(count(N))` | declaration modifier |
+| `keyed(Ref, Positions)` | `key(P, P, ...)` | declaration modifier |
+| `(Head <- Body)` | `Head <- Body.` | level rule |
+| `(Head <+ Body)` | `Head <+ Body.` | edge rule |
+| bare fact | `Head.` | body becomes registered `true/0` |
+| bare positive relation | `name(args)` | trigger relation |
+| comparison alias `<=` | input only | maps to registered `=</2` |
+| comparison alias `!=` | input only | maps to registered `\==/2` |
+| comparison alias `=` | input only | maps to registered `==/2` |
+| arithmetic `+ - * / mod` | infix with precedence-preserving parentheses | expression grammar |
+| `concat([e1, e2, ...])` | same call shape | general compound expression |
+| `'{}'(Pairs)` | `{key: value, ...}` | braces expression |
+| list | `[e1, e2, ...]` | list expression |
+| wildcard | `_` | fresh anonymous variable |
+| named variable | bare identifier | file-wide variable identity |
+| atom constant | `'text'` | always single-quoted |
+| string | `"text"` | SWI string |
+| integer | `123` / `-123` | integer |
+| named args | `col: val` | resolved to declared positional order |
+| probe | `rel?(args)` | `unsupported_surface(probe(Name/Arity))` |
+| mutation | `rel!(args)` | `unsupported_surface(mutation(Name/Arity))` |
+| host declaration | `sh name(cols) = \`template\`.` | `unsupported_surface(host_decl(Name/Arity))` |
+| query | `? name(args).` | `unsupported_surface(query(Name/Arity))` |
+| retention marker | `rel(N) Name(...)` | `unsupported_surface(retention_marker(Ref, N))` |
+| column wrapper | `Key(text)` / `Min(int)` / `Max(int)` | `unsupported_surface(column_type_wrapper(Ref, Column, Wrapper))` |
+| `true` / `false` as values | unavailable | bare identifiers remain variables in argument position |
+| `null` | unavailable | no term-form mapping |
 
 ## Round-trip design note (why decl lines are exact, not fallback-merged)
 
@@ -109,7 +134,7 @@ every ref's name, arity, and column names via `analyze.pl:rel_columns/4`).
 
 ## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
 
-- **G1**: 109 / 109 fixtures round-trip (`parse_dl(print_dl(Term)) =@= Term`
+- **G1**: 110 / 110 fixtures round-trip (`parse_dl(print_dl(Term)) =@= Term`
   for every `fixture/5` in `v6/prolog/conformance/fixtures/*.pl`).
 - **G2**: both real files parse without error.
   - `ghcacher.dl`: Decls 7, Rules 9, 8 findings (3 host decls + 3 matching
@@ -117,14 +142,14 @@ every ref's name, arity, and column names via `analyze.pl:rel_columns/4`).
     parser defect).
   - `conformance.dl`: Decls 23, Rules 28, 0 findings (the named/positional
     mix resolves silently, per the construct table above).
-- **G3**: `v6/prolog/conformance/go.pl` unchanged, 109 pass / 0 fail (this
+- **G3**: `v6/prolog/conformance/go.pl` unchanged, 110 pass / 0 fail (this
   parser edits nothing under `compile.pl`/`analyze.pl`/`strat.pl`/
   `lower.pl`/`emit_ts.pl`, so this is a no-regression sanity check, not a
   claim of new coverage).
 
 ## What `dl_view/*.dl` is
 
-Every fixture in the 109-fixture corpus, printed as `.dl` text by this
+Every fixture in the 110-fixture corpus, printed as `.dl` text by this
 parser's own printer, committed under `v6/prolog/compile/dl_view/`. This is
 the "language you can see" deliverable: inspect any file there to read a
 conformance fixture's PROGRAM (not its test scaffolding -- `Initial`,
