@@ -634,6 +634,28 @@ language finding, not a reason to special-case the spine.
 - **MERGED TO MAIN**: main fast-forwarded to the cleanup tip (aed4c155 ->
   9f8b6edc, 92 commits).
 
+### v6.2.0 TAGGED (2026-07-29, local tag on e931191e, push = user)
+P3 LANDED (merge e931191e, codex sol no-commit flow, coordinator
+verified: sweep 34/31/0, conformance 115, roundtrip, plunit 28/28,
+tsv2 6/6, gate, tsgo, store js 74/74): retraction = emitted
+support-count SQL, guard per rule graph (plain count acyclic /
+recursive-CTE reseed where cycles reachable), P2's three fallbacks
+removed with fixture receipts, SIGKILL-mid-CTE recovery PASS.
+COMPETITION ENTERED (PERF-REPORT.md standings, same input hashes):
+tsv2-from-node DAG 60k 24.5ms / 240k 98.7ms / 960k 429.2ms BEATS rust
+sqlite-count (31.3/105.1/443.0) at 23 stmts; CYC 960k 2756.5ms
+CORRECT via reseed where rust bare count is wrong. Common memory
+columns live in the shared CSV (host_peak_mb; sqlite_hw_mb =
+N/A-with-reason, @libsql exposes no memory_highwater API; db_mb).
+Honest cracks: support seeding not delta-proportional inside the
+seed statement; multi-head recursive strata + multi-self-read
+clauses = named unsupported; rust kernel_roots test skipped under
+git law (writes .git/worktrees). FULL GATE ON THE TAGGED COMMIT:
+conformance 115/0, sweep 34/31/0, roundtrip ALL PASS, plunit 28/28,
+tsv2 6/6 + gate, dl 96/96, store 74/74, ratchet 1/1, endurance END
+GOAL HOLDS. NEXT (user-agreed order): edge-off-derived carry seam,
+then match block sugar.
+
 ### Hands-on findings 2026-07-29 (coordinator wrote+ran a cold program; scratch fixture, receipts in chat)
 - **keyed() on a level-rule head is SILENTLY INERT** (F8/retention-inert
   defect class): keyed(current/2,[1]) + `current(Id,Tag) <- door_tag(Id,Tag)`
