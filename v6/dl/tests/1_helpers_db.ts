@@ -171,6 +171,9 @@ export function fakeBridgeOk(
 // Boot helpers.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Subscribing deltas$ is what makes the tick loop turn (3_runtime.ts header): the app
+ *  does it from main.ts's one terminal subscription, and a test does it here, once per
+ *  fixture. `rt.dispose()` completes the stream, so no test has to unsubscribe. */
 export async function bootFixture(
   program: Program,
   literalSeeds?: ReadonlyMap<string, Value>,
@@ -180,6 +183,11 @@ export async function bootFixture(
   const dbPath = freshDbPath();
   const bridge = fakeBridgeOk(program, literalSeeds, retentionOverrides, columnTypeOverrides);
   const rt = await DlRuntime.boot({ dbPath, bridge });
+  rt.deltas$.subscribe({
+    error: (failure: unknown) => {
+      throw failure;
+    },
+  });
   return { rt, dbPath };
 }
 

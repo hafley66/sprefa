@@ -6,6 +6,13 @@
  *  concatMap is the lock. share() is the only fan-out. The fixpoint (evalProgramSql) is
  *  awaited inside applyDerivedTxn, so a settled answer is the only thing anyone observes.
  *
+ *  THE TICK LOOP TURNS ONLY WHILE SOMETHING SUBSCRIBES `deltas$`. This class holds no
+ *  subscription of its own (one-subscribe law): the app graph in 6_http.ts hands
+ *  `deltas$` to main.ts's single terminal subscription for the life of the program, and
+ *  a test fixture does the same for the life of the test. `share()` multicasts that one
+ *  active source to every later reader (SSE, HostRunner), so no reader re-runs a tick.
+ *  `commit()` refuses loudly rather than hanging when nothing is subscribed.
+ *
  *  Surface plane is text (rel_* decode views); storage plane is interned integers
  *  (relbase_*). internProgramForStorage crosses it for a PROGRAM,
  *  encodeSurfaceRowByColumns for a ROW. */
@@ -13,7 +20,6 @@
 import {
   EMPTY,
   Subject,
-  Subscription,
   catchError,
   concat,
   concatMap,
@@ -753,7 +759,6 @@ function literalSeedRows(
 
 export class DlRuntime implements IDlRuntime {
   private readonly commits$: Subject<CommitRequest>;
-  private readonly keepAlive: Subscription;
   private nextCommitId: number;
   readonly deltas$: Observable<DeltaEvent>;
 
@@ -767,21 +772,12 @@ export class DlRuntime implements IDlRuntime {
 
     const settled$ = derived$.pipe(tap((outcome) => clearScratchRels(state, outcome)));
 
+    // Cold until someone subscribes; share() then multicasts that one active source to
+    // every later reader instead of re-running applyEdbTxn/applyDerivedTxn per reader.
     this.deltas$ = settled$.pipe(
       mergeMap((outcome) => from(outcome.events)),
       share(),
     );
-
-    // The one permanent subscription: keeps commits$ -> ... -> deltas$ hot for the life
-    // of the runtime, regardless of how many external readers (SSE/LSP/HostRunner)
-    // subscribe to deltas$ afterward. Without this, every external subscriber would
-    // re-run applyEdbTxn/applyDerivedTxn itself (a double-write bug) since share()
-    // only multicasts an ALREADY-active source.
-    this.keepAlive = this.deltas$.subscribe({
-      error: (failure: unknown) => {
-        throw failure;
-      },
-    });
   }
 
   static async boot(config: { dbPath: string; bridge: BridgeOk; extraDdl?: readonly string[] }): Promise<DlRuntime> {
@@ -886,6 +882,11 @@ export class DlRuntime implements IDlRuntime {
   }
 
   async commit(batch: EdbBatch): Promise<TickReport> {
+    // Without a live subscriber the request would sit in commits$ forever and this
+    // promise would never settle. Say so instead of hanging.
+    if (!this.commits$.observed) {
+      throw new Error("DlRuntime.commit: nothing is subscribed to deltas$, so the tick loop is not running");
+    }
     const id = this.nextCommitId++;
     const pending = firstValueFrom(
       this.state.reportsSubject.pipe(
@@ -958,8 +959,10 @@ export class DlRuntime implements IDlRuntime {
     return selectAll(this.state.db, rel, decl.columns);
   }
 
+  /** Completing commits$ ends the tick chain, which completes deltas$, which ends the
+   *  app graph's (or a test fixture's) subscription on its own — nothing to unsubscribe
+   *  here. */
   async dispose(): Promise<void> {
-    this.keepAlive.unsubscribe();
     this.commits$.complete();
     this.state.reportsSubject.complete();
     this.state.db.close();

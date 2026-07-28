@@ -14,6 +14,8 @@
  * tests/7_churn_stress.test.ts, so neither has to spawn a real process to prove the
  * identity/witness mechanics).
  */
+import { merge, type Subscription } from "rxjs";
+
 import { open_db, type SqliteDb } from "sprefa-store-engine/src/engine/lib.ts";
 
 import { bridge } from "../src/0_ast_bridge.ts";
@@ -39,24 +41,32 @@ export interface HostFixture {
   readonly runner: HostRunner;
   readonly dbPath: string;
   readonly cacheClient: SqliteDb;
+  /** The test's stand-in for main.ts's terminal subscription: it runs the tick loop and
+   *  the runner's effects for the life of the fixture. Merged in that order, so deltas$
+   *  is live before the runner's boot replay starts, exactly as the app graph does it. */
+  readonly running: Subscription;
 }
 
 /** Boots a DlRuntime against a fresh scratch db, then a HostRunner over the SAME file
  *  via a second libsql connection (the pinned cacheDb resolution: HostRunner receives
  *  the runtime only for deltas$/commit; a libsql-shaped client for effect_cache reads/
- *  writes is a separate connection to the same on-disk file). runner.start() is called
- *  before returning -- tests never forget to wire the subscription. */
+ *  writes is a separate connection to the same on-disk file). The fixture subscribes
+ *  before returning -- tests never forget to wire the graph. */
 export async function bootHostRunnerFixture(bridgeOk: BridgeOk, hosts: readonly HostDef[]): Promise<HostFixture> {
   const dbPath = freshDbPath();
   const rt = await DlRuntime.boot({ dbPath, bridge: bridgeOk });
   const cacheClient = open_db(`file:${dbPath}`);
   const runner = new HostRunner(rt, hosts, cacheClient as unknown as CacheDb);
-  runner.start();
-  return { rt, runner, dbPath, cacheClient };
+  const running = merge(rt.deltas$, runner.effects$).subscribe({
+    error: (failure: unknown) => {
+      throw failure;
+    },
+  });
+  return { rt, runner, dbPath, cacheClient, running };
 }
 
 export async function disposeHostFixture(fixture: HostFixture): Promise<void> {
-  fixture.runner.dispose();
+  fixture.running.unsubscribe();
   await fixture.rt.dispose();
   fixture.cacheClient.close();
   cleanupDbFile(fixture.dbPath);

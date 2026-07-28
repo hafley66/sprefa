@@ -17,7 +17,7 @@
  * ingestFile once per file.
  *
  * Deliberately NO HostRunner is constructed here (src/1_hosts.ts's HostRunner is a
- * separate class 6_http.ts instantiates and .start()s explicitly — DlRuntime.boot
+ * separate class 6_http.ts instantiates and merges into the app graph — DlRuntime.boot
  * alone never creates or runs one). sg-rail.dl's `sh sg(...)` host effect therefore
  * never fires: this harness measures ingest's spine-rel storage (file/node/edge/sig/
  * site/const/span_line), not host-effect cost. Wiring a HostRunner here would spawn
@@ -92,6 +92,14 @@ async function main() {
   }
 
   const rt = await DlRuntime.boot({ dbPath, bridge: bridgeResult, extraDdl: [DIAG_V5_VIEW_SQL] });
+  // The tick loop turns only while something subscribes deltas$ (3_runtime.ts header).
+  // In the app that is main.ts's one terminal subscription; this harness is its own
+  // driver, so it holds the stream for the length of the walk. rt.dispose() ends it.
+  rt.deltas$.subscribe({
+    error: (failure) => {
+      throw failure;
+    },
+  });
 
   const files = walkTsFiles(corpusDir);
   console.log(`[ingest_corpus] found ${files.length} .ts files under ${corpusDir}`);

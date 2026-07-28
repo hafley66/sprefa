@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Ratchet: exactly one manual .subscribe() in the app, ever. Baseline 3, target 1.
+# Ratchet: exactly one manual .subscribe() in the app, ever. Target reached
+# 2026-07-27 (standing plan item 3): the one site is dl/src/main.ts.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-BASELINE=3
+BASELINE=1
 sites=$(grep -rn '\.subscribe(' dl/src --include='*.ts' || true)
 count=$(printf '%s' "$sites" | grep -c . || true)
 printf 'subscribe sites: %s (baseline %s, target 1)\n' "$count" "$BASELINE"

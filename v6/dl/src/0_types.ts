@@ -182,6 +182,14 @@ export interface EffectCacheRow {
   readonly requested_tick: number;
 }
 
+/** One finished trip through HostRunner's effect pipeline: which host it was, and how
+ *  many response rows that trip committed. A cache hit (the witness already fired) and
+ *  a failed run both report zero. */
+export interface HostEffectDone {
+  readonly host: string;
+  readonly responseRows: number;
+}
+
 /** Builtins shipped in-box; sh decls become HostDefs via shHost(decl).
  *  extract path override: env DL_EXTRACT_BIN, default the worktree debug bin. */
 export interface BuiltinHosts {
@@ -297,13 +305,24 @@ export interface HttpSurface {
   "POST /query": { req: "? rel(args)."; res: { rows: Row[] } };
 }
 
-/** DlServer: startServer()'s public return shape (6_http.ts, moved here — a
- *  cross-file contract: tests/6_http.test.ts imports the type). */
+/** DlServer: the handle the app hands out once it is listening (6_http.ts, declared
+ *  here — a cross-file contract: tests/6_http.test.ts imports the type). */
 export interface DlServer {
   close(): Promise<void>;
   readonly port: number;
   activeSubscribeCount(): number;
 }
+
+/** Everything the running app reports to its ONE subscriber (main.ts). Each branch of
+ *  the graph emits one of these, so no branch has to throw its values away: `listening`
+ *  once, carrying the handle; `served` per finished request; `delta` per tick event,
+ *  emitted once by the tick stream itself and once more per SSE client it was written
+ *  to (so the fan-out is visible); `effect` per finished host effect. */
+export type DlAppEvent =
+  | { readonly kind: "listening"; readonly server: DlServer }
+  | { readonly kind: "served"; readonly method: string; readonly path: string }
+  | { readonly kind: "delta"; readonly delta: DeltaEvent }
+  | { readonly kind: "effect"; readonly done: HostEffectDone };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Class contracts — I-prefixed, one per class in this package. src/3_runtime.ts
@@ -331,8 +350,8 @@ export interface IDlRuntimeStatics {
 }
 
 /**
- * The effect driver. Subscribes `runtime.deltas$`, sees `__req_<host>` rows appear, runs
- * the host process, and commits `__resp_<host>` rows back. It is a SUBSCRIBER, not a
+ * The effect driver. Reads `runtime.deltas$`, sees `__req_<host>` rows appear, runs
+ * the host process, and commits `__resp_<host>` rows back. It is a READER, not a
  * queue: the effect_cache row is the dedupe, and concatMap is the serialization lock.
  *
  * It holds the runtime only for deltas$/commit, so the parameter is typed by IDlRuntime
@@ -340,10 +359,10 @@ export interface IDlRuntimeStatics {
  * writes it does on its own.
  */
 export interface IHostRunner {
-  /** Idempotent: a second call while already subscribed is a no-op. */
-  start(): void;
-  /** Unsubscribes. Safe to call without a prior start(). */
-  dispose(): void;
+  /** Cold. Subscribing starts the boot replay and the live watch; unsubscribing is the
+   *  whole of teardown (one-subscribe law: no start/dispose pair, no held Subscription).
+   *  One value per finished effect trip. */
+  readonly effects$: Observable<HostEffectDone>;
 }
 
 /** The static side of the HostRunner class: its constructor is the whole surface. */
@@ -362,8 +381,8 @@ export interface IHostRunnerStatics {
 // The pipeline in one read: text enters through `Bridge`; a file enters through
 // `IngestFile`; both land in `IDlRuntime.commit`, the single write site. `Ddl`
 // mints the tables that commit writes into. `ShHost` turns a parsed `sh` decl
-// into a `HostDef` that `IHostRunner` can run. `StartServer` wires all of it to
-// the http surface above.
+// into a `HostDef` that `IHostRunner` can run. `ServeDl` wires all of it to the
+// http surface above, as one cold observable with one subscriber.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** decl set -> the DDL statement list (delta, effect_cache, store_meta, tick seed, views). */
@@ -390,9 +409,11 @@ export type IngestFile = (rt: IDlRuntime, filePath: string) => Promise<TickRepor
  *  line and `$col` goes to the environment; output is parsed as JSON, JSONL, or columns. */
 export type ShHost = (decl: HostDecl) => HostDef;
 
-/** Boot the http front on `cfg.port` against `cfg.dbPath`. The server owns one mutable
- *  slot, empty until a program loads via POST /edb/program. */
-export type StartServer = (cfg: { dbPath: string; port: number }) => Promise<DlServer>;
+/** The whole app as one cold observable: subscribing boots the http front on
+ *  `cfg.port` against `cfg.dbPath` and IS the app's lifetime; `DlServer.close()` (or
+ *  unsubscribing) ends it. The server owns one mutable slot, empty until a program
+ *  loads via POST /edb/program. */
+export type ServeDl = (cfg: { dbPath: string; port: number }) => Observable<DlAppEvent>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Static-side proof helper. `implements` covers a class's instance side and

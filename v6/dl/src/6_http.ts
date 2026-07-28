@@ -18,9 +18,27 @@
  * socket close (refCount honesty — a dropped curl unsubscribes, proven by
  * activeSubscribeCount() returning to baseline in tests/6_http.test.ts).
  *
+ * THE APP IS ONE COLD OBSERVABLE (`serveDl`), subscribed exactly once, at the bottom of
+ * main.ts. Shape:
+ *
+ *   httpServer$ -> mergeMap(node =>
+ *        merge( programExchanges$ -> switchMap(runProgram$)     the program's lifetime
+ *             , otherExchanges$   -> mergeMap(routeRequest)     one inner per request
+ *             , of(listening)                                   the DlServer handle ))
+ *
+ * `switchMap` is what makes a program swap work under one subscription: a new accepted
+ * program unsubscribes the previous program's branch (its tick stream and its host
+ * effects) and subscribes the new one. The bridge runs BEFORE that switch, so a
+ * rejected program (400) leaves the running one untouched. Requests are `fromEvent` on
+ * the server, so nothing pushes into a Subject to get into the graph, and every branch
+ * emits a DlAppEvent rather than throwing its values away.
+ *
  * Server state: ONE mutable slot (ServerState below), empty until a program loads via
- * POST /edb/program. A re-POST disposes the previous runtime + HostRunner + side db
- * connection, then boots fresh — no two-worlds split, no partial-reload machinery.
+ * POST /edb/program — the request branch and the program branch are siblings under the
+ * merge, so the slot is how a request finds the program currently loaded. A re-POST
+ * disposes the previous runtime + side db connection, then boots fresh — no two-worlds
+ * split, no partial-reload machinery. The previous HostRunner needs no disposal: it is
+ * pure composition over the runtime's deltas$, and the switch unsubscribes it.
  *
  * Second SQLite connection (sideDb): per the owner's own pinned resolution for
  * HostRunner's cacheDb (1_hosts.ts header: "the same db the runtime booted with...
@@ -36,7 +54,24 @@
 import * as http from "node:http";
 import path from "node:path";
 
-import { filter } from "rxjs";
+import {
+  Observable,
+  catchError,
+  concatMap,
+  defer,
+  filter,
+  finalize,
+  from,
+  fromEvent,
+  map,
+  merge,
+  mergeMap,
+  of,
+  partition,
+  switchMap,
+  takeUntil,
+  tap,
+} from "rxjs";
 
 import { open_db, type SqliteDb } from "sprefa-store-engine/src/engine/lib.ts";
 
@@ -49,19 +84,26 @@ import type {
   AssertTrue,
   BridgeOk,
   DeltaEvent,
+  DlAppEvent,
   DlServer,
   LoadDiag,
   Row,
-  StartServer,
+  ServeDl,
   TickReport,
   Value,
 } from "./0_types.ts";
 import type { RelDecl } from "sprefa-store-engine/src/lower/ast.ts";
 
-// DlServer (startServer()'s public return shape) is declared in 0_types.ts (M7: a
-// cross-file contract -- tests/6_http.test.ts imports the type) and re-exported here
-// so that existing `from "./6_http.ts"` importers keep working unchanged.
+// DlServer (the handle serveDl emits once it is listening) is declared in 0_types.ts
+// (M7: a cross-file contract -- tests/6_http.test.ts imports the type) and re-exported
+// here so that existing `from "./6_http.ts"` importers keep working unchanged.
 export type { DlServer };
+
+/** One http request and the response it is owed, as a value the graph can carry. */
+interface Exchange {
+  readonly request: http.IncomingMessage;
+  readonly response: http.ServerResponse;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Route list.
@@ -83,19 +125,14 @@ export const ROUTE_LIST: readonly string[] = [
 interface ServerState {
   bridgeOk: BridgeOk | null;
   runtime: DlRuntime | null;
-  hostRunner: HostRunner | null;
   sideDb: SqliteDb | null;
 }
 
 function newServerState(): ServerState {
-  return { bridgeOk: null, runtime: null, hostRunner: null, sideDb: null };
+  return { bridgeOk: null, runtime: null, sideDb: null };
 }
 
 async function disposeCurrentProgram(state: ServerState): Promise<void> {
-  if (state.hostRunner) {
-    state.hostRunner.dispose();
-    state.hostRunner = null;
-  }
   if (state.runtime) {
     await state.runtime.dispose();
     state.runtime = null;
@@ -173,21 +210,32 @@ function writeJson(res: http.ServerResponse, status: number, body: unknown): voi
 // path) explicitly, mirroring 3_runtime.ts's explicit-state-over-`this` convention.
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function handleProgramLoad(
-  state: ServerState,
-  config: { readonly dbPath: string },
-  request: http.IncomingMessage,
-  response: http.ServerResponse,
-): Promise<void> {
-  const dlText = await readBody(request);
+/** An accepted program and the response still owed to whoever POSTed it. A rejected
+ *  program is answered right here (400) and never reaches the switch, so the program
+ *  already running keeps running. */
+interface ProgramLoad {
+  readonly bridgeOk: BridgeOk;
+  readonly response: http.ServerResponse;
+}
+
+async function readProgram(exchange: Exchange): Promise<ProgramLoad | null> {
+  const dlText = await readBody(exchange.request);
   const result = bridge(dlText, builtinDecls);
   if (result.kind === "err") {
-    writeJson(response, 400, { diags: result.diags satisfies readonly LoadDiag[] });
-    return;
+    writeJson(exchange.response, 400, { diags: result.diags satisfies readonly LoadDiag[] });
+    return null;
   }
+  return { bridgeOk: result, response: exchange.response };
+}
 
+async function bootProgram(
+  state: ServerState,
+  config: { readonly dbPath: string },
+  load: ProgramLoad,
+): Promise<{ readonly runtime: DlRuntime; readonly hostRunner: HostRunner }> {
   await disposeCurrentProgram(state);
 
+  const result = load.bridgeOk;
   const runtime = await DlRuntime.boot({ dbPath: config.dbPath, bridge: result, extraDdl: [DIAG_V5_VIEW_SQL] });
   const sideDb = open_db(`file:${config.dbPath}`);
   // Order matters: HostRunner keys hosts by name (last write wins on a collision).
@@ -202,18 +250,41 @@ async function handleProgramLoad(
   // (identical name, no reshape) doesn't silently shadow the working implementation.
   const hosts: HostDef[] = [...result.hosts.map(shHost), builtinSg, builtinExtract];
   const hostRunner = new HostRunner(runtime, hosts, sideDb as unknown as CacheDb);
-  hostRunner.start();
 
   state.bridgeOk = result;
   state.runtime = runtime;
-  state.hostRunner = hostRunner;
   state.sideDb = sideDb;
 
-  writeJson(response, 200, {
-    loaded: true,
-    rels: result.program.rels.map((decl) => decl.name),
-    minted: result.minted,
-  });
+  return { runtime, hostRunner };
+}
+
+/** The loaded program's whole life as one observable: the tick stream (subscribing it
+ *  is what makes the tick loop turn) and the host effects, both live until the next
+ *  accepted program swaps them out. The 200 is written LAST, from a `defer` merged
+ *  after those two, so a client that reads `loaded:true` and immediately POSTs a row
+ *  cannot beat the tick loop into existence. */
+function runProgram$(
+  state: ServerState,
+  config: { readonly dbPath: string },
+  load: ProgramLoad,
+): Observable<DlAppEvent> {
+  return from(bootProgram(state, config, load)).pipe(
+    concatMap(({ runtime, hostRunner }) =>
+      merge(
+        runtime.deltas$.pipe(map((delta): DlAppEvent => ({ kind: "delta", delta }))),
+        hostRunner.effects$.pipe(map((done): DlAppEvent => ({ kind: "effect", done }))),
+        defer(() => {
+          writeJson(load.response, 200, {
+            loaded: true,
+            rels: load.bridgeOk.program.rels.map((decl) => decl.name),
+            minted: load.bridgeOk.minted,
+          });
+          return of<DlAppEvent>({ kind: "served", method: "POST", path: "/edb/program" });
+        }),
+      ),
+    ),
+    catchError((failure: unknown) => of(serveFailure(load.response, "POST", "/edb/program", failure))),
+  );
 }
 
 async function handleFileChanged(state: ServerState, request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
@@ -257,16 +328,28 @@ async function handleIdbRead(state: ServerState, relName: string, response: http
   writeJson(response, 200, { rows: resolvePathSurface(rows) });
 }
 
-function handleSubscribe(
+/** One SSE client as one inner observable under the app's single subscription: the
+ *  filtered delta stream, written to the socket as it flows.
+ *
+ *  Teardown law: a dropped curl (socket close) must unsubscribe -- refCount honesty.
+ *  request.socket's "close" is the one reliable signal across both a graceful client
+ *  disconnect and an abrupt one (curl -N killed, `response.destroy()` from the client
+ *  side, etc.), and `takeUntil` on it ends this inner. `finalize` then returns the
+ *  count to baseline exactly once, whether the end came from the socket, from the
+ *  runtime's stream completing (program disposed), or from the app graph itself
+ *  shutting down. */
+function sseClient$(
   state: ServerState,
   relName: string,
   request: http.IncomingMessage,
   response: http.ServerResponse,
   bumpActive: (delta: number) => void,
-): void {
-  if (!state.runtime || !relDeclOf(state, relName)) {
+): Observable<DlAppEvent> {
+  const runtime = state.runtime;
+  const path = `/subscribe/${relName}`;
+  if (!runtime || !relDeclOf(state, relName)) {
     writeJson(response, 404, { error: `unknown rel '${relName}'` });
-    return;
+    return of({ kind: "served", method: "GET", path });
   }
 
   response.writeHead(200, {
@@ -275,28 +358,15 @@ function handleSubscribe(
     connection: "keep-alive",
   });
   response.flushHeaders();
-
   bumpActive(1);
-  let torn = false;
-  const subscription = state.runtime.deltas$.pipe(filter((event: DeltaEvent) => event.rel === relName)).subscribe({
-    next: (event) => {
-      response.write(`data: ${JSON.stringify(event)}\n\n`);
-    },
-    complete: () => teardown(),
-  });
 
-  function teardown(): void {
-    if (torn) return;
-    torn = true;
-    subscription.unsubscribe();
-    bumpActive(-1);
-  }
-
-  // Teardown law: a dropped curl (socket close) must unsubscribe -- refCount
-  // honesty. request.socket is the one reliable signal across both a graceful client
-  // disconnect and an abrupt one (curl -N killed, `response.destroy()` from the client
-  // side, etc.).
-  request.socket.once("close", teardown);
+  return runtime.deltas$.pipe(
+    filter((event: DeltaEvent) => event.rel === relName),
+    tap((event) => response.write(`data: ${JSON.stringify(event)}\n\n`)),
+    map((delta): DlAppEvent => ({ kind: "delta", delta })),
+    takeUntil(fromEvent(request.socket, "close")),
+    finalize(() => bumpActive(-1)),
+  );
 }
 
 async function handleQuery(state: ServerState, request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
@@ -349,72 +419,95 @@ async function handleQuery(state: ServerState, request: http.IncomingMessage, re
 // Router: six literal path shapes, matched by method + split segments.
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function routeRequest(
-  state: ServerState,
-  config: { readonly dbPath: string },
-  request: http.IncomingMessage,
+function pathSegments(request: http.IncomingMessage): readonly string[] {
+  return new URL(request.url ?? "/", "http://localhost").pathname.split("/").filter((segment) => segment.length > 0);
+}
+
+function isProgramLoad(request: http.IncomingMessage): boolean {
+  const segments = pathSegments(request);
+  return request.method === "POST" && segments.length === 2 && segments[0] === "edb" && segments[1] === "program";
+}
+
+/** The 500 path, shared by every branch: answer if the response is still open, and
+ *  report the request as served so one bad request cannot end the app's stream. */
+function serveFailure(
   response: http.ServerResponse,
+  method: string,
+  path: string,
+  failure: unknown,
+): DlAppEvent {
+  if (response.headersSent) response.end();
+  else writeJson(response, 500, { error: failure instanceof Error ? failure.message : String(failure) });
+  return { kind: "served", method, path };
+}
+
+/** Every route except POST /edb/program (that one owns the program's lifetime, so it
+ *  rides its own switchMap branch). Handlers stay `async` and write their own response;
+ *  this wraps each one as a one-value inner so the app graph can hold them all. */
+function routeRequest(
+  state: ServerState,
+  exchange: Exchange,
   bumpActive: (delta: number) => void,
-): Promise<void> {
+): Observable<DlAppEvent> {
+  const { request, response } = exchange;
   const method = request.method ?? "GET";
-  const url = new URL(request.url ?? "/", "http://localhost");
-  const segments = url.pathname.split("/").filter((segment) => segment.length > 0);
+  const segments = pathSegments(request);
+  const path = `/${segments.join("/")}`;
+  const served = (work: Promise<void>): Observable<DlAppEvent> =>
+    from(work).pipe(map((): DlAppEvent => ({ kind: "served", method, path })));
 
-  if (method === "POST" && segments.length === 2 && segments[0] === "edb" && segments[1] === "program") {
-    return handleProgramLoad(state, config, request, response);
-  }
-  if (method === "POST" && segments.length === 2 && segments[0] === "edb" && segments[1] === "file_changed") {
-    return handleFileChanged(state, request, response);
-  }
-  if (method === "POST" && segments.length === 2 && segments[0] === "edb") {
-    return handleEdbInsert(state, segments[1]!, request, response);
-  }
-  if (method === "GET" && segments.length === 2 && segments[0] === "idb") {
-    return handleIdbRead(state, segments[1]!, response);
-  }
-  if (method === "GET" && segments.length === 2 && segments[0] === "subscribe") {
-    handleSubscribe(state, segments[1]!, request, response, bumpActive);
-    return;
-  }
-  if (method === "POST" && segments.length === 1 && segments[0] === "query") {
-    return handleQuery(state, request, response);
-  }
+  const answered = ((): Observable<DlAppEvent> => {
+    if (method === "POST" && segments.length === 2 && segments[0] === "edb" && segments[1] === "file_changed") {
+      return served(handleFileChanged(state, request, response));
+    }
+    if (method === "POST" && segments.length === 2 && segments[0] === "edb") {
+      return served(handleEdbInsert(state, segments[1]!, request, response));
+    }
+    if (method === "GET" && segments.length === 2 && segments[0] === "idb") {
+      return served(handleIdbRead(state, segments[1]!, response));
+    }
+    if (method === "GET" && segments.length === 2 && segments[0] === "subscribe") {
+      return sseClient$(state, segments[1]!, request, response, bumpActive);
+    }
+    if (method === "POST" && segments.length === 1 && segments[0] === "query") {
+      return served(handleQuery(state, request, response));
+    }
+    writeJson(response, 404, { error: "not found", routes: ROUTE_LIST });
+    return of({ kind: "served", method, path });
+  })();
 
-  writeJson(response, 404, { error: "not found", routes: ROUTE_LIST });
+  return answered.pipe(catchError((failure: unknown) => of(serveFailure(response, method, path, failure))));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// startServer: the public entry point.
+// serveDl: the app. Cold; one subscription (main.ts) runs it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function startServer(config: { dbPath: string; port: number }): Promise<DlServer> {
-  const state = newServerState();
-  let activeSubscriptions = 0;
-  const bumpActive = (delta: number): void => {
-    activeSubscriptions += delta;
-  };
-
-  const server = http.createServer((request, response) => {
-    routeRequest(state, config, request, response, bumpActive).catch((failure: unknown) => {
-      if (!response.headersSent) {
-        writeJson(response, 500, { error: failure instanceof Error ? failure.message : String(failure) });
-      } else {
-        response.end();
-      }
+/** The listener as an observable: created and listening on subscribe, closed on
+ *  teardown. Replaces the `new Promise` around `server.listen`. */
+function httpServer$(port: number): Observable<{ readonly server: http.Server; readonly port: number }> {
+  return new Observable<{ readonly server: http.Server; readonly port: number }>((subscriber) => {
+    const server = http.createServer();
+    server.once("error", (failure) => subscriber.error(failure));
+    server.listen(port, () => {
+      const address = server.address();
+      subscriber.next({ server, port: typeof address === "object" && address !== null ? address.port : port });
     });
+    return () => {
+      server.close();
+    };
   });
+}
 
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(config.port, () => resolve());
-  });
-
-  const address = server.address();
-  const actualPort = typeof address === "object" && address !== null ? address.port : config.port;
-
+function serverHandle(
+  state: ServerState,
+  server: http.Server,
+  port: number,
+  activeSubscribeCount: () => number,
+): DlServer {
   return {
-    port: actualPort,
-    activeSubscribeCount: () => activeSubscriptions,
+    port,
+    activeSubscribeCount,
     async close(): Promise<void> {
       await disposeCurrentProgram(state);
       await new Promise<void>((resolve, reject) => {
@@ -424,5 +517,46 @@ export async function startServer(config: { dbPath: string; port: number }): Pro
   };
 }
 
+export function serveDl(config: { dbPath: string; port: number }): Observable<DlAppEvent> {
+  return defer(() => {
+    const state = newServerState();
+    let activeSubscriptions = 0;
+    const bumpActive = (delta: number): void => {
+      activeSubscriptions += delta;
+    };
+
+    return httpServer$(config.port).pipe(
+      mergeMap(({ server, port }) => {
+        const exchanges$ = fromEvent(
+          server,
+          "request",
+          (request: http.IncomingMessage, response: http.ServerResponse): Exchange => ({ request, response }),
+        );
+        const [programExchanges$, otherExchanges$] = partition(exchanges$, (exchange) => isProgramLoad(exchange.request));
+
+        // Read + bridge BEFORE the switch: only an accepted program may replace the
+        // running one. A rejected one has already been answered 400 and drops out here.
+        const accepted$ = programExchanges$.pipe(
+          concatMap((exchange) =>
+            from(readProgram(exchange)).pipe(
+              catchError((failure: unknown) => {
+                serveFailure(exchange.response, "POST", "/edb/program", failure);
+                return of(null);
+              }),
+            ),
+          ),
+          filter((load): load is ProgramLoad => load !== null),
+        );
+
+        return merge(
+          accepted$.pipe(switchMap((load) => runProgram$(state, config, load))),
+          otherExchanges$.pipe(mergeMap((exchange) => routeRequest(state, exchange, bumpActive))),
+          of<DlAppEvent>({ kind: "listening", server: serverHandle(state, server, port, () => activeSubscriptions) }),
+        );
+      }),
+    );
+  });
+}
+
 // ---- dataflow proof (src/0_types.ts) -----------------------------------------
-export type StartServerHolds = AssertTrue<typeof startServer extends StartServer ? true : false>;
+export type ServeDlHolds = AssertTrue<typeof serveDl extends ServeDl ? true : false>;

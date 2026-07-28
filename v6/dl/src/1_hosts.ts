@@ -8,7 +8,7 @@
  * `builtinSg` = `sg run --pattern <p> --json <path>` (bin from node_modules/.bin,
  * devDep @ast-grep/cli); `builtinExtract` = DL_EXTRACT_BIN (task 4.4: exposing the
  * extraction machinery as a demand-driven host, not a second ingest path). `HostRunner`
- * subscribes deltas$ for __req_* inserts, digest-caches via effect_cache (the `?`
+ * reads deltas$ for __req_* inserts, digest-caches via effect_cache (the `?`
  * idempotence law -- fire-once per WITNESS, M8-beta: IdentityWitnessLaw, tasks.d.ts),
  * commits __resp_* rows in one batch, ALSO retracting the prior witness's rows in that
  * same commit when a new witness supersedes it within the same identity group. One
@@ -32,7 +32,7 @@
 import { spawn, type SpawnOptions } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { EMPTY, Observable, Subscription, concatMap, filter, firstValueFrom, from, merge, mergeMap } from "rxjs";
+import { EMPTY, Observable, concatMap, defer, filter, firstValueFrom, from, merge, mergeMap } from "rxjs";
 
 import { foldRowDigest } from "./0_digest.ts";
 import { RowCodec } from "./0_row.ts";
@@ -42,6 +42,7 @@ import type {
   EdbBatch,
   HostDecl,
   HostDef,
+  HostEffectDone,
   IDlRuntime,
   IHostRunner,
   IHostRunnerStatics,
@@ -337,7 +338,7 @@ export const builtinExtract: HostDef = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HostRunner: subscribes deltas$ for __req_* inserts, digest-caches via effect_cache,
+// HostRunner: reads deltas$ for __req_* inserts, digest-caches via effect_cache,
 // commits __resp_* rows. cacheDb is a THIRD structural param (pinned resolution, per
 // the escalation ruling): HostRunner receives the runtime only for deltas$/commit, and
 // a libsql-shaped client for the effect_cache reads/writes it needs on its own -- the
@@ -355,7 +356,26 @@ interface PendingEffect {
 
 export class HostRunner implements IHostRunner {
   private readonly hostsByRequestRel: ReadonlyMap<string, HostDef>;
-  private subscription: Subscription | null = null;
+
+  /** Cold: nothing runs until the app graph (main.ts's one terminal subscription) or a
+   *  test fixture subscribes, and unsubscribing is the whole of teardown -- no
+   *  Subscription field, no dispose(). Reading runtime.deltas$ here is what makes the
+   *  runner one more reader of the shared tick stream rather than a second driver of it.
+   *  concatMap is the serialization lock (one effect runs at a time this arc; the cache
+   *  row is the dedupe, not a queue data structure).
+   *
+   *  BOOT REPLAY (endurance law, goal-endurance.sh phase 1): demand rows are durable
+   *  but deltas are not -- a request committed before a crash never re-announces
+   *  itself on deltas$. So the boot branch replays EVERY live __req_* row through the
+   *  same pipeline. runEffectOnce's cache-hit check makes already-answered requests
+   *  no-ops, so replay-everything is correct without a "which are unanswered" query.
+   *  Orphaned 'pending' cache rows are deleted first: the cache row is the in-flight
+   *  lock, and at subscribe time this single-process runner cannot have anything in
+   *  flight, so a surviving 'pending' can only belong to a dead process. `defer` is
+   *  what holds the scan back to subscribe time. merge (not concat) because deltas$ is
+   *  live -- a concat would drop deltas emitted while the replay scan runs; ordering
+   *  between the two sources is irrelevant under the concatMap lock + cache dedupe. */
+  readonly effects$: Observable<HostEffectDone>;
 
   constructor(
     private readonly runtime: IDlRuntime,
@@ -365,24 +385,7 @@ export class HostRunner implements IHostRunner {
     const hostsByRequestRel = new Map<string, HostDef>();
     for (const host of hosts) hostsByRequestRel.set(`__req_${host.name}`, host);
     this.hostsByRequestRel = hostsByRequestRel;
-  }
 
-  /** Subscribes runtime.deltas$. concatMap is the serialization lock (one effect runs
-   *  at a time this arc; the cache row is the dedupe, not a queue data structure).
-   *
-   *  BOOT REPLAY (endurance law, goal-endurance.sh phase 1): demand rows are durable
-   *  but deltas are not -- a request committed before a crash never re-announces
-   *  itself on deltas$. So start() also replays EVERY live __req_* row through the
-   *  same pipeline. runEffectOnce's cache-hit check makes already-answered requests
-   *  no-ops, so replay-everything is correct without a "which are unanswered" query.
-   *  Orphaned 'pending' cache rows are deleted first: the cache row is the in-flight
-   *  lock, and at start() time this single-process runner cannot have anything in
-   *  flight, so a surviving 'pending' can only belong to a dead process. merge (not
-   *  concat) because deltas$ is hot -- a concat would drop deltas emitted while the
-   *  replay scan runs; ordering between the two sources is irrelevant under the
-   *  concatMap lock + cache dedupe. */
-  start(): void {
-    if (this.subscription) return;
     const livePending$: Observable<PendingEffect> = this.runtime.deltas$.pipe(
       filter((event) => event.rel.startsWith("__req_") && event.inserts.length > 0),
       mergeMap((event) => {
@@ -391,19 +394,12 @@ export class HostRunner implements IHostRunner {
         return from(event.inserts.map((insertRow): PendingEffect => ({ host, requestRow: insertRow, tick: event.tick })));
       }),
     );
-    const bootPending$: Observable<PendingEffect> = from(this.replayableRequests()).pipe(
+    const bootPending$: Observable<PendingEffect> = defer(() => this.replayableRequests()).pipe(
       mergeMap((pendings) => from(pendings)),
     );
-    const requests$: Observable<void> = merge(bootPending$, livePending$).pipe(
+    this.effects$ = merge(bootPending$, livePending$).pipe(
       concatMap((pending) => from(this.runEffectOnce(pending))),
     );
-    this.subscription = requests$.subscribe({
-      error: (error: unknown) => {
-        // runEffectOnce swallows every per-effect failure internally; reaching this
-        // handler means a bug in the pipeline plumbing itself, not an effect run.
-        throw error;
-      },
-    });
   }
 
   /** The boot-replay scan: clear dead in-flight locks, then re-present every live
@@ -427,21 +423,17 @@ export class HostRunner implements IHostRunner {
     return pendings;
   }
 
-  /** Unsubscribes; any run already past its `host.run()` drain settles harmlessly
-   *  (its commit()/cache UPDATE simply lands after dispose, same as any in-flight
-   *  promise on teardown -- no cancellation machinery this arc). */
-  dispose(): void {
-    this.subscription?.unsubscribe();
-    this.subscription = null;
-  }
-
   /** M8-beta supersession flow (owner-authorized escalation, IdentityWitnessLaw +
    *  the orchestrator's latest-wins interpretation, tasks.d.ts). identityCols = the
    *  host's template inputs (host.requestCols); saltCols = whatever salt_N keys the
    *  bridge spliced into THIS request row (saltColumnsOf). fullDigest is the
    *  fire-once key (identity+witness); identityDigest is the supersession GROUP key
-   *  (identity only). */
-  private async runEffectOnce(pending: PendingEffect): Promise<void> {
+   *  (identity only).
+   *
+   *  A run already past its `host.run()` drain when the subscription ends settles
+   *  harmlessly (its commit()/cache UPDATE simply lands after teardown, same as any
+   *  in-flight promise -- no cancellation machinery this arc). */
+  private async runEffectOnce(pending: PendingEffect): Promise<HostEffectDone> {
     const identityCols = pending.host.requestCols;
     const saltCols = saltColumnsOf(pending.requestRow);
     const fullDigest = effectDigest(pending.host.name, pending.requestRow, [...identityCols, ...saltCols]);
@@ -451,7 +443,9 @@ export class HostRunner implements IHostRunner {
         sql: "SELECT full_digest FROM effect_cache WHERE full_digest = ?",
         args: [fullDigest],
       });
-      if (existing.rows.length > 0) return; // cache hit: fire-once per WITNESS, not per address.
+      // Cache hit: fire-once per WITNESS, not per address. Reported as zero response
+      // rows -- this demand was already answered by the run that minted the row.
+      if (existing.rows.length > 0) return { host: pending.host.name, responseRows: 0 };
 
       await this.cacheDb.execute({
         sql:
@@ -514,6 +508,7 @@ export class HostRunner implements IHostRunner {
         sql: "DELETE FROM effect_cache WHERE identity_digest = ? AND full_digest != ?",
         args: [identityDigest, fullDigest],
       });
+      return { host: pending.host.name, responseRows: responseRows.length };
     } catch {
       // Error DETAIL retrieval is a frontier item (documented, not this arc's scope):
       // the state column's 'error' value is all effect_cache records today. The
@@ -522,6 +517,7 @@ export class HostRunner implements IHostRunner {
       await this.cacheDb
         .execute({ sql: "UPDATE effect_cache SET state = ? WHERE full_digest = ?", args: ["error", fullDigest] })
         .catch(() => {});
+      return { host: pending.host.name, responseRows: 0 };
     }
   }
 }
