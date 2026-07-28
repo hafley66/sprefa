@@ -422,7 +422,7 @@ covers(scopes,               rel_kind_decl).      % kind(route_change/2, log), s
 covers(scopes,               retention_clause).   % keep(route_change/2, all), scopes.pl:32
 covers(scopes,               edge_rule).          % <+ scopes.pl:35
 covers(scopes,               level_rule).         % <- scopes.pl:36
-covers(scopes,               trigger_marker).     % only(route_change(...)), scopes.pl:35
+covers(scopes,               trigger_marker).     % bare route_change(...), scopes.pl:35
 covers(scopes,               pre_read).           % pre(queue_next(...)), scopes.pl:141
 covers(scopes,               negation).           % not(closed(...)), scopes.pl:66
 covers(scopes,               aggregate_head_forms). % queue_head(_, min(Ordinal)), scopes.pl:146

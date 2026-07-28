@@ -509,6 +509,16 @@ body(Body, Vars0, Vars, S0, S) :-
 body_item(latest(Atom), Vars0, Vars, S0, S) :-
     keyword_call(latest, InnerCodes, S0, S),
     parse_full(rel_atom_term(Atom, Vars0, Vars), InnerCodes), !.
+body_item(Body, Vars0, Vars, S0, S) :-
+    keyword_call(combine, InnerCodes, S0, S),
+    parse_atom_list(InnerCodes, Atoms, Vars0, Vars),
+    combine_body(Atoms, Body), !.
+body_item(Atom, Vars0, Vars, S0, S) :-
+    keyword_call(next, InnerCodes, S0, S),
+    parse_full(rel_atom_term(Atom, Vars0, Vars), InnerCodes), !.
+body_item(zip(Left, Right), Vars0, Vars, S0, S) :-
+    keyword_call(zip, InnerCodes, S0, S),
+    parse_atom_list(InnerCodes, [Left, Right], Vars0, Vars), !.
 body_item(finalize(Atom), Vars0, Vars, S0, S) :-
     keyword_call(finalize, InnerCodes, S0, S), !,
     parse_full(rel_atom_term(Atom, Vars0, Vars), InnerCodes).
@@ -527,6 +537,11 @@ body_item(json_each(Expr, Elem), Vars0, Vars, S0, S) :-
 body_item(not(Inner), Vars0, Vars, S0, S) :-
     keyword_call(not, InnerCodes, S0, S), !,
     parse_full(body_item(Inner, Vars0, Vars), InnerCodes).
+body_item(Item, Vars0, Vars, S0, S) :-
+    lifecycle_arm_name(Name),
+    keyword_call(Name, InnerCodes, S0, S),
+    parse_full(rel_atom_term(Atom, Vars0, Vars), InnerCodes), !,
+    Item =.. [Name, Atom].
 body_item(true, Vars, Vars, S0, S) :-
     word(`true`, S0, S), !.
 body_item(Item, Vars0, Vars, S0, S) :-
@@ -584,6 +599,26 @@ parse_two_args(Codes, A, B, Vars0, Vars) :-
     expr(B, Vars1, Vars, Rest4, Rest5),
     skip_ws(Rest5, Rest6),
     ( Rest6 == [] -> true ; throw(dl_parse_error(trailing_input(Rest6))) ).
+
+parse_atom_list(Codes, Atoms, Vars0, Vars) :-
+    parse_full(atom_list(Atoms, Vars0, Vars), Codes).
+
+atom_list([Atom | Rest], Vars0, Vars, S0, S) :-
+    rel_atom_term(Atom, Vars0, Vars1, S0, S1),
+    ws0(S1, S2),
+    ( lit_dcg(`,`, S2, S3)
+    -> ws0(S3, S4), atom_list(Rest, Vars1, Vars, S4, S)
+    ; Rest = [], Vars = Vars1, S = S2
+    ).
+
+combine_body([Atom], Atom) :- !.
+combine_body([Left | Rest], Body) :-
+    combine_body(Rest, Right), Body = (Left, Right).
+
+lifecycle_arm_name(unsubscribe).
+lifecycle_arm_name(complete).
+lifecycle_arm_name(subscribe).
+lifecycle_arm_name(error).
 
 args_positional([], Vars, Vars, S0, S) :- ws0(S0, S1), peek(0'), S1, S), !.
 args_positional([Arg | Rest], Vars0, Vars, S0, S) :-

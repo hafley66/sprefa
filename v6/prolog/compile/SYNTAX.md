@@ -54,6 +54,10 @@ this reason -- never Prolog's own `~q` "quote only if necessary" -- see
 | `(Head <+ Body)` edge rule | `Head <+ Body.` | GAP(EXT) -- `DlRule` has only one arrow (`<-`); no edge/level distinction exists in the grammar at all | |
 | bare fact (no body) | `Head.` | `DlRule`'s optional body (`dl.langium:66-67`) -- DIRECT MATCH | `Body` becomes `true` |
 | bare positive atom / `latest(Atom)` | bare positive atom / `latest(Atom)` | GAP(EXT) -- no trigger/sample distinction exists in the grammar | bare atoms are edge triggers; `latest(Atom)` is a sampled positive read and is never a trigger |
+| `combine(A, B, ...)` in an edge body | bare `A, B, ...` | GAP(EXT) | parser sugar; desugars to a comma conjunction before analysis |
+| `next(A)` in an edge body | bare `A` | GAP(EXT) | parser sugar for the ruled default arm |
+| `zip(A, B)` in an edge body | `zip(A, B)` | GAP(EXT) | parses and prints; compiler throws `unsupported_construct(zip)`; future lowering uses the min-ordinal pending-queue pattern in the scopes fixtures |
+| `unsubscribe(A)`, `complete(A)`, `subscribe(A)`, `error(A)` | same wrapper spelling | GAP(EXT) | parses and prints; compiler throws `unsupported_construct(lifecycle_arm(Name))` |
 | `pre(Atom)` | `pre(Atom)` | GAP(EXT) | |
 | `finalize(Atom)` (standalone) | `finalize(Atom)` | GAP(EXT) | departure trigger; the ARCH construct name remains `departure_form` |
 | `now(Var)` | `now(Var)` | GAP(EXT) | |

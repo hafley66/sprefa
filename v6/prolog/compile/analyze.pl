@@ -89,6 +89,11 @@ body_ref_uses(finalize(Atom), [use(Ref, Args, pos, trigger)]) :- !,
     atom_ref_args(Atom, Ref, Args).
 body_ref_uses(latest(Atom), [use(Ref, Args, pos, sampled)]) :- !,
     atom_ref_args(Atom, Ref, Args).
+body_ref_uses(next(Atom), Uses) :- !,
+    body_ref_uses(Atom, Uses).
+body_ref_uses(Term, Uses) :-
+    compound(Term), Term =.. [combine | [First | Rest]], !,
+    body_ref_uses_list([First | Rest], Uses).
 body_ref_uses(pre(Atom), [use(Ref, Args, pos, sampled)]) :- !,
     atom_ref_args(Atom, Ref, Args).
 body_ref_uses(not(Goal), Uses) :- !,
@@ -105,6 +110,11 @@ body_ref_uses(Atom, [use(Ref, Args, pos, trigger)]) :-
     atom_ref_args(Atom, Ref, Args).
 
 flip_to_neg(use(Ref, Args, _, Marked), use(Ref, Args, neg, Marked)).
+
+body_ref_uses_list([], []).
+body_ref_uses_list([Body | Rest], Uses) :-
+    body_ref_uses(Body, BodyUses), body_ref_uses_list(Rest, RestUses),
+    append(BodyUses, RestUses, Uses).
 
 atom_ref_args(Atom, Ref, Args) :- rel_ref(Atom, Ref), Atom =.. [_ | Args].
 
@@ -291,11 +301,17 @@ edge_trigger_shape(Body, unsupported(Reason)) :-
 conjunction_goals((Left, Right), Goals) :- !,
     conjunction_goals(Left, LeftGoals), conjunction_goals(Right, RightGoals),
     append(LeftGoals, RightGoals, Goals).
+conjunction_goals(Term, Goals) :-
+    compound(Term), Term =.. [combine | Atoms], Atoms \== [], !,
+    maplist(conjunction_goals, Atoms, AtomGoals), append(AtomGoals, Goals).
+conjunction_goals(next(Atom), [Atom]) :- !.
 conjunction_goals(Goal, [Goal]).
 
 plain_positive_atom(Goal) :-
     compound(Goal),
-    Goal \= latest(_), Goal \= finalize(_), Goal \= pre(_), Goal \= now(_), Goal \= not(_),
+    Goal \= latest(_), Goal \= finalize(_), Goal \= zip(_, _),
+    Goal \= unsubscribe(_), Goal \= complete(_), Goal \= subscribe(_), Goal \= error(_),
+    Goal \= pre(_), Goal \= now(_), Goal \= not(_),
     Goal \= (_ := _), Goal \= (_ is _), Goal \= decode(_, _), Goal \= json_each(_, _),
     \+ comparison_goal(Goal).
 
@@ -358,6 +374,8 @@ check_edge_head_column_types_for_rule(RelPlans, (Head <+ Body)) :-
 % target fixtures need them; lower.pl has no SQL shape for them yet).
 
 check_supported_subset(prog(Decls, Rules)) :-
+    forall(( member(Rule, Rules), rule_is_edge(Rule), edge_reserved_construct(Rule, Construct) ),
+           throw(unsupported_construct(Construct))),
     forall(( member(Rule, Rules), rule_is_edge(Rule) ), check_edge_rule_shape(Rule)),
     forall(( member(Rule, Rules), rule_is_level(Rule) ), check_level_rule_shape(Rule)),
     derived_refs(Rules, DerivedRefs),
@@ -376,6 +394,22 @@ check_edge_rule_shape((Head <+ Body)) :-
     ( head_arithmetic_shape(Head, ArithExpr)
     -> throw(unsupported_construct(head_arithmetic(Head, ArithExpr)))
     ; true ).
+
+edge_reserved_construct((_Head <+ Body), Construct) :-
+    reserved_construct_in_body(Body, Construct).
+
+reserved_construct_in_body((Left, Right), Construct) :- !,
+    ( reserved_construct_in_body(Left, Construct)
+    ; reserved_construct_in_body(Right, Construct)
+    ).
+reserved_construct_in_body(zip(_, _), zip) :- !.
+reserved_construct_in_body(Term, lifecycle_arm(Name)) :-
+    Term =.. [Name, _], lifecycle_arm_name(Name), !.
+
+lifecycle_arm_name(unsubscribe).
+lifecycle_arm_name(complete).
+lifecycle_arm_name(subscribe).
+lifecycle_arm_name(error).
 
 % A trigger firing off a DERIVED ref (edge-headed OR level-headed --
 % analyze.pl:derived_refs/2 unions both) is a genuine gap in BOTH shapes,

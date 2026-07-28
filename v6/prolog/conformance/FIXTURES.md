@@ -18,7 +18,7 @@ dashes in comments.
 
 - `Decls`: `kind(Ref, set|log)` | `keyed(Ref, Positions)` | `keep(Ref, all|count(N))`
 - `Rules`: `(Head <- Body)` level | `(Head <+ Body)` edge
-- Body goals: atoms, `not(Goal)`, `pre(Atom)`, `only(Atom)` trigger marker,
+- Body goals: bare trigger atoms, `latest(Atom)` sampled atoms, `not(Goal)`, `pre(Atom)`,
   `Var := Expr`, comparisons `< =< > >= == \==`, `now(Tick)`,
   `decode(Expr, Pattern)`, `json_each(Expr, Elem)`, and `finalize(Atom)`
   (edge bodies only, ruling r4): a DEPARTURE trigger binding a Set/level
