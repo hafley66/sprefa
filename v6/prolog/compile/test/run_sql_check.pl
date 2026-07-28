@@ -43,7 +43,19 @@
 :- op(1150, xfx, <+).
 :- op(700,  xfx, :=).
 
-fixture_file('/Users/chrishafley/projects/sprefa/.claude/worktrees/agent-a1aa8144f466d366d/v6/prolog/conformance/fixtures/scopes.pl').
+% Resolved relative to this file's own load-time directory (mirrors
+% sweep.pl's compile_dir/1 pattern -- prolog_load_context/2 only answers
+% inside a directive running WHILE this file loads, so the directory is
+% captured once, here, into a fact) rather than a hardcoded absolute path --
+% a hardcoded path to a worktree that no longer exists is a portability bug,
+% not a style nit (a prior version of this line named a stale worktree that
+% happened to still exist on this machine by coincidence).
+:- dynamic(test_dir_fact/1).
+:- prolog_load_context(directory, Here), assertz(test_dir_fact(Here)).
+
+fixture_file(File) :-
+    test_dir_fact(Here),
+    atomic_list_concat([Here, '/../../conformance/fixtures/scopes.pl'], File).
 
 check_all :-
     forall(member(Name, [switch_as_keyed_replace, demand_laziness_effect_rows]),
@@ -113,7 +125,7 @@ snapshot_all(DbFile, DeltaStatements, RelPlans, ByRef) :-
     findall(Ref-Terms,
             ( member(deltastmt(Ref, SelectSql), DeltaStatements),
               query_json(DbFile, SelectSql, Rows),
-              memberchk(relplan(Ref, _, Columns, _), RelPlans),
+              memberchk(relplan(Ref, _, Columns, _, _), RelPlans),
               ref_table_name(Ref, Name),
               maplist(row_to_term(Name, Columns), Rows, Terms)
             ), ByRef).
@@ -176,7 +188,7 @@ resolve_and_apply_edge_writes(DbFile, RelPlans, edgestmt(HeadRef, TriggerRef, He
               substitute_params(ProjectSql, Values, Executable),
               query_json(DbFile, Executable, [json(Pairs)]),
               maplist(column_value(Pairs), HeadColumns, RawValues),
-              memberchk(relplan(HeadRef, _, _, _), RelPlans),
+              memberchk(relplan(HeadRef, _, _, _, _), RelPlans),
               ref_table_name(HeadRef, Name),
               maplist(decode_cell, RawValues, DecodedValues),
               Term =.. [Name | DecodedValues]
@@ -277,7 +289,7 @@ decode_cell(Raw, Decoded) :-
 
 query_final_rows(DbFile, RelPlans, FinalByRef) :-
     findall(Ref-Terms,
-            ( member(relplan(Ref, _Kind, Columns, _), RelPlans),
+            ( member(relplan(Ref, _Kind, Columns, _, _), RelPlans),
               ref_table_name(Ref, Name),
               maplist(quoted_ident_test, Columns, QuotedColumns),
               atomic_list_concat(QuotedColumns, ', ', ColumnsSql),

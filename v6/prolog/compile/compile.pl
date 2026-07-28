@@ -65,15 +65,19 @@ find_fixture(Stream, Name, Term, Bindings) :-
 % once so both stay pure functions of it rather than re-deriving it ═════════
 %
 % plan(Name, Prog, RelPlans, ArrivalTargets, RuleOrder, EdgeRules)
-%   RelPlans: list of relplan(Ref, Kind, Columns, KeyPositionsOrNone)
-%             covering every ref program_refs/2 finds (arrival targets and
-%             derived rels alike -- the tick log envelope reports both).
+%   RelPlans: list of relplan(Ref, Kind, Columns, KeyPositionsOrNone,
+%             ColumnTypes) covering every ref program_refs/2 finds (arrival
+%             targets and derived rels alike -- the tick log envelope
+%             reports both). ColumnTypes (PHASE C2 RULING 1) is int|text per
+%             Columns position, inferred by analyze.pl:rel_column_types/5
+%             from the fixture's own literal values (Decls carries no column
+%             type syntax) -- lower.pl:column_def/3 is the only reader.
 %   RuleOrder: level rules in strat.pl:sql_rule_order/2 order.
 %   EdgeRules: edge rules, program order (engine.pl tries edge rules in
 %              program order for each occurrence; with at most one edge rule
 %              per target fixture this is a formality kept for generality).
 
-program_plan(fixture(Name, Prog, _Initial, _Schedule, _Expectations)-Bindings, Plan) :-
+program_plan(fixture(Name, Prog, Initial, Schedule, _Expectations)-Bindings, Plan) :-
     Prog = prog(Decls, Rules),
     check_supported_subset(Prog),
     % Union rule-derived refs with EVERY declared ref (analyze.pl:
@@ -85,10 +89,11 @@ program_plan(fixture(Name, Prog, _Initial, _Schedule, _Expectations)-Bindings, P
     append(RuleRefs, DeclaredRefs, AllRefs0), sort(AllRefs0, AllRefs),
     derived_refs(Rules, DerivedRefs),
     subtract(AllRefs, DerivedRefs, ArrivalTargets),
-    findall(relplan(Ref, Kind, Columns, KeyOrNone),
+    findall(relplan(Ref, Kind, Columns, KeyOrNone, ColumnTypes),
             ( member(Ref, AllRefs),
               rel_kind(Decls, Ref, Kind),
               rel_columns(Rules, Bindings, Ref, Columns),
+              rel_column_types(Rules, Initial, Schedule, Ref, ColumnTypes),
               ( decl_key(Decls, Ref, Positions) -> KeyOrNone = key(Positions) ; KeyOrNone = none )
             ), RelPlans),
     sql_rule_order(Rules, RuleOrder),

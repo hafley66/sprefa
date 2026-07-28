@@ -190,7 +190,7 @@ rel_columns_lines(RelPlans, Lines) :-
     maplist(rel_columns_entry_line, RelPlans, EntryLines),
     append([ ['const relColumns: Record<string, readonly string[]> = {'], EntryLines, ['};'] ], Lines).
 
-rel_columns_entry_line(relplan(Ref, _Kind, Columns, _Key), Line) :-
+rel_columns_entry_line(relplan(Ref, _Kind, Columns, _Key, _ColumnTypes), Line) :-
     ref_name(Ref, Name),
     quoted_string_array_text(Columns, ColumnsSql),
     format(atom(Line), '  ~w: ~w,', [Name, ColumnsSql]).
@@ -218,7 +218,7 @@ snapshot_type_lines(RelPlans, Lines) :-
     maplist(snapshot_field_line, RelPlans, FieldLines),
     append([ ['type Snapshot = {'], FieldLines, ['};'] ], Lines).
 
-snapshot_field_line(relplan(Ref, _Kind, _Columns, _Key), Line) :-
+snapshot_field_line(relplan(Ref, _Kind, _Columns, _Key, _ColumnTypes), Line) :-
     ref_name(Ref, Name),
     format(atom(Line), '  readonly ~w: readonly IRow[];', [Name]).
 
@@ -433,11 +433,11 @@ build_deltas_fn_lines(RelPlans, EdgeStatements, Lines) :-
           ['    ],', CarryLine, '  };', '}']
         ], Lines).
 
-diff_local_line(relplan(Ref, _Kind, _Columns, _Key), Line) :-
+diff_local_line(relplan(Ref, _Kind, _Columns, _Key, _ColumnTypes), Line) :-
     ref_name(Ref, Name),
     format(atom(Line), '  const ~w = multisetDiff(before.~w, after.~w);', [Name, Name, Name]).
 
-rel_entry_line(relplan(Ref, _Kind, _Columns, _Key), Line) :-
+rel_entry_line(relplan(Ref, _Kind, _Columns, _Key, _ColumnTypes), Line) :-
     ref_name(Ref, Name),
     format(atom(Line), '      { rel: "~w", add: ~w.add, del: ~w.del },', [Name, Name, Name]).
 

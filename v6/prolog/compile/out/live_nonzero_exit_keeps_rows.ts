@@ -49,7 +49,7 @@ function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "stream_end" ("col1" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
-  `CREATE TABLE "stream_item" ("col1" TEXT NOT NULL, "col2" TEXT NOT NULL, "col3" TEXT NOT NULL)`,
+  `CREATE TABLE "stream_item" ("col1" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" TEXT NOT NULL)`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {

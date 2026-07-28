@@ -19,7 +19,7 @@
             program_refs/2, arrival_target_refs/2, derived_refs/2,
             edge_headed_refs/2, level_headed_refs/2,
             rule_head_ref/2, rule_is_edge/1, rule_is_level/1,
-            body_ref_uses/2, rel_columns/4, snake_name/2,
+            body_ref_uses/2, rel_columns/4, rel_column_types/5, snake_name/2,
             check_supported_subset/1 ]).
 
 :- use_module(library(lists)).
@@ -201,6 +201,52 @@ snake_codes([Code | Rest], Out) :-
     ;  Out = [Code | More]
     ),
     snake_codes(Rest, More).
+
+% ═══ column type inference from concrete literal values (PHASE C2 RULING 1)
+% ═══════════════════════════════════════════════════════════════════════════
+% Decls carries no per-column type syntax at all (no fixture in the corpus
+% declares one -- expressions.pl's own header comment: "no HM/enum type
+% checker... no rel_decl/column type", SCOREBOARD.md Finding 3), so a
+% column's SQL storage type is inferred from every literal atomic value ever
+% observed at that argument position, across three sources: the fixture's
+% own Rules (head/body atom occurrences, reusing ref_occurrence_args/3 --
+% var and compound arguments there are not literals and are filtered by
+% atomic/1 below), its Initial seed rows, and its Schedule arrivals (either
+% sign; a retraction's row is as real a literal witness as an addition's).
+% A position is INTEGER only when EVERY literal witness found is a Prolog
+% integer/1; TEXT otherwise, including "zero literal witnesses at all" (a
+% column reached only through variables or nested inside a compound
+% argument -- compound-term columns stay inline-flat text per the ruling's
+% punt, and this default is exactly how that stays true with no special
+% case: a compound occurrence is never atomic/1, so it never contributes a
+% witness, and the column falls through to text). Matches the corpus
+% observation behind the heuristic (Finding 3): no fixture here quotes a
+% digit string, so Prolog's own reader never hands this scan an ambiguous
+% integer-vs-atom token.
+rel_column_types(Rules, Initial, Schedule, Name/Arity, Types) :-
+    numlist(1, Arity, Positions),
+    maplist(column_type_at(Rules, Initial, Schedule, Name/Arity), Positions, Types).
+
+column_type_at(Rules, Initial, Schedule, Ref, Position, Type) :-
+    findall(Witness,
+            ( column_source_args(Rules, Initial, Schedule, Ref, Args),
+              nth1(Position, Args, Witness),
+              atomic(Witness)
+            ), AtomicWitnesses),
+    ( AtomicWitnesses \== [], forall(member(Witness, AtomicWitnesses), integer(Witness))
+    -> Type = int
+    ;  Type = text
+    ).
+
+% Every place a ground literal for Ref can appear: a rule head/body atom
+% occurrence, an Initial seed row, or one Schedule tick's arrival row.
+column_source_args(Rules, _Initial, _Schedule, Ref, Args) :- ref_occurrence_args(Rules, Ref, Args).
+column_source_args(_Rules, Initial, _Schedule, Ref, Args) :-
+    member(Row, Initial), rel_ref(Row, Ref), Row =.. [_ | Args].
+column_source_args(_Rules, _Initial, Schedule, Ref, Args) :-
+    member(Batch, Schedule), member(Signed, Batch),
+    ( Signed = +Atom ; Signed = -Atom ),
+    rel_ref(Atom, Ref), Atom =.. [_ | Args].
 
 % ═══ supported-subset gate ═══════════════════════════════════════════════════
 % Refuses (with a specific term, not a generic failure) any construct wider

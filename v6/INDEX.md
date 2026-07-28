@@ -46,12 +46,11 @@
 | [plans/2026-07-24-v6-dl-mvp-slice.md](plans/2026-07-24-v6-dl-mvp-slice.md) | 664 | v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24) |
 | [plans/2026-07-25-sql-builder-build-vs-buy.md](plans/2026-07-25-sql-builder-build-vs-buy.md) | 322 | SQL query-builder / templating: build-vs-buy for `lowerSql.ts` |
 | [prolog/LANG.md](prolog/LANG.md) | 95 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
-| [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 309 | TSV2 Phase C scoreboard |
+| [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 358 | TSV2 Phase C scoreboard |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
-| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
 
 ## Full header index
 
@@ -640,10 +639,10 @@
 ```
 1:# TSV2 Phase C scoreboard
 15:## Totals (current)
-31:## Per-fixture table: compiled (17)
-53:## Per-construct blocked tally (UNSUPPORTED, ranked)
-74:## Widening / fix history (chronological, each transition measured)
-154:## Findings
+37:## Per-fixture table: compiled (17)
+59:## Per-construct blocked tally (UNSUPPORTED, ranked)
+80:## Widening / fix history (chronological, each transition measured)
+204:## Findings
 ```
 
 ### prolog/conformance/FIXTURES.md
@@ -690,13 +689,5 @@
 126:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
 139:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
 152:## Breakpoint ramp — tight gun 700 MB
-```
-
-### sprefa-store/bench/out/REPORT.md
-```
-1:# Z-set / IVM head-to-head — feasibility lab
-15:## Charts
-22:## Data
-43:## Takeaways (derived)
 ```
 

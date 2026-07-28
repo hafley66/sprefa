@@ -19,14 +19,20 @@ excerpt per compiled fixture).
 | fixtures swept | 109 |
 | UNSUPPORTED (compiler refuses, named construct) | 92 |
 | compiled (lowering + emission succeeded) | 17 |
-| — of which IDENTICAL (tick log byte-identical to oracle) | 9 |
-| — of which WRONG (diff, crash, or silent gap vs oracle) | 8 |
+| — of which IDENTICAL (tick log byte-identical to oracle) | 14 |
+| — of which WRONG (diff, crash, or silent gap vs oracle) | 3 |
 
-IDENTICAL + WRONG + UNSUPPORTED = 9 + 8 + 92 = 109.
+IDENTICAL + WRONG + UNSUPPORTED = 14 + 3 + 92 = 109.
 
-Two of the 9 IDENTICAL rows are **vacuous passes**, not verified correctness
-— see Findings 1 and 2. Read as "9 nominal, 7 genuinely exercised and
+Two of the 14 IDENTICAL rows are **vacuous passes**, not verified correctness
+— see Findings 1 and 2. Read as "14 nominal, 12 genuinely exercised and
 correct."
+
+**PHASE C2 RULING 1 (typed columns) landed** (commit `tsv2 C2a`): the 5
+int-vs-string WRONGs Finding 3 documented are now IDENTICAL — see the
+widening history's entry 4 and Finding 3's resolution note below. Totals
+above are post-landing; the pre-landing numbers (9 IDENTICAL / 8 WRONG) are
+preserved in git history at the commit before `tsv2 C2a`.
 
 ## Per-fixture table: compiled (17)
 
@@ -41,11 +47,11 @@ correct."
 | fork_join_is_a_conjunctive_body | operators.pl | IDENTICAL | |
 | retention_count_prunes_oldest | engine_core.pl | IDENTICAL (deltas-blind) | see Finding 1 — retention is not lowered at all; the gap is invisible to a delta-trace diff |
 | braces_in_head_position | json_arm.pl | IDENTICAL (vacuous) | see Finding 2 — empty Schedule, zero oracle lines, zero actual lines |
-| log_deltas_follow_arrival_order | occurrence_identity.pl | WRONG | integer column renders as JSON string `"1"`, oracle prints `1` — Finding 3 |
-| shuffled_arrival_reorders_log_deltas | occurrence_identity.pl | WRONG | same as above |
-| level_view_reads_set_projection_not_occurrences | occurrence_identity.pl | WRONG | same as above |
-| terminal_is_terminal | shell_stream.pl | WRONG | same as above (multi-clause-per-head union now correct — Finding 4b — the residual diff is purely the integer-representation gap) |
-| live_nonzero_exit_keeps_rows | shell_stream.pl | WRONG | same as above |
+| log_deltas_follow_arrival_order | occurrence_identity.pl | IDENTICAL | PHASE C2 RULING 1 (typed columns) — `line/3`'s `stream_id`-equivalent column is now INTEGER; was WRONG (`"1"` vs `1`), see Finding 3 |
+| shuffled_arrival_reorders_log_deltas | occurrence_identity.pl | IDENTICAL | same fix as above |
+| level_view_reads_set_projection_not_occurrences | occurrence_identity.pl | IDENTICAL | same fix as above |
+| terminal_is_terminal | shell_stream.pl | IDENTICAL | same fix as above (multi-clause-per-head union already correct — Finding 4b — the residual diff was purely the integer-representation gap, now closed) |
+| live_nonzero_exit_keeps_rows | shell_stream.pl | IDENTICAL | same fix as above |
 | fork_join_error_arm_is_a_value | operators.pl | WRONG (crash: `SQLITE_ERROR: malformed JSON`) | compound arrival VALUE stored as canonical text, read back via `json_extract` which expects json1 — Finding 5 |
 | log_retraction_rejected | engine_core.pl | WRONG (crash, matches oracle's *intent*) | oracle throws `retract_from_log`; emitted program also throws (a JS `Error`, not a byte-comparable log) — Finding 6 |
 | log_without_retention_rejected | engine_core.pl | WRONG (silent gap) | oracle throws `missing_retention`; emitted program has no such validation and runs "successfully" — Finding 6 |
@@ -150,6 +156,50 @@ like "the same shape as `only(Atom)` minus a wrapper."
      converts three previously-undetectable silent-WRONG results into
      clean, named refusals, matching the contract's "Refusal must be a
      clean named error, never wrong output."
+4. **PHASE C2 RULING 1, commit `tsv2 C2a`: typed columns (flat compounds).**
+   Every column was `TEXT NOT NULL` regardless of its Prolog-side type
+   (`lower.pl:column_def/2`); Finding 3 named this as the cause of all 5
+   remaining WRONGs and left it open pending a user ruling on how a column's
+   type should be decided, since Decls carries no type syntax at all. The
+   ruling: infer int-vs-text per column from the fixture's own concrete
+   literal values, never from a new declaration. `analyze.pl:
+   rel_column_types/5` (new) scans every literal, atomic argument observed
+   at a given (Ref, Position) across three sources — rule head/body atom
+   occurrences (`ref_occurrence_args/3`, already used for column naming),
+   `Initial` seed rows, and `Schedule` arrivals (either sign) — and marks the
+   column `int` only when EVERY literal witness found is a Prolog
+   `integer/1`; `text` otherwise, including "zero witnesses at all" (a
+   column reached only through variables or nested inside a compound
+   argument, which is never `atomic/1` and so never contributes a witness —
+   this is exactly how a compound-term column keeps the ruling's flat-punt
+   without a special case). `relplan/4` widened to `relplan/5` (`RelPlans`
+   entries now carry a `ColumnTypes` list parallel to `Columns`);
+   `lower.pl:column_def/3` emits `INTEGER NOT NULL` for `int`, `TEXT NOT
+   NULL` unchanged for `text`. No change was needed on the TypeScript side:
+   `emit_ts.pl`'s existing `bindArgs` helper (bigint-converts any
+   integer-valued `IRowValue` before binding, the earlier REAL-vs-INTEGER
+   fix) already produces correct results against BOTH column types —
+   verified empirically with a throwaway `open_db` probe before relying on
+   it, not assumed: binding a JS `bigint` or a plain JS `number` into an
+   `INTEGER` column both land as SQLite `integer` storage and read back as a
+   plain JS `number` (this driver's default `intMode` is `"number"`, not
+   `"bigint"`), so `runtime/rows.ts` and `runtime/ticklog.ts` needed no
+   changes either — `ticklog.ts:encodeValue` already rendered a JS `number`
+   as a bare JSON number. The entire fix is therefore two Prolog files
+   (`analyze.pl` + `lower.pl`'s DDL path) plus the mechanical `relplan/4` ->
+   `relplan/5` arity change through `compile.pl`, `emit_ts.pl`, and both test
+   harnesses. Before: `RUN identical=9 wrong=5`. After: `RUN identical=14
+   wrong=0` (2 `run_error` + 1 `no_oracle_log` remain, both pre-existing and
+   out of this ruling's scope — Finding 6). `compiled=17`,
+   `unsupported=92` unchanged (this is a DDL/runtime-typing fix, not a
+   supported-subset widening). Two incidental fixes landed in the same
+   commit, both pre-existing and orthogonal to typing: `test/plunit_tests.pl`
+   and `test/run_sql_check.pl` each hardcoded an absolute `fixture_file/1`
+   path into a stale, since-deleted agent worktree (both tests were passing
+   only because that worktree happened to still exist on disk by
+   coincidence); both now resolve the path at load time via
+   `prolog_load_context/2`, matching `sweep.pl`'s own `compile_dir/1`
+   pattern.
 
 ## Findings
 
@@ -183,34 +233,33 @@ like "the same shape as `only(Atom)` minus a wrapper."
    confirm its head (a plain `{...}` -> JSON braces literal, no arithmetic)
    does not hit the same known-wrong pattern Finding 5 describes, but its
    IDENTICAL status here should be read as "not disproven," not "proven."
-3. **Residual number-vs-string representation gap (5 WRONG fixtures, all
-   the same root cause).** After the `bindArgs` fix (history step 2), an
-   integer arrival value is stored correctly as SQLite-TEXT `"1"` (not
-   `"1.0"`), but every column in this compiler's schema is declared
-   `TEXT NOT NULL` (`lower.pl:column_def/2`) with no per-column type
-   information anywhere upstream (`engine.pl` is untyped — see
-   `fixtures/expressions.pl`'s own header comment: "no HM/enum type
-   checker... no `rel_decl`/column type"). Reading that TEXT value back
-   (`runtime/rows.ts:selectRows`) returns a JS **string** `"1"`;
-   `runtime/ticklog.ts:encodeValue` renders any non-`number` value as a
-   quoted JSON string, so the tick log prints `"1"`. The oracle's Prolog
-   term is a genuine `integer/1`, so `ticklog.pl:value_json/2` prints the
-   bare JSON number `1`. This is the sole remaining cause for
-   `log_deltas_follow_arrival_order`, `shuffled_arrival_reorders_log_deltas`,
+3. **RESOLVED by PHASE C2 RULING 1 (commit `tsv2 C2a`).** Residual
+   number-vs-string representation gap (5 WRONG fixtures, all the same root
+   cause). After the `bindArgs` fix (history step 2), an integer arrival
+   value was stored correctly as SQLite-TEXT `"1"` (not `"1.0"`), but every
+   column in this compiler's schema was declared `TEXT NOT NULL`
+   (`lower.pl:column_def/2`) with no per-column type information anywhere
+   upstream (`engine.pl` is untyped — see `fixtures/expressions.pl`'s own
+   header comment: "no HM/enum type checker... no `rel_decl`/column type").
+   Reading that TEXT value back (`runtime/rows.ts:selectRows`) returned a JS
+   **string** `"1"`; `runtime/ticklog.ts:encodeValue` renders any
+   non-`number` value as a quoted JSON string, so the tick log printed
+   `"1"`. The oracle's Prolog term is a genuine `integer/1`, so
+   `ticklog.pl:value_json/2` prints the bare JSON number `1`. This was the
+   sole remaining cause for `log_deltas_follow_arrival_order`,
+   `shuffled_arrival_reorders_log_deltas`,
    `level_view_reads_set_projection_not_occurrences`, `terminal_is_terminal`,
-   and `live_nonzero_exit_keeps_rows`.
-   **This is a structural consequence of the TEXT-only column design, not a
-   bug in any one lowering rule.** A sound fix needs either (a) real
-   per-column type inference upstream (nothing in `engine.pl`'s semantics
-   gives the compiler that information — it would be a new analysis, not a
-   lowering widen) or (b) a heuristic at the SELECT boundary ("an
-   all-digit TEXT value renders as a JSON number") that is empirically
-   sound for every fixture in this corpus (Prolog's own reader makes a bare
-   digit token an `integer/1`, never an atom, unless explicitly
-   single-quoted — no fixture here quotes a digit string) but is not
-   general Prolog semantics and was judged too close to a "judgment call"
-   to land without asking first, per the phase C contract's own stop
-   condition. **Left open, not implemented.**
+   and `live_nonzero_exit_keeps_rows` — all five now IDENTICAL.
+   **This was a structural consequence of the TEXT-only column design, not a
+   bug in any one lowering rule.** The ruling picked option (b) from the two
+   named here — a heuristic, not a real type system — but grounded it in
+   ALL of a column's concrete literal occurrences across Rules, Initial, and
+   Schedule (`analyze.pl:rel_column_types/5`), not just "an all-digit TEXT
+   value renders as a JSON number" at the SELECT boundary; see the widening
+   history entry 4 above for the mechanism and why it stays sound for this
+   corpus (Prolog's own reader makes a bare digit token an `integer/1`,
+   never an atom, unless explicitly single-quoted — no fixture here quotes a
+   digit string).
 4. **Two independent `declared_refs/2` gaps, both real corpus fixtures, not
    hypotheticals.** (a) a `kind(Ref, _)`-declared rel with zero rule
    readers (`retention_count_prunes_oldest`,

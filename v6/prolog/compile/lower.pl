@@ -4,7 +4,13 @@
 %   lowered(Name, Ddl, ArrivalStatements, EdgeStatements, LevelStatements,
 %           DeltaStatements, RelPlans, ArrivalTargets)
 %     Ddl              : list of CREATE TABLE SQL strings.
-%     RelPlans         : list of relplan(Ref, log|set, Columns, key(Ps)|none).
+%     RelPlans         : list of relplan(Ref, log|set, Columns, key(Ps)|none,
+%                        ColumnTypes) -- ColumnTypes (PHASE C2 RULING 1) is a
+%                        int|text list parallel to Columns, inferred
+%                        upstream by analyze.pl:rel_column_types/5 from the
+%                        fixture's own literal values (Decls has no column
+%                        type syntax); column_def/3 below is the one place
+%                        that reads it.
 %     ArrivalStatements: list of arrivalstmt(Ref, Kind, AddSql, DelSqlOrNone).
 %     EdgeStatements   : list of edgestmt(HeadRef, TriggerRef, HeadColumns,
 %                        KeyColumns, ProjectSql, UpsertSql).
@@ -144,8 +150,9 @@ sql_literal(Atom, Literal) :-
 
 % ═══ relplan lookup ══════════════════════════════════════════════════════════
 
-relplan_columns(RelPlans, Ref, Columns) :- memberchk(relplan(Ref, _, Columns, _), RelPlans).
-relplan_kind(RelPlans, Ref, Kind) :- memberchk(relplan(Ref, Kind, _, _), RelPlans).
+relplan_columns(RelPlans, Ref, Columns) :- memberchk(relplan(Ref, _, Columns, _, _), RelPlans).
+relplan_kind(RelPlans, Ref, Kind) :- memberchk(relplan(Ref, Kind, _, _, _), RelPlans).
+relplan_column_types(RelPlans, Ref, ColumnTypes) :- memberchk(relplan(Ref, _, _, _, ColumnTypes), RelPlans).
 
 % ═══ pattern-argument compiler (level-rule bodies; unchanged from round 1) ══
 % compile_pattern_arg(Arg, ColumnExpr, Bound0, Bound, WhereParts, Mode)
@@ -293,19 +300,19 @@ alias_select_expr(Expr, Alias, AliasedExpr) :- format(atom(AliasedExpr), '~w AS 
 % as exact-row membership, matching srow(Row)), so an all-column PK is the
 % right invariant there, and no ON CONFLICT clause ever targets it.
 
-rel_ddl(_, relplan(Ref, log, Columns, _), [Ddl]) :- !,
+rel_ddl(_, relplan(Ref, log, Columns, _, ColumnTypes), [Ddl]) :- !,
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
-    maplist(column_def, QuotedColumns, ColumnDefs),
+    maplist(column_def, QuotedColumns, ColumnTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     % Plain rowid table (no PK, no WITHOUT ROWID): a Log rel's duplicate rows
     % are distinct occurrences (engine.pl q1) and must physically coexist as
     % separate rows for multisetDiff to count them correctly.
     format(atom(Ddl), 'CREATE TABLE ~w (~w)', [QuotedTable, ColumnsSql]).
-rel_ddl(EdgeHeadedRefs, relplan(Ref, set, Columns, KeyOrNone), [Ddl]) :-
+rel_ddl(EdgeHeadedRefs, relplan(Ref, set, Columns, KeyOrNone, ColumnTypes), [Ddl]) :-
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
-    maplist(column_def, QuotedColumns, ColumnDefs),
+    maplist(column_def, QuotedColumns, ColumnTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     ( memberchk(Ref, EdgeHeadedRefs), KeyOrNone = key(KeyPositions)
     -> nth1_list(KeyPositions, Columns, KeyColumns),
@@ -315,18 +322,25 @@ rel_ddl(EdgeHeadedRefs, relplan(Ref, set, Columns, KeyOrNone), [Ddl]) :-
     ),
     format(atom(Ddl), 'CREATE TABLE ~w (~w, PRIMARY KEY (~w)) WITHOUT ROWID', [QuotedTable, ColumnsSql, PkSql]).
 
-column_def(QuotedColumn, Def) :- format(atom(Def), '~w TEXT NOT NULL', [QuotedColumn]).
+% PHASE C2 RULING 1: INTEGER storage for an int-typed column, TEXT for
+% everything else (text columns and compound-term columns alike -- a
+% compound value never gets an int witness, see analyze.pl:column_type_at/6,
+% so it always falls through to text here, matching the ruling's flat-punt:
+% compound-term columns stay inline-flat text, never their own storage
+% type).
+column_def(QuotedColumn, int, Def) :- !, format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
+column_def(QuotedColumn, text, Def) :- format(atom(Def), '~w TEXT NOT NULL', [QuotedColumn]).
 
 % ═══ arrival statement templates (round 2: Log rel drops tick/seq params) ═══
 
-arrival_statement(relplan(Ref, log, Columns, _), arrivalstmt(Ref, log, AddSql, none)) :- !,
+arrival_statement(relplan(Ref, log, Columns, _, _), arrivalstmt(Ref, log, AddSql, none)) :- !,
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
     length(Columns, N), placeholders(N, Placeholders),
     atomic_list_concat(Placeholders, ', ', PlaceholdersSql),
     format(atom(AddSql), 'INSERT INTO ~w (~w) VALUES (~w)', [QuotedTable, ColumnsSql, PlaceholdersSql]).
-arrival_statement(relplan(Ref, set, Columns, _), arrivalstmt(Ref, set, AddSql, DelSql)) :-
+arrival_statement(relplan(Ref, set, Columns, _, _), arrivalstmt(Ref, set, AddSql, DelSql)) :-
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
@@ -355,7 +369,7 @@ edge_statement(RelPlans, (Head <+ only(TriggerAtom)), edgestmt(HeadRef, TriggerR
     rel_ref(Head, HeadRef),
     ( relplan_kind(RelPlans, HeadRef, set) -> true
     ; throw(unsupported_construct(edge_write_log_head(HeadRef))) ),
-    ( memberchk(relplan(HeadRef, set, _, key(KeyPositions)), RelPlans) -> true
+    ( memberchk(relplan(HeadRef, set, _, key(KeyPositions), _), RelPlans) -> true
     ; throw(unsupported_construct(edge_into_unkeyed_set(HeadRef))) ),
     TriggerAtom =.. [_ | TriggerArgs],
     compile_trigger_bound(TriggerArgs, Bound),
@@ -491,7 +505,7 @@ is_negative_use(use(_, _, neg, _)).
 % because it is a SQL-generation decision a future emit_rust.pl would want
 % identically, not a TypeScript-specific rendering choice.
 
-delta_statement(relplan(Ref, _Kind, Columns, _), deltastmt(Ref, SelectSql)) :-
+delta_statement(relplan(Ref, _Kind, Columns, _, _), deltastmt(Ref, SelectSql)) :-
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(canonical_column_expr, Columns, ColumnExprs),
     atomic_list_concat(ColumnExprs, ', ', ColumnsSql),
@@ -530,7 +544,7 @@ canonical_column_expr(Column, Expr) :-
 % it runs `boot` after DDL and before the tick fold, confirmed by that
 % script's own header comment.
 
-boot_seed_statement(relplan(Ref, log, Columns, _), Initial, Statements) :- !,
+boot_seed_statement(relplan(Ref, log, Columns, _, _), Initial, Statements) :- !,
     findall(bootstmt(Sql, Values),
             ( member(Row, Initial), rel_ref(Row, Ref), Row =.. [_ | Values],
               table_name(Ref, Table), quote_ident(Table, QuotedTable),
@@ -540,7 +554,7 @@ boot_seed_statement(relplan(Ref, log, Columns, _), Initial, Statements) :- !,
               atomic_list_concat(Placeholders, ', ', PlaceholdersSql),
               format(atom(Sql), 'INSERT INTO ~w (~w) VALUES (~w)', [QuotedTable, ColumnsSql, PlaceholdersSql]) ),
             Statements).
-boot_seed_statement(relplan(Ref, set, Columns, _), Initial, Statements) :-
+boot_seed_statement(relplan(Ref, set, Columns, _, _), Initial, Statements) :-
     findall(bootstmt(Sql, Values),
             ( member(Row, Initial), rel_ref(Row, Ref), Row =.. [_ | Values],
               table_name(Ref, Table), quote_ident(Table, QuotedTable),
@@ -563,7 +577,7 @@ lower_program(plan(Name, prog(_Decls, _Rules), RelPlans, ArrivalTargets, RuleOrd
     level_statement_groups(RelPlans, RuleOrder, LevelStatements),
     maplist(delta_statement, RelPlans, DeltaStatements).
 
-arrival_target_relplan(ArrivalTargets, relplan(Ref, _, _, _)) :- memberchk(Ref, ArrivalTargets).
+arrival_target_relplan(ArrivalTargets, relplan(Ref, _, _, _, _)) :- memberchk(Ref, ArrivalTargets).
 
 % Boot statements, computed on demand (needs Initial, which plan/6 does not
 % carry -- compile.pl calls this directly with the fixture's Initial list).

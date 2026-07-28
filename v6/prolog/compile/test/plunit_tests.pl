@@ -18,7 +18,19 @@
 :- use_module('../lower', [ lower_program/2 ]).
 :- use_module('../analyze', [ check_supported_subset/1 ]).
 
-fixture_file('/Users/chrishafley/projects/sprefa/.claude/worktrees/agent-a1aa8144f466d366d/v6/prolog/conformance/fixtures/scopes.pl').
+% Resolved relative to this file's own load-time directory (mirrors
+% sweep.pl's compile_dir/1 pattern -- prolog_load_context/2 only answers
+% inside a directive running WHILE this file loads, so the directory is
+% captured once, here, into a fact) rather than a hardcoded absolute path --
+% a hardcoded path to a worktree that no longer exists is a portability bug,
+% not a style nit (a prior version of this line named a stale worktree that
+% happened to still exist on this machine by coincidence).
+:- dynamic(test_dir_fact/1).
+:- prolog_load_context(directory, Here), assertz(test_dir_fact(Here)).
+
+fixture_file(File) :-
+    test_dir_fact(Here),
+    atomic_list_concat([Here, '/../../conformance/fixtures/scopes.pl'], File).
 
 % once/1 around both: plunit warns ("Test succeeded with choicepoint") on a
 % test whose body leaves one open, and neither read_fixture_term/4 nor
@@ -78,21 +90,27 @@ test(demand_laziness_rule_order) :-
 
 % analyze.pl:rel_columns/4 mines column names from the fixture's OWN surface
 % variable names (via read_fixture_term/4's variable_names preservation),
-% not from any hardcoded per-fixture table. relplan(Ref, Kind, Columns, Key).
+% not from any hardcoded per-fixture table. relplan(Ref, Kind, Columns, Key,
+% ColumnTypes) -- ColumnTypes (PHASE C2 RULING 1) all TEXT here: neither
+% fixture's own literal values (Schedule/Initial/rule literals) ever put an
+% integer at any of these positions, so analyze.pl:rel_column_types/5's
+% "zero int witnesses -> text" default is exactly what fires, including for
+% `target` (a compound route_data(...) column, which never gets an atomic
+% witness at all and stays text per the ruling's flat-punt).
 
 test(switch_as_keyed_replace_columns) :-
     load_plan(switch_as_keyed_replace, plan(_, _, RelPlans, _, _, _)),
-    memberchk(relplan(open_scope/2, set, [session_id, target], key([1])), RelPlans),
-    memberchk(relplan(demanded/2, set, [target, session_id], none), RelPlans),
-    memberchk(relplan(route_view/2, set, [route_id, body], none), RelPlans),
-    memberchk(relplan(route_change/2, log, [session_id, route_id], none), RelPlans),
-    memberchk(relplan(route_row/2, set, [route_id, body], none), RelPlans).
+    memberchk(relplan(open_scope/2, set, [session_id, target], key([1]), [text, text]), RelPlans),
+    memberchk(relplan(demanded/2, set, [target, session_id], none, [text, text]), RelPlans),
+    memberchk(relplan(route_view/2, set, [route_id, body], none, [text, text]), RelPlans),
+    memberchk(relplan(route_change/2, log, [session_id, route_id], none, [text, text]), RelPlans),
+    memberchk(relplan(route_row/2, set, [route_id, body], none, [text, text]), RelPlans).
 
 test(demand_laziness_columns) :-
     load_plan(demand_laziness_effect_rows, plan(_, _, RelPlans, _, _, _)),
-    memberchk(relplan(open_feed/2, set, [session_id, target], key([1])), RelPlans),
-    memberchk(relplan(demanded/2, set, [target, session_id], none), RelPlans),
-    memberchk(relplan(effect_call/1, set, [target], none), RelPlans).
+    memberchk(relplan(open_feed/2, set, [session_id, target], key([1]), [text, text]), RelPlans),
+    memberchk(relplan(demanded/2, set, [target, session_id], none, [text, text]), RelPlans),
+    memberchk(relplan(effect_call/1, set, [target], none, [text]), RelPlans).
 
 :- end_tests(column_naming).
 
