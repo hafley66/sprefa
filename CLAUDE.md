@@ -325,7 +325,17 @@ language finding, not a reason to special-case the spine.
   inline-flat (punt); nested/reference storage model (struct-as-rel +
   surrogate id, the intern-dictionary pattern) BANKED as a future header.
 - **unmarked edge triggers confirmed**: any-body-atom occurrence model (not
-  whole-world), only() = opt-in restriction; C2 agent implementing.
+  whole-world), only() = opt-in restriction. C2 LANDED 2026-07-28 (merge
+  c32dba53, coordinator re-ran the sweep to identical counts): typed columns
+  (C2a, int/text inference per literal witness) + unmarked triggers (C2b) =
+  scoreboard 9 identical/8 wrong/92 unsupported -> 27/0 wrong-diff/79
+  (3 residual = pre-existing run_error/no_oracle fixtures). Named refusals
+  banked: edge_trigger_is_derived (needs a tickLoop carry seam, ownership
+  crossed so refused), edge_head_column_type_mismatch (2), edge_head_
+  conflict_risk (1). Next unsupported buckets by size: edge_marked_with_
+  extra_goal 21, comparison-in-level-body 14, aggregate_head 9, pre 8.
+  C2 also fixed: both prolog test harnesses' hardcoded dead-worktree path,
+  sweep.pl stale-output off-by-one, boot t=0 level closure over Initial.
 - **clock_residency = world_fed_bind_not_construct** ("clock bind yes"):
   cadence enters as ordinary bind rows; SWR = rules over latest state joined
   with the clock rel; F2 gap dissolves at zero construct cost.
