@@ -167,6 +167,15 @@ function encodeSurfaceRowByColumns(
       }
       if (typeof value === "boolean") return value ? 1 : 0;
       if (typeof value !== "number") throw new Error(`commit: non-numeric value in rel '${relName}' column '${column}'`);
+      // A non-finite number (NaN/Infinity/-Infinity) is still `typeof "number"`, so the
+      // check above lets it through. Left unguarded it reaches sqlTuple's `row.join(",")`
+      // and splices the literal text "NaN" (or "Infinity") into a VALUES(...) tuple
+      // UNQUOTED -- SQLite then parses that token as a column reference, not a number,
+      // and fails with the unrelated-looking "no such column: NaN" (docs/failure-modes.md
+      // class 36). Reject it here, by name, before any SQL is built.
+      if (!Number.isFinite(value)) {
+        throw new Error(`commit: non-finite number (${String(value)}) in rel '${relName}' column '${column}'`);
+      }
       return value;
     }
     return value === null ? -1 : store.intern(String(value));
@@ -183,6 +192,9 @@ function encodeLiteral(store: Store, type: ColumnType, value: LitValue, where: s
     if (value === null) throw new Error(`${where}: numeric NULL literal (the stored column is NOT NULL)`);
     if (typeof value === "boolean") return value ? 1 : 0;
     if (typeof value !== "number") throw new Error(`${where}: non-numeric literal '${String(value)}' against an int column`);
+    // Same splice-site hazard as encodeSurfaceRowByColumns above (docs/failure-modes.md
+    // class 36): `typeof NaN === "number"` passes the check above, so it needs its own.
+    if (!Number.isFinite(value)) throw new Error(`${where}: non-finite literal (${String(value)}) against an int column`);
     return value;
   }
   // -1 is the stored NULL sentinel for a text column (2_schema.ts's rel_* decode view).
@@ -271,7 +283,26 @@ function relMaxColumnWidth(relDecls: ReadonlyMap<string, RelDecl>): number {
 
 type QueryResult = Awaited<ReturnType<Db["execute"]>>;
 
-const execute$ = (db: Db, sql: string): Observable<QueryResult> => defer(() => from(db.execute(sql)));
+/** How much of a failing statement's text rides in the thrown error. Long enough to see
+ *  the shape of the VALUES(...) tuple that broke (the whole reason this exists: F7's
+ *  incident, docs/failure-modes.md class 36, spent a session unable to see the
+ *  statement at all -- LibsqlError carries no SQL text of its own), short enough that a
+ *  multi-thousand-row batch insert doesn't dump megabytes into a log line. */
+const SQL_ERROR_EXCERPT_LENGTH = 800;
+
+/** Self-diagnosis law (CLAUDE.md): every SQL statement this runtime runs goes through
+ *  here, so this is the one place that can guarantee the NEXT hunt is not blind. On
+ *  failure, re-throw with the failing statement's own text (truncated) attached, and the
+ *  original failure chained as `cause` so nothing about the underlying driver error is
+ *  lost. */
+export const execute$ = (db: Db, sql: string): Observable<QueryResult> =>
+  defer(() => from(db.execute(sql))).pipe(
+    catchError((failure: unknown) => {
+      const excerpt = sql.length > SQL_ERROR_EXCERPT_LENGTH ? `${sql.slice(0, SQL_ERROR_EXCERPT_LENGTH)}…` : sql;
+      const detail = failure instanceof Error ? failure.message : String(failure);
+      return throwError(() => new Error(`execute$ failed on statement: ${excerpt}\ncause: ${detail}`, { cause: failure }));
+    }),
+  );
 
 /** Run each statement in order; one emission with every result once the last finishes
  *  (`toArray` emits `[]` even for an empty list, so callers can always sequence on it). */
