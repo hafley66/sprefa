@@ -1,0 +1,23 @@
+{
+  "name": "sprefa-tsv2",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "tsv2 compile-target arc, phase A (plans/2026-07-27-tsv2-compile-target-header.md): the hand-carved static runtime + two by-hand generated program files a future prolog emitter must reproduce byte-for-byte. Grading loop: v6/prolog/conformance/ticklog.pl prints the oracle tick log; scripts/run-fixture.ts prints the tsv2 tick log; DONE = diff is empty.",
+  "packageManager": "pnpm@11.10.0",
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "test": "node --test --experimental-transform-types",
+    "check-imports": "bash scripts/check-imports.sh",
+    "run-fixture": "node --experimental-transform-types scripts/run-fixture.ts"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.17.4",
+    "rxjs": "^7.8.2",
+    "sprefa-store-engine": "link:../sprefa-store/js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@typescript/native-preview": "^7.0.0-dev.20260707.2"
+  }
+}
