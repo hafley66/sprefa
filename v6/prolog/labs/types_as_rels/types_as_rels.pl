@@ -18,6 +18,7 @@
 :- use_module(schema).
 :- use_module(value_model).
 :- use_module(lowering).
+:- use_module(lattice).
 
 go :- run(check).
 
@@ -346,3 +347,52 @@ check(spelling_new_construct_counts,
 
 spelling_length(Name, Length) :-
     spelling_text(Name, Text), atom_length(Text, Length).
+
+% ═══ CHECK 6: THE MERGE BIT (kind words as named lattices) ══════════════════
+% Our own claim, graded: set / log / keyed are three named join-semilattices,
+% not three mechanisms. Prior-art citations live in the verdict.
+
+sample(set, [ [a, b], [b, c], [c] ]).
+sample(log, [ [st(1,1)-a], [st(1,2)-a], [st(2,1)-b] ]).
+sample(keyed, [ [k1-st(1,1)-v1], [k1-st(2,1)-v2], [k2-st(1,3)-v9] ]).
+
+check(kind_words_are_joins,
+      ( forall(( merge_kind(Kind, _), sample(Kind, [A, B, C]) ),
+               ( lub(Kind, A, A, A),                       % idempotent
+                 lub(Kind, A, B, AB), lub(Kind, B, A, BA), AB == BA,
+                 lub(Kind, AB, C, Left),                   % associative
+                 lub(Kind, B, C, BC), lub(Kind, A, BC, Right), Left == Right )) )).
+
+check(arrivals_only_move_state_up,
+      ( forall(( merge_kind(Kind, _), sample(Kind, Arrivals) ),
+               ( merge_all(Kind, Arrivals, Final),
+                 foldl(monotone_step(Kind), Arrivals, [], Final) )) )).
+
+% log is idempotent ONLY because the stamp is part of the value. Strip the
+% stamp and a second identical arrival is lost, which is exactly the
+% occurrence semantics q1 preserves.
+check(log_needs_its_stamp_to_be_a_join,
+      ( sample(log, Arrivals),
+        merge_all(log, Arrivals, Stamped), length(Stamped, 3),
+        observed(log, Stamped, Rows), msort(Rows, Sorted), Sorted == [a, a, b],
+        findall(Row, ( member(Arrival, Arrivals), member(_-Row, Arrival) ), Raw),
+        sort(Raw, Deduped), length(Deduped, 2) )).
+
+% THE POINT against R7: a keyed rel's lattice state only ever rises, and the
+% boundary delta STILL retracts, because the observed projection changed.
+% Monotone merge buys the store (no re-derivation), never the boundary.
+check(keyed_state_rises_but_boundary_retracts,
+      ( First = [k1-st(1,1)-v1], Second = [k1-st(2,1)-v2],
+        lub(keyed, First, Second, State), leq(keyed, First, State),
+        boundary(keyed, First, State, Deltas),
+        Deltas == [-row(k1, v1), +row(k1, v2)] )).
+
+check(set_boundary_never_retracts_on_arrival,
+      ( First = [a, b], Second = [c],
+        lub(set, First, Second, State),
+        boundary(set, First, State, Deltas),
+        Deltas == [+c] )).
+
+monotone_step(Kind, Arrival, State0, State) :-
+    lub(Kind, State0, Arrival, State),
+    leq(Kind, State0, State).

@@ -98,8 +98,10 @@ The op tape and its deltas, produced by the model, not asserted by prose:
 | release one parent | `[]` | 1 |
 | release the last parent | `[-row(list, 1)]` | 0, row gone |
 
-The empty delta on the share step is not new behavior: an equal-row write is a
-no-op (rulings.pl `r_equal_row_write`, engine.pl:247-248). The support rising
+The empty delta on the share step is not new behavior: adding a row a Set rel
+already holds produces no occurrence and no delta (engine.pl:191-192), and the
+keyed-write path says the same thing separately (engine.pl:247-248, rulings.pl
+`r_equal_row_write`). The support rising
 to 2 is not new either (ARCH.pl:68-71, per-ROW origin support). PASS = no new
 construct was needed.
 
