@@ -129,6 +129,28 @@ phase B agent mid-flight.
   the generated shape; NEW hand-written runtime rx still gets the ask-first
   check.)
 
+## PHASE C CONTRACT (seeded after reconciliation completed 3/3 byte-identical)
+
+The sweep: run the compiler over EVERY fixture program in
+conformance/fixtures/*.pl and grade each into exactly one bucket:
+- IDENTICAL: emitted module runs on the A runtime, tick log byte-identical
+  to ticklog.pl's oracle log for the fixture's own schedule.
+- UNSUPPORTED(constructs): the compiler's supported-subset gate refuses it,
+  naming the constructs (aggregates, negation, pre, departed, now, ...).
+  Refusal must be a clean named error, never wrong output.
+- WRONG: compiles and runs but the log differs — always a bug, in the
+  compiler or in the runtime's generality (phase A FINDING 3's carryPending
+  simplification is the first suspect for edge-heavy fixtures).
+The scoreboard (counts + per-fixture bucket + per-construct unsupported
+tally, ranked by how many fixtures each construct blocks) is the
+deliverable and drives the construct-implementation backlog. Widening the
+supported subset is allowed within the sweep for constructs whose lowering
+is unambiguous from engine.pl (each widening = its own commit with the
+before/after scoreboard); ambiguous semantics = leave UNSUPPORTED, note the
+question. Entry bar for calling phase C DONE (later, not this sweep):
+byte-identity emitter-output vs the hand exemplars (formatting argument;
+user taste decides ties).
+
 ## Sequencing with running work
 
 P0 tracing agent (v6/dl + sqlRunner seams) merges independently; tsv2 consumes
