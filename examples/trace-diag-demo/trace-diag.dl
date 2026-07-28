@@ -1,0 +1,91 @@
+# examples/trace-diag-demo/trace-diag.dl
+#
+# Feasibility demo for plans/2026-07-28-lsp-trace-diag-feasibility.md.
+#
+# A user aims a `@trace` marker comment at a source line. This program:
+#   tier (a) — resolves what OTHER extraction rel has a row on that same
+#              line (comment_node the marker itself, call_site the call);
+#   tier (b) — reads its OWN source as data (match_line over this very file)
+#              to report which rule body in THIS program mentions the
+#              call_site rel — a static "who reads this" answer with no
+#              purpose-built introspection construct.
+# Both are published through pre-existing v5 sinks: an info-severity `diag`
+# row (a hoverable squiggle under --lsp / --check) and a richer multi-line
+# `hover_note` (markdown shown on hover, no squiggle required).
+#
+# No new engine construct anywhere in this file: comment_node, call_site,
+# match_line, diag, hover_note are all pre-existing v5 builtins
+# (src/engine/decls.rs).
+#
+#   dl examples/trace-diag-demo/trace-diag.dl --no-daemon \
+#       --db /path/to/scratch.sqlite --query-json
+#
+# NEVER starts the daemon (self-diagnosis standing law): every run in
+# run-demo.sh passes --no-daemon and a scratch --db.
+
+# ---- the traced corpus ------------------------------------------------------
+rel demo_file(path: file).
+demo_file(path) <- scan("WORK", "examples/trace-diag-demo/src/**/*.ts", path, rev).
+
+# ---- tier (a) input: the marker itself --------------------------------------
+# comment_node sees every comment in the scanned corpus (grammar-backed via
+# oxc for .ts, not a text scan — src/comment.rs), so a `@trace` marker on a
+# line is just a row: (path, marker_line, ..., marker_text, kind).
+rel trace_marker(path: file, marker_line: int, marker_text: text).
+trace_marker(path, marker_line, marker_text) <-
+    demo_file(path),
+    comment_node(path, marker_line, _, _, _, marker_text, _),
+    marker_text =~ /@trace/.
+
+# ---- tier (a) output: what else has a row on the marker's line -------------
+# call_site is the resolved-call spine rel: (repo, caller, callee, file,
+# line), line already 1-based — no coordinate translation needed.
+rel call_on_marker_line(source_path: file, marker_line: int, callee_name: text).
+call_on_marker_line(source_path, marker_line, callee_name) <-
+    trace_marker(source_path, marker_line, _),
+    call_site(_, _, callee_name, source_path, marker_line).
+
+# ---- tier (b): which rule body in THIS program reads the call_site rel -----
+# No introspection builtin exists for "which rules read rel X" (the plan
+# doc's Q3 finding) — but the .dl program is itself just a file, and
+# match_line is a generic line-regex source op, so the program's own rule
+# bodies are queryable exactly like any other text corpus.
+rel program_reader_line(program_path: file, hit_line: int).
+program_reader_line(program_path, hit_line) <-
+    scan("WORK", "examples/trace-diag-demo/trace-diag.dl", program_path, rev),
+    match_line(program_path, rev, /\bcall_site\(/, hit_line).
+
+rel program_reader_lines_json(program_path: file, hit_lines_json: text).
+program_reader_lines_json(program_path, json_group_array(hit_line)) <-
+    program_reader_line(program_path, hit_line).
+
+# ---- the trace, joined from both tiers --------------------------------------
+rel traced(source_path: file, marker_line: int, marker_text: text,
+           callee_name: text, reader_lines_json: text).
+traced(source_path, marker_line, marker_text, callee_name, reader_lines_json) <-
+    trace_marker(source_path, marker_line, marker_text),
+    call_on_marker_line(source_path, marker_line, callee_name),
+    program_reader_lines_json(_, reader_lines_json).
+
+# ---- published two ways ------------------------------------------------------
+# info-severity diag: a hoverable info squiggle under --lsp (or --diag-db
+# against the v6-compat `diag_v5` view — identical 9-col schema).
+diag(path: source_path, line: marker_line, severity: "info", code: "trace",
+     msg: "tier(a): line ${marker_line} calls `${callee_name}` -- tier(b): call_site is read at trace-diag.dl line(s) ${reader_lines_json}") <-
+    traced(source_path, marker_line, marker_text, callee_name, reader_lines_json).
+
+# hover_note: multi-line markdown, no squiggle required; merges into the
+# entity hover if one also resolves at this position (src/lsp.rs handle_hover).
+hover_note(path: source_path, line: marker_line, col: 0,
+           end_line: marker_line, end_col: 200,
+           md: "**trace @ ${marker_text}**" + `
+` + "- tier(a): this line also produced a row in `call_on_marker_line` (callee = `${callee_name}`)" + `
+` + "- tier(b): `call_site` is read by a rule body at trace-diag.dl line(s) ${reader_lines_json}") <-
+    traced(source_path, marker_line, marker_text, callee_name, reader_lines_json).
+
+? trace_marker(path, marker_line, marker_text).
+? call_on_marker_line(source_path, marker_line, callee_name).
+? program_reader_line(program_path, hit_line).
+? traced(source_path, marker_line, marker_text, callee_name, reader_lines_json).
+? diag(path, line, col, end_line, end_col, severity, code, msg, hint).
+? hover_note(path, line, col, end_line, end_col, md).
