@@ -297,3 +297,14 @@ ruling(no_policy_suffix_words, bare_rel_is_set_log_is_the_only_kind_word, user,
 % on a never-headed rel must seed EDB rows.
 ruling(edb_definition, never_headed_rel_is_pure_subject, user,
        'user 2026-07-29: "we want edb to be ... a rel enum, that never has a body, is pure subject"').
+
+% 2026-07-29 same sitting. The founding purpose of the TS runtime,
+% stated after the scale bench landed: ROWS STAY OUT OF HOST RESIDENCY.
+% Tables live in sqlite; the host process sees deltas and aggregates,
+% never a materialized table. The naive boundary diff (full-table reads
+% into JS for multisetDiff every tick) violates this and is the named
+% suspect for both the 10x-vs-v1 overhead and the s3 OOM-at-1k. Grade
+% consequence: zero full-table reads into JS anywhere in the tick path
+% is an acceptance criterion for the emitter arc, not an optimization.
+ruling(host_residency, rows_stay_in_sqlite_host_sees_deltas, user,
+       'user 2026-07-29: "entire purpose of that ts engine was keeping rows out of residency in the host"').
