@@ -1,0 +1,24 @@
+# clock-swr-demo.dl -- the bind seam's demo + receipt program (1_binds.ts). Proves
+# clock_residency = world_fed_bind_not_construct: cadence enters as an ordinary
+# EDB rel (clock_bucket), fed by the clock bind, not as any new language construct.
+#
+# One declared period on purpose (2 seconds): `rel(1) clock_bucket` keeps the
+# WHOLE table down to its newest row on every insert (3_runtime.ts's applyRelWrite
+# keepNewestOnly sweep is a GLOBAL sweep, not a per-period upsert -- see
+# 1_hosts.ts's ghcacher-derived etag comment for the same caveat on a different
+# rel). With exactly one active period, "keep the newest row in the whole table"
+# and "keep the latest row per period" agree; a program that wants more than one
+# live period at once needs a real per-key retention (the standing Key/Q8 gap),
+# not something this demo invents.
+
+rel clock_period(period_secs: int).
+clock_period(2).
+
+rel(1) clock_bucket(period: int, bucket: int).
+
+# poll_due re-derives every time clock_bucket's single row changes -- the
+# re-fire receipt: each bucket advance is one retract+insert delta on poll_due,
+# observable over GET /subscribe/poll_due (or by diffing GET /idb/poll_due across
+# two polls) without poll_due itself needing to accumulate any history.
+rel poll_due(period: int, bucket: int).
+poll_due(period, bucket) <- clock_bucket(period, bucket).

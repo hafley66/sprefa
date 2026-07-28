@@ -7,7 +7,8 @@
  * doing any real work — an unsubscribed diagnostics_channel publish is documented as
  * near-free, which is the whole "near-zero when off" contract.
  *
- * THREE SEAMS, matching the header 1:1:
+ * FOUR SEAMS (sql/effect/ingest match the header 1:1; sprefa:bind was added by the
+ * bind-seam arc, same shape as sprefa:effect):
  *
  *   sprefa:sql — one event per SQL statement, fed from SqlRunner's EXISTING
  *   `trace?: TraceStatement` hook (engine/types.ts:50), reached through
@@ -45,6 +46,14 @@
  *   they are tagged with the DEMAND tick (`pending.tick`) instead — a real asymmetry
  *   in the underlying system, not a shortcut taken here.
  *
+ *   sprefa:bind -- one event per finished bind commit (1_binds.ts, BindRunner.
+ *   commitOnce). Every firing reaches a commit (a bind has no cache/demand row
+ *   to short-circuit against, unlike an effect's cache_hit), so `bindDone` is
+ *   called exactly once per firing, tagged with that firing's own commit tick.
+ *   Generic on purpose: the event carries `rel`/`rows`/`ms` only, never
+ *   anything clock-specific (spine_residency ruling -- the tracer, like the
+ *   runner, knows the word "bind", never the word "clock").
+ *
  *   sprefa:ingest — one event per file, now split into every sub-span `ingestFile`
  *   (4_ingest.ts) measures (read_ms/extract_wall_ms/fact_ms/diff_ms/commit_ms — see
  *   PerfIngestEntry in 0_types.ts for what each covers; this is the attribution work
@@ -55,8 +64,8 @@
  * is set (`installFromEnv`, called once at import time for the real app; tests call
  * it again after mutating env — idempotent either way). It folds events into a
  * per-tick buffer and writes ONE pino JSONL line per tick — never one write per
- * statement/effect/file. The N+1 law applies to this module's own output exactly as
- * much as it applies to the engine's SQL.
+ * statement/effect/bind/file. The N+1 law applies to this module's own output
+ * exactly as much as it applies to the engine's SQL.
  *
  * FLUSH TIMING: a tick's SQL statements complete synchronously as part of that same
  * tick's commit; a tick's effect/ingest spans (measured by the CALLER of
@@ -80,7 +89,7 @@ import pino, { type Logger } from "pino";
 
 import { memcap } from "sprefa-store-engine/src/engine/measure.ts";
 
-import type { IPerfTrace, PerfEffectEntry, PerfIngestEntry, PerfTickLine } from "./0_types.ts";
+import type { IPerfTrace, PerfBindEntry, PerfEffectEntry, PerfIngestEntry, PerfTickLine } from "./0_types.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Channels. diagnostics_channel.channel(name) is a process-global registry: the
@@ -91,11 +100,13 @@ import type { IPerfTrace, PerfEffectEntry, PerfIngestEntry, PerfTickLine } from 
 export const PERF_CHANNEL_NAMES = {
   sql: "sprefa:sql",
   effect: "sprefa:effect",
+  bind: "sprefa:bind",
   ingest: "sprefa:ingest",
 } as const;
 
 const sqlChannel = diagnostics_channel.channel(PERF_CHANNEL_NAMES.sql);
 const effectChannel = diagnostics_channel.channel(PERF_CHANNEL_NAMES.effect);
+const bindChannel = diagnostics_channel.channel(PERF_CHANNEL_NAMES.bind);
 const ingestChannel = diagnostics_channel.channel(PERF_CHANNEL_NAMES.ingest);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -115,6 +126,13 @@ interface EffectEvent {
   readonly effectId: number;
   readonly ms: number;
   readonly status: "done" | "cache_hit" | "error";
+}
+
+interface BindEvent {
+  readonly tick: number;
+  readonly rel: string;
+  readonly rows: number;
+  readonly ms: number;
 }
 
 interface IngestEvent extends PerfIngestEntry {
@@ -175,6 +193,7 @@ interface TickBuffer {
   stmtMsTotal: number;
   stmtMsMax: number;
   effects: PerfEffectEntry[];
+  binds: PerfBindEntry[];
   ingest: PerfIngestEntry | null;
 }
 
@@ -191,7 +210,7 @@ function noteTickTouched(tick: number, now: number): void {
 function bufferFor(tick: number): TickBuffer {
   const existing = buffers.get(tick);
   if (existing) return existing;
-  const created: TickBuffer = { stmtCount: 0, stmtMsTotal: 0, stmtMsMax: 0, effects: [], ingest: null };
+  const created: TickBuffer = { stmtCount: 0, stmtMsTotal: 0, stmtMsMax: 0, effects: [], binds: [], ingest: null };
   buffers.set(tick, created);
   return created;
 }
@@ -211,6 +230,15 @@ function onEffectMessage(message: unknown): void {
     effect_id: event.effectId,
     ms: round2(event.ms),
     status: event.status,
+  });
+}
+
+function onBindMessage(message: unknown): void {
+  const event = message as BindEvent;
+  bufferFor(event.tick).binds.push({
+    rel: event.rel,
+    rows: event.rows,
+    ms: round2(event.ms),
   });
 }
 
@@ -249,6 +277,12 @@ function effectDone(
   effectChannel.publish({ tick, host, effectId, ms, status } satisfies EffectEvent);
 }
 
+function bindDone(tick: number, rel: string, rows: number, ms: number): void {
+  if (!bindChannel.hasSubscribers) return;
+  noteTickTouched(tick, performance.now());
+  bindChannel.publish({ tick, rel, rows, ms } satisfies BindEvent);
+}
+
 function ingestDone(tick: number, entry: PerfIngestEntry): void {
   if (!ingestChannel.hasSubscribers) return;
   noteTickTouched(tick, performance.now());
@@ -276,6 +310,7 @@ function flushTick(tick: number): void {
     stmt_ms_total: round2(buffer.stmtMsTotal),
     stmt_ms_max: round2(buffer.stmtMsMax),
     effects: buffer.effects,
+    binds: buffer.binds,
     ingest: buffer.ingest,
     rss_kb: Math.floor(memcap.sample() / 1024),
   };
@@ -286,7 +321,12 @@ function flushTick(tick: number): void {
  *  last open SQL statement, then schedules the flush — see file header FLUSH TIMING
  *  for why this is not synchronous. */
 function tickSettled(tick: number): void {
-  if (!sqlChannel.hasSubscribers && !effectChannel.hasSubscribers && !ingestChannel.hasSubscribers) {
+  if (
+    !sqlChannel.hasSubscribers &&
+    !effectChannel.hasSubscribers &&
+    !bindChannel.hasSubscribers &&
+    !ingestChannel.hasSubscribers
+  ) {
     openStatementByTick.delete(tick);
     return;
   }
@@ -305,6 +345,7 @@ function uninstall(): void {
   if (installedPath === null) return;
   sqlChannel.unsubscribe(onSqlMessage);
   effectChannel.unsubscribe(onEffectMessage);
+  bindChannel.unsubscribe(onBindMessage);
   ingestChannel.unsubscribe(onIngestMessage);
   logger = null;
   installedPath = null;
@@ -319,6 +360,7 @@ function install(destinationPath: string): void {
   logger = pino({ base: null }, pino.destination({ dest: destinationPath, sync: true, mkdir: true }));
   sqlChannel.subscribe(onSqlMessage);
   effectChannel.subscribe(onEffectMessage);
+  bindChannel.subscribe(onBindMessage);
   ingestChannel.subscribe(onIngestMessage);
   installedPath = destinationPath;
 }
@@ -334,13 +376,19 @@ function installFromEnv(): void {
 
 export const PerfTrace: IPerfTrace = {
   get enabled(): boolean {
-    return sqlChannel.hasSubscribers || effectChannel.hasSubscribers || ingestChannel.hasSubscribers;
+    return (
+      sqlChannel.hasSubscribers ||
+      effectChannel.hasSubscribers ||
+      bindChannel.hasSubscribers ||
+      ingestChannel.hasSubscribers
+    );
   },
   installFromEnv,
   uninstall,
   sqlTraceFor,
   finishSqlTrace,
   effectDone,
+  bindDone,
   ingestDone,
   tickSettled,
 };

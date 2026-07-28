@@ -210,6 +210,68 @@ export interface CacheDb {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Binds (M? · src/1_binds.ts) -- the INPUT-side twin of the Hosts section above.
+// A HostDef answers OUTBOUND demand (`host?(args)` rows trigger a subprocess whose
+// response lands on `__resp_h`); a BindDef feeds INBOUND arrival rows into an
+// ordinary EDB rel with no demand row at all -- the world pushes on its own
+// schedule, the program just reads the latest state (clock_residency ruling,
+// rulings.pl: "cadence enters as ordinary arrival rows; SWR policy is program
+// rules over latest state, NEVER runtime machinery").
+//
+// LINKING BY REL NAME (spine_residency ruling: the kernel learns the word
+// "bind", never the word "clock" -- zero grammar changes this arc): a BindDef
+// activates for a loaded program iff the program declares an EDB rel whose name
+// matches `bind.rel`. An inactive bind's `source$` is never subscribed, so it
+// costs nothing (no timer, no query) for a program that never mentions its rel.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Everything a bind's source needs to decide what to emit. `runtime` is the
+ *  structural IDlRuntime (never the concrete class, same numbering-law reason
+ *  as HostDef.run/HostRunner above) -- a bind reads its own config rows off it
+ *  (e.g. the clock bind's `clock_period` rows) the same way it will later
+ *  write through it. */
+export interface BindConfig {
+  readonly runtime: IDlRuntime;
+}
+
+/** A registered input source, symmetric to HostDef on the output side: `rel`
+ *  names the EDB rel it feeds; `columns` documents its emitted row shape (Row is
+ *  a Record, so only the NAMES need to match the rel's declared columns, not
+ *  their order); `source$` is a cold Observable of row batches to insert. One
+ *  subscription per program load (the same cold-graph region HostRunner's
+ *  effects$ lives in), one commit per emitted batch -- a bind never computes its
+ *  own retract: a bind whose rel needs "latest wins" relies on the rel's OWN
+ *  retention marker (`rel(1)`), the same knob any program author already uses
+ *  for EDB writes, rather than the bind tracking prior state itself. */
+export interface BindDef {
+  readonly rel: string;
+  readonly columns: readonly string[];
+  source$(config: BindConfig): Observable<readonly Row[]>;
+}
+
+/** One finished bind commit: which rel, how many rows that firing inserted. */
+export interface BindCommitDone {
+  readonly rel: string;
+  readonly rows: number;
+}
+
+/** The bind driver: reads the currently loaded program's declared EDB rels,
+ *  activates every registered BindDef whose `rel` matches one by name, and
+ *  merges their `source$` firings into one commit stream. Cold: nothing runs
+ *  (no timer starts, no config row is read) until the program's own cold graph
+ *  region subscribes, and unsubscribing (program swap) IS every timer's
+ *  teardown -- no dispose(), no held Subscription, matching IHostRunner's
+ *  contract exactly. */
+export interface IBindRunner {
+  readonly commits$: Observable<BindCommitDone>;
+}
+
+/** The static side of the BindRunner class: its constructor is the whole surface. */
+export interface IBindRunnerStatics {
+  new (runtime: IDlRuntime, binds: readonly BindDef[], program: Program): IBindRunner;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Timecut arm protocol (FRONTIER · forward contract, not this slice). A probe/
 // mutation with a match block — `h?(in){ next(out) -> .., error(e) -> .., .. }`,
 // same block on `h!(..)` — materializes the host's `HostDef.run` lifecycle as
@@ -317,12 +379,14 @@ export interface DlServer {
  *  the graph emits one of these, so no branch has to throw its values away: `listening`
  *  once, carrying the handle; `served` per finished request; `delta` per tick event,
  *  emitted once by the tick stream itself and once more per SSE client it was written
- *  to (so the fan-out is visible); `effect` per finished host effect. */
+ *  to (so the fan-out is visible); `effect` per finished host effect; `bind` per
+ *  finished bind commit (1_binds.ts, the input-side twin of `effect`). */
 export type DlAppEvent =
   | { readonly kind: "listening"; readonly server: DlServer }
   | { readonly kind: "served"; readonly method: string; readonly path: string }
   | { readonly kind: "delta"; readonly delta: DeltaEvent }
-  | { readonly kind: "effect"; readonly done: HostEffectDone };
+  | { readonly kind: "effect"; readonly done: HostEffectDone }
+  | { readonly kind: "bind"; readonly done: BindCommitDone };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Perf trace (Phase 0 · src/0_trace.ts, plans/2026-07-27-v5-port-perf-header.md,
@@ -341,6 +405,16 @@ export interface PerfEffectEntry {
   readonly effect_id: number;
   readonly ms: number;
   readonly status: "done" | "cache_hit" | "error";
+}
+
+/** One finished bind commit folded into a tick's perf line (1_binds.ts,
+ *  BindRunner) -- the input-side twin of PerfEffectEntry. Generic on purpose
+ *  (spine_residency ruling: the tracer knows "rel" and "row count", never
+ *  "period"/"bucket" -- those stay inside the clock bind's own closure). */
+export interface PerfBindEntry {
+  readonly rel: string;
+  readonly rows: number;
+  readonly ms: number;
 }
 
 /** One file's ingest, split into every sub-span `ingestFile` (4_ingest.ts) times
@@ -372,7 +446,9 @@ export interface PerfIngestEntry {
 /** One emitted JSONL line, one per tick. Shape pinned by the header:
  *  `{tick, wall_ms, stmt_count, stmt_ms_total, stmt_ms_max, effects, ingest, rss_kb}`.
  *  `rss_kb` comes from sprefa-store-engine's existing `memcap` sampler — no second
- *  RSS reader. `ingest` is null on a tick no file was ingested into. */
+ *  RSS reader. `ingest` is null on a tick no file was ingested into. `binds` is the
+ *  bind-seam addition (1_binds.ts): empty on a tick no bind fired, same convention
+ *  as `effects`. */
 export interface PerfTickLine {
   readonly tick: number;
   readonly wall_ms: number;
@@ -380,6 +456,7 @@ export interface PerfTickLine {
   readonly stmt_ms_total: number;
   readonly stmt_ms_max: number;
   readonly effects: readonly PerfEffectEntry[];
+  readonly binds: readonly PerfBindEntry[];
   readonly ingest: PerfIngestEntry | null;
   readonly rss_kb: number;
 }
@@ -407,6 +484,9 @@ export interface IPerfTrace {
   finishSqlTrace(tick: number): void;
   /** One finished host effect (1_hosts.ts, HostRunner.runEffectOnce). */
   effectDone(tick: number, host: string, effectId: number, ms: number, status: "done" | "cache_hit" | "error"): void;
+  /** One finished bind commit (1_binds.ts, BindRunner.commitOnce) -- the input-side
+   *  twin of effectDone. */
+  bindDone(tick: number, rel: string, rows: number, ms: number): void;
   /** One finished file's ingest, every sub-span already measured by the caller
    *  (4_ingest.ts, ingestFile) — see PerfIngestEntry for what each field covers. */
   ingestDone(tick: number, entry: PerfIngestEntry): void;
