@@ -1,0 +1,17 @@
+{"record":"node","family":"type","span":{"start":244,"end":385},"kind":"function","name":"shift"}
+{"record":"node","family":"type","span":{"start":394,"end":439},"kind":"interface","name":"Point"}
+{"record":"node","family":"type","span":{"start":448,"end":467},"kind":"alias","name":"Vec"}
+{"record":"node","family":"type","span":{"start":476,"end":522},"kind":"enum","name":"Dir"}
+{"record":"node","family":"type","span":{"start":531,"end":796},"kind":"class","name":"Vec2"}
+{"record":"node","family":"type","span":{"start":599,"end":681},"kind":"method","name":"magnitude"}
+{"record":"node","family":"type","span":{"start":7,"end":83},"kind":"function","name":"add"}
+{"record":"node","family":"type","span":{"start":730,"end":794},"kind":"method","name":"scaled"}
+{"record":"node","family":"type","span":{"start":857,"end":894},"kind":"function","name":"sub"}
+{"record":"node","family":"type","span":{"start":937,"end":987},"kind":"function","name":"mirror"}
+{"record":"sig","family":"type","owner":{"start":244,"end":385},"slot":"param","pos":0,"ty":"Point"}
+{"record":"sig","family":"type","owner":{"start":244,"end":385},"slot":"param","pos":1,"ty":"Dir"}
+{"record":"sig","family":"type","owner":{"start":244,"end":385},"slot":"ret","pos":0,"ty":"Vec2"}
+{"record":"sig","family":"type","owner":{"start":730,"end":794},"slot":"param","pos":0,"ty":"Vec"}
+{"record":"sig","family":"type","owner":{"start":730,"end":794},"slot":"ret","pos":0,"ty":"Vec2"}
+{"record":"sig","family":"type","owner":{"start":937,"end":987},"slot":"param","pos":0,"ty":"Point"}
+{"record":"sig","family":"type","owner":{"start":937,"end":987},"slot":"ret","pos":0,"ty":"Point"}

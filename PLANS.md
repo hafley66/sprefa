@@ -41,6 +41,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `decision` plans/2026-07-18-db-seam-migration.md:463 — the pre-existing Storage trait (src/storage.rs) predates the struct ruling; collapse it into Db's inherent API or keep it for CallStore — decided outside this arc
 - `decision` plans/2026-07-20-typed-template-bootstrap-lab.md:705 — Select the embedded relation storage strategy after measuring Vec-plus-indexes against a Rust Datalog crate on the fixed fact vocabulary.
 - `decision` plans/2026-07-20-typed-template-bootstrap-lab.md:711 — Decide whether repeated named slots mean equality constraints or duplicate-binding errors after matcher ambiguity tests exist.
+- `decision` plans/2026-07-25-analysis-engine-bakeoff-labs.md:118 — per-candidate verdict at the human gate — adopt-as-engine / adopt-as-oracle / read-only / discard
 - `docs` plans/2026-07-10-change-cost-friction-inventory.md:151 — item 6 — a generated per-language coverage table (which node kinds each TypeLang lift emits, tested counts on a fixture) in docs/reference
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:105 — match() trailing positional is a match ID not captured text — rename convention to match_id in shipped examples, show named-capture form in the op quickref
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:106 — comment_node.text strips comment tokens — state it in the relations table row, not only the buried authoring bullet
@@ -59,6 +60,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `docs` plans/2026-07-11-docs-and-dogfood-audit.md:20 — CHANGELOG drift rail — commit window vs entries cross-check
 - `docs` plans/2026-07-11-docs-and-dogfood-audit.md:28 — book/tutorial refresh for sym/file_lines/--max-wall/semi-naive
 - `docs` plans/2026-07-18-db-seam-migration.md:464 — src/db.rs grows past 1500 lines under this plan; it is already in scripts/filesize-allow.txt, but a future split into src/db/ requires extending rusqlite_seam in .dl/no-new-rusqlite.dl
+- `docs` plans/2026-07-25-analysis-engine-bakeoff-labs.md:119 — scale matrix committed to labs/bakeoff/MATRIX.md (tool × Q1–Q10 × C0–C3 × wall/RSS/LOC/cold-start)
 - `feature` plans/2026-07-10-change-cost-friction-inventory.md:148 — item 1 — a first-class --hermetic flag that implies all three, plus the already-ledgered loud "daemon is serving this root, writes went there" warning on hijack
 - `feature` plans/2026-07-10-change-cost-friction-inventory.md:150 — item 3 — --format=json (or tsv) for ? query blocks and one paragraph documenting the human format's contract
 - `feature` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:103 — agent_edit carries line/span columns so touched-region x AST-span joins work (guarded-MATCH vs guarded-FILE)
@@ -99,6 +101,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-07-16-family-cutover-completion-map.md:80 — capstone — after C1-C6 land, host call_kind/call_edge_rev/call_def_rev and cut over to families-as-sole-writer with live react_deltas render, proving the surface end-to-end; freeze 6-rel golden snapshots BEFORE deleting legacy (legacy is the parity oracle)
 - `feature` plans/2026-07-18-db-seam-migration.md:462 — extend .dl/no-new-rusqlite.dl scans from src/**/*.rs to tests/**/*.rs so the rail covers the it suite
 - `feature` plans/2026-07-20-typed-template-bootstrap-lab.md:709 — Define the exact positional-slot surface spelling after named brace and colon slots pass parser and normalization tests.
+- `feature` plans/2026-07-25-analysis-engine-bakeoff-labs.md:50 — bake-off harness — fact loader (extract JSONL) + Q1–Q10 runners + measure script (wall, peak RSS via memcap, LOC, cold-start)
 - `perf` plans/2026-07-11-codex-feedback-queue.md:92 — semi-naive delta-growth bail + wedge visibility
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:189 — replace corpus-wide extraction payload caches with bounded byte-weighted reuse and stream WORK and Git inventories into staging
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:190 — replace per-connection 512 MiB SQLite cache and mmap settings with one measured process-wide budget and permit disk-backed large temporary work
@@ -120,10 +123,12 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `perf` plans/2026-07-16-arch-doc-saga.md:494 — measure A5 wall time vs the 73 ms/1000-file baseline from plans/2026-07-15-family-derive-reactive-engine.md:187 once M3 lands
 - `perf` plans/2026-07-18-db-seam-migration.md:461 — after the seam migration, profile a chunk-loop-heavy --check run; if prepare-per-call regressed a hot loop, add a seam-internal statement cache keyed by SQL
 - `perf` plans/2026-07-20-typed-template-bootstrap-lab.md:707 — Record fresh-process allocation and wall-time measurements for every required scale case before selecting interning and matcher-cache policies.
+- `perf` plans/2026-07-25-analysis-engine-bakeoff-labs.md:117 — RAM budget per lab declared BEFORE its first C2 run — exceeding = fail (30GB lesson)
 - `triage` plans/2026-07-11-cross-harness-agent-tooling.md:147 — a CodexSessions AgentHarness arm for agent_* rels — session-store format needs research
 - `triage` plans/2026-07-11-docs-and-dogfood-audit.md:40 — re-enable hooks (timeout+advisory) — relights the dark event arm; Chris flips
 - `triage` plans/2026-07-11-engine-mod-split.md:72 — SG_LANG_TABLE final home (src/sg.rs vs engine/lang_tables.rs) when the lang_tables cluster moves
 - `triage` plans/2026-07-15-structural-parsing-coverage.md:119 — CSS comment_node coverage depends on tree-sitter-css being published for tree-sitter 0.25; verify availability
+- `triage` plans/2026-07-25-analysis-engine-bakeoff-labs.md:60 — corpus tiers C0–C3 pinned revs committed to labs/bakeoff/CORPUS.md; parse-only, no builds allowed for any candidate
 <!-- END: plans-by-category -->
 
 ## By plan
@@ -245,6 +250,11 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-20-typed-template-bootstrap-lab.md:707 `perf` — Record fresh-process allocation and wall-time measurements for every required scale case before selecting interning and matcher-cache policies.
 - plans/2026-07-20-typed-template-bootstrap-lab.md:709 `feature` — Define the exact positional-slot surface spelling after named brace and colon slots pass parser and normalization tests.
 - plans/2026-07-20-typed-template-bootstrap-lab.md:711 `decision` — Decide whether repeated named slots mean equality constraints or duplicate-binding errors after matcher ambiguity tests exist.
+- plans/2026-07-25-analysis-engine-bakeoff-labs.md:50 `feature` — bake-off harness — fact loader (extract JSONL) + Q1–Q10 runners + measure script (wall, peak RSS via memcap, LOC, cold-start)
+- plans/2026-07-25-analysis-engine-bakeoff-labs.md:60 `triage` — corpus tiers C0–C3 pinned revs committed to labs/bakeoff/CORPUS.md; parse-only, no builds allowed for any candidate
+- plans/2026-07-25-analysis-engine-bakeoff-labs.md:117 `perf` — RAM budget per lab declared BEFORE its first C2 run — exceeding = fail (30GB lesson)
+- plans/2026-07-25-analysis-engine-bakeoff-labs.md:118 `decision` — per-candidate verdict at the human gate — adopt-as-engine / adopt-as-oracle / read-only / discard
+- plans/2026-07-25-analysis-engine-bakeoff-labs.md:119 `docs` — scale matrix committed to labs/bakeoff/MATRIX.md (tool × Q1–Q10 × C0–C3 × wall/RSS/LOC/cold-start)
 <!-- END: plans-by-plan -->
 
 ## By code file

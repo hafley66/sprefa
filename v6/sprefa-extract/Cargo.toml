@@ -1,0 +1,87 @@
+# Standalone crate: its own [workspace] table decouples it from the v5 root
+# workspace so `cargo test` here is fully isolated (the whole point: prove the
+# v6 extraction leaf with no v5 tree in the build graph).
+[workspace]
+
+[package]
+name = "sprefa-extract"
+version = "0.1.0"
+edition = "2021"
+description = "v6 extraction leaf: a corpus at a version -> normalized graph facts. Sync, rayon-parallel, arena-mastered. No DB, no async."
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+# ast-grep-language ships the tree-sitter grammars for rust/ts/tsx/js/go in ONE
+# dep; ast-grep-core is the parse + Node API. v5 carried these v0 -> v6 (src/sg.rs).
+# Ported verbatim, not relitigated.
+ast-grep-core = "0.38"
+ast-grep-language = "0.38"
+# oxc arena AST front-end for TS/JS (v5 carried these; src/graph/typegraph/ts).
+# The Program<'a> borrows the Allocator + source text, so parse ties content to
+# 'a (the GAT seam). Commit 2b: TypeF entities; commit 2c: the arrow-type sigs
+# (oxc_ast_visit walks type annotations for the named references they reference).
+oxc_allocator = "0.135"
+oxc_parser = "0.135"
+oxc_ast = "0.135"
+oxc_ast_visit = "0.135"
+oxc_span = "0.135"
+oxc_syntax = "0.135"
+# syn is the Rust AST front-end v5 carried (src/graph/typegraph/rust). The
+# `full` feature parses Item::*; `visit` drives the call-site/call-def walks;
+# `extra-traits` for derive Eq on AST nodes some helpers pattern-match. Ported
+# verbatim, not relitigated. Line/col on spans lives on proc_macro2::Span
+# (syn 2 dropped its `span-locations` feature), gated by proc-macro2's
+# `span-locations`; v6 Span is byte offsets, bridged by the line_starts table
+# in lang/rust.rs.
+syn = { version = "2", features = ["full", "visit", "parsing", "extra-traits"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+# tree-sitter is the Go AST front-end v5 carried (src/graph/typegraph/go.rs).
+# These versions match what ast-grep-language already transitively pulls
+# (tree-sitter 0.25.10 + tree-sitter-go 0.23.4), so cargo UNIFIES them: one copy
+# each, no dupes. tree-sitter-go 0.23 exports `LANGUAGE: LanguageFn`, which
+# tree-sitter 0.25's `Language::new` wraps (v5's exact `go_parse` shape). Byte
+# spans come straight off the nodes (`start_byte`/`end_byte`); no line/col bridge.
+tree-sitter = "0.25"
+tree-sitter-go = "0.23"
+# tree-sitter-kotlin-sg is the Kotlin AST front-end v5 carried
+# (src/graph/typegraph/kotlin.rs; root Cargo.toml pins the same crate, so the v6
+# parse is byte-identical to the v5 oracle's). It is ALREADY in this lock as an
+# ast-grep-language transitive (0.4.1), exports `LANGUAGE: LanguageFn` like
+# tree-sitter-go 0.23, and deps only `tree-sitter-language` + `cc` (no
+# tree-sitter core): cargo UNIFIES it, one copy, no dupes.
+tree-sitter-kotlin-sg = "0.4"
+# serde on the FLAT wire envelope only (never on the generic Node<F>). The store
+# seam + the parity-golden normalize + the stdout JSONL all read this one shape.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# blake3 backs BlobHash (the content key behind ProjectEdge.dst_blob + the
+# phase-1/phase-2 cache keys). Same major as v5 (root Cargo.toml: blake3 = "1").
+# Human-approved dep (4b ruling 2026-07-24).
+blake3 = "1"
+# prost decodes index.scip for the ScipSource seam (commit 4c). v5's pairing
+# (scip = "0.7.1" + protobuf = "3.7"; src/scip_import.rs) was REJECTED here:
+# protobuf 3.7.2 hard-deps thiserror 1, a NEW dup against this tree's
+# thiserror 2 (every scip crate version pins that runtime). prost + the
+# vendored proto/scip.proto keeps the rails clean. The generated bindings are
+# COMMITTED at src/scip/scip_proto.rs (the `scip` crate's own pattern): no
+# build.rs, no build-time protoc. Regen: prost-build + protoc-bin-vendored
+# over proto/scip.proto (run anywhere; diff the result against the committed
+# file) - the prost-build route was measured to fork `cargo tree -d` with
+# build-kind dup groups (bitflags/regex/prost via tempfile/prost-build).
+prost = "0.13"
+
+# clap is BIN-only: gated behind `cli` so `cargo tree --lib` stays free of it.
+# The bin adds only clap; the lib never touches it.
+[dependencies.clap]
+version = "4"
+features = ["derive"]
+optional = true
+
+[features]
+cli = ["dep:clap"]
+
+[[bin]]
+name = "extract"
+path = "src/bin/extract.rs"
+required-features = ["cli"]

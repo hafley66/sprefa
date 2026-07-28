@@ -34,12 +34,14 @@
 | [plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md](plans/2026-07-21-v6-lab-arc-oracles-and-measured-perf.md) | 184 | v6 core: the lab arc — oracles, why, efficiency, measured Big-O + empirical ratios |
 | [plans/2026-07-23-ghcacher-in-signals.md](plans/2026-07-23-ghcacher-in-signals.md) | 175 | ghcacher in signals (2026-07-23) |
 | [plans/2026-07-23-opus-dispatch.md](plans/2026-07-23-opus-dispatch.md) | 172 | Opus dispatch pack — v6 js engine (cut 2026-07-23) |
+| [plans/2026-07-23-sprefa-extract-golden-plan.md](plans/2026-07-23-sprefa-extract-golden-plan.md) | 537 | sprefa-extract - the golden plan (distill v5, normalize for v6) |
 | [plans/2026-07-23-v5-surface-audit.md](plans/2026-07-23-v5-surface-audit.md) | 271 | v5 surface audit vs the v6 direction — adversarial, living table (2026-07-23) |
 | [plans/2026-07-23-v6-in-literal-rxjs.md](plans/2026-07-23-v6-in-literal-rxjs.md) | 204 | v6 in literal rxjs — the whole deal, rx words only (F10 working spec, 2026-07-23) |
 | [plans/2026-07-23-v6-reactive-datalog-isomorphism.md](plans/2026-07-23-v6-reactive-datalog-isomorphism.md) | 139 | v6 reactive datalog ↔ rx isomorphism (theory draft, NOT locked) |
 | [plans/2026-07-23-v6-rest-epic-golden-plan.md](plans/2026-07-23-v6-rest-epic-golden-plan.md) | 492 | v6 rest-of-arc — epic golden plan (cut 2026-07-23, receipts verified same day) |
 | [plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md](plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md) | 256 | v6 rxjs lowering + the TS cascade port (engineering plan) |
 | [plans/2026-07-23-v6-transports-as-rels.md](plans/2026-07-23-v6-transports-as-rels.md) | 123 | Transports as rels — http/ws/LSP/shell with zero effect syntax (F4/F10 working note, 2026-07-23) |
+| [plans/2026-07-24-extract-go-closeout-and-resolve4.md](plans/2026-07-24-extract-go-closeout-and-resolve4.md) | 957 | sprefa-extract: Go closeout → Resolve<\*> (commit 4) → fixture broadening |
 | [plans/2026-07-24-fork-pipeline-syntax-findings.md](plans/2026-07-24-fork-pipeline-syntax-findings.md) | 80 | Fork findings: pipeline syntax + surface rulings (2026-07-24, session forked-for-sql-pipeline-syntax) |
 | [plans/2026-07-24-m9-storage-plane-continuation.md](plans/2026-07-24-m9-storage-plane-continuation.md) | 90 | M9 storage-plane continuation — codex brief (2026-07-24) |
 | [plans/2026-07-24-sqlite-retract-perf-lab.md](plans/2026-07-24-sqlite-retract-perf-lab.md) | 425 | 2026-07-24 SQLite retraction perf lab |
@@ -50,6 +52,7 @@
 | [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 580 | TSV2 Phase C scoreboard |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
+| [sprefa-extract/AGENTS.md](sprefa-extract/AGENTS.md) | 66 | sprefa-extract — Agent Guidance |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
 | [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
@@ -423,6 +426,25 @@
 165:## USER decisions (Opus must surface, never decide)
 ```
 
+### plans/2026-07-23-sprefa-extract-golden-plan.md
+```
+1:# sprefa-extract - the golden plan (distill v5, normalize for v6)
+15:## Context
+24:### Recon - observed facts (v5, at HEAD)
+76:### Recon - prior art (representation only; lazy/IVM stripped)
+95:### Plan boundary
+122:## The inversion (v5 → v6)
+129:### v5 - extraction lives INSIDE the engine (the tangle)
+168:### v6 - extraction is a SYNC LEAF below the store (per-family; CLI streams)
+211:### What changed (one axis per row)
+232:## Decisions (the rulings; full detail in `_7_tasks.rs`)
+268:## The build sequence (epics / commits; each ends green)
+324:## Epic U - the uniform surface (commit 3c; slots after 3b, before Resolve/Rust/Go)
+506:## Frontier (deferred, evidence-gated)
+519:## Verification (standing rails, every commit)
+531:## Staffing
+```
+
 ### plans/2026-07-23-v5-surface-audit.md
 ```
 1:# v5 surface audit vs the v6 direction — adversarial, living table (2026-07-23)
@@ -527,6 +549,60 @@
 82:## LSP
 103:## Who hosts all of this
 111:## What this kills from v5
+```
+
+### plans/2026-07-24-extract-go-closeout-and-resolve4.md
+```
+1:# sprefa-extract: Go closeout → Resolve<\*> (commit 4) → fixture broadening
+8:## Context
+46:## Decisions
+94:## Conventions (binding on every increment)
+123:## Phase 0 — Go closeout (one agent, ~30 min)
+167:## Phase 0.5 — consistency sweep (one agent, read-only, report-only)
+182:## Phase 1 — Resolve<\*> (commit 4), four increments — **COMPLETE 2026-07-24**
+188:### 4a — hollow Resolve surface (design freeze; HUMAN REVIEW GATE)
+202:### 4b — Resolve<TypeF> for TsSource
+211:### 4c — ScipSource seam + Resolve<CallF> (TS)
+220:### 4d — rust + go resolve arms
+227:## Phase 2 — broaden parity fixtures — **LANDED 2026-07-24** (lambda:
+239:## Design audit findings (2026-07-24, read-only structural audit)
+278:### 4a must-encodes (from the audit's Resolve-arm triplication preview)
+299:### 4b-i candidate ruling (2026-07-24, user): OPTION (a) APPROVED
+314:### Diet-SCIP tier mapping (2026-07-24, user: "want all that purely here too")
+336:## Verification
+344:## Staffing
+353:### Subagent brief template (orchestrator fills `[...]`)
+371:### Orchestrator audit checklist (per increment)
+381:## State + recovery (2026-07-24 — written so any session can pick this up)
+387:### Landed (branch `plan/extract-golden-plan`, worktree `.claude/worktrees/extract-golden-plan`)
+417:### In flight — RESOLVED 2026-07-24: both landed + merged. THE RESOLVE PASS IS COMPLETE.
+431:### NEXT — queued 2026-07-25 (user: "write briefs so we can resume"): launch
+437:### Parked (do NOT start without the user's explicit word)
+456:### Operating machine (conventions for any agent/orchestrator)
+477:## Next-arc seed: new-language traits + codegen (2026-07-24, user ask)
+495:### Traits/generics to build (lands with the parked dedup sweep, in this order)
+517:### The generator (after 1–4 stabilize the skeleton)
+527:## Increment briefs (queued 2026-07-25 — launch in order, ONE agent each)
+548:### I1 — df aux port (df_args / df_fields / df_lits / df_param_pos)
+583:### I2 — docs facet port (`doc` rows)
+599:### I3 — oddity fix, ADDITIVE LANE ONLY (evidence-first)
+616:### I4 — dedup sweep → traits (FOUR increments, strict order; ALL pure
+644:### I5 — micro-batch (ONE agent session, TWO commits)
+654:### I6 — codegen (launch only after I4a–d merged)
+668:### I7 — python port (first consumer of I6; proves the generator)
+680:### I8 — Epic 3 general ratchet — STUB ONLY
+686:### Decision block — ModuleF/specifiers (HUMAN GATE; no increment until ruled)
+700:## Dogfood findings (2026-07-25 — CLI used as a ts/rs/kotlin user, break-in-spirit battery)
+715:### CLI-1..8 (user-visible, ordered by cost/benefit; micros can batch into ONE agent session)
+744:### Survival log (no action needed)
+751:### I0a — CLI micros batch (ONE agent session, ONE commit; launch before I1)
+804:### I0b — stdin + --ext (ONE agent; launch after I0a merges)
+825:## Dogfood analysis #2 (2026-07-25 — v6/dl + v6/sprefa-store measured with the CLI)
+855:## Design seeds (2026-07-25, user-approved for later; PARKED — no briefs yet)
+857:### S1 — Similarity: α-normalized anti-unification over df subgraphs
+879:### S2 — Three layers + the doc lane (JSON/YAML path rows; RTKQ golden)
+899:### S3 — Derived inter-procedural flow (NOT extracted)
+916:### S4 — Analysis family map (what's a PROGRAM vs a FACET vs a RABBIT HOLE)
 ```
 
 ### plans/2026-07-24-fork-pipeline-syntax-findings.md
@@ -677,6 +753,15 @@
 37:## Copy-paste skeleton
 64:## Mermaid's real limits (when to reach for D2 instead)
 89:## Validate the render (don't trust the source)
+```
+
+### sprefa-extract/AGENTS.md
+```
+1:# sprefa-extract — Agent Guidance
+6:## The boundary law
+19:## Analysis family map (program vs facet vs rabbit hole)
+48:## Inter-procedural rule (permanent)
+57:## Pointers
 ```
 
 ### sprefa-store/FINDINGS-AND-GAPS.md

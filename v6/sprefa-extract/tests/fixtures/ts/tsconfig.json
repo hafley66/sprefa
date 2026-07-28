@@ -1,0 +1,16 @@
+// 4c-ii scip-ratchet corpus manifest. ScipSource.build runs scip-typescript
+// over this directory; WITHOUT a tsconfig the indexer's --infer-tsconfig
+// defaults to the ES5 lib, which has no Array#flat (ES2019) - lambdas.ts's
+// `.flat()` site then emits NO scip occurrence and the ratchet's occurrence-
+// parity leg (0 missing) cannot hold. lib es2020 resolves every fixture call
+// site. Not a Source input (no .ts extension; dispatch/snapshots ignore it).
+{
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "commonjs",
+    "lib": ["es2020"],
+    "strict": false,
+    "noEmit": true
+  },
+  "include": ["**/*.ts"]
+}

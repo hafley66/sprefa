@@ -1,0 +1,55 @@
+call_def	function	MakeEngine	31
+call_def	function	Trim	25
+call_def	method	Mode	38
+call_site	Mode	39
+call_site	Trim	32
+df_args	13	0	12
+df_args	5	0	4
+df_edge	1055	1081
+df_edge	1065	1055
+df_edge	1070	1065
+df_edge	1081	1081
+df_edge	737	768
+df_edge	768	768
+df_edge	898	937
+df_edge	921	967
+df_edge	932	921
+df_edge	937	932
+df_edge	944	984
+df_edge	954	944
+df_edge	967	954
+df_edge	984	984
+df_fields	7	name	8
+df_node	call_res		1065
+df_node	call_res		932
+df_node	let_bind	engine	944
+df_node	let_bind	picked	1055
+df_node	let_bind	trimmed	921
+df_node	lit		1070
+df_node	new	Engine	954
+df_node	param	name	898
+df_node	param	value	737
+df_node	ret		1081
+df_node	ret		768
+df_node	ret		984
+df_node	var_read	engine	984
+df_node	var_read	name	937
+df_node	var_read	picked	1081
+df_node	var_read	trimmed	967
+df_node	var_read	value	768
+df_param_pos	0	0
+df_param_pos	3	0
+doc	v6/sprefa-extract/tests/fixtures/go/docs.go::alias::Mode	22
+doc	v6/sprefa-extract/tests/fixtures/go/docs.go::function::MakeEngine	31
+doc	v6/sprefa-extract/tests/fixtures/go/docs.go::function::Trim	25
+doc	v6/sprefa-extract/tests/fixtures/go/docs.go::interface::Sizer	17
+doc	v6/sprefa-extract/tests/fixtures/go/docs.go::method::Engine.Mode	38
+doc	v6/sprefa-extract/tests/fixtures/go/docs.go::struct::Engine	12
+type_node	alias	Mode	22
+type_node	function	MakeEngine	31
+type_node	function	Trim	25
+type_node	interface	Sizer	17
+type_node	method	Mode	38
+type_node	struct	Engine	12
+type_sig	31	ret	0	Engine
+type_sig	38	ret	0	Mode

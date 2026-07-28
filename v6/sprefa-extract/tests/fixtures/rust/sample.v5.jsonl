@@ -1,0 +1,77 @@
+call_def	function	apply	32
+call_def	function	make_engine	19
+call_def	function	trim	15
+call_def	lambda		33
+call_def	method	mode	26
+call_site	Engine	21
+call_site	func	34
+call_site	trim	20
+const_value	13		lit	hello
+df_args	23	0	22
+df_args	5	0	4
+df_edge	287	318
+df_edge	318	318
+df_edge	346	395
+df_edge	380	434
+df_edge	390	380
+df_edge	395	390
+df_edge	410	449
+df_edge	419	410
+df_edge	434	419
+df_edge	449	449
+df_edge	518	547
+df_edge	527	518
+df_edge	547	547
+df_edge	576	648
+df_edge	618	611
+df_edge	619	633
+df_edge	633	633
+df_edge	643	643
+df_edge	648	643
+df_fields	8	name	7
+df_node	call_res		390
+df_node	call_res		643
+df_node	closure	v6/sprefa-extract/tests/fixtures/rust/sample.rs::function::apply::closure::33_15	618
+df_node	let_bind	engine	410
+df_node	let_bind	func	611
+df_node	let_bind	picked	518
+df_node	let_bind	trimmed	380
+df_node	new	Engine	419
+df_node	param	name	346
+df_node	param	text	619
+df_node	param	value	287
+df_node	param	value	576
+df_node	ret		318
+df_node	ret		449
+df_node	ret		547
+df_node	ret		633
+df_node	ret		643
+df_node	var_read	Fast	527
+df_node	var_read	engine	449
+df_node	var_read	name	395
+df_node	var_read	picked	547
+df_node	var_read	text	633
+df_node	var_read	trimmed	434
+df_node	var_read	value	318
+df_node	var_read	value	648
+df_param_pos	0	0
+df_param_pos	16	0
+df_param_pos	17	0
+df_param_pos	3	0
+type_edge	Engine	String	field
+type_edge	Mode	Mode::Fast	variant
+type_edge	Mode	Mode::Slow	variant
+type_node	const	GREETING	13
+type_node	enum	Mode	8
+type_node	function	apply	32
+type_node	function	make_engine	19
+type_node	function	trim	15
+type_node	method	mode	26
+type_node	struct	Engine	4
+type_sig	15	param	0	String
+type_sig	15	ret	0	String
+type_sig	19	param	0	String
+type_sig	19	ret	0	Engine
+type_sig	26	ret	0	Mode
+type_sig	32	param	0	String
+type_sig	32	ret	0	String

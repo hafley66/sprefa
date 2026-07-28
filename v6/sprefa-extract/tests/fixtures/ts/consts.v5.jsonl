@@ -1,0 +1,39 @@
+call_def	function	handler	30
+call_def	function	makeTable	33
+const_value	12		template	`hi ${name}`
+const_value	19	About	lit	/about
+const_value	19	Home	lit	/home
+const_value	27		lit	/pin
+const_value	34	x	lit	/inner/x
+const_value	34	y	lit	/inner/y
+const_value	6		lit	/home
+const_value	9	api	lit	/api
+const_value	9	home	lit	/home
+const_value	9	nested.a	lit	/a
+const_value	9	nested.b	lit	/b
+df_edge	1225	1282
+df_edge	1239	1225
+df_edge	1244	1239
+df_edge	1259	1239
+df_edge	1282	1275
+df_fields	2	x	0
+df_fields	2	y	1
+df_lits	0	lit	/inner/x
+df_lits	1	lit	/inner/y
+df_node	let_bind	INNER_TABLE	1225
+df_node	lit		1244
+df_node	lit		1259
+df_node	new		1239
+df_node	ret		1275
+df_node	var_read	INNER_TABLE	1282
+type_edge	Routes	Routes::About	variant
+type_edge	Routes	Routes::Home	variant
+type_edge	Routes	Routes::Numeric	variant
+type_node	const	INNER_TABLE	34
+type_node	const	greeting	12
+type_node	const	home	6
+type_node	const	pinned	27
+type_node	const	routes	9
+type_node	enum	Routes	19
+type_node	function	handler	30
+type_node	function	makeTable	33

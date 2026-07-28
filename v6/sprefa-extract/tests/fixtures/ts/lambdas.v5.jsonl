@@ -1,0 +1,144 @@
+call_def	function	double	9
+call_def	function	doubleAll	32
+call_def	function	pairs	27
+call_def	function	summarize	11
+call_def	lambda		15
+call_def	lambda		17
+call_def	lambda		21
+call_def	lambda		28
+call_site	filter	17
+call_site	flat	28
+call_site	map	15
+call_site	map	28
+call_site	map	33
+call_site	reduce	21
+df_args	10	-1	3
+df_args	10	0	9
+df_args	19	-1	12
+df_args	19	0	18
+df_args	31	-1	22
+df_args	31	0	29
+df_args	31	1	30
+df_args	47	-1	40
+df_args	47	0	46
+df_args	50	-1	34
+df_args	50	0	49
+df_args	51	-1	50
+df_args	56	-1	54
+df_args	56	0	55
+df_edge	1045	1038
+df_edge	1045	1045
+df_edge	1061	1045
+df_edge	1071	1096
+df_edge	1076	1102
+df_edge	1096	1089
+df_edge	1096	1096
+df_edge	1102	1096
+df_edge	1114	1045
+df_edge	1222	1261
+df_edge	1261	1254
+df_edge	1261	1261
+df_edge	1272	1261
+df_edge	1273	1284
+df_edge	1273	1291
+df_edge	1283	1283
+df_edge	1284	1283
+df_edge	1291	1283
+df_edge	1291	1291
+df_edge	1299	1291
+df_edge	1306	1283
+df_edge	1307	1317
+df_edge	1317	1317
+df_edge	1325	1317
+df_edge	1441	1480
+df_edge	1480	1473
+df_edge	1480	1480
+df_edge	1491	1480
+df_edge	601	787
+df_edge	688	679
+df_edge	778	901
+df_edge	787	778
+df_edge	787	787
+df_edge	798	787
+df_edge	799	809
+df_edge	809	809
+df_edge	817	809
+df_edge	890	1045
+df_edge	901	890
+df_edge	901	901
+df_edge	915	901
+df_edge	916	939
+df_edge	939	932
+df_edge	939	939
+df_edge	947	939
+df_lits	28	concat	acc + value
+df_lits	39	concat	outer + 1
+df_node	binop		1317
+df_node	binop		809
+df_node	binop		939
+df_node	call_res		1045
+df_node	call_res		1261
+df_node	call_res		1283
+df_node	call_res		1480
+df_node	call_res		787
+df_node	call_res		901
+df_node	closure	v6/sprefa-extract/tests/fixtures/ts/lambdas.ts::function::pairs::closure::1272	1272
+df_node	closure	v6/sprefa-extract/tests/fixtures/ts/lambdas.ts::function::pairs::closure::1272::closure::1306	1306
+df_node	closure	v6/sprefa-extract/tests/fixtures/ts/lambdas.ts::function::summarize::closure::1061	1061
+df_node	closure	v6/sprefa-extract/tests/fixtures/ts/lambdas.ts::function::summarize::closure::798	798
+df_node	closure	v6/sprefa-extract/tests/fixtures/ts/lambdas.ts::function::summarize::closure::915	915
+df_node	concat		1096
+df_node	concat		1291
+df_node	let_bind	factor	679
+df_node	let_bind	positive	890
+df_node	let_bind	scaled	778
+df_node	lit		1114
+df_node	lit		1299
+df_node	lit		1325
+df_node	lit		688
+df_node	lit		947
+df_node	new		1283
+df_node	param	acc	1071
+df_node	param	inner	1307
+df_node	param	outer	1273
+df_node	param	value	1076
+df_node	param	value	799
+df_node	param	value	916
+df_node	param	values	1222
+df_node	param	values	1441
+df_node	param	values	601
+df_node	ret		1038
+df_node	ret		1089
+df_node	ret		1254
+df_node	ret		1283
+df_node	ret		1317
+df_node	ret		1473
+df_node	ret		809
+df_node	ret		932
+df_node	var_read	acc	1096
+df_node	var_read	double	1491
+df_node	var_read	factor	817
+df_node	var_read	inner	1317
+df_node	var_read	outer	1284
+df_node	var_read	outer	1291
+df_node	var_read	positive	1045
+df_node	var_read	scaled	901
+df_node	var_read	value	1102
+df_node	var_read	value	809
+df_node	var_read	value	939
+df_node	var_read	values	1261
+df_node	var_read	values	1480
+df_node	var_read	values	787
+df_param_pos	0	0
+df_param_pos	13	0
+df_param_pos	23	0
+df_param_pos	24	1
+df_param_pos	32	0
+df_param_pos	35	0
+df_param_pos	4	0
+df_param_pos	41	0
+df_param_pos	52	0
+type_node	function	double	9
+type_node	function	doubleAll	32
+type_node	function	pairs	27
+type_node	function	summarize	11

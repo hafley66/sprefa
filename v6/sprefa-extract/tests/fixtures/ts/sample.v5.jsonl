@@ -1,0 +1,124 @@
+call_def	function	add	1
+call_def	function	clamp	8
+call_def	function	mirror	44
+call_def	function	shift	7
+call_def	function	sub	41
+call_def	method	Vec2	29
+call_def	method	magnitude	30
+call_def	method	scaled	34
+call_site	Vec2	11
+call_site	Vec2	35
+call_site	clamp	11
+call_site	sqrt	31
+df_args	11	0	10
+df_args	14	0	13
+df_args	15	0	11
+df_args	15	1	14
+df_args	31	-1	19
+df_args	31	0	30
+df_args	38	0	35
+df_args	38	1	37
+df_edge	20	68
+df_edge	259	365
+df_edge	259	377
+df_edge	34	75
+df_edge	350	343
+df_edge	359	350
+df_edge	365	359
+df_edge	365	365
+df_edge	371	350
+df_edge	377	371
+df_edge	377	377
+df_edge	632	625
+df_edge	632	632
+df_edge	642	632
+df_edge	642	642
+df_edge	651	642
+df_edge	651	651
+df_edge	660	642
+df_edge	660	660
+df_edge	669	660
+df_edge	669	669
+df_edge	68	61
+df_edge	68	68
+df_edge	75	68
+df_edge	765	758
+df_edge	774	765
+df_edge	774	774
+df_edge	782	765
+df_edge	782	782
+df_lits	30	concat	this.x * this.x + this.y * this.y
+df_lits	5	concat	left + right
+df_node	binop		642
+df_node	binop		660
+df_node	call_res		359
+df_node	call_res		371
+df_node	call_res		632
+df_node	concat		642
+df_node	concat		68
+df_node	expr		642
+df_node	expr		651
+df_node	expr		660
+df_node	expr		669
+df_node	expr		774
+df_node	expr		782
+df_node	member	x	365
+df_node	member	x	642
+df_node	member	x	651
+df_node	member	x	774
+df_node	member	y	377
+df_node	member	y	660
+df_node	member	y	669
+df_node	member	y	782
+df_node	new	Vec2	350
+df_node	new	Vec2	765
+df_node	param	by	737
+df_node	param	d	269
+df_node	param	left	20
+df_node	param	p	259
+df_node	param	right	34
+df_node	param	x	558
+df_node	param	y	576
+df_node	ret		343
+df_node	ret		61
+df_node	ret		625
+df_node	ret		758
+df_node	var_read	Math	632
+df_node	var_read	left	68
+df_node	var_read	p	365
+df_node	var_read	p	377
+df_node	var_read	right	75
+df_param_pos	0	0
+df_param_pos	1	1
+df_param_pos	16	0
+df_param_pos	17	1
+df_param_pos	32	0
+df_param_pos	6	0
+df_param_pos	7	1
+type_edge	Dir	Dir::East	variant
+type_edge	Dir	Dir::North	variant
+type_edge	Dir	Dir::South	variant
+type_edge	Dir	Dir::West	variant
+type_edge	Vec	Point	field
+type_edge	mirror	Point	param
+type_edge	mirror	Point	returns
+type_edge	shift	Dir	param
+type_edge	shift	Point	param
+type_edge	shift	Vec2	returns
+type_node	alias	Vec	19
+type_node	class	Vec2	28
+type_node	enum	Dir	21
+type_node	function	add	1
+type_node	function	mirror	44
+type_node	function	shift	7
+type_node	function	sub	41
+type_node	interface	Point	14
+type_node	method	magnitude	30
+type_node	method	scaled	34
+type_sig	34	param	0	Vec
+type_sig	34	ret	0	Vec2
+type_sig	44	param	0	Point
+type_sig	44	ret	0	Point
+type_sig	7	param	0	Point
+type_sig	7	param	1	Dir
+type_sig	7	ret	0	Vec2

@@ -1,0 +1,49 @@
+call_def	function	MakeEngine	26
+call_def	function	Trim	22
+call_def	method	Mode	32
+call_site	Mode	33
+call_site	Trim	27
+df_args	13	0	12
+df_args	5	0	4
+df_edge	607	638
+df_edge	638	638
+df_edge	663	702
+df_edge	686	732
+df_edge	697	686
+df_edge	702	697
+df_edge	709	749
+df_edge	719	709
+df_edge	732	719
+df_edge	749	749
+df_edge	791	817
+df_edge	801	791
+df_edge	806	801
+df_edge	817	817
+df_fields	7	name	8
+df_node	call_res		697
+df_node	call_res		801
+df_node	let_bind	engine	709
+df_node	let_bind	picked	791
+df_node	let_bind	trimmed	686
+df_node	lit		806
+df_node	new	Engine	719
+df_node	param	name	663
+df_node	param	value	607
+df_node	ret		638
+df_node	ret		749
+df_node	ret		817
+df_node	var_read	engine	749
+df_node	var_read	name	702
+df_node	var_read	picked	817
+df_node	var_read	trimmed	732
+df_node	var_read	value	638
+df_param_pos	0	0
+df_param_pos	3	0
+type_node	alias	Mode	18
+type_node	function	MakeEngine	26
+type_node	function	Trim	22
+type_node	interface	Sizer	14
+type_node	method	Mode	32
+type_node	struct	Engine	10
+type_sig	26	ret	0	Engine
+type_sig	32	ret	0	Mode
