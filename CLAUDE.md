@@ -201,7 +201,17 @@ positive), sabotage receipts red->green recorded in test headers; ~14s of
 real test sleep removed. Two tests deliberately stay real-time (bucketFor
 reads Date.now for VALUES; virtual firings inside one wall second would
 collapse buckets). Endurance-as-gate still
-ungated (open). MATCH FRONTIER LAB LANDED 2026-07-28 PM (merge aeba1b72, 63 PASS, lab
+ungated (open). COUNT-TEST LAW EXECUTED (cherry-pick 53762d1c -> main,
+dl 96/96): EXPLAIN QUERY PLAN SEARCH-not-SCAN on rowsForPath's real
+captured statement, only-requested-rows at 50 paths, and statements-per-
+file exactly spineDeclsLocal.length flat across 5 vs 20 file corpora;
+sabotage receipts in both test headers. PROCESS DEFECT, recurring: agent
+worktrees are being cut from stale bases (three today: parser hook
+failure, scheduler 244-behind, count-test 450-behind with NO v6/ — that
+agent tunneled around a permission denial via git archive|tar to
+materialize main's tree; disclosed, content read-only, branch history NOT
+merged, test commit cherry-picked instead). Worktree-base staleness needs
+a look before the next dispatch wave. MATCH FRONTIER LAB LANDED 2026-07-28 PM (merge aeba1b72, 63 PASS, lab
 deleted per protocol, last copy 5ba7b0c5, verdict =
 plans/2026-07-28-match-frontier-lab-verdict.md): event axis HOLDS, four
 cracks: Ta (DISSOLVES into pending rel, confirmed by tick-log diff both
