@@ -48,11 +48,11 @@
 | [prolog/LANG.md](prolog/LANG.md) | 95 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
 | [prolog/compile/PIPELINE.md](prolog/compile/PIPELINE.md) | 153 | The tsv2 compiler pipeline, stage by stage |
 | [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 580 | TSV2 Phase C scoreboard |
+| [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 130 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
-| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
 
 ## Full header index
 
@@ -660,6 +660,17 @@
 339:## Findings
 ```
 
+### prolog/compile/SYNTAX.md
+```
+1:# SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl)
+7:## Ruling that reframes this whole document (relayed mid-flight)
+21:## The central superseding decision: bare identifier = variable, always
+45:## Construct table
+91:## Round-trip design note (why decl lines are exact, not fallback-merged)
+106:## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
+121:## What `dl_view/*.dl` is
+```
+
 ### prolog/conformance/FIXTURES.md
 ```
 1:# The shared fixture contract (read before promoting a lab)
@@ -704,13 +715,5 @@
 126:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
 139:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
 152:## Breakpoint ramp — tight gun 700 MB
-```
-
-### sprefa-store/bench/out/REPORT.md
-```
-1:# Z-set / IVM head-to-head — feasibility lab
-15:## Charts
-22:## Data
-43:## Takeaways (derived)
 ```
 

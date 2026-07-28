@@ -1,0 +1,6 @@
+rel head_move(repo_id, rev_id) log keep(all).
+rel head(repo_id, rev_id) key(1).
+rel tree_file(rev_id, path, digest) key(1, 2).
+
+head(RepoId, RevId) <+ head_move(RepoId, RevId).
+current_tree(Path, Digest) <- head(RepoId, RevId), tree_file(RevId, Path, Digest).

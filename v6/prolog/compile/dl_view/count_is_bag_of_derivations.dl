@@ -1,0 +1,1 @@
+hits(Path, count(Line)) <- hit(Path, Line, _).

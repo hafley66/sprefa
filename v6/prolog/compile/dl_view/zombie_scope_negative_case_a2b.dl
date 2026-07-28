@@ -1,0 +1,6 @@
+rel open_pane(col1, col2) key(1).
+rel open_detail(pane_id, item_id) key(1, 2).
+
+live_detail(PaneId, detail(ItemId)) <- open_detail(PaneId, ItemId).
+demanded(Target, PaneId) <- live_detail(PaneId, Target).
+detail_view(ItemId, Body) <- demanded(detail(ItemId), _), detail_row(ItemId, Body).

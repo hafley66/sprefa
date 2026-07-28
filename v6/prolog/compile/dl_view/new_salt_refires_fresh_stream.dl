@@ -1,0 +1,4 @@
+rel watch_request(col1, args, salt) log keep(all).
+rel demand(args, salt) set key(1, 2).
+
+demand(Args, Salt) <+ watch_request(_, Args, Salt).

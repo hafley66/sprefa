@@ -1,0 +1,1 @@
+probe(Sum) <- text_value(Value), Sum := Value + 1.
