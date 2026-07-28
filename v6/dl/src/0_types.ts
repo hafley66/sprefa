@@ -428,6 +428,10 @@ export interface IDlRuntime {
   /** THE single write site; one call = one tick (store-owned counter). */
   commit(batch: EdbBatch): Promise<TickReport>;
   rows(rel: string): Promise<Row[]>;
+  /** Path-scoped read: WHERE on the interned path id against the rel's
+   *  UNIQUE(path, ...) index, never fetch-all-then-filter. The per-file
+   *  ingest diff depends on this staying O(rows-for-path). */
+  rowsForPath(rel: string, path: string): Promise<Row[]>;
   readonly deltas$: Observable<DeltaEvent>;
   dispose(): Promise<void>;
 }
