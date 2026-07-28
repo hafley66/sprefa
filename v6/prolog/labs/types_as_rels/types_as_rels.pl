@@ -3,10 +3,10 @@
 % Run: swipl -q -l v6/prolog/labs/types_as_rels/types_as_rels.pl -g go -g halt
 %
 % Grades THE UNIFICATION HYPOTHESIS (plans/2026-07-28-types-as-rels-header.md):
-% struct / enum / type are shorthands over rel, with a policy bundle pinned
-% (content-addressed surrogate identity, no mutation, refcount lifetime), and
-% nesting is never physical -- a nested position is a ref column, the tree
-% lives in the printer and the matcher.
+% struct / enum / type are shorthands over rel with an explicit value or
+% entity policy. Value pins content identity, immutability and refcount
+% lifetime. Entity pins extrinsic identity, mutable history and explicit
+% lifetime. Nesting is never physical: a nested position is a ref column.
 %
 % Six check groups: json round-trip, policy-bundle derivation, the domination
 % scenario pair (support counting vs SQL ON DELETE CASCADE on the SAME store),
@@ -585,3 +585,117 @@ check(policy_specific_ddl_shapes,
         sub_atom(EntityCurrent, _, _, _, '"route_entity"'),
         sub_atom(EntityHistory, _, _, _, '"route_entity_history"'),
         sub_atom(EntityHistory, _, _, _, 'PRIMARY KEY ("id", "tick")') )).
+
+% ═══ FIXPOINT ROUND 3: CROSS-POLICY BREAK CASES ════════════════════════════
+% Attack: compose the two policies across refs, variable-arity rows, enum
+% changes, matching, support release, rendering, and retirement.
+
+check(entity_variable_arity_update_preserves_id,
+      ( empty_entity_store(Store0),
+        create_entity(list, [text(x)], Store0, Store1, ListId, _),
+        update_entity(ListId, [text(w), text(x), text(y)], Store1, Store, _),
+        entity_rows(Store, [entity(list, ListId,
+                                   [text(w), text(x), text(y)])]) )).
+
+check(entity_enum_variant_change_preserves_id_and_history,
+      ( empty_entity_store(Store0),
+        create_entity(body, [tag(page), id(7)], Store0, Store1, BodyId, _),
+        update_entity(BodyId, [tag(redirect), text('/a')], Store1, Store, _),
+        entity_rows(Store,
+                    [entity(body, BodyId, [tag(redirect), text('/a')])]),
+        entity_history(Store,
+          [ version(1, body, BodyId, [tag(page), id(7)]),
+            version(2, body, BodyId, [tag(redirect), text('/a')]) ]) )).
+
+check(value_to_entity_deep_render_can_change,
+      ( empty_entity_store(Store0),
+        create_entity(view, [text('T')], Store0, Store1, ViewId, _),
+        semantic_id(wrapper, [entity_ref(view, ViewId)], WrapperHash),
+        entity_rows(Store1, [entity(view, ViewId, BeforeArgs)]),
+        update_entity(ViewId, [text('U')], Store1, Store2, _),
+        entity_rows(Store2, [entity(view, ViewId, AfterArgs)]),
+        semantic_id(wrapper, [entity_ref(view, ViewId)], WrapperHash),
+        BeforeArgs \== AfterArgs )).
+
+check(value_to_entity_opaque_text_stays_stable,
+      ( empty_entity_store(Store0),
+        create_entity(view, [text('T')], Store0, Store1, ViewId, _),
+        json_text(obj([view-obj([entity-int(ViewId)])]), BeforeText),
+        update_entity(ViewId, [text('U')], Store1, _, _),
+        json_text(obj([view-obj([entity-int(ViewId)])]), AfterText),
+        BeforeText == AfterText )).
+
+check(cross_policy_ref_modes_are_explicit,
+      ( ref_mode(value, value, deep),
+        ref_mode(entity, value, deep),
+        ref_mode(entity, entity, deep),
+        ref_mode(value, entity, identity),
+        \+ ref_mode(value, entity, deep),
+        \+ ref_mode(value, entity, default) )).
+
+check(entity_ref_replacement_releases_old_value,
+      ( empty_mate_store(MateStore0),
+        intern_value(view, [text('T')], MateStore0, MateStore1,
+                     FirstDense, FirstHash, _),
+        empty_entity_store(EntityStore0),
+        create_entity(route, [value_ref(FirstDense)], EntityStore0,
+                      EntityStore1, RouteId, _),
+        intern_value(view, [text('U')], MateStore1, MateStore2,
+                     SecondDense, SecondHash, Added),
+        update_entity(RouteId, [value_ref(SecondDense)], EntityStore1,
+                      _, EntityDeltas),
+        release_value(view, [text('T')], MateStore2, MateStore3,
+                      FirstHash, Removed),
+        mate_support(MateStore3, SecondHash, 1),
+        Added == [+value(view, [text('U')])],
+        Removed == [-value(view, [text('T')])],
+        EntityDeltas == [ -row(route, RouteId, [value_ref(FirstDense)]),
+                          +row(route, RouteId, [value_ref(SecondDense)]) ] )).
+
+check(lifetime_claim_is_scoped_by_policy,
+      ( shared_store(content, ValueStore, _, _),
+        live_ids(ValueStore, ValueLive),
+        reachable_ids(ValueStore, ValueReachable),
+        ValueLive == ValueReachable,
+        empty_entity_store(EntityStore0),
+        create_entity(route, [text('/a')], EntityStore0, EntityStore, _, _),
+        entity_row_count(EntityStore, 1) )).
+
+check(match_path_cost_is_policy_independent,
+      ( policy_match_path_sql(value, route,
+                              [body-page, view, title], ValueSql),
+        policy_match_path_sql(entity, route,
+                              [body-page, view, title], EntitySql),
+        ValueSql == EntitySql,
+        findall(Position,
+                sub_atom(ValueSql, Position, _, _, 'JOIN '), Joins),
+        length(Joins, 2) )).
+
+check(entity_retire_tick_prints_current_row,
+      ( empty_entity_store(Store0),
+        create_entity(route, [text('/a')], Store0, Store1, RouteId, _),
+        update_entity(RouteId, [text('/b')], Store1, Store2, _),
+        retire_entities([RouteId], Store2, Store, Deltas),
+        Deltas == [-row(route, RouteId, [text('/b')])],
+        entity_history(Store, History),
+        length(History, 2) )).
+
+round_findings(1,
+    [ explicit_policy, four_bit_bundles, distinct_entity_ids,
+      mutable_current, immutable_history, entity_boundary_replace,
+      entity_cycles, atomic_retire, explicit_lifetime, scoped_support_gc ]).
+round_findings(2,
+    [ semantic_hash, dense_mate, value_tick_log, mate_refcount,
+      reinterned_dense_key, semantic_child_hash, dense_child_hazard,
+      coexistence_equivalence, policy_token_cost, policy_ddl ]).
+round_findings(3,
+    [ entity_variable_arity, mutable_enum_variant, deep_render_hazard,
+      opaque_entity_ref, explicit_ref_direction, entity_value_support,
+      scoped_lifetime, policy_independent_join, current_retire_delta ]).
+round_findings(4, []).
+
+check(fixpoint_stops_after_full_zero_finding_round,
+      ( round_findings(1, First), First \== [],
+        round_findings(2, Second), Second \== [],
+        round_findings(3, Third), Third \== [],
+        round_findings(4, []) )).

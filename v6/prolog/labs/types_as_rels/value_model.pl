@@ -4,7 +4,7 @@
 %
 %   1. INTERN. A value row's id is a function of (type, key columns). Two
 %      minting policies are modelled side by side so the lab can grade the
-%      difference: content (sha of the type+key term, the ruled default per
+%      difference: content (sha of the type+key term, the value policy per
 %      rulings.pl salt_minting) and counter (a monotone integer, the
 %      storage_integer_keys ruling's dense-id shape).
 %   2. NESTING. Every nested position is a ref column holding a child id.
@@ -180,6 +180,7 @@ render_pairs([Field | Fields], [Ref | Refs], Store, [Field-Json | Rest]) :-
 
 json_text(str(Atom), Text) :- !, format(atom(Text), '"~w"', [Atom]).
 json_text(int(Number), Text) :- !, format(atom(Text), '~w', [Number]).
+json_text(entity-int(Number), Text) :- !, format(atom(Text), '~w', [Number]).
 json_text(arr(Items), Text) :- !,
     maplist(json_text, Items, Texts),
     atomic_list_concat(Texts, ',', Inner),

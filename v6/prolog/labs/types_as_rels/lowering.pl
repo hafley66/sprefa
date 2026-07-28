@@ -15,7 +15,8 @@
             policy_bundle/2, resolve_policy/2,
             policy_ddl/3,
             coexistence_spelling/2, coexistence_text/2,
-            coexistence_assignments/2, coexistence_policy_tokens/2 ]).
+            coexistence_assignments/2, coexistence_policy_tokens/2,
+            ref_mode/3, policy_match_path_sql/4 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -30,6 +31,14 @@ policy_bundle(entity,
 
 resolve_policy(decl(_, Policy), Bundle) :-
     policy_bundle(Policy, Bundle).
+
+% Deep value refs close over immutable values. An entity id inside a value is
+% an identity scalar: matching may follow it, while value rendering stops at
+% the id. This keeps a mutable entity from changing an already interned value.
+ref_mode(value, value, deep).
+ref_mode(entity, value, deep).
+ref_mode(entity, entity, deep).
+ref_mode(value, entity, identity).
 
 % Physical tables differ by policy. Value rows carry a unique semantic hash
 % beside their dense integer key. Entity rows keep current state plus history.
@@ -108,6 +117,10 @@ match_path_sql(RootType, Steps, Sql) :-
     ; atomic_list_concat(Joins, ' ', JoinSql),
       format(atom(FromSql), '~w ~w', [From, JoinSql]) ),
     format(atom(Sql), 'SELECT ~w FROM ~w WHERE r0."id" = ?', [Select, FromSql]).
+
+policy_match_path_sql(Policy, RootType, Steps, Sql) :-
+    policy_bundle(Policy, _),
+    match_path_sql(RootType, Steps, Sql).
 
 walk_steps(Type, Alias, _, [Field], Joins, Joins, Select) :-
     atom(Field),
