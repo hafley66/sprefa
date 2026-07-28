@@ -117,13 +117,15 @@ fn prolog_parser_error_recovery_ledger_for_the_v6_corpus() {
         })
         .collect();
 
-    assert_eq!(files.len(), 35);
+    assert_eq!(files.len(), 37);
     assert_eq!(
         errors,
         [
             "compile/analyze.pl",
             "compile/compile.pl",
             "compile/lower.pl",
+            "compile/parse_dl.pl",
+            "compile/print_dl.pl",
             "compile/strat.pl",
             "compile/sweep.pl",
             "compile/test/plunit_tests.pl",
