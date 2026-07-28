@@ -221,11 +221,21 @@ check_edge_rule_shape((Head <+ Body)) :-
     ( Body = only(Atom), \+ ( Atom = departed(_) )
     -> true
     ; throw(unsupported_construct(edge_body_shape(Head, Body)))
-    ).
+    ),
+    % Same hazard as a level head (head_arithmetic_shape/2's comment):
+    % compile_head_expr renders every compound argument as a json1 tagged
+    % term unconditionally, arithmetic functor or not. No fixture in the
+    % current corpus hits this on an edge head, checked defensively anyway.
+    ( head_arithmetic_shape(Head, ArithExpr)
+    -> throw(unsupported_construct(head_arithmetic(Head, ArithExpr)))
+    ; true ).
 
 check_level_rule_shape((Head <- Body)) :-
     ( aggregate_head_shape(Head)
     -> throw(unsupported_construct(aggregate_head(Head)))
+    ; true ),
+    ( head_arithmetic_shape(Head, ArithExpr)
+    -> throw(unsupported_construct(head_arithmetic(Head, ArithExpr)))
     ; true ),
     ( body_forbidden_goal(Body, Forbidden)
     -> throw(unsupported_construct(level_body_goal(Head, Forbidden)))
@@ -236,6 +246,31 @@ aggregate_head_shape(Head) :-
     member(Arg, Args), nonvar(Arg), Arg =.. [Kind | _],
     memberchk(Kind, [count, sum, min, max, json_array, json_object]).
 
+% compile_head_expr (lower.pl) renders EVERY compound head argument as a
+% json1 "construct a tagged term" expression (json_object('fn', Functor,
+% 'args', json_array(...))) -- correct for a genuine domain compound like
+% route_data(RouteId), silently WRONG for an arithmetic expression like
+% `LeftSize + RightSize - Shared`: nothing evaluates it, so the stored value
+% is a json1-encoded expression TREE, never the computed number. Phase C
+% sweep finding (fixtures/expressions.pl:head_expression_evaluates_derived_column,
+% comparison_filters_rows): both "compiled" clean under the pre-existing
+% gate and produced a wrong stored value, invisible to the tick-log diff
+% here because both fixtures also have an empty Schedule (all grading is via
+% `final(...)`, which this compiler's sweep does not check -- see
+% SCOREBOARD.md findings). Refusing head arithmetic turns that silent wrong
+% output into a named refusal until real arithmetic lowering lands (widening
+% priority: "arithmetic + bind :=" in the phase C contract's own ordering).
+head_arithmetic_shape(Head, ArithExpr) :-
+    Head =.. [_ | Args],
+    member(Arg, Args),
+    contains_arithmetic_functor(Arg, ArithExpr).
+
+contains_arithmetic_functor(Arg, Arg) :-
+    compound(Arg), Arg =.. [Functor | SubArgs], SubArgs \== [],
+    memberchk(Functor, ['+', '-', '*', '/', mod]), !.
+contains_arithmetic_functor(Arg, Found) :-
+    compound(Arg), Arg =.. [_ | SubArgs], member(SubArg, SubArgs), contains_arithmetic_functor(SubArg, Found).
+
 body_forbidden_goal((Left, Right), Forbidden) :- !,
     ( body_forbidden_goal(Left, Forbidden) ; body_forbidden_goal(Right, Forbidden) ).
 body_forbidden_goal(pre(Atom), pre(Atom)) :- !.
@@ -243,3 +278,23 @@ body_forbidden_goal(now(Tick), now(Tick)) :- !.
 body_forbidden_goal(decode(Expr, Pattern), decode(Expr, Pattern)) :- !.
 body_forbidden_goal(json_each(Expr, Elem), json_each(Expr, Elem)) :- !.
 body_forbidden_goal(departed(Atom), departed(Atom)) :- !.
+% Comparison operators (body_ref_uses/2 already returns zero Uses for these
+% -- comparison_goal/1 -- meaning nothing downstream ever compiled them into
+% a WHERE clause; a level rule that filters on one silently lost the filter)
+% and `:=`/`is` binds (body_ref_uses/2 returns zero Uses for these too, and
+% lower.pl's compile_pattern_arg never learns the bound variable, so any
+% head reference to it already fails as unbound_head_var -- but a `:=`/`is`
+% goal that is NEVER read by the head, only used to gate a later comparison,
+% reached no failure at all and just silently vanished). Both are phase C
+% sweep findings (fixtures/expressions.pl:comparison_filters_rows,
+% range_join_over_arithmetic, bind_computes_derived_value_then_comparison_filters);
+% refusing them cleanly until real lowering lands, rather than leaving the
+% silent-drop behavior.
+body_forbidden_goal(Left < Right, comparison(Left < Right)) :- !.
+body_forbidden_goal(Left =< Right, comparison(Left =< Right)) :- !.
+body_forbidden_goal(Left > Right, comparison(Left > Right)) :- !.
+body_forbidden_goal(Left >= Right, comparison(Left >= Right)) :- !.
+body_forbidden_goal(Left == Right, comparison(Left == Right)) :- !.
+body_forbidden_goal(Left \== Right, comparison(Left \== Right)) :- !.
+body_forbidden_goal(Var := Expr, bind(Var := Expr)) :- !.
+body_forbidden_goal(Var is Expr, bind(Var is Expr)) :- !.

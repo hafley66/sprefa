@@ -20,21 +20,6 @@
     "detail": ""
   },
   {
-    "name": "head_expression_evaluates_derived_column",
-    "bucket": "identical",
-    "detail": ""
-  },
-  {
-    "name": "comparison_filters_rows",
-    "bucket": "identical",
-    "detail": ""
-  },
-  {
-    "name": "range_join_over_arithmetic",
-    "bucket": "identical",
-    "detail": ""
-  },
-  {
     "name": "braces_in_head_position",
     "bucket": "identical",
     "detail": ""

@@ -79,12 +79,27 @@ scan_fixtures(Stream, Entries) :-
 
 sweep :-
     out_dir(OutDir), make_directory_path(OutDir),
+    clear_stale_compiled_outputs(OutDir),
     fixture_files(Files),
     findall(Result,
             ( member(File, Files), sweep_file(File, FileResults), member(Result, FileResults) ),
             Results),
     write_manifest(Results),
     summarize(Results).
+
+% A fixture that COMPILED on a previous run and now falls out of the
+% compiled set (a widening's own gate narrowing, e.g. the comparison/bind/
+% head-arithmetic refusal) would otherwise leave its stale .ts/.schedule.json
+% behind, no longer regenerated but also not removed -- misleading generated
+% output nothing re-checks. Only .ts and .schedule.json are cleared (one
+% per compiled fixture, by construction); manifest.json/run-results.json are
+% overwritten wholesale every run regardless.
+clear_stale_compiled_outputs(OutDir) :-
+    directory_files(OutDir, Entries),
+    forall(( member(Entry, Entries),
+             ( sub_atom(Entry, _, 3, 0, '.ts') ; sub_atom(Entry, _, 13, 0, '.schedule.json') )
+           ),
+           ( atomic_list_concat([OutDir, '/', Entry], Path), delete_file(Path) )).
 
 sweep_file(File, Results) :-
     read_all_fixtures(File, Entries),
