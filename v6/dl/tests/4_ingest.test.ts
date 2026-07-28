@@ -8,16 +8,29 @@
  *      against a control file that is never touched by the edit.
  *   4. delete-file: a vanished path retracts everything ingested for it.
  *   5. extract exit 1 on a real (non-ENOENT) failure is thrown, not swallowed.
+ *   6. COUNT-LAYER (2026-07-28, CLAUDE.md's O(n^2)-path law): rowsForPath-shaped SQL
+ *      statements per `ingestFile` call stay at exactly `spineDeclsLocal.length`,
+ *      constant across a 5-file and a 20-file synthetic corpus, even as the underlying
+ *      tables' total row count keeps growing. Tests 1/3 of this arc's plan-based proof
+ *      live in tests/3_runtime.test.ts (F1-COUNT + the many-paths rows-touched test);
+ *      this is the statement-COUNT layer, over the same `sprefa:sql` diagnostics_channel
+ *      seam (0_trace.ts's `rawSql`), watched directly rather than through
+ *      PerfTickLine.stmt_count -- 0_trace.ts's own SEAM GAP note explains why:
+ *      rowsForPath's `execute$` calls are untethered `rawSql` publishes with no `tick`,
+ *      which the tick-keyed aggregator (`onSqlMessage`) explicitly ignores, so they
+ *      never reach a PerfTickLine at all. Sabotage receipt inline on the test.
  *
  * Reuses tests/1_helpers_db.ts's bootFixture/cleanupDbFile (never duplicated here).
  */
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import diagnostics_channel from "node:diagnostics_channel";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
+import { PERF_CHANNEL_NAMES } from "../src/0_trace.ts";
 import { DL_ROOT, extractFile, ingestFile, spineDeclsLocal, toFactLines } from "../src/4_ingest.ts";
 import type { ExtractRecord, Row } from "../tasks.d.ts";
 import { bootFixture, cleanupDbFile } from "./1_helpers_db.ts";
@@ -332,4 +345,98 @@ test("regression (M9-before): ingesting a real ~1800-span_line-row file no longe
     await rt.dispose();
     cleanupDbFile(dbPath);
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COUNT-LAYER (2026-07-28 cleanup audit, CLAUDE.md's O(n^2)-path law): a statement-
+// COUNT bound over the per-file diff loop `ingestFile` runs (src/4_ingest.ts:322-331,
+// one `rt.rowsForPath(relName, relPath)` call per SPINE_REL_SCHEMA entry). The old
+// selectAll+JS-filter shape and the current WHERE-scoped shape both issue exactly one
+// SQL statement per rel per file -- statement COUNT alone can't see which shape ran --
+// so this test matches on the STATEMENT TEXT (the same rowsForPath-shaped pattern
+// F1's own test in tests/3_runtime.test.ts asserts), over the raw `sprefa:sql`
+// diagnostics_channel seam (0_trace.ts's `rawSql`, independent of DL_PERF_LOG).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Every file `.ts` this test ingests is content-distinct only in its numeric suffix
+ *  (`const valueN = N`), which is enough for `extractFile` to emit a real, non-empty
+ *  fact set per path without needing a hand-crafted corpus per size. */
+function writeTinyCorpus(dirPath: string, fileCount: number): string[] {
+  const filePaths: string[] = [];
+  for (let index = 0; index < fileCount; index++) {
+    const filePath = path.join(dirPath, `tiny_${index}.ts`);
+    fs.writeFileSync(filePath, `export const value${index} = ${index};\n`);
+    filePaths.push(filePath);
+  }
+  return filePaths;
+}
+
+const ROWS_FOR_PATH_STATEMENT = /FROM relbase_\w+ WHERE path = \d+/;
+
+/** Ingests every file in `filePaths` one at a time against `rt`, counting how many
+ *  rowsForPath-shaped SQL statements (see ROWS_FOR_PATH_STATEMENT) fire during EACH
+ *  individual ingestFile call. Returns one count per file, in ingest order. */
+async function rowsForPathCountsPerFile(rt: Awaited<ReturnType<typeof bootSpineFixture>>["rt"], filePaths: readonly string[]): Promise<number[]> {
+  const sqlChannel = diagnostics_channel.channel(PERF_CHANNEL_NAMES.sql);
+  const counts: number[] = [];
+  for (const filePath of filePaths) {
+    let count = 0;
+    const listener = (message: unknown): void => {
+      const { sql } = message as { sql?: unknown };
+      if (typeof sql === "string" && ROWS_FOR_PATH_STATEMENT.test(sql)) count += 1;
+    };
+    sqlChannel.subscribe(listener);
+    try {
+      await ingestFile(rt, filePath);
+    } finally {
+      sqlChannel.unsubscribe(listener);
+    }
+    counts.push(count);
+  }
+  return counts;
+}
+
+test("COUNT: rowsForPath fires exactly spineDeclsLocal.length times per ingestFile call, flat at 5 files and at 20 files", async () => {
+  const expectedPerFile = spineDeclsLocal.length;
+  const nodeRowsPerFileByRunSize = new Map<number, number>();
+
+  for (const fileCount of [5, 20]) {
+    const { rt, dbPath } = await bootSpineFixture();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "dl-count-ingest-"));
+    try {
+      const filePaths = writeTinyCorpus(tmpDir, fileCount);
+      const counts = await rowsForPathCountsPerFile(rt, filePaths);
+
+      assert.equal(counts.length, fileCount);
+      for (const [index, count] of counts.entries()) {
+        assert.equal(
+          count,
+          expectedPerFile,
+          `file #${index} (of ${fileCount}) fired ${count} rowsForPath-shaped statements, expected exactly ${expectedPerFile}`,
+        );
+      }
+
+      // Sanity: the table this loop reads DID grow across the run, so the flat
+      // statement count above is a real O(1)-per-file result over a real, growing
+      // table -- not a vacuous one from an empty table throughout. Every tiny fixture
+      // file has identical shape (one `export const` declaration), so `node` rows per
+      // file must be the SAME constant at both corpus sizes; that equality (asserted
+      // after the loop, below) is the actual proof, not a hardcoded row count that
+      // would drift if the extract binary's node-per-declaration count ever changes.
+      const nodeRows = (await rt.rows("node")) as Row[];
+      assert.ok(nodeRows.length > 0, "expected at least one node row after ingesting the tiny corpus");
+      assert.equal(nodeRows.length % fileCount, 0, "expected the same node-row count per identically-shaped fixture file");
+      nodeRowsPerFileByRunSize.set(fileCount, nodeRows.length / fileCount);
+    } finally {
+      await rt.dispose();
+      cleanupDbFile(dbPath);
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }
+
+  assert.equal(
+    nodeRowsPerFileByRunSize.get(5),
+    nodeRowsPerFileByRunSize.get(20),
+    "node rows per file should be identical at both corpus sizes: every fixture file has the same shape",
+  );
 });

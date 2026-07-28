@@ -28,6 +28,27 @@
  * 3_runtime.ts's `execute$` runs now also publishes its raw text on `sprefa:sql` with
  * no `tick`, which `onSqlMessage`'s tick-keyed aggregator explicitly ignores (hardened
  * in the same change) so this can never pollute a real DL_PERF_LOG JSONL line.
+ *
+ * COUNT-LAYER RECEIPT (2026-07-28, CLAUDE.md's "any path that was ever O(n^2) gets a
+ * COUNT/PLAN test" law): F1's own test only ever watched the SQL TEXT; it never
+ * proved that text actually EXECUTES as an index lookup rather than a scan, nor that
+ * the row count returned stays flat as the total table grows. Two tests below close
+ * that: "F1-COUNT: rowsForPath's compiled SELECT plans..." runs the exact statement
+ * F1 captures through `EXPLAIN QUERY PLAN`, on a second short-lived connection to the
+ * same db file (1_helpers_db.ts's `deltaDump` pattern), and asserts every plan step is
+ * a SEARCH, never a SCAN. "rowsForPath returns only the requested path's rows out of
+ * many..." seeds 50 distinct paths (100 rows) and reruns the same plan check at that
+ * size, so the proof holds with real row-count pressure, not just the 3-path fixture.
+ * SABOTAGE (same probe as F1's own receipt above, reapplied here): swapping
+ * `rowsForPath$`'s body back to `selectAll(...).pipe(map(rows => rows.filter(...)))`
+ * flipped BOTH new tests RED, in both cases: the plan's top step became
+ * `SCAN relbase_node` (a whole-table scan through the view's underlying table), where
+ * the real body produces `SEARCH relbase_node USING COVERING INDEX
+ * sqlite_autoindex_relbase_node_1 (path=?)`. Restoring the real body turned both
+ * green again. tests/4_ingest.test.ts carries the third layer (statement COUNT, not
+ * just plan shape): rowsForPath fires exactly `spineDeclsLocal.length`
+ * times per `ingestFile` call, constant at 5 files and at 20 files even though the
+ * table's total row count keeps growing underneath it.
  */
 import assert from "node:assert/strict";
 import diagnostics_channel from "node:diagnostics_channel";
@@ -42,7 +63,7 @@ import { open_db } from "sprefa-store-engine/src/engine/lib.ts";
 
 import { diffDerivedRel, DlRuntime, execute$ } from "../src/3_runtime.ts";
 import { PERF_CHANNEL_NAMES } from "../src/0_trace.ts";
-import type { DeltaEvent } from "../tasks.d.ts";
+import type { DeltaEvent, Row } from "../tasks.d.ts";
 import {
   bootFixture,
   bootParentFixture,
@@ -312,6 +333,125 @@ test("F1: rowsForPath compiles a WHERE-scoped SELECT against relbase_<rel>, neve
     assert.ok(
       !/FROM rel_node\b/.test(statements[0]!),
       `rowsForPath must not read through the unscoped rel_<rel> decode view; saw: ${statements[0]}`,
+    );
+  } finally {
+    await rt.dispose();
+    cleanupDbFile(dbPath);
+  }
+});
+
+/** Runs `sql` through `EXPLAIN QUERY PLAN` on a fresh short-lived connection to
+ *  `dbPath` (same driver seam, same pattern as 1_helpers_db.ts's `deltaDump`: open,
+ *  read, close before returning) and returns each step's `detail` text. */
+async function explainQueryPlan(dbPath: string, sql: string): Promise<string[]> {
+  const db = open_db(`file:${dbPath}`);
+  try {
+    const result = await db.execute(`EXPLAIN QUERY PLAN ${sql}`);
+    return result.rows.map((row) => String(row.detail));
+  } finally {
+    db.close();
+  }
+}
+
+// COUNT-LAYER test 1 (CLAUDE.md's O(n^2)-path law, sabotage receipt in this file's
+// header docblock): F1 above only ever watched the SQL TEXT. This test watches
+// whether SQLite actually EXECUTES that text as an index lookup: it runs the exact
+// statement rowsForPath compiles through EXPLAIN QUERY PLAN and asserts every step
+// is a SEARCH -- never a SCAN, which is the plan shape the O(n^2) unscoped-read-then-
+// JS-filter body would produce (a bare `selectAll` has no WHERE clause for the
+// planner to push into an index seek at all).
+test("F1-COUNT: rowsForPath's compiled SELECT plans as SEARCH against relbase_node, never SCAN", async () => {
+  const { rt, dbPath } = await bootFixture(singleEdbRelProgram("node", ["path", "kind"]));
+  const sqlChannel = diagnostics_channel.channel(PERF_CHANNEL_NAMES.sql);
+  try {
+    await rt.commit(
+      edbBatch({
+        node: [
+          { path: "a.ts", kind: "call" },
+          { path: "b.ts", kind: "call" },
+        ],
+      }),
+    );
+
+    const statements: string[] = [];
+    const listener = (message: unknown): void => {
+      const { sql } = message as { sql?: unknown };
+      if (typeof sql === "string") statements.push(sql);
+    };
+    sqlChannel.subscribe(listener);
+    try {
+      await rt.rowsForPath("node", "a.ts");
+    } finally {
+      sqlChannel.unsubscribe(listener);
+    }
+    assert.equal(statements.length, 1, `expected exactly one SQL statement, saw ${statements.length}`);
+
+    const planSteps = await explainQueryPlan(dbPath, statements[0]!);
+    assert.ok(planSteps.length > 0, "EXPLAIN QUERY PLAN returned no steps at all");
+    assert.ok(
+      planSteps.some((detail) => /^SEARCH relbase_node USING (COVERING )?INDEX/.test(detail)),
+      `expected an index SEARCH step against relbase_node; got: ${JSON.stringify(planSteps)}`,
+    );
+    assert.ok(
+      !planSteps.some((detail) => /^SCAN\b/.test(detail)),
+      `rowsForPath's plan must never SCAN a whole table; got: ${JSON.stringify(planSteps)}`,
+    );
+  } finally {
+    await rt.dispose();
+    cleanupDbFile(dbPath);
+  }
+});
+
+// COUNT-LAYER test 3 (rows-touched bound): seeds MANY distinct paths so the "rows
+// returned" and "rows the plan structurally could have visited" properties both get
+// checked under real row-count pressure, not just the 2-path fixture above.
+test("rowsForPath returns only the requested path's rows out of many, and its plan proves it never visited the rest", async () => {
+  const { rt, dbPath } = await bootFixture(singleEdbRelProgram("node", ["path", "kind"]));
+  const sqlChannel = diagnostics_channel.channel(PERF_CHANNEL_NAMES.sql);
+  try {
+    const PATH_COUNT = 50;
+    const seedRows: Row[] = [];
+    for (let index = 0; index < PATH_COUNT; index++) {
+      seedRows.push({ path: `file_${index}.ts`, kind: "call" });
+      seedRows.push({ path: `file_${index}.ts`, kind: "ident" });
+    }
+    await rt.commit(edbBatch({ node: seedRows }));
+
+    const targetPath = "file_25.ts";
+    const statements: string[] = [];
+    const listener = (message: unknown): void => {
+      const { sql } = message as { sql?: unknown };
+      if (typeof sql === "string") statements.push(sql);
+    };
+    sqlChannel.subscribe(listener);
+    let scoped: Row[];
+    try {
+      scoped = await rt.rowsForPath("node", targetPath);
+    } finally {
+      sqlChannel.unsubscribe(listener);
+    }
+
+    // Rows-touched: exactly the 2 rows for this one path out of 100 committed rows
+    // across 50 paths, never a row from any other path.
+    assert.deepEqual(
+      scoped.slice().sort(byJson),
+      [
+        { path: targetPath, kind: "call" },
+        { path: targetPath, kind: "ident" },
+      ].sort(byJson),
+    );
+    assert.ok(
+      scoped.every((row) => row.path === targetPath),
+      `expected every returned row to belong to '${targetPath}'; saw: ${JSON.stringify(scoped)}`,
+    );
+
+    // Plan proof, same technique as F1-COUNT above, at this larger size: a SEARCH,
+    // never a SCAN -- structurally, the query never touched the other 49 paths.
+    assert.equal(statements.length, 1);
+    const planSteps = await explainQueryPlan(dbPath, statements[0]!);
+    assert.ok(
+      !planSteps.some((detail) => /^SCAN\b/.test(detail)),
+      `rowsForPath must never SCAN with ${PATH_COUNT} distinct paths present; got: ${JSON.stringify(planSteps)}`,
     );
   } finally {
     await rt.dispose();
