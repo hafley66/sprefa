@@ -126,9 +126,9 @@ print_body(Item, Bindings, Text) :-
 print_body_item(latest(Atom), Bindings, Text) :- !,
     print_term(Atom, Bindings, 0, top, AtomText),
     format(atom(Text), "latest(~w)", [AtomText]).
-print_body_item(departed(Atom), Bindings, Text) :- !,
+print_body_item(finalize(Atom), Bindings, Text) :- !,
     print_term(Atom, Bindings, 0, top, AtomText),
-    format(atom(Text), "departed(~w)", [AtomText]).
+    format(atom(Text), "finalize(~w)", [AtomText]).
 print_body_item(pre(Atom), Bindings, Text) :- !,
     print_term(Atom, Bindings, 0, top, AtomText),
     format(atom(Text), "pre(~w)", [AtomText]).

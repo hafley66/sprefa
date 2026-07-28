@@ -20,10 +20,10 @@ dashes in comments.
 - `Rules`: `(Head <- Body)` level | `(Head <+ Body)` edge
 - Body goals: atoms, `not(Goal)`, `pre(Atom)`, `only(Atom)` trigger marker,
   `Var := Expr`, comparisons `< =< > >= == \==`, `now(Tick)`,
-  `decode(Expr, Pattern)`, `json_each(Expr, Elem)`, and `departed(Atom)`
+  `decode(Expr, Pattern)`, `json_each(Expr, Elem)`, and `finalize(Atom)`
   (edge bodies only, ruling r4): a DEPARTURE trigger binding a Set/level
   row's `-delta` as a next-tick occurrence; never satisfiable as a read; a
-  keyed replace departs the old row; marker form `only(departed(Atom))`.
+  keyed replace departs the old row; trigger form `finalize(Atom)`.
 - Exprs: ints, `+ - * / mod` (Int-only, `/` truncates), `concat([..])`
   (the interpolation lowering), braces json literals `{key: Value}`, lists.
 - Aggregate HEAD forms (level rules only, head column position only):

@@ -1,7 +1,7 @@
 % parse_dl.pl : phase D parser. Plain SWI-Prolog DCG-and-recursive-descent
 % over codes, .dl TEXT in, the fixture term form out: prog(Decls, Rules) with
 % the SAME operators the conformance fixtures use (<-, <+, :=) and the same
-% wrappers (latest/1, not/1, kind/2, keyed/2, keep/2, pre/1, departed/1, now/1,
+% wrappers (latest/1, not/1, kind/2, keyed/2, keep/2, pre/1, finalize/1, now/1,
 % decode/2, json_each/2). No consult of generated text, no new deps.
 %
 % Variable identity survives parsing: one Vars accumulator (Name-Var pairs)
@@ -509,8 +509,8 @@ body(Body, Vars0, Vars, S0, S) :-
 body_item(latest(Atom), Vars0, Vars, S0, S) :-
     keyword_call(latest, InnerCodes, S0, S),
     parse_full(rel_atom_term(Atom, Vars0, Vars), InnerCodes), !.
-body_item(departed(Atom), Vars0, Vars, S0, S) :-
-    keyword_call(departed, InnerCodes, S0, S), !,
+body_item(finalize(Atom), Vars0, Vars, S0, S) :-
+    keyword_call(finalize, InnerCodes, S0, S), !,
     parse_full(rel_atom_term(Atom, Vars0, Vars), InnerCodes).
 body_item(pre(Atom), Vars0, Vars, S0, S) :-
     keyword_call(pre, InnerCodes, S0, S), !,
@@ -544,7 +544,7 @@ body_item(Item, Vars0, Vars, S0, S) :-
 % the parens (unparsed), so each specific handler above re-parses that inner
 % text with its own sub-grammar. Consuming as balanced-paren text first
 % (rather than parsing args in place) sidesteps the fact that `only`'s inner
-% shape (departed(Atom) or a bare atom) differs from `decode`'s (two
+% shape (finalize(Atom) or a bare atom) differs from `decode`'s (two
 % comma-separated exprs).
 keyword_call(Keyword, InnerCodes, S0, S) :-
     atom_codes(Keyword, KeywordCodes),

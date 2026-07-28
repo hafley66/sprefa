@@ -112,7 +112,7 @@ fixtures.
 | unmarked edge trigger needing `now/1` (the current tick number) | 5 | `worktree_edit(Path, Digest), now(Tick)` |
 | **JSON destructuring** (`decode/2`, `json_each/2`) in a level body | 4 | `decode(Doc, {name: Name})` |
 | unmarked edge trigger referencing a **derived** (edge- or level-headed) ref | 2 | `stage_two(Item) <+ stage_one(Item)`, `stage_one` itself edge-headed |
-| unmarked edge trigger needing `departed/1` | 2 | `departed(latest(Key, OldValue))` |
+| edge trigger needing `finalize/1` | 2 | `finalize(latest(Key, OldValue))` |
 | **arithmetic in a rule head** (`+`,`-`,`*`,`/`,`mod` as a head argument, not evaluated) | 2 | `jaccard(L, R, Shared*100/Union)` |
 | edge-derived head column **type mismatch** (value flows from an int-typed source column into a text-typed head column) | 2 | `xref(FromSpanId, ...) <+ pin_extracted(FromSpanId, ...)`, `xref`'s own column never sees a literal int |
 | `keyed(Ref, _)` on a **Log rel** | 1 | `keyed(latest/2, [1])` where `latest/2` is `kind(latest/2, log)` |

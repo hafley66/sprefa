@@ -122,7 +122,7 @@ fixture(exhaust_policy,
 % concat dequeue costs one tick not two", generalized here past queue depth
 % one to a genuine FIFO). queue_slot is a dense-integer-ordinal keyed rel
 % (storage_integer_keys), queue_head is the min-ordinal aggregate view over
-% the undrained slots, and the dequeue is a departed(live_tab(...)) trigger
+% the undrained slots, and the dequeue is a finalize(live_tab(...)) trigger
 % (r4) reading last tick's queue head: arrival order is preserved (tab_b
 % drains before tab_c because it queued first), the swap lands exactly one
 % tick after the close it waited on, and queue_head_tab (the visible "current
@@ -145,8 +145,8 @@ fixture(concat_program_queue,
          (live_tab(SessionId, TabId) <- open_tab(SessionId, TabId), not(closed(SessionId, TabId))),
          (queue_head(SessionId, min(Ordinal)) <- queue_slot(SessionId, Ordinal, _), not(drained(SessionId, Ordinal))),
          (queue_head_tab(SessionId, TabId) <- queue_head(SessionId, Ordinal), queue_slot(SessionId, Ordinal, TabId)),
-         (drained(SessionId, Ordinal) <+ departed(live_tab(SessionId, _)), pre(queue_head(SessionId, Ordinal))),
-         (open_tab(SessionId, TabId) <+ departed(live_tab(SessionId, _)), pre(queue_head_tab(SessionId, TabId))),
+         (drained(SessionId, Ordinal) <+ finalize(live_tab(SessionId, _)), pre(queue_head(SessionId, Ordinal))),
+         (open_tab(SessionId, TabId) <+ finalize(live_tab(SessionId, _)), pre(queue_head_tab(SessionId, TabId))),
          (demanded(tab(TabId), SessionId) <- live_tab(SessionId, TabId)),
          (tab_view(TabId, Body) <- demanded(tab(TabId), _), tab_row(TabId, Body)) ]),
   [ queue_next(session_one, 0),

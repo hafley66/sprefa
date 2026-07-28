@@ -85,7 +85,7 @@ derived_refs(Rules, Refs) :-
 body_ref_uses((Left, Right), Uses) :- !,
     body_ref_uses(Left, LeftUses), body_ref_uses(Right, RightUses),
     append(LeftUses, RightUses, Uses).
-body_ref_uses(departed(Atom), [use(Ref, Args, pos, trigger)]) :- !,
+body_ref_uses(finalize(Atom), [use(Ref, Args, pos, trigger)]) :- !,
     atom_ref_args(Atom, Ref, Args).
 body_ref_uses(latest(Atom), [use(Ref, Args, pos, sampled)]) :- !,
     atom_ref_args(Atom, Ref, Args).
@@ -269,7 +269,7 @@ column_source_args(_Rules, _Initial, Schedule, Ref, Args) :-
 % stays precise as this widens further.
 edge_trigger_shape(Body, unsupported(edge_body_with_latest(Body))) :-
     conjunction_goals(Body, Goals), member(latest(_), Goals), !.
-edge_trigger_shape(departed(Atom), unsupported(edge_body_needs_departed(departed(Atom)))) :- !.
+edge_trigger_shape(finalize(Atom), unsupported(edge_body_needs_finalize(finalize(Atom)))) :- !.
 edge_trigger_shape(Body, unmarked_conjunction(Atoms)) :-
     conjunction_goals(Body, Goals),
     \+ member(latest(_), Goals),
@@ -278,7 +278,7 @@ edge_trigger_shape(Body, unmarked_conjunction(Atoms)) :-
 edge_trigger_shape(Body, unsupported(Reason)) :-
     conjunction_goals(Body, Goals),
     ( member(latest(_), Goals) -> Reason = edge_body_with_latest(Body)
-    ; member(G1, Goals), G1 = departed(_) -> Reason = edge_body_needs_departed(Body)
+    ; member(G1, Goals), G1 = finalize(_) -> Reason = edge_body_needs_finalize(Body)
     ; member(G2, Goals), G2 = pre(_) -> Reason = edge_body_needs_pre(Body)
     ; member(G3, Goals), G3 = now(_) -> Reason = edge_body_needs_now(Body)
     ; member(G4, Goals), G4 = not(_) -> Reason = edge_body_needs_negation(Body)
@@ -295,7 +295,7 @@ conjunction_goals(Goal, [Goal]).
 
 plain_positive_atom(Goal) :-
     compound(Goal),
-    Goal \= latest(_), Goal \= departed(_), Goal \= pre(_), Goal \= now(_), Goal \= not(_),
+    Goal \= latest(_), Goal \= finalize(_), Goal \= pre(_), Goal \= now(_), Goal \= not(_),
     Goal \= (_ := _), Goal \= (_ is _), Goal \= decode(_, _), Goal \= json_each(_, _),
     \+ comparison_goal(Goal).
 
@@ -493,7 +493,7 @@ body_forbidden_goal(pre(Atom), pre(Atom)) :- !.
 body_forbidden_goal(now(Tick), now(Tick)) :- !.
 body_forbidden_goal(decode(Expr, Pattern), decode(Expr, Pattern)) :- !.
 body_forbidden_goal(json_each(Expr, Elem), json_each(Expr, Elem)) :- !.
-body_forbidden_goal(departed(Atom), departed(Atom)) :- !.
+body_forbidden_goal(finalize(Atom), finalize(Atom)) :- !.
 % Comparison operators (body_ref_uses/2 already returns zero Uses for these
 % -- comparison_goal/1 -- meaning nothing downstream ever compiled them into
 % a WHERE clause; a level rule that filters on one silently lost the filter)

@@ -429,7 +429,7 @@ covers(scopes,               aggregate_head_forms). % queue_head(_, min(Ordinal)
 covers(scopes,               bind_goal).          % Next := SoFar + 1, scopes.pl:141
 covers(scopes,               arithmetic_ops).     % SoFar + 1, scopes.pl:141
 covers(scopes,               fact).               % non-empty InitialRows, scopes.pl:38
-covers(scopes,               departure_form).     % only(departed(live_tab(...))), scopes.pl:148
+covers(scopes,               departure_form).     % finalize(live_tab(...)), scopes.pl:148
                                                   % ^ first FIXTURE coverage of departure_form
                                                   %   (was ruling-only; uncovered count 10 -> 9)
 

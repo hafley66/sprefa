@@ -14,7 +14,7 @@ closed(SessionId, TabId) <+ close_request(SessionId, TabId).
 live_tab(SessionId, TabId) <- open_tab(SessionId, TabId), not(closed(SessionId, TabId)).
 queue_head(SessionId, min(Ordinal)) <- queue_slot(SessionId, Ordinal, _), not(drained(SessionId, Ordinal)).
 queue_head_tab(SessionId, TabId) <- queue_head(SessionId, Ordinal), queue_slot(SessionId, Ordinal, TabId).
-drained(SessionId, Ordinal) <+ departed(live_tab(SessionId, _)), pre(queue_head(SessionId, Ordinal)).
-open_tab(SessionId, TabId) <+ departed(live_tab(SessionId, _)), pre(queue_head_tab(SessionId, TabId)).
+drained(SessionId, Ordinal) <+ finalize(live_tab(SessionId, _)), pre(queue_head(SessionId, Ordinal)).
+open_tab(SessionId, TabId) <+ finalize(live_tab(SessionId, _)), pre(queue_head_tab(SessionId, TabId)).
 demanded(tab(TabId), SessionId) <- live_tab(SessionId, TabId).
 tab_view(TabId, Body) <- demanded(tab(TabId), _), tab_row(TabId, Body).

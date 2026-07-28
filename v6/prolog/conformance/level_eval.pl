@@ -107,7 +107,7 @@ goal_rel_refs(not(Goal), [], Neg) :- !,
     goal_rel_refs(Goal, InnerPos, InnerNeg),
     append(InnerPos, InnerNeg, Neg).
 goal_rel_refs(latest(Atom), [Ref], []) :- !, rel_ref(Atom, Ref).
-goal_rel_refs(departed(_), [], []) :- !.
+goal_rel_refs(finalize(_), [], []) :- !.
 goal_rel_refs(pre(_), [], []) :- !.
 goal_rel_refs(now(_), [], []) :- !.
 goal_rel_refs(true, [], []) :- !.
