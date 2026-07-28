@@ -384,6 +384,13 @@ language finding, not a reason to special-case the spine.
   deleted; a lab file surviving its landing commit is a defect, not a follow-up.
 
 ### Style notes for this repo
+- **Language vocabulary law** (user-set 2026-07-28): construct names and design
+  discussion use ONLY rxjs, prolog, or SQL words. No invented terminology.
+  Consequence under review: `only()` -> `latest()` (withLatestFrom), explicit
+  `combine`/`zip`, `departed` -> rx-word candidate.
+- **Every .dl snippet shown to the user carries its intended pure-rxjs
+  lowering** (user-set 2026-07-28: "if u cant then we are not right"). A
+  construct whose rx lowering cannot be written is a design defect.
 - dl variable names are descriptive, never single-letter: `path`/`line`/`callee_name`, not `p`/`l`/`q`. Applies to every snippet in skills, examples, book, tests, and agent prompts; rename opportunistically when touching old files.
 - N+1: never a per-row write. Collect the set, call `Db::insert_rows` once. The tick counter screams if you don't.
 - No `provenance`/`substrate`/`load-bearing`/`regime` as prose or identifiers (use source/base/critical/mode).
