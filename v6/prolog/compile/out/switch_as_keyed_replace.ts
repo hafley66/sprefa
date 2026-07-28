@@ -76,11 +76,11 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    demanded: selectRows(seam, `SELECT "target", "session_id" FROM "demanded"`, relColumns.demanded!),
-    open_scope: selectRows(seam, `SELECT "session_id", "target" FROM "open_scope"`, relColumns.open_scope!),
-    route_change: selectRows(seam, `SELECT "session_id", "route_id" FROM "route_change"`, relColumns.route_change!),
-    route_row: selectRows(seam, `SELECT "route_id", "body" FROM "route_row"`, relColumns.route_row!),
-    route_view: selectRows(seam, `SELECT "route_id", "body" FROM "route_view"`, relColumns.route_view!),
+    demanded: selectRows(seam, `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id" FROM "demanded"`, relColumns.demanded!),
+    open_scope: selectRows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target" FROM "open_scope"`, relColumns.open_scope!),
+    route_change: selectRows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("route_id") AND json_type("route_id") = 'object' THEN json_extract("route_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("route_id", '$.args')) || ')' ELSE "route_id" END AS "route_id" FROM "route_change"`, relColumns.route_change!),
+    route_row: selectRows(seam, `SELECT CASE WHEN json_valid("route_id") AND json_type("route_id") = 'object' THEN json_extract("route_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("route_id", '$.args')) || ')' ELSE "route_id" END AS "route_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "route_row"`, relColumns.route_row!),
+    route_view: selectRows(seam, `SELECT CASE WHEN json_valid("route_id") AND json_type("route_id") = 'object' THEN json_extract("route_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("route_id", '$.args')) || ')' ELSE "route_id" END AS "route_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "route_view"`, relColumns.route_view!),
   });
 }
 

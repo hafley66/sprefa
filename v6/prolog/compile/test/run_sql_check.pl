@@ -243,10 +243,19 @@ row_to_term(Name, Columns, json(Pairs), Term) :-
 
 column_value(Pairs, Column, Value) :- memberchk(Column=Value, Pairs).
 
-% atom_json_term returns JSON string values as ATOMS (SWI's classic JSON
-% representation), never Prolog strings, so the compound-encoding sniff and
-% the recursive re-parse both need to work over atomic/1, not string/1 --
-% string/1 alone silently never matched, leaving every compound column raw.
+% Round 3 (reconciliation): decode_cell now meets a compound column in TWO
+% different text shapes depending on WHICH query produced it.
+% edge_statement/3's ProjectSql and query_final_rows/3's plain column list
+% still read the STORAGE encoding (json1: `{"fn":"route_data","args":[...
+% ]}`) -- unaffected by the round-3 change, which touched delta_statement/2
+% only. deltastmt/2's SelectSql (lower.pl:canonical_column_expr/2) now
+% renders LOG-FACING canonical Prolog term text instead
+% (`route_data(settings)`), which snapshot_all/4 reads via that same
+% deltastmt SQL. decode_cell is shared by both call sites, so it tries the
+% json1 sniff FIRST, then a canonical-term-text sniff, falling through to a
+% plain atom if neither shape matches -- atom_json_term returns JSON string
+% values as ATOMS (SWI's classic JSON representation), never Prolog
+% strings, so both sniffs work over atomic/1, not string/1.
 decode_cell(Raw, Decoded) :-
     ( atomic(Raw), atom_string(Raw, RawString), sub_string(RawString, 0, _, _, "{\"fn\":")
     -> atom_json_term(RawString, json(Pairs), []),
@@ -254,6 +263,8 @@ decode_cell(Raw, Decoded) :-
        memberchk(args=ArgsRaw, Pairs),
        maplist(decode_cell, ArgsRaw, DecodedArgs),
        Decoded =.. [Functor | DecodedArgs]
+    ; atom(Raw), sub_atom(Raw, _, _, 0, ')'), sub_atom(Raw, Before, _, _, '('), Before > 0
+    -> catch(term_to_atom(Decoded, Raw), _, Decoded = Raw)
     ; string(Raw) -> atom_string(Decoded, Raw)
     ; Decoded = Raw
     ).
