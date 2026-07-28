@@ -1,0 +1,78 @@
+# v6 — prolog compiler front (tsv2) + TS runtimes. Run from here:
+# `cd v6 && just` (lists recipes). Every recipe is the exact command the
+# coordinator runs as a review gate; nothing here is aspirational.
+#
+# Layout the recipes map onto:
+#   prolog/conformance/  the 110-fixture corpus + oracle engine (go.pl)
+#   prolog/compile/      the tsv2 compiler: parse_dl/print_dl/analyze/lower/
+#                        registry.pl, plunit tests, roundtrip.sh, sweep.pl
+#   prolog/ARCH.pl       machine-checked architecture claims (go)
+#   tsv2/                A runtime + generated programs, sweep driver, import gate
+#   dl/                  the v6 dl app (http server, hosts, binds, tracing)
+#   sprefa-store/        rust store + js port + the scale bench harness
+
+v6 := justfile_directory()
+
+default:
+	@just --list
+
+# ── prolog side ──
+
+# the fixture corpus vs the oracle engine (expect: 110 PASS, nothing else)
+conformance:
+	cd {{v6}}/prolog/conformance && swipl -q -l go.pl -g go -g halt
+
+# parse -> print -> reparse identity over all fixtures + real .dl files
+roundtrip:
+	cd {{v6}}/prolog/compile && bash scripts/roundtrip.sh
+
+# compiler unit tests (expect: 17/17)
+plunit:
+	cd {{v6}}/prolog/compile && swipl -q -l test/plunit_tests.pl -g run_tests -g halt
+
+# architecture claims machine-check + atlas re-emit
+arch:
+	swipl -q -l {{v6}}/prolog/ARCH.pl -g go -g halt
+
+# ── tsv2 (prolog compiles TO TypeScript) ──
+
+# full corpus sweep: compile every fixture, replay vs oracle tick logs
+# (expect: RUN total=31 identical=28 wrong=0; slow, minutes)
+sweep:
+	cd {{v6}}/tsv2 && bash scripts/sweep.sh
+
+# tsv2 runtime tests (expect: 6/6)
+tsv2-test:
+	cd {{v6}}/tsv2 && npm test
+
+# generated files import only the named runtime seams (class-34 law)
+import-gate:
+	cd {{v6}}/tsv2 && bash scripts/check-imports.sh
+
+# ── TS apps ──
+
+# the v6 dl app suite
+dl-test:
+	cd {{v6}}/dl && npm test
+
+# js store port suite
+store-test:
+	cd {{v6}}/sprefa-store/js && npm test
+
+# THE END GOAL, executable: kill -9 mid-delay, reboot, value lands exactly once
+endurance:
+	bash {{v6}}/dl/scripts/goal-endurance.sh
+
+# ── benches ──
+
+# the house scale-test rig (engines/*.sh emit a shared CSV protocol)
+bench:
+	cd {{v6}}/sprefa-store/bench && bash run.sh
+
+# ── batteries ──
+
+# the review-gate battery minus the slow sweep; what a merge must pass
+green: conformance roundtrip plunit tsv2-test import-gate dl-test store-test
+
+# everything, including the sweep
+green-all: green sweep
