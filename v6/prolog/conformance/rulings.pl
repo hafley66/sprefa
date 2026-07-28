@@ -287,3 +287,13 @@ ruling(enum_decl_in_rel, semicolon_variants_in_decl, user,
 % whatever it is, it will not be a bare suffix word on the decl.
 ruling(no_policy_suffix_words, bare_rel_is_set_log_is_the_only_kind_word, user,
        'user 2026-07-29: "i dont want magic suffix words to trip anything up. no set. ... log all and a rel without any form of specificity are just tables no?"').
+
+% 2026-07-29 same sitting. EDB is DEFINED BY ABSENCE: a rel (enum-shaped
+% or not) that no rule ever heads is pure input -- an rx Subject the
+% world pushes into (schedule rows, binds, host responses). No decl word
+% marks it; being un-headed IS the mark. Consequence: the binds-arc
+% finding that a bare fact like clock_period(2). compiles to an IDB rule
+% over a minted __lit_0 seed is now a DEFECT, not a curiosity -- facts
+% on a never-headed rel must seed EDB rows.
+ruling(edb_definition, never_headed_rel_is_pure_subject, user,
+       'user 2026-07-29: "we want edb to be ... a rel enum, that never has a body, is pure subject"').
