@@ -57,3 +57,24 @@ format.
 - P2 before P3 (retraction fixtures exercise recursive views).
 - Runner: sol-class, no-commit flow (codex sandbox cannot write git
   metadata; coordinator verifies and commits -- the P1 precedent).
+
+## AMENDMENT (user, 2026-07-29): common memory columns + the 6.2.0 gate
+
+Memory reporting gets ONE shape across implementations, extending the
+existing 8-field CSV protocol (pure_wrap.sh header is the authority),
+never a second format: peak RSS via /usr/bin/time -l (already common),
+host_peak_mb (rust = CappedAlloc high-water; TS = v8 heap high-water
+sampled per tick -- the host-residency gauge), sqlite_hw_mb (rust =
+sqlite3_memory_highwater; TS = N/A-with-reason until the driver exposes
+it, never a fudged number), db_mb (file size). P3's competition rows
+carry all columns so they drop into PERF-REPORT.md's standings table
+unmodified.
+
+THE 6.2.0 GATE (user: "drive this home"): v6.2.0 is tagged on main when
+(1) P2 landed, recursive rels incremental; (2) P3 landed, retraction +
+mandatory cycle guard, naive fallback surface reduced to named
+residuals; (3) tsv2 rows sit in the PERF-REPORT standings with the
+common memory columns; (4) every suite green on the tagged commit
+(conformance, sweep, roundtrip, plunit, tsv2 + gate, dl, store,
+ratchet, endurance). Tag is local like every commit; push stays a human
+decision.
