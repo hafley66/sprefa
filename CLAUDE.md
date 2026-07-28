@@ -122,8 +122,16 @@ directive, SQL-check 8/8 vs fixture expectations, 15/15 plunit); first
 cross-run caught 4 emitted seam-shape misses (the clean typecheck was
 vacuous until run-emitted.ts imported the drafts; gen_emitted/ now
 quarantined from the type graph, drafts load via computed dynamic import,
-package green). Emitter ROUND 2 in flight (backend-only fix expected; a
-forced plan-term change would be a finding against the split).
+package green). ROUNDS 2+3 LANDED, RECONCILIATION COMPLETE: emitted modules
+on the A runtime are byte-identical to the prolog oracle on ALL THREE runs
+(both fixtures + perturbed schedule), independently re-verified by the
+coordinator. Round 2's finding: the tick-number dependency did not survive
+the real seam (plan term converged to snapshot-diff deltas +
+arrival-projected upserts). Round 3: compound columns render canonical term
+text at read via CASE json_valid+json_type in lower.pl SQL (shared with the
+future rust backend). gen_emitted back in the type graph. NEXT: phase C
+(fixture-corpus sweep, entry bar = byte-identity emitter-vs-exemplar,
+formatting = user taste on ties) and phase D (.dl DCG + hosts).
 
 **v5 BACKGROUND OPS (overnight 2026-07-27, user asleep)**: daemon swapped to
 current binary (~/.cargo/bin/dl restored from target/release, was missing —
