@@ -11,15 +11,17 @@
 %                        fixture's own literal values (Decls has no column
 %                        type syntax); column_def/3 below is the one place
 %                        that reads it.
-%     ArrivalStatements: list of arrivalstmt(Ref, Kind, AddSql, DelSqlOrNone).
+%     ArrivalStatements: list of arrivalstmt(Ref, Kind, AddSql, DelSqlOrNone,
+%                        IncrementalAddSql, IncrementalDelSqlOrNone).
 %     EdgeStatements   : list of edgestmt(HeadRef, TriggerRef, HeadColumns,
-%                        KeyColumns, ProjectSql, UpsertSql).
-%     LevelStatements  : list of levelstmt(HeadRef, DeleteSql, InsertSql),
+%                        KeyColumns, ProjectSql, WriteSql, DeltaProjectSql).
+%     LevelStatements  : list of levelstmt(HeadRef, DeleteSql, InsertSqls,
+%                        DeltaInsertSql),
 %                        already in execution order (strat.pl:sql_rule_order/2).
-%     DeltaStatements  : list of deltastmt(Ref, SelectAllSql) -- ONE plain
-%                        "read every row" query per rel, run before AND after
-%                        a tick's mutations; the runtime diffs the two row
-%                        lists (see ROUND 2 note below).
+%     DeltaStatements  : list of deltastmt(Ref, SelectAllSql, DeltaTable,
+%                        BoundarySql). SelectAllSql preserves the recompute
+%                        referee. DeltaTable and BoundarySql carry P1's
+%                        tick-local change stream.
 %
 % plus boot_statements/4, a SEPARATE list of bootstmt(Sql, Params) (needs
 % Initial, which plan/6 does not carry, plus LevelStatements for the t=0
@@ -137,6 +139,9 @@
 % ═══ identifiers ═════════════════════════════════════════════════════════════
 
 table_name(Name/_Arity, Name).
+
+delta_table_name(Name/_Arity, DeltaTable) :-
+    format(atom(DeltaTable), '__delta_~w', [Name]).
 
 quote_ident(Name, Quoted) :- format(atom(Quoted), '"~w"', [Name]).
 
@@ -334,14 +339,18 @@ column_def(QuotedColumn, text, Def) :- format(atom(Def), '~w TEXT NOT NULL', [Qu
 
 % ═══ arrival statement templates (round 2: Log rel drops tick/seq params) ═══
 
-arrival_statement(relplan(Ref, log, Columns, _, _), arrivalstmt(Ref, log, AddSql, none)) :- !,
+arrival_statement(relplan(Ref, log, Columns, _, _),
+                  arrivalstmt(Ref, log, AddSql, none, IncrementalAddSql, none)) :- !,
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
     length(Columns, N), placeholders(N, Placeholders),
     atomic_list_concat(Placeholders, ', ', PlaceholdersSql),
-    format(atom(AddSql), 'INSERT INTO ~w (~w) VALUES (~w)', [QuotedTable, ColumnsSql, PlaceholdersSql]).
-arrival_statement(relplan(Ref, set, Columns, _, _), arrivalstmt(Ref, set, AddSql, DelSql)) :-
+    format(atom(AddSql), 'INSERT INTO ~w (~w) VALUES (~w)', [QuotedTable, ColumnsSql, PlaceholdersSql]),
+    incremental_arrival_add_sql(log, QuotedTable, ColumnsSql, QuotedColumns,
+                                IncrementalAddSql).
+arrival_statement(relplan(Ref, set, Columns, _, _),
+                  arrivalstmt(Ref, set, AddSql, DelSql, IncrementalAddSql, IncrementalDelSql)) :-
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
@@ -350,7 +359,24 @@ arrival_statement(relplan(Ref, set, Columns, _, _), arrivalstmt(Ref, set, AddSql
     format(atom(AddSql), 'INSERT OR IGNORE INTO ~w (~w) VALUES (~w)', [QuotedTable, ColumnsSql, PlaceholdersSql]),
     maplist(eq_placeholder, QuotedColumns, EqParts),
     atomic_list_concat(EqParts, ' AND ', WhereSql),
-    format(atom(DelSql), 'DELETE FROM ~w WHERE ~w', [QuotedTable, WhereSql]).
+    format(atom(DelSql), 'DELETE FROM ~w WHERE ~w', [QuotedTable, WhereSql]),
+    incremental_arrival_add_sql(set, QuotedTable, ColumnsSql, QuotedColumns,
+                                IncrementalAddSql),
+    format(atom(IncrementalDelSql), '~w RETURNING ~w', [DelSql, ColumnsSql]).
+
+incremental_arrival_add_sql(Kind, QuotedTable, ColumnsSql, QuotedColumns, Sql) :-
+    incremental_json_select_exprs(QuotedColumns, 0, SelectExprs),
+    atomic_list_concat(SelectExprs, ', ', SelectSql),
+    ( Kind == log -> Insert = 'INSERT INTO' ; Insert = 'INSERT OR IGNORE INTO' ),
+    format(atom(Sql),
+           '~w ~w (~w) SELECT ~w FROM json_each(?) RETURNING ~w',
+           [Insert, QuotedTable, ColumnsSql, SelectSql, ColumnsSql]).
+
+incremental_json_select_exprs([], _, []).
+incremental_json_select_exprs([_ | Rest], Index, [Expr | More]) :-
+    format(atom(Expr), 'json_extract(value, \'$[~w]\')', [Index]),
+    NextIndex is Index + 1,
+    incremental_json_select_exprs(Rest, NextIndex, More).
 
 eq_placeholder(QuotedColumn, Text) :- format(atom(Text), '~w = ?', [QuotedColumn]).
 
@@ -407,7 +433,9 @@ edge_statements_for_rule(RelPlans, (Head <+ Body), EdgeStatements) :-
 % too, since a Log head's resolver must NOT collapse multiple derived rows
 % into one Map entry the way a Set head's last-write-wins fold does (every
 % key would otherwise be the same empty `[]`).
-edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql)) :-
+edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms,
+                      edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns,
+                               ProjectSql, WriteSql, DeltaProjectSql)) :-
     rel_ref(TriggerAtom, TriggerRef),
     rel_ref(Head, HeadRef),
     relplan_kind(RelPlans, HeadRef, HeadKind),
@@ -449,6 +477,7 @@ edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, edgestmt(HeadRef,
     -> format(atom(ProjectSql), 'SELECT ~w FROM ~w', [SelectSql, FromSql])
     ; format(atom(ProjectSql), 'SELECT ~w FROM ~w WHERE ~w', [SelectSql, FromSql, WhereSql])
     ),
+    edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, HeadColumns, DeltaProjectSql),
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
@@ -477,6 +506,28 @@ edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, edgestmt(HeadRef,
               [QuotedHeadTable, HeadColumnsSql, ValuePlaceholdersSql, ConflictClause])
     ).
 
+edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, HeadColumns, DeltaProjectSql) :-
+    rel_ref(TriggerAtom, TriggerRef),
+    TriggerAtom =.. [_ | TriggerArgs],
+    delta_table_name(TriggerRef, DeltaTable),
+    quote_ident(DeltaTable, QuotedDeltaTable),
+    DeltaAlias = d0,
+    relplan_columns(RelPlans, TriggerRef, TriggerColumns),
+    compile_atom_args(TriggerArgs, TriggerColumns, DeltaAlias, [], TriggerBound, TriggerWhereParts),
+    maplist(where_text, TriggerWhereParts, TriggerWhereTexts),
+    maplist(other_atom_use, OtherAtoms, OtherUses),
+    compile_positive_uses(RelPlans, OtherUses, TriggerBound, Bound, OtherFromParts, OtherWhereTexts),
+    head_select_list(Head, Bound, HeadColumns, SelectExprs),
+    atomic_list_concat(SelectExprs, ', ', SelectSql),
+    format(atom(DeltaFrom), '~w ~w', [QuotedDeltaTable, DeltaAlias]),
+    append([DeltaFrom], OtherFromParts, FromParts),
+    atomic_list_concat(FromParts, ', ', FromSql),
+    append(['d0."_sign" = 1' | TriggerWhereTexts], OtherWhereTexts, WhereTexts),
+    atomic_list_concat(WhereTexts, ' AND ', WhereSql),
+    format(atom(DeltaProjectSql),
+           'SELECT ~w FROM ~w WHERE ~w ORDER BY d0."_sequence"',
+           [SelectSql, FromSql, WhereSql]).
+
 excluded_assignment(QuotedColumn, Text) :- format(atom(Text), '~w = excluded.~w', [QuotedColumn, QuotedColumn]).
 
 other_atom_use(Atom, use(Ref, Args, pos, unmarked)) :- rel_ref(Atom, Ref), Atom =.. [_ | Args].
@@ -499,7 +550,8 @@ nth1_list([], _, []).
 nth1_list([Position | Rest], List, [Element | More]) :- nth1(Position, List, Element), nth1_list(Rest, List, More).
 
 % ═══ level rule lowering ═════════════════════════════════════════════════════
-% levelstmt(HeadRef, DeleteSql, InsertSqls): InsertSqls is a LIST, one entry
+% levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql): InsertSqls is a
+% LIST, one entry
 % per rule clause headed by HeadRef, not one levelstmt per rule -- the phase
 % C sweep found real multi-clause-per-head fixtures (shell_stream.pl's
 % terminal_is_terminal: `stream_status(Args, running) <- ...` and
@@ -533,10 +585,12 @@ take_same_head(HeadRef, [Rule | Rest], [Rule | SameRest], Remaining) :-
     take_same_head(HeadRef, Rest, SameRest, Remaining).
 take_same_head(_, Rules, [], Rules).
 
-level_statement_group(RelPlans, HeadRef-Rules, levelstmt(HeadRef, DeleteSql, InsertSqls)) :-
+level_statement_group(RelPlans, HeadRef-Rules,
+                      levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql)) :-
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
     format(atom(DeleteSql), 'DELETE FROM ~w', [QuotedHeadTable]),
-    maplist(level_insert_sql(RelPlans, HeadRef), Rules, InsertSqls).
+    maplist(level_insert_sql(RelPlans, HeadRef), Rules, InsertSqls),
+    level_delta_insert_sql(RelPlans, HeadRef, Rules, DeltaInsertSql).
 
 level_insert_sql(RelPlans, HeadRef, (Head <- Body), InsertSql) :-
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
@@ -560,6 +614,67 @@ level_insert_sql(RelPlans, HeadRef, (Head <- Body), InsertSql) :-
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
     format(atom(InsertSql), 'INSERT OR IGNORE INTO ~w (~w) ~w', [QuotedHeadTable, HeadColumnsSql, SelectStatement]).
 
+level_delta_insert_sql(RelPlans, HeadRef, Rules, DeltaInsertSql) :-
+    table_name(HeadRef, HeadTable),
+    quote_ident(HeadTable, QuotedHeadTable),
+    relplan_columns(RelPlans, HeadRef, HeadColumns),
+    maplist(quote_ident, HeadColumns, QuotedHeadColumns),
+    atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
+    level_rules_delta_arms(RelPlans, Rules, DeltaArms),
+    atomic_list_concat(DeltaArms, ' UNION ALL ', DeltaSelectSql),
+    format(atom(DeltaInsertSql),
+           'INSERT OR IGNORE INTO ~w (~w) ~w RETURNING ~w',
+           [QuotedHeadTable, HeadColumnsSql, DeltaSelectSql, HeadColumnsSql]).
+
+level_rules_delta_arms(_, [], []).
+level_rules_delta_arms(RelPlans, [Rule | Rest], DeltaArms) :-
+    level_rule_delta_arms(RelPlans, Rule, RuleArms),
+    level_rules_delta_arms(RelPlans, Rest, RestArms),
+    append(RuleArms, RestArms, DeltaArms).
+
+level_rule_delta_arms(RelPlans, (Head <- Body), DeltaArms) :-
+    body_ref_uses(Body, Uses),
+    include(is_positive_use, Uses, PosUses),
+    include(is_negative_use, Uses, NegUses),
+    level_positive_delta_arms(RelPlans, Head, PosUses, NegUses, PosUses, DeltaArms).
+
+level_positive_delta_arms(_, _, [], _, _, []).
+level_positive_delta_arms(RelPlans, Head, [_ | RestPositions], NegUses, PosUses,
+                          [DeltaArm | RestArms]) :-
+    length(RestPositions, RemainingCount),
+    length(PosUses, PositiveCount),
+    Position is PositiveCount - RemainingCount - 1,
+    nth0_select(Position, PosUses, DeltaUse, OtherPosUses),
+    level_delta_select_arm(RelPlans, Head, DeltaUse, OtherPosUses, NegUses, DeltaArm),
+    level_positive_delta_arms(RelPlans, Head, RestPositions, NegUses, PosUses, RestArms).
+
+nth0_select(0, [Selected | Rest], Selected, Rest) :- !.
+nth0_select(Index, [Item | Rest], Selected, [Item | More]) :-
+    Index > 0,
+    NextIndex is Index - 1,
+    nth0_select(NextIndex, Rest, Selected, More).
+
+level_delta_select_arm(RelPlans, Head, use(DeltaRef, DeltaArgs, pos, _),
+                       OtherPosUses, NegUses, DeltaArm) :-
+    delta_table_name(DeltaRef, DeltaTable),
+    quote_ident(DeltaTable, QuotedDeltaTable),
+    relplan_columns(RelPlans, DeltaRef, DeltaColumns),
+    compile_atom_args(DeltaArgs, DeltaColumns, d0, [], DeltaBound, DeltaWhereParts),
+    maplist(where_text, DeltaWhereParts, DeltaWhereTexts),
+    compile_positive_uses(RelPlans, OtherPosUses, DeltaBound, Bound,
+                          OtherFromParts, OtherWhereTexts),
+    compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
+    head_select_list(Head, Bound, none, SelectExprs),
+    atomic_list_concat(SelectExprs, ', ', SelectSql),
+    format(atom(DeltaFrom), '~w d0', [QuotedDeltaTable]),
+    append([DeltaFrom], OtherFromParts, FromParts),
+    atomic_list_concat(FromParts, ', ', FromSql),
+    append(['d0."_sign" = 1' | DeltaWhereTexts], OtherWhereTexts, PositiveWhereTexts),
+    append(PositiveWhereTexts, NegWhereTexts, WhereTexts),
+    atomic_list_concat(WhereTexts, ' AND ', WhereSql),
+    format(atom(DeltaArm), 'SELECT DISTINCT ~w FROM ~w WHERE ~w',
+           [SelectSql, FromSql, WhereSql]).
+
 is_positive_use(use(_, _, pos, _)).
 is_negative_use(use(_, _, neg, _)).
 
@@ -573,15 +688,39 @@ is_negative_use(use(_, _, neg, _)).
 % with no baked-in functor-length constant) -- only the delta-snapshot READ
 % renders canonical text, via canonical_column_expr/2 below. This is a SQL-
 % TEXT change inside deltastmt/2, not a plan-term SHAPE change (still
-% deltastmt(Ref, SelectSql)); it lives here rather than in emit_ts.pl
+% deltastmt(Ref, SelectSql, DeltaTable, BoundarySql)); it lives here rather
+% than in emit_ts.pl
 % because it is a SQL-generation decision a future emit_rust.pl would want
 % identically, not a TypeScript-specific rendering choice.
 
-delta_statement(relplan(Ref, _Kind, Columns, _, ColumnTypes), deltastmt(Ref, SelectSql)) :-
+delta_statement(relplan(Ref, _Kind, Columns, _, ColumnTypes),
+                deltastmt(Ref, SelectSql, DeltaTable, BoundarySql)) :-
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(canonical_column_expr, Columns, ColumnTypes, ColumnExprs),
     atomic_list_concat(ColumnExprs, ', ', ColumnsSql),
-    format(atom(SelectSql), 'SELECT ~w FROM ~w', [ColumnsSql, QuotedTable]).
+    format(atom(SelectSql), 'SELECT ~w FROM ~w', [ColumnsSql, QuotedTable]),
+    delta_table_name(Ref, DeltaTable),
+    quote_ident(DeltaTable, QuotedDeltaTable),
+    maplist(quote_ident, Columns, QuotedColumns),
+    atomic_list_concat(QuotedColumns, ', ', GroupColumnsSql),
+    format(atom(BoundarySql),
+           'SELECT ~w, "_sign" AS "__sign", count(*) AS "__count" FROM ~w WHERE "_sign" IN (-1, 1) GROUP BY ~w, "_sign"',
+           [ColumnsSql, QuotedDeltaTable, GroupColumnsSql]).
+
+delta_ddl(relplan(Ref, _Kind, Columns, _, ColumnTypes), [TableDdl, IndexDdl]) :-
+    delta_table_name(Ref, DeltaTable),
+    quote_ident(DeltaTable, QuotedDeltaTable),
+    maplist(quote_ident, Columns, QuotedColumns),
+    maplist(column_def, QuotedColumns, ColumnTypes, ColumnDefs),
+    atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
+    format(atom(TableDdl),
+           'CREATE TEMP TABLE ~w ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ~w)',
+           [QuotedDeltaTable, ColumnsSql]),
+    format(atom(IndexName), '~w_sign', [DeltaTable]),
+    quote_ident(IndexName, QuotedIndexName),
+    format(atom(IndexDdl),
+           'CREATE INDEX ~w ON ~w ("_sign")',
+           [QuotedIndexName, QuotedDeltaTable]).
 
 % INTEGER columns cannot hold a json1 compound under the inferred storage
 % contract, so their delta reads use the quoted column directly. TEXT columns
@@ -641,7 +780,11 @@ boot_seed_statement(relplan(Ref, set, Columns, _, _), Initial, Statements) :-
 lower_program(plan(Name, prog(_Decls, _Rules), RelPlans, ArrivalTargets, RuleOrder, EdgeRules),
               lowered(Name, Ddl, ArrivalStatements, EdgeStatements, LevelStatements, DeltaStatements, RelPlans, ArrivalTargets)) :-
     findall(EdgeHeadedRef, ( member(EdgeRule, EdgeRules), rule_head_ref(EdgeRule, EdgeHeadedRef) ), EdgeHeadedRefs),
-    maplist(rel_ddl(EdgeHeadedRefs), RelPlans, DdlGroups), append(DdlGroups, Ddl),
+    maplist(rel_ddl(EdgeHeadedRefs), RelPlans, RelationDdlGroups),
+    maplist(delta_ddl, RelPlans, DeltaDdlGroups),
+    append(RelationDdlGroups, RelationDdl),
+    append(DeltaDdlGroups, DeltaDdl),
+    append(RelationDdl, DeltaDdl, Ddl),
     include(arrival_target_relplan(ArrivalTargets), RelPlans, ArrivalRelPlans),
     maplist(arrival_statement, ArrivalRelPlans, ArrivalStatements),
     % PHASE C2 RULING 2: one rule may lower to MULTIPLE edgestmt entries now
@@ -679,6 +822,6 @@ boot_seed_statement_for(Initial, RelPlan, Statements) :- boot_seed_statement(Rel
 % Initial-seeded data starts at its real t=0 rows rather than empty.
 boot_level_recompute_statements(LevelStatements, BootStatements) :-
     findall(bootstmt(Sql, []),
-            ( member(levelstmt(_, DeleteSql, InsertSqls), LevelStatements),
+            ( member(levelstmt(_, DeleteSql, InsertSqls, _), LevelStatements),
               ( Sql = DeleteSql ; member(Sql, InsertSqls) ) ),
             BootStatements).

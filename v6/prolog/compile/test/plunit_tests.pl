@@ -126,13 +126,15 @@ test(demand_laziness_columns) :-
 % self-join filtered by a stamp column.
 test(switch_as_keyed_replace_edge_sql) :-
     lowered_for(switch_as_keyed_replace, Lowered),
-    Lowered = lowered(_, _, _, [edgestmt(open_scope/2, route_change/2, HeadColumns, KeyColumns, ProjectSql, UpsertSql)], _, _, _, _),
+    Lowered = lowered(_, _, _, [edgestmt(open_scope/2, route_change/2, HeadColumns, KeyColumns, ProjectSql, UpsertSql, DeltaProjectSql)], _, _, _, _),
     HeadColumns == [session_id, target],
     KeyColumns == [session_id],
     ProjectSql ==
       'SELECT ?1 AS "session_id", json_object(\'fn\', \'route_data\', \'args\', json_array(?2)) AS "target"',
     UpsertSql ==
-      'INSERT INTO "open_scope" ("session_id", "target") VALUES (?, ?) ON CONFLICT("session_id") DO UPDATE SET "target" = excluded."target"'.
+      'INSERT INTO "open_scope" ("session_id", "target") VALUES (?, ?) ON CONFLICT("session_id") DO UPDATE SET "target" = excluded."target"',
+    DeltaProjectSql ==
+      'SELECT d0."session_id" AS "session_id", json_object(\'fn\', \'route_data\', \'args\', json_array(d0."route_id")) AS "target" FROM "__delta_route_change" d0 WHERE d0."_sign" = 1 ORDER BY d0."_sequence"'.
 
 % An edge-headed keyed rel's table must carry PRIMARY KEY on the KEY
 % COLUMNS ALONE, matching the UPSERT's ON CONFLICT target -- SQLite
@@ -161,7 +163,7 @@ ddl_for_table(Table, Ddl) :-
 test(switch_as_keyed_replace_level_sql) :-
     lowered_for(switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    LevelStatements = [levelstmt(demanded/2, DemandedDelete, [DemandedInsert]), levelstmt(route_view/2, RouteViewDelete, [RouteViewInsert])],
+    LevelStatements = [levelstmt(demanded/2, DemandedDelete, [DemandedInsert], _), levelstmt(route_view/2, RouteViewDelete, [RouteViewInsert], _)],
     DemandedDelete == 'DELETE FROM "demanded"',
     DemandedInsert == 'INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_scope" b0',
     RouteViewDelete == 'DELETE FROM "route_view"',
@@ -172,12 +174,24 @@ test(demand_laziness_no_edge_rules) :-
     lowered_for(demand_laziness_effect_rows, Lowered),
     Lowered = lowered(_, _, _, [], _, _, _, _).
 
+test(demand_laziness_incremental_arrival_is_one_batch_statement) :-
+    lowered_for(demand_laziness_effect_rows, Lowered),
+    Lowered = lowered(_, _, ArrivalStatements, _, _, _, _, _),
+    memberchk(arrivalstmt(open_feed/2, set, _, _, IncrementalAddSql, _),
+              ArrivalStatements),
+    IncrementalAddSql ==
+      'INSERT OR IGNORE INTO "open_feed" ("session_id", "target") SELECT json_extract(value, \'$[0]\'), json_extract(value, \'$[1]\') FROM json_each(?) RETURNING "session_id", "target"'.
+
 test(demand_laziness_level_sql) :-
     lowered_for(demand_laziness_effect_rows, Lowered),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    LevelStatements = [levelstmt(demanded/2, _, [DemandedInsert]), levelstmt(effect_call/1, _, [EffectCallInsert])],
+    LevelStatements = [levelstmt(demanded/2, _, [DemandedInsert], DemandedDeltaInsert), levelstmt(effect_call/1, _, [EffectCallInsert], EffectCallDeltaInsert)],
     DemandedInsert == 'INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_feed" b0',
-    EffectCallInsert == 'INSERT OR IGNORE INTO "effect_call" ("target") SELECT b0."target" FROM "demanded" b0'.
+    EffectCallInsert == 'INSERT OR IGNORE INTO "effect_call" ("target") SELECT b0."target" FROM "demanded" b0',
+    DemandedDeltaInsert ==
+      'INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT DISTINCT d0."target", d0."session_id" FROM "__delta_open_feed" d0 WHERE d0."_sign" = 1 RETURNING "target", "session_id"',
+    EffectCallDeltaInsert ==
+      'INSERT OR IGNORE INTO "effect_call" ("target") SELECT DISTINCT d0."target" FROM "__delta_demanded" d0 WHERE d0."_sign" = 1 RETURNING "target"'.
 
 % Round 2: one plain "read every row" query per rel (log and set alike) --
 % no __prev shadow table, no EXCEPT, no tick filter. The runtime (or, for
@@ -200,17 +214,19 @@ test(canonical_column_expr_shape) :-
 test(switch_as_keyed_replace_delta_sql_open_scope) :-
     lowered_for(switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, _, _, _, _, DeltaStatements, _, _),
-    memberchk(deltastmt(open_scope/2, SelectSql), DeltaStatements),
+    memberchk(deltastmt(open_scope/2, SelectSql, __delta_open_scope, BoundarySql), DeltaStatements),
     once(sub_atom(SelectSql, _, _, _, 'FROM "open_scope"')),
     once(sub_atom(SelectSql, _, _, _, 'json_valid("target")')),
     once(sub_atom(SelectSql, _, _, _, 'json_valid("session_id")')),
     once(sub_atom(SelectSql, _, _, _, 'AS "session_id"')),
-    once(sub_atom(SelectSql, _, _, _, 'AS "target"')).
+    once(sub_atom(SelectSql, _, _, _, 'AS "target"')),
+    once(sub_atom(BoundarySql, _, _, _, 'FROM "__delta_open_scope"')),
+    once(sub_atom(BoundarySql, _, _, _, '"_sign" IN (-1, 1)')).
 
 test(switch_as_keyed_replace_delta_sql_route_change_log) :-
     lowered_for(switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, _, _, _, _, DeltaStatements, _, _),
-    memberchk(deltastmt(route_change/2, SelectSql), DeltaStatements),
+    memberchk(deltastmt(route_change/2, SelectSql, __delta_route_change, _), DeltaStatements),
     once(sub_atom(SelectSql, _, _, _, 'FROM "route_change"')),
     once(sub_atom(SelectSql, _, _, _, 'json_valid("route_id")')),
     once(sub_atom(SelectSql, _, _, _, 'AS "route_id"')).
