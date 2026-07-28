@@ -273,8 +273,25 @@ departure/derived-edge fixtures; P0 emitted fixture-specific modules
 graded through ScratchStore+TickFold); COUNT_CYCLE_RESEED (departure
 coverage acyclic; cyclic P3 rides the retraction verdict's reseed);
 CARTESIAN_CURRENT_SCAN (fork fixture has no equality predicate;
-current side scans). P1-P4 now have proven shapes; P1 dispatchable on
-user word. PROCESS FINDING (codex lane): the codex sandbox cannot
+current side scans). P1-P4 now have proven shapes.
+EMITTER P1 LANDED same sitting (merge on main after fcb47777, codex
+sol no-commit flow, coordinator verified EVERYTHING on the branch:
+sweep 31/28/0 per-fixture unchanged BOTH modes, conformance 110,
+plunit 18/18, roundtrip, tsv2 6/6, import gate, tsgo clean):
+incremental delta-join emitter is the DEFAULT for non-recursive level
+rules; tick log computed FROM the delta stream (host_residency ruling
+satisfied on the incremental path); SPREFA_TSV2_EMITTER_MODE=naive =
+the snapshot referee; automatic naive fallback on retraction ticks,
+negative bodies, edge+level mixed rels (P2/P3 scope). SCALE: s1/100k
+177s -> 2.1s (84x), s2/100k 183s -> 1.1s (165x), ms/1k-arrivals FLAT
+(s2: 15.8/11.7/11.1), s3/1k naive-OOM -> 6.5s under 512MB, statement
+counts flat, all delta-side reads indexed SEARCH (p1-receipts.jsonl).
+OBSERVABILITY-COST EXPERIMENT (coordinator scratch, DL_NO_OBS flag,
+reverted, receipts in the merge message): s2/10k 1894 -> 199ms
+(~=v1's 195ms), s2/100k 183s -> 10.2s naive-minus-snapshots (beats
+v1's 17s) -- the WHOLE 10x-vs-v1 gap was boundary snapshot reads, v1
+never paid the tick-log obligation (v1_scale_bench.ts emits no delta
+log; asymmetry now noted here). P1 makes the obligation O(delta). PROCESS FINDING (codex lane): the codex sandbox cannot
 write git metadata for coordinator-cut worktrees (.git/worktrees/*
 is outside its writable roots) -- sol STOPPED AND REPORTED per the
 dispatch law twice (ff-only, then git add); coordinator verified
