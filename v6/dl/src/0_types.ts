@@ -343,12 +343,28 @@ export interface PerfEffectEntry {
   readonly status: "done" | "cache_hit" | "error";
 }
 
-/** One file's extract phase (extractFile + toFactLines only, NOT the commit that
- *  follows — 4_ingest.ts). `diff_size` is toInsert.length + toRetract.length summed
- *  across every spine rel. */
+/** One file's ingest, split into every sub-span `ingestFile` (4_ingest.ts) times
+ *  around its existing calls (attribution work for the unexplained-3s perf hunt,
+ *  plans/2026-07-27-v5-port-perf-header.md):
+ *   - `read_ms`: the file read (`fs.readFileSync`) + content hash, one IO shared by
+ *     both (see 4_ingest.ts's `contentHashOf` doc). Zero on the delete-file path.
+ *   - `extract_wall_ms`: `extractFile` draining start to finish — spawn through
+ *     process close, so subprocess startup cost is visible here, not folded into
+ *     `read_ms`/`fact_ms`. Zero on the delete-file path.
+ *   - `fact_ms`: the whole `toFactLines` call (F2 mapping + the span_line byte
+ *     scan), INCLUDING `read_ms` as a nested subset — `fact_ms >= read_ms` always
+ *     holds when a file was read. Zero on the delete-file path.
+ *   - `diff_ms`: the SPINE_REL_SCHEMA loop — `rt.rows(relName)` per rel plus the
+ *     `differenceWith` insert/retract computation.
+ *   - `commit_ms`: the `rt.commit(...)` await.
+ *  `diff_size` is toInsert.length + toRetract.length summed across every spine rel. */
 export interface PerfIngestEntry {
   readonly path: string;
-  readonly extract_ms: number;
+  readonly read_ms: number;
+  readonly extract_wall_ms: number;
+  readonly fact_ms: number;
+  readonly diff_ms: number;
+  readonly commit_ms: number;
   readonly fact_lines: number;
   readonly diff_size: number;
 }
@@ -391,8 +407,9 @@ export interface IPerfTrace {
   finishSqlTrace(tick: number): void;
   /** One finished host effect (1_hosts.ts, HostRunner.runEffectOnce). */
   effectDone(tick: number, host: string, effectId: number, ms: number, status: "done" | "cache_hit" | "error"): void;
-  /** One finished file's extract phase (4_ingest.ts, ingestFile). */
-  ingestDone(tick: number, path: string, extractMs: number, factLines: number, diffSize: number): void;
+  /** One finished file's ingest, every sub-span already measured by the caller
+   *  (4_ingest.ts, ingestFile) — see PerfIngestEntry for what each field covers. */
+  ingestDone(tick: number, entry: PerfIngestEntry): void;
   /** The tick-boundary hook (3_runtime.ts, clearScratchRels): schedules this tick's
    *  JSONL line for emission once the current tick's caller-side continuation (the
    *  effectDone/ingestDone call right after `await rt.commit(...)`) has had a chance
