@@ -42,8 +42,8 @@ print_dl_to_file(prog(Decls, Rules), Bindings, FilePath) :-
         close(Stream)).
 
 print_dl_program(prog(Decls, Rules), Bindings, Text) :-
-    decl_ref_order(Decls, Refs),
-    maplist(decl_line(Decls, Rules, Bindings), Refs, DeclLines),
+    decl_ref_order(Decls, DeclItems),
+    maplist(decl_line(Decls, Rules, Bindings), DeclItems, DeclLines),
     maplist(rule_line(Bindings), Rules, RuleLines),
     ( DeclLines == [] -> DeclBlock = "" ; atomic_list_concat(DeclLines, DeclBlock) ),
     ( RuleLines == [] -> RuleBlock = "" ; atomic_list_concat(RuleLines, RuleBlock) ),
@@ -62,15 +62,17 @@ print_dl_program(prog(Decls, Rules), Bindings, Text) :-
 % column names rel_columns/4 mines), so nothing is actually hidden.
 
 decl_ref_order(Decls, Order) :-
-    findall(Ref,
+    findall(Item,
             ( member(Decl, Decls),
-              ( Decl = kind(Ref, log)
-              ; Decl = keyed(Ref, _)
-              ; Decl = keep(Ref, _)
-              ; Decl = col_type(Ref, _, _)
-              )
+              decl_order_item(Decl, Item)
             ), Refs0),
     dedup_preserve_order(Refs0, Order).
+
+decl_order_item(enum_decl(Name, Variants), enum_decl(Name, Variants)).
+decl_order_item(kind(Ref, log), Ref).
+decl_order_item(keyed(Ref, _), Ref).
+decl_order_item(keep(Ref, _), Ref).
+decl_order_item(col_type(Ref, _, _), Ref).
 
 dedup_preserve_order(List, Deduped) :-
     dedup_preserve_order_(List, [], RevDeduped),
@@ -88,6 +90,10 @@ dedup_preserve_order_([X | Xs], Acc, Out) :-
 % drop an entry the round-trip needs bit-for-bit (see the module-level note
 % above decl_ref_order/2). ═══════════════════════════════════════════════
 
+decl_line(_, _, _, enum_decl(Name, Variants), Line) :-
+    !,
+    print_enum_variants(Variants, VariantsText),
+    format(atom(Line), "rel ~w(~w).~n", [Name, VariantsText]).
 decl_line(Decls, Rules, Bindings, Ref, Line) :-
     Ref = Name/_Arity,
     rel_columns(Decls, Rules, Bindings, Ref, Columns),
@@ -117,6 +123,24 @@ print_decl_modifier(keep(_, count(N)), Text) :- !, format(atom(Text), "keep(coun
 print_decl_modifier(keyed(_, Positions), Text) :-
     atomic_list_concat(Positions, ', ', PosText),
     format(atom(Text), "key(~w)", [PosText]).
+
+print_enum_variants((Left ; Right), Text) :-
+    !,
+    print_enum_variant(Left, LeftText),
+    print_enum_variants(Right, RightText),
+    format(atom(Text), "~w ; ~w", [LeftText, RightText]).
+print_enum_variants(Variant, Text) :-
+    print_enum_variant(Variant, Text).
+
+print_enum_variant(Variant, Text) :-
+    Variant =.. [Name | Fields],
+    maplist(print_enum_field, Fields, FieldTexts),
+    atomic_list_concat(FieldTexts, ', ', FieldsText),
+    format(atom(Text), "~w(~w)", [Name, FieldsText]).
+
+print_enum_field(Field, Text) :-
+    Field =.. [':', ColumnName, TypeName],
+    format(atom(Text), "~w: ~w", [ColumnName, TypeName]).
 
 % ═══ rule line : `HeadText <- BodyText.` / `HeadText <+ BodyText.` ══════════
 

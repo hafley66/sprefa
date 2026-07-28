@@ -49,6 +49,8 @@ surface(max/1,          aggregate, no_refs,                      head(refuse(agg
 surface(json_array/1,   aggregate, no_refs,                      head(refuse(aggregate)),               refused).
 surface(json_object/2,  aggregate, no_refs,                      head(refuse(aggregate)),               refused).
 
+surface(enum_decl/2,     decl,      no_refs,                      decl(enum_variants),                    live).
+surface(';' /2,          decl,      no_refs,                      decl(enum_variant_separator),           live).
 surface(col_type/3,      decl,      no_refs,                      decl(column_type),                      live).
 surface(set/0,           decl,      no_refs,                      decl(refuse(removed_word)),            refused).
 

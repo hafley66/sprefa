@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"body_page":{"add":[[101,7]],"del":[]},"body_tag":{"add":[[101,"page"]],"del":[]}}}
+{"tick":2,"deltas":{"body_redirect":{"add":[[202,"/next"]],"del":[]},"body_tag":{"add":[[202,"redirect"]],"del":[]}}}

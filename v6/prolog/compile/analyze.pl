@@ -27,6 +27,7 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
+:- use_module('../0_enum_expand', [expand_enum_program/2]).
 :- use_module('../conformance/body', [rel_ref/2]).
 :- use_module(registry,
               [ surface_for_term/6,
@@ -439,7 +440,11 @@ check_edge_head_column_types_for_rule(RelPlans, (Head <+ Body)) :-
 % must not reference pre/1, now/1, decode/2 or json_each/2 (none of the two
 % target fixtures need them; lower.pl has no SQL shape for them yet).
 
-check_supported_subset(prog(Decls, Rules)) :-
+check_supported_subset(SugaredProg) :-
+    expand_enum_program(SugaredProg, ExpandedProg),
+    check_supported_subset_expanded(ExpandedProg).
+
+check_supported_subset_expanded(prog(Decls, Rules)) :-
     forall(( member(Rule, Rules), rule_reserved_construct(Rule, Construct) ),
            throw(unsupported_construct(Construct))),
     forall(( member(Rule, Rules), rule_is_edge(Rule) ), check_edge_rule_shape(Rule)),

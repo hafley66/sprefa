@@ -26,6 +26,7 @@
 :- module(compile, [ read_fixture_term/4, compile_fixture/3, compile_fixture/4, program_plan/2 ]).
 
 :- use_module(library(lists)).
+:- use_module('../0_enum_expand', [expand_enum_program/2]).
 :- use_module(analyze).
 :- use_module(strat).
 :- use_module(lower).
@@ -79,7 +80,8 @@ find_fixture(Stream, Name, Term, Bindings) :-
 %              program order for each occurrence; with at most one edge rule
 %              per target fixture this is a formality kept for generality).
 
-program_plan(fixture(Name, Prog, Initial, Schedule, _Expectations)-Bindings, Plan) :-
+program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindings, Plan) :-
+    expand_enum_program(SugaredProg, Prog),
     Prog = prog(Decls, Rules),
     check_supported_subset(Prog),
     % Union rule-derived refs with EVERY declared ref (analyze.pl:
