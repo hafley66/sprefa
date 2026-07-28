@@ -86,6 +86,10 @@ test(demand_laziness_rule_order) :-
     functor(DemandedHead, demanded, 2),
     functor(EffectCallHead, effect_call, 1).
 
+test(self_recursive_level_rule_remains_in_p2_order) :-
+    Rules = [(path(X, Y) <- path(X, Z), edge(Z, Y))],
+    once(strat:sql_rule_order(Rules, Rules)).
+
 :- end_tests(stratum_order).
 
 :- begin_tests(column_naming).
@@ -172,7 +176,7 @@ ddl_for_table(Table, Ddl) :-
 test(switch_as_keyed_replace_level_sql) :-
     lowered_for(switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    LevelStatements = [levelstmt(demanded/2, DemandedDelete, [DemandedInsert], _), levelstmt(route_view/2, RouteViewDelete, [RouteViewInsert], _)],
+    LevelStatements = [levelstmt(demanded/2, DemandedDelete, [DemandedInsert], _, _), levelstmt(route_view/2, RouteViewDelete, [RouteViewInsert], _, _)],
     DemandedDelete == 'DELETE FROM "demanded"',
     DemandedInsert == 'INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_scope" b0',
     RouteViewDelete == 'DELETE FROM "route_view"',
@@ -194,7 +198,7 @@ test(demand_laziness_incremental_arrival_is_one_batch_statement) :-
 test(demand_laziness_level_sql) :-
     lowered_for(demand_laziness_effect_rows, Lowered),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    LevelStatements = [levelstmt(demanded/2, _, [DemandedInsert], DemandedDeltaInsert), levelstmt(effect_call/1, _, [EffectCallInsert], EffectCallDeltaInsert)],
+    LevelStatements = [levelstmt(demanded/2, _, [DemandedInsert], DemandedDeltaInsert, _), levelstmt(effect_call/1, _, [EffectCallInsert], EffectCallDeltaInsert, _)],
     DemandedInsert == 'INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_feed" b0',
     EffectCallInsert == 'INSERT OR IGNORE INTO "effect_call" ("target") SELECT b0."target" FROM "demanded" b0',
     DemandedDeltaInsert ==
@@ -250,11 +254,54 @@ test(positive_edge_level_program_is_incremental) :-
     Lowered = lowered(_, _, _, EdgeStatements, LevelStatements, _, _, _),
     emit_ts:incremental_program_safe(Plan, EdgeStatements, LevelStatements, true).
 
-test(negative_level_body_remains_naive) :-
+test(negative_level_body_uses_incremental_reconcile) :-
     load_plan(merge_policy, Plan),
     lower_program(Plan, Lowered),
     Lowered = lowered(_, _, _, EdgeStatements, LevelStatements, _, _, _),
-    emit_ts:incremental_program_safe(Plan, EdgeStatements, LevelStatements, false).
+    emit_ts:incremental_program_safe(Plan, EdgeStatements, LevelStatements, true),
+    emit_ts:reconcile_every_tick(Plan, true).
+
+test(acyclic_support_count_statements_are_emitted) :-
+    lowered_for(shared_demand_refcount, Lowered),
+    Lowered = lowered(_, Ddl, _, _, LevelStatements, _, _, _),
+    memberchk('CREATE TEMP TABLE "__support_next_effect_call" ("target" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("target")) WITHOUT ROWID', Ddl),
+    memberchk(levelstmt(effect_call/1, _, _, _,
+                        supportsql(ClearSql, SeedSql, UpdateSql,
+                                   CollectZeroSql, InsertNewSql)),
+              LevelStatements),
+    ClearSql == 'DELETE FROM "__support_next_effect_call"',
+    once(sub_atom(SeedSql, _, _, _, 'count(*) AS "__support_count"')),
+    once(sub_atom(UpdateSql, _, _, _, 'SET "__support_count" = "__support_count" -')),
+    CollectZeroSql == 'DELETE FROM "effect_call" WHERE "__support_count" <= 0 RETURNING "target"',
+    once(sub_atom(InsertNewSql, _, _, _, 'WHERE NOT EXISTS')).
+
+test(self_recursive_support_uses_recursive_cte_reseed) :-
+    RelPlans = [
+        relplan(root/1, set, [node], none, [int]),
+        relplan(edge/2, set, [parent, child], none, [int, int]),
+        relplan(path/1, set, [node], none, [int])
+    ],
+    Rules = [
+        (path(Node) <- root(Node)),
+        (path(Child) <- path(Parent), edge(Parent, Child))
+    ],
+    lower:level_support_sql(
+        RelPlans, path/1, Rules,
+        supportsql(_, SeedSql, _, _, _)),
+    once(sub_atom(
+        SeedSql, _, _, _,
+        'WITH RECURSIVE "path" ("node") AS')),
+    once(sub_atom(SeedSql, _, _, _, 'FROM "path" b0')),
+    Plan = plan(test, prog([], Rules), RelPlans, [], Rules, []),
+    emit_ts:retraction_guard(Plan, 'recursive-cte-reseed').
+
+test(set_delete_arrival_is_one_json_batch_statement) :-
+    lowered_for(shared_demand_refcount, Lowered),
+    Lowered = lowered(_, _, ArrivalStatements, _, _, _, _, _),
+    memberchk(arrivalstmt(open_feed/2, set, _, _, _, IncrementalDelSql),
+              ArrivalStatements),
+    IncrementalDelSql ==
+      'DELETE FROM "open_feed" WHERE ("session_id", "target") IN (SELECT json_extract(value, \'$[0]\'), json_extract(value, \'$[1]\') FROM json_each(?)) RETURNING "session_id", "target"'.
 
 :- end_tests(incremental_mode).
 

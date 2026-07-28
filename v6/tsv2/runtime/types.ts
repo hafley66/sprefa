@@ -120,6 +120,7 @@ export interface IIncrementalRelationPlan {
   readonly nextFrontierTableName: string;
   readonly columns: readonly string[];
   readonly arrivalAddSql: string | null;
+  readonly arrivalDelSql: string | null;
   readonly boundarySql: string;
 }
 
@@ -140,10 +141,19 @@ export interface IIncrementalLevelStatement {
   readonly insertSql: string;
   readonly selectSql: string;
   readonly recomputeSql: string;
+  readonly supportSql: readonly [
+    clear: string,
+    seed: string,
+    update: string,
+    collectZero: string,
+    insertNew: string,
+  ];
 }
 
 export interface IIncrementalProgramPlan {
   readonly safe: boolean;
+  readonly reconcileEveryTick: boolean;
+  readonly retractionGuard: "plain-count-acyclic" | "recursive-cte-reseed";
   readonly relations: readonly IIncrementalRelationPlan[];
   readonly edges: readonly IIncrementalEdgeStatement[];
   readonly levels: readonly IIncrementalLevelStatement[];
@@ -179,6 +189,7 @@ export interface IIncrementalRuntime {
     seam: ISqlSeam,
     statements: readonly IIncrementalLevelStatement[],
     relations: readonly IIncrementalRelationPlan[],
+    reconcileEveryTick: boolean,
   ): Observable<void>;
   readBoundary(
     seam: ISqlSeam,

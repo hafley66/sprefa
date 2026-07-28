@@ -55,7 +55,7 @@
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-extract/AGENTS.md](sprefa-extract/AGENTS.md) | 66 | sprefa-extract — Agent Guidance |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
-| [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
+| [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 167 | v6 store — retraction perf & completeness report |
 | [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
 | [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
 
@@ -792,17 +792,17 @@
 ```
 1:# v6 store — retraction perf & completeness report
 9:## DAG 60k — nodes≈60002, DAG
-22:## DAG 240k — nodes≈240002, DAG
-35:## DAG 960k — nodes≈960002, DAG
-48:## DAG 2.9M — nodes≈2880002, DAG
-61:## DAG 5.8M — nodes≈5760002, DAG
-74:## DAG 11.5M — nodes≈11520002, DAG
-87:## CYC 60k s7 — nodes≈60002, cyclic stride=7
-100:## CYC 960k s7 — nodes≈960002, cyclic stride=7
-113:## CYC 2.9M s7 — nodes≈2880002, cyclic stride=7
-126:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
-139:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
-152:## Breakpoint ramp — tight gun 700 MB
+23:## DAG 240k — nodes≈240002, DAG
+37:## DAG 960k — nodes≈960002, DAG
+51:## DAG 2.9M — nodes≈2880002, DAG
+64:## DAG 5.8M — nodes≈5760002, DAG
+77:## DAG 11.5M — nodes≈11520002, DAG
+90:## CYC 60k s7 — nodes≈60002, cyclic stride=7
+103:## CYC 960k s7 — nodes≈960002, cyclic stride=7
+117:## CYC 2.9M s7 — nodes≈2880002, cyclic stride=7
+130:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
+143:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
+156:## Breakpoint ramp — tight gun 700 MB
 ```
 
 ### sprefa-store/bench/out/REPORT.md

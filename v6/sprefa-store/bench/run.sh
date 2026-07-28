@@ -33,7 +33,7 @@ ENGINES=(
 # Scale sweep as "layers x width". Kept medium so a laptop survives.
 SCALES="${SCALES:-2x200 6x2000 8x20000 10x50000 14x80000}"
 
-echo "engine,nodes,edges,killed,setup_ms,retract_ms,ops,rss_mb" > "$CSV"
+echo "engine,nodes,edges,killed,setup_ms,retract_ms,ops,rss_mb,host_peak_mb,sqlite_hw_mb,db_mb" > "$CSV"
 
 for spec in "${ENGINES[@]}"; do
   IFS='|' read -r label bin env <<< "$spec"
@@ -55,6 +55,9 @@ for spec in "${ENGINES[@]}"; do
     env $env DL_MEMCAP_MB="$CAP" "$binpath" "$layers" "$width" >/dev/null 2>"$cell_log"
     status=$?
     line=$(grep '^CSV,' "$cell_log" | head -1 | cut -d, -f2-)
+    if [[ -n "$line" && "$(awk -F, '{print NF}' <<< "$line")" -eq 8 ]]; then
+      line="${line},N/A,N/A,N/A"
+    fi
     na_count=$(grep -c '^V1_NA' "$cell_log" || true)
     if [[ "$label" == "tsv2-gen" && "$status" -ne 0 && \
           "$(grep -c '^TSV2_ORACLE_DIFF' "$cell_log")" -gt 0 ]]; then
@@ -71,7 +74,7 @@ for spec in "${ENGINES[@]}"; do
     else
       # non-empty means it aborted/OOM'd at the cap: record as a wall hit.
       nodes=$(( 2 + layers * width ))
-      echo "$label,$nodes,,,,,WALL," >> "$CSV"
+      echo "$label,$nodes,,,,,WALL,,N/A,N/A,N/A" >> "$CSV"
       echo "WALL $label $s (hit the ${CAP}MB budget or failed)"
     fi
     rm -f "$cell_log"

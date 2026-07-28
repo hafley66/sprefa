@@ -8,6 +8,18 @@ import {
   incrementalPlan as switchIncrementalPlan,
   program as switchProgram,
 } from "../gen_emitted/switch_as_keyed_replace.ts";
+import {
+  incrementalPlan as retractionIncrementalPlan,
+  program as retractionProgram,
+} from "../gen_emitted/retraction_only_tick_retracts_level_view.ts";
+import {
+  incrementalPlan as sharedIncrementalPlan,
+  program as sharedProgram,
+} from "../gen_emitted/shared_demand_refcount.ts";
+import {
+  incrementalPlan as negativeIncrementalPlan,
+  program as negativeProgram,
+} from "../gen_emitted/merge_policy.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import type {
   IArrivalBatch,
@@ -21,13 +33,51 @@ import type {
 
 const BATCH_SIZE = 100;
 
-type Shape = "s1" | "s2" | "s3" | "p2-switch";
+type Shape =
+  | "s1"
+  | "s2"
+  | "s3"
+  | "p2-switch"
+  | "p3-retraction"
+  | "p3-shared"
+  | "p3-negative";
 
 function scheduleFor(shape: Shape, rows: number): readonly IArrivalBatch[] {
   if (shape === "p2-switch") {
     return [
       [{ rel: "route_change", sign: "add", row: ["session_one", "settings"] }],
       [{ rel: "route_change", sign: "add", row: ["session_one", "profile"] }],
+    ];
+  }
+  if (shape === "p3-retraction") {
+    return [
+      [
+        { rel: "source_row", sign: "add", row: ["alpha"] },
+        { rel: "source_row", sign: "add", row: ["beta"] },
+      ],
+      [
+        { rel: "source_row", sign: "del", row: ["alpha"] },
+        { rel: "source_row", sign: "del", row: ["beta"] },
+      ],
+    ];
+  }
+  if (shape === "p3-shared") {
+    return [
+      [
+        { rel: "open_feed", sign: "add", row: ["session_one", "alpha"] },
+        { rel: "open_feed", sign: "add", row: ["session_two", "alpha"] },
+      ],
+      [{ rel: "open_feed", sign: "del", row: ["session_one", "alpha"] }],
+      [{ rel: "open_feed", sign: "del", row: ["session_two", "alpha"] }],
+    ];
+  }
+  if (shape === "p3-negative") {
+    return [
+      [
+        { rel: "open_request", sign: "add", row: ["session_one", "tab_a"] },
+        { rel: "open_request", sign: "add", row: ["session_one", "tab_b"] },
+      ],
+      [{ rel: "close_request", sign: "add", row: ["session_one", "tab_a"] }],
     ];
   }
   if (shape === "s1") {
@@ -108,6 +158,27 @@ async function explainLevel(
   };
 }
 
+async function explainSupport(
+  seam: ISqlSeam,
+  statement: IIncrementalLevelStatement,
+): Promise<{
+  readonly headRel: string;
+  readonly statements: readonly {
+    readonly index: number;
+    readonly details: readonly string[];
+  }[];
+}> {
+  const statements = await Promise.all(
+    statement.supportSql.map(async (sql, index) => {
+      const result = await firstValueFrom(
+        seam.runner.execute(seam.db, `EXPLAIN QUERY PLAN ${sql}`),
+      );
+      return { index, details: result.rows.map((row) => String(row.detail)) };
+    }),
+  );
+  return { headRel: statement.headRel, statements };
+}
+
 async function explainBoundary(
   seam: ISqlSeam,
   relation: IIncrementalRelationPlan,
@@ -127,9 +198,12 @@ async function main(): Promise<void> {
     shapeArg !== "s1" &&
     shapeArg !== "s2" &&
     shapeArg !== "s3" &&
-    shapeArg !== "p2-switch"
+    shapeArg !== "p2-switch" &&
+    shapeArg !== "p3-retraction" &&
+    shapeArg !== "p3-shared" &&
+    shapeArg !== "p3-negative"
   ) {
-    throw new Error("p1-receipts: shape must be s1, s2, s3, or p2-switch");
+    throw new Error("p1-receipts: unknown receipt shape");
   }
   const rows = Number(rowsArg);
   if (
@@ -139,16 +213,26 @@ async function main(): Promise<void> {
   ) {
     throw new Error("p1-receipts: rows must be a positive multiple of 100");
   }
-  const selectedPlan: IIncrementalProgramPlan =
-    shapeArg === "p2-switch" ? switchIncrementalPlan : incrementalPlan;
-  const selectedProgram: ProgramWithBoot =
-    shapeArg === "p2-switch" ? switchProgram : program;
+  const selected = shapeArg === "p2-switch"
+    ? { plan: switchIncrementalPlan, program: switchProgram }
+    : shapeArg === "p3-retraction"
+    ? { plan: retractionIncrementalPlan, program: retractionProgram }
+    : shapeArg === "p3-shared"
+    ? { plan: sharedIncrementalPlan, program: sharedProgram }
+    : shapeArg === "p3-negative"
+    ? { plan: negativeIncrementalPlan, program: negativeProgram }
+    : { plan: incrementalPlan, program };
+  const selectedPlan: IIncrementalProgramPlan = selected.plan;
+  const selectedProgram: ProgramWithBoot = selected.program;
   if (!selectedPlan.safe) throw new Error(`p1-receipts: ${shapeArg} lowered as unsafe`);
 
   const explainSeam = ScratchStore.open(":memory:");
   await runBoot(explainSeam, selectedProgram);
   const plans = await Promise.all(
     selectedPlan.levels.map((statement) => explainLevel(explainSeam, statement)),
+  );
+  const supportPlans = await Promise.all(
+    selectedPlan.levels.map((statement) => explainSupport(explainSeam, statement)),
   );
   const edgePlans = await Promise.all(
     selectedPlan.edges.map((statement) => explainEdge(explainSeam, statement)),
@@ -204,6 +288,10 @@ async function main(): Promise<void> {
     plans,
     edgePlans,
     boundaryPlans,
+    supportPlans,
+    incrementalSafe: selectedPlan.safe,
+    reconcileEveryTick: selectedPlan.reconcileEveryTick,
+    retractionGuard: selectedPlan.retractionGuard,
   };
   const line = JSON.stringify(receipt);
   if (recordPath !== undefined) appendFileSync(recordPath, `${line}\n`);
