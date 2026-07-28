@@ -5,7 +5,9 @@ kernel needs **zero stored engine rels and zero new tick phases**; switchMap is
 keyed replace on an ordinary program rel, flattening policy is the scope row's
 primary key shape, teardown is the ordinary IVM retraction cascade.
 
-Probes: `v6/prolog/labs/redteam_kernel.pl`, 27 checks, all PASS, self-contained
+Probes: `v6/prolog/labs/redteam_kernel.pl`, 27 checks, all PASS, self-contained.
+DELETED per lab protocol; last copy at commit d655bb2d, recover via
+`git show d655bb2d:v6/prolog/labs/redteam_kernel.pl`.
 (`swipl -q -l v6/prolog/labs/redteam_kernel.pl -g go -g halt`; `-g report` prints
 the round table). Lab under attack recovered and re-run green at 89/89 from
 `git show ac2aafdc:v6/prolog/labs/switch_flow.pl`.
