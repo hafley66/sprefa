@@ -259,8 +259,7 @@ coexistence_assignments(use_site,
 coexistence_assignments(hybrid,
     [route-entity, body_page-value, body_redirect-value, view-value]).
 
-% Count of policy words in the fully constructed route_tree: three route
-% rows, two page rows, one redirect row, and one shared view row.
+% Count of explicit value/entity choice words in each shown source.
 coexistence_policy_tokens(decl_word, 4).
-coexistence_policy_tokens(use_site, 7).
-coexistence_policy_tokens(hybrid, 7).
+coexistence_policy_tokens(use_site, 4).
+coexistence_policy_tokens(hybrid, 6).

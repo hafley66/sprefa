@@ -573,8 +573,8 @@ check(coexistence_spellings_assign_same_policies,
 
 check(coexistence_policy_token_counts,
       ( coexistence_policy_tokens(decl_word, 4),
-        coexistence_policy_tokens(use_site, 7),
-        coexistence_policy_tokens(hybrid, 7) )).
+        coexistence_policy_tokens(use_site, 4),
+        coexistence_policy_tokens(hybrid, 6) )).
 
 check(policy_specific_ddl_shapes,
       ( policy_ddl(value, view, ValueDdl),
