@@ -330,6 +330,73 @@ test(rejects_pre_in_level_body, [throws(unsupported_construct(level_body_goal(_,
 
 :- end_tests(supported_subset_gate).
 
+:- begin_tests(expression_miscompile_guards).
+
+% ═══ FAIL-FIRST CHECK (a): TEXT-collapse "1" vs 1 ═══════════════════════════
+% Written BEFORE the expression lift, per the arc contract, and red at three
+% distinct stages on the way in:
+%
+%   RED 1 (pre-lift)  : program_plan/2 throws
+%                       unsupported_construct(head_arithmetic(...)) -- the
+%                       phase-C guard that turned this exact miscompile into
+%                       a refusal.
+%   RED 2 (naive lift): the guard is gone and the arithmetic fuses into SQL,
+%                       but union_size/3's third column has NO literal
+%                       witness of its own (its only occurrences are the
+%                       head's `LeftSize + RightSize - Shared` compound and
+%                       jaccard's body variable `Union`), so PHASE C2 RULING
+%                       1's "zero witnesses -> text" default stores the
+%                       computed 12 in a TEXT column. The tick-log/final-state
+%                       encoder then prints "12" where the oracle prints 12,
+%                       AND `Union > 0` compares a TEXT-affinity column
+%                       against an integer literal.
+%   GREEN             : the level-head expression type reaches the column
+%                       (analyze.pl program_column_types/7), union_size col3
+%                       is INTEGER, and 12 crosses the boundary as 12.
+%
+% The type list, not the DDL text, is the assertion: lower.pl:column_def/3 is
+% the single reader of it, so a wrong type here is a wrong CREATE TABLE by
+% construction.
+
+test(head_arithmetic_column_is_int_not_text_collapse) :-
+    expressions_fixture_file(File),
+    once(( read_fixture_term(File, head_expression_evaluates_derived_column, Term, Bindings),
+           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _)) )),
+    memberchk(relplan(union_size/3, _, _, _, UnionTypes), RelPlans),
+    assertion(UnionTypes == [text, text, int]),
+    memberchk(relplan(callee_set_size/2, _, _, _, CalleeTypes), RelPlans),
+    assertion(CalleeTypes == [text, int]).
+
+% Same collapse one hop further out: `Sum := Base + Extra` binds a variable
+% the head then reads. The bind's own type has to reach over_budget/2's second
+% column or the comparison `Sum > 10` runs against TEXT affinity.
+test(bind_result_column_is_int_not_text_collapse) :-
+    expressions_fixture_file(File),
+    once(( read_fixture_term(File, bind_computes_derived_value_then_comparison_filters,
+                             Term, Bindings),
+           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _)) )),
+    memberchk(relplan(over_budget/2, _, _, _, Types), RelPlans),
+    assertion(Types == [text, int]).
+
+% concat/1 is the other direction of the same boundary: an Int piece
+% auto-converts to text inside the interpolation lowering target
+% (engine.pl:eval_expr concat -> atomic_list_concat), so the head column that
+% receives it must stay TEXT even though one of its inputs is an integer
+% column. A naive "any arithmetic-ish expression is int" rule would collapse
+% it the other way.
+test(concat_result_column_stays_text) :-
+    expressions_fixture_file(File),
+    once(( read_fixture_term(File, interpolation_desugars_to_concat, Term, Bindings),
+           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _)) )),
+    memberchk(relplan(message/3, _, _, _, Types), RelPlans),
+    assertion(Types == [text, int, text]).
+
+expressions_fixture_file(File) :-
+    test_dir_fact(Here),
+    atomic_list_concat([Here, '/../../conformance/fixtures/expressions.pl'], File).
+
+:- end_tests(expression_miscompile_guards).
+
 :- begin_tests(enum_decl_expansion).
 
 test(parser_retains_semicolon_enum_decl) :-

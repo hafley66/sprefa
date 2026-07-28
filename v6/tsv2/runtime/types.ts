@@ -217,6 +217,34 @@ export interface IGenProgram {
 // The scratch store (boot the seam, run a program's DDL once).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Boot statements (seeding Initial rows before tick 1).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One emitted boot statement: SQL plus the row values it binds. `boot` is an
+ * extra field beyond IGenProgram's five pinned names ("extend by adding
+ * fields, never renaming"); every harness that seeds a compiled program runs
+ * these after DDL and before the tick fold.
+ */
+export interface IBootStatement {
+  readonly sql: string;
+  readonly params: readonly (string | number)[];
+}
+
+export interface IBootRunner {
+  /**
+   * Run every boot statement in order. Integer params cross the driver seam
+   * as bigint, never as a plain JS `number`: `@libsql/client` binds a JS
+   * number as SQLite REAL, so a bound `1` lands in a TEXT-affinity column as
+   * the text "1.0" while `1n` lands as "1" (measured, not assumed --
+   * v6/tsv2/tests/bootBind.test.ts is the receipt). Same rule the emitted
+   * `bindArgs` helper and 1_incremental.ts already apply on every other bind
+   * path; the boot path was the one seam that bound raw.
+   */
+  run(seam: ISqlSeam, statements: readonly IBootStatement[]): Observable<void>;
+}
+
 export interface IScratchStore {
   /** Open a fresh SQLite connection (`:memory:` or `file:...`) and wrap it
    *  in a seam. Does not run any DDL. */
