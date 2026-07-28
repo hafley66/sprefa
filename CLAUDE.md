@@ -711,6 +711,13 @@ then match block sugar.
   discussion use ONLY rxjs, prolog, or SQL words. No invented terminology.
   Consequence under review: `only()` -> `latest()` (withLatestFrom), explicit
   `combine`/`zip`, `departed` -> rx-word candidate.
+  ENFORCED 2026-07-29 on "support" (user: datalog-paper jargon, out):
+  the concept is refCount, row-granular (count of derivations keeping a
+  row alive; zero = teardown; cycles never reach zero = the Rc leak).
+  Prose uses refCount NOW; identifier rename queued (rust store
+  supportEdges/supportPlan/retractThroughSupport, lowerSql supportPlan,
+  P3 emitter names) -- luna-shaped mechanical sweep, dispatch on word or
+  fold into the next emitter-touching arc.
 - **Every .dl snippet shown to the user carries its intended pure-rxjs
   lowering** (user-set 2026-07-28: "if u cant then we are not right"). A
   construct whose rx lowering cannot be written is a design defect.
