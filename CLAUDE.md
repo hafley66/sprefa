@@ -258,7 +258,17 @@ it today. Deletes lab OFFERED (support-zero vs fixpoint equivalence,
 cycle counterexample, retirement-as-history-move, C4 silent-prune),
 awaiting go. Scale bench brief DISPATCHED to luna
 (plans/2026-07-28-codex-scale-bench-brief.md): first tsv2 scale data,
-12-cell matrix, oracle cross-check rail.
+12-cell matrix, oracle cross-check rail. STORE-ADOPTION FINDINGS LANDED
+(plans/2026-07-28-store-adoption-findings.md, sonnet, merged): PREMISE
+CORRECTED -- the js store's cascade/reconcile is a generic liveness
+propagator over (tag,id) keys + cx_dep edges, NO joins; the actual
+derivation engine 3_runtime rides is lowerSql's DatalogEvaluator which
+does DELETE-all + rebuild per tick and lodash differenceWith diffing,
+the SAME naive shape as tsv2. The count-IVM-beat-DRed-4-5x receipt is
+the RUST store only (engine.ts header says so itself). Consequence: no
+js-store adoption win exists; the real tsv2 perf path is an incremental
+join engine (rust store port or new strategy), to be motivated by the
+scale bench curve. Prototype correctly declined with evidence.
 TYPES-AS-RELS LAB LANDED (merge 7a416fac, 36 PASS, lab deleted, last copy
 b58d1ece, verdict = plans/2026-07-28-types-as-rels-verdict.md): hypothesis
 HOLDS on the value plane -- one construct (rel), struct = rel+set with
