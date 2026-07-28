@@ -195,3 +195,16 @@ ruling(subscription_kernel, minimal_with_coverage_check_and_ghost_view, user,
 % stay types; the RELS over them are library.
 ruling(spine_residency, stdlib_rels_and_binds_not_kernel, user,
        'user 2026-07-27 late PM: spine hostable in the language instead of being core').
+
+% Clock residency: wall-clock cadence enters the system as a WORLD-FED BIND
+% (rows arriving like any other input, e.g. clock_bucket(period, bucket)),
+% never a new language construct and never kernel machinery. Rules cannot
+% observe time passing (nothing re-fires without an input row changing), so
+% time ticks in as ordinary arrivals; SWR/staleness policy is then plain
+% rules over latest state (keyed replace = latest wins) joined against the
+% clock rel -- the ghcacher F2 gap dissolves with zero construct-budget
+% cost. Consistent with spine_residency (clock is spine-shaped: a bind) and
+% with v5's clock(secs, bucket) builtin, re-homed as a bind per the ruling
+% above. Lifetimes stay matches; no bespoke freshness machinery.
+ruling(clock_residency, world_fed_bind_not_construct, user,
+       'user 2026-07-28 AM: "clock bind yes"; ghcacher findings F2 + the SWR-as-latest-state exchange').

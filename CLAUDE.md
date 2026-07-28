@@ -311,6 +311,21 @@ HOSTED IN THE LANGUAGE (stdlib rels + binds + salts over generic effect machiner
 never kernel; where the native concepts fail to host it intuitively, that is a
 language finding, not a reason to special-case the spine.
 
+### v6 rulings 2026-07-28 AM (rulings.pl is the record)
+- **typed columns** (tsv2): int decls -> INTEGER storage; compounds stay
+  inline-flat (punt); nested/reference storage model (struct-as-rel +
+  surrogate id, the intern-dictionary pattern) BANKED as a future header.
+- **unmarked edge triggers confirmed**: any-body-atom occurrence model (not
+  whole-world), only() = opt-in restriction; C2 agent implementing.
+- **clock_residency = world_fed_bind_not_construct** ("clock bind yes"):
+  cadence enters as ordinary bind rows; SWR = rules over latest state joined
+  with the clock rel; F2 gap dissolves at zero construct cost.
+  Implementation NOT yet dispatched: needs the one-line rx-shape check
+  (standing plan item 4) — proposed shape: one rx interval per declared
+  clock bind, merged into serveDl's app graph beside effects$.
+- **MERGED TO MAIN**: main fast-forwarded to the cleanup tip (aed4c155 ->
+  9f8b6edc, 92 commits).
+
 ### v6 still awaiting user word (small, none blocking the absorption arc)
 - **Q8 residual**: confirm left-of-arrow = demand key on effect rels, `Key()` never
   appears there (the shipped TS reading; extraction lab's preference).
