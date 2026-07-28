@@ -72,3 +72,18 @@ P4 index emission per program (the souffle-style specialization).
 - P3 BEHIND the sqlite_retraction lab verdict (its statement patterns).
 - Runner: sol-class (open lowering decisions per rule shape); briefs per
   phase, each phase = its own worktree + full-corpus byte-identity gate.
+
+## TEMPERING (user, same night): lab it, it aint godhood
+
+Inline generation is NOT a dogma. P0 becomes a LAB before any phase:
+prototype the incremental families on 3-4 fixtures and grade, per
+statement family, INLINE-SPECIALIZED vs ONE SHARED FUNCTION CALL:
+- inline when the SQL text genuinely differs per program (join shapes,
+  column lists) so specialization carries information;
+- a single runtime helper call when the code is common modulo
+  parameters -- generated-file linecount is a REAL criterion, and the
+  precedent already exists (selectRows, multisetDiff are helper calls
+  in generated files today).
+Lab deliverable: per-family verdict table (inline | helper | mixed) with
+linecount, readability, and perf columns; tick-log identity as always.
+The souffle framing survives only where the specialization pays.
