@@ -18,7 +18,7 @@
 %   (a) the tsv2 "term form made visible" spelling this file's own printer
 %       (print_dl.pl) emits into dl_view/*.dl -- <-/<+ arrows, latest/pre/
 %       departed/now/decode/json_each/:= as function-call-shaped body items,
-%       arithmetic infix, `rel Name(cols) log|set [keep(...)] [key(...)].`
+%       arithmetic infix, `rel Name(cols) log [keep(...)] [key(...)].`
 %       decls.
 %   (b) the existing v6/dl surface (v6/dl/grammar/dl.langium), read here so
 %       v6/dl/fixtures/ghcacher.dl and conformance.dl keep parsing: `rel
@@ -214,7 +214,7 @@ statement(Kind, Item, Vars0, Vars, S0, S) :-
     ; rule_stmt(Item0, Vars0, Vars1, S1, S2) -> Kind = rule, Item = Item0, Vars = Vars1, S = S2
     ).
 
-% ═══ dialect-A decl: `rel Name(col, ...) [log|set] [keep(all|count(N))]
+% ═══ dialect-A decl: `rel Name(col[: type], ...) [log] [keep(all|count(N))]
 % [key(P, ...)].` (EXT surface -- dl.langium has no kind/keyed/keep
 % expressed in one line at all, see SYNTAX.md). Every modifier is OPTIONAL
 % and they may appear in ANY order (a plain findall-in-order loop, not a
@@ -234,31 +234,60 @@ decl_a_stmt(DeclList, S0, S) :-
     ident(Name, S2, S3),
     ws0(S3, S4),
     lit_dcg(`(`, S4, S5),
-    decl_a_columns(Cols, S5, S6),
+    decl_a_columns(Specs, S5, S6),
     ws0(S6, S7),
     lit_dcg(`)`, S7, S8),
-    length(Cols, Arity),
+    length(Specs, Arity),
     Ref = Name/Arity,
+    column_spec_names(Specs, Cols),
     record_column_order(Name, Cols),
     ws0(S8, S9),
-    decl_a_modifiers(Ref, DeclList, S9, S10),
+    typed_decl_entries(Ref, Specs, TypedDecls),
+    decl_a_modifiers(Ref, Modifiers, S9, S10),
+    append(TypedDecls, Modifiers, DeclList),
     ws0(S10, S11),
     lit_dcg(`.`, S11, S).
 
 decl_a_modifiers(Ref, [Decl | Rest], S0, S) :-
     ( word(`log`, S0, S1) -> Decl = kind(Ref, log)
-    ; word(`set`, S0, S1) -> Decl = kind(Ref, set)
     ; keep_clause(Policy, S0, S1) -> Decl = keep(Ref, Policy)
     ; key_clause(Positions, S0, S1) -> Decl = keyed(Ref, Positions)
     ), !,
     ws0(S1, S2),
     decl_a_modifiers(Ref, Rest, S2, S).
+decl_a_modifiers(Ref, Decls, S0, S) :-
+    word(`set`, S0, S1), !,
+    record_finding(unsupported_surface(removed_word(set))),
+    ws0(S1, S2),
+    decl_a_modifiers(Ref, Decls, S2, S).
 decl_a_modifiers(_, [], S, S).
 
 decl_a_columns([], S0, S) :- ws0(S0, S1), peek(0'), S1, S), !.
-decl_a_columns([Name | Rest], S0, S) :-
+decl_a_columns([Spec | Rest], S0, S) :-
+    decl_a_column(Spec, S0, S1), ws0(S1, S2),
+    ( lit_dcg(`,`, S2, S3) -> decl_a_columns(Rest, S3, S) ; Rest = [], S = S2 ).
+
+decl_a_column(column(Name, Type), S0, S) :-
     ws0(S0, S1), ident(Name, S1, S2), ws0(S2, S3),
-    ( lit_dcg(`,`, S3, S4) -> decl_a_columns(Rest, S4, S) ; Rest = [], S = S3 ).
+    ( lit_dcg(`:`, S3, S4)
+    -> ws0(S4, S5), typed_column_type(Type, S5, S)
+    ; Type = none, S = S3
+    ).
+
+typed_column_type(int, S0, S) :- word(`int`, S0, S), !.
+typed_column_type(text, S0, S) :- word(`text`, S0, S).
+
+column_spec_names([], []).
+column_spec_names([column(Name, _) | Rest], [Name | More]) :-
+    column_spec_names(Rest, More).
+
+typed_decl_entries(_, [], []).
+typed_decl_entries(Ref, [column(Column, Type) | Rest], Decls) :-
+    ( Type == none
+    -> Decls = More
+    ; Decls = [col_type(Ref, Column, Type) | More]
+    ),
+    typed_decl_entries(Ref, Rest, More).
 
 keep_clause(Policy, S0, S) :-
     word(`keep`, S0, S1), ws0(S1, S2), lit_dcg(`(`, S2, S3), ws0(S3, S4),
@@ -280,9 +309,8 @@ int_list([N | Rest], S0, S) :-
 % ═══ dialect-B decl: `rel ['(' INT ')'] Name(col: type, ...).` (real v6/dl
 % surface, dl.langium:28-30). Retention is parsed and RECORDED as a finding
 % (never lowered -- Key()/retention markers are frontier per the grammar's
-% own comment, dl.langium:38); every dialect-B rel becomes kind(Ref, set)
-% here, the closest already-modeled shape (plain membership, no keep policy
-% required by decl_keep/3's own `all` fallback). ═══════════════════════════
+% own comment, dl.langium:38). A bare dialect-B rel has the engine's set
+% fallback, so it contributes no synthetic kind(set) declaration.
 
 decl_b_stmt(DeclList, S0, S) :-
     word(`rel`, S0, S1),
@@ -296,16 +324,17 @@ decl_b_stmt(DeclList, S0, S) :-
     ident(Name, S4, S5),
     ws0(S5, S6),
     lit_dcg(`(`, S6, S7),
-    decl_b_columns(Name, Cols, S7, S8),
+    decl_b_columns(Name, Specs, S7, S8),
     ws0(S8, S9),
     lit_dcg(`)`, S9, S10),
     ws0(S10, S11),
     lit_dcg(`.`, S11, S),
-    length(Cols, Arity),
+    length(Specs, Arity),
     Ref = Name/Arity,
+    column_spec_names(Specs, Cols),
     record_column_order(Name, Cols),
     ( HasRetention == true -> record_finding(unsupported_surface(retention_marker(Ref, Retention))) ; true ),
-    DeclList = [kind(Ref, set)].
+    typed_decl_entries(Ref, Specs, DeclList).
 
 % Wrapper column types (Key(text)/Min(int)/Max(int)) parse -- and their
 % wrapper name is recorded as an unsupported_surface(column_type_wrapper(...))
@@ -319,14 +348,16 @@ decl_b_stmt(DeclList, S0, S) :-
 % since a future .dl file using them must not be silently mis-lowered.
 
 decl_b_columns(_, [], S0, S) :- ws0(S0, S1), peek(0'), S1, S), !.
-decl_b_columns(RelName, [ColName | Rest], S0, S) :-
+decl_b_columns(RelName, [column(ColName, Type) | Rest], S0, S) :-
     ws0(S0, S1), ident(ColName, S1, S2), ws0(S2, S3), lit_dcg(`:`, S3, S4),
-    ws0(S4, S5), coltype(Wrapper, S5, S6), ws0(S6, S7),
-    ( Wrapper == none
-    -> true
-    ; record_finding(unsupported_surface(column_type_wrapper(RelName, ColName, Wrapper)))
-    ),
+    ws0(S4, S5), decl_b_column_type(RelName, ColName, Type, S5, S6), ws0(S6, S7),
     ( lit_dcg(`,`, S7, S8) -> decl_b_columns(RelName, Rest, S8, S) ; Rest = [], S = S7 ).
+
+decl_b_column_type(_, _, int, S0, S) :- word(`int`, S0, S), !.
+decl_b_column_type(_, _, text, S0, S) :- word(`text`, S0, S), !.
+decl_b_column_type(RelName, ColName, none, S0, S) :-
+    coltype(Wrapper, S0, S),
+    record_finding(unsupported_surface(column_type_wrapper(RelName, ColName, Wrapper))).
 
 coltype(Wrapper, S0, S) :-
     ( word(`Key`, S0, S1) -> Wrapper = 'Key'

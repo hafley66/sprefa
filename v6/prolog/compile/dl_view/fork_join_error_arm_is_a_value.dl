@@ -1,6 +1,3 @@
-rel outcome_a(col1) set.
-rel outcome_b(col1) set.
-
 both_ok(BodyA, BodyB) <- outcome_a(ok(BodyA)), outcome_b(ok(BodyB)).
 any_failed(Status) <- outcome_a(error(Status)).
 any_failed(Status) <- outcome_b(error(Status)).

@@ -6,7 +6,7 @@
 %
 % Column names for decl lines are MINED, not reinvented: this file calls
 % analyze.pl's exported rel_kind/3, decl_key/3, decl_keep/3, declared_refs/2,
-% program_refs/2, rel_columns/4, snake_name/2 directly (read-only use of an
+% program_refs/2, rel_columns/5, snake_name/2 directly (read-only use of an
 % already-owned module, not a duplicate implementation -- the repo style law
 % against reinventing a mining pass that already exists elsewhere).
 %
@@ -16,13 +16,13 @@
 % would change meaning), atom literals single-quoted (every bare identifier
 % is a variable in this grammar -- see parse_dl.pl's module header for the
 % full reasoning), strings double-quoted, decls spelled
-% `rel Name(cols) log|set [keep(...)] [key(...)].`.
+% `rel Name(cols[: type]) log [keep(...)] [key(...)].`.
 
 :- module(print_dl, [ print_dl_program/3, print_dl_to_file/3 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
-:- use_module(analyze, [ rel_columns/4 ]).
+:- use_module(analyze, [ rel_columns/5 ]).
 :- use_module(registry,
               [ body_surface_for_term/6,
                 wrapper_lower_role/3
@@ -64,7 +64,11 @@ print_dl_program(prog(Decls, Rules), Bindings, Text) :-
 decl_ref_order(Decls, Order) :-
     findall(Ref,
             ( member(Decl, Decls),
-              ( Decl = kind(Ref, _) ; Decl = keyed(Ref, _) ; Decl = keep(Ref, _) )
+              ( Decl = kind(Ref, log)
+              ; Decl = keyed(Ref, _)
+              ; Decl = keep(Ref, _)
+              ; Decl = col_type(Ref, _, _)
+              )
             ), Refs0),
     dedup_preserve_order(Refs0, Order).
 
@@ -77,7 +81,7 @@ dedup_preserve_order_([X | Xs], Acc, Out) :-
     ; dedup_preserve_order_(Xs, [X | Acc], Out)
     ).
 
-% ═══ decl line : `rel Name(cols) [log|set] [keep(policy)] [key(positions)].`
+% ═══ decl line : `rel Name(cols[: type]) [log] [keep(policy)] [key(positions)].`
 % Reproduces EXACTLY the literal decl/2 entries this ref has in the original
 % Decls list, in their original relative order -- never rel_kind/3's or
 % decl_keep/3's fallback-merged view, which would silently synthesize or
@@ -86,9 +90,10 @@ dedup_preserve_order_([X | Xs], Acc, Out) :-
 
 decl_line(Decls, Rules, Bindings, Ref, Line) :-
     Ref = Name/_Arity,
-    rel_columns(Rules, Bindings, Ref, Columns),
-    atomic_list_concat(Columns, ', ', ColsText),
-    findall(Decl, ( member(Decl, Decls), decl_is_for_ref(Decl, Ref) ), RefDecls),
+    rel_columns(Decls, Rules, Bindings, Ref, Columns),
+    maplist(print_decl_column(Decls, Ref), Columns, ColumnTexts),
+    atomic_list_concat(ColumnTexts, ', ', ColsText),
+    findall(Decl, ( member(Decl, Decls), decl_is_modifier(Decl, Ref) ), RefDecls),
     maplist(print_decl_modifier, RefDecls, ModifierTexts),
     ( ModifierTexts == []
     -> ModifiersText = '', Sep = ''
@@ -96,11 +101,17 @@ decl_line(Decls, Rules, Bindings, Ref, Line) :-
     ),
     format(atom(Line), "rel ~w(~w)~w~w.~n", [Name, ColsText, Sep, ModifiersText]).
 
-decl_is_for_ref(kind(Ref, _), Ref).
-decl_is_for_ref(keep(Ref, _), Ref).
-decl_is_for_ref(keyed(Ref, _), Ref).
+decl_is_modifier(kind(Ref, log), Ref).
+decl_is_modifier(keep(Ref, _), Ref).
+decl_is_modifier(keyed(Ref, _), Ref).
 
-print_decl_modifier(kind(_, Kind), Text) :- format(atom(Text), "~w", [Kind]).
+print_decl_column(Decls, Ref, Column, Text) :-
+    ( memberchk(col_type(Ref, Column, Type), Decls)
+    -> format(atom(Text), "~w: ~w", [Column, Type])
+    ; Text = Column
+    ).
+
+print_decl_modifier(kind(_, log), Text) :- Text = log.
 print_decl_modifier(keep(_, all), Text) :- !, Text = 'keep(all)'.
 print_decl_modifier(keep(_, count(N)), Text) :- !, format(atom(Text), "keep(count(~w))", [N]).
 print_decl_modifier(keyed(_, Positions), Text) :-

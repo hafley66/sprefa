@@ -28,7 +28,7 @@ anywhere in the grammar (`ArgTerm := Var | Literal | Wildcard`,
 real `.dl` files: grepped both, neither ever writes a bareword atom constant;
 every constant is a quoted string (`"repos/cli/cli"`) or an int (`200`).
 
-The 110-fixture term-form corpus needs the opposite in places: a bareword
+The 112-fixture term-form corpus needs the opposite in places: a bareword
 constant-tag match is a real, critical construct:
 `fixtures/state_machine.pl`'s `phase(Endpoint, fetching)` matches the exact
 atom `fetching`, not a fresh variable. Since this parser is now canonical
@@ -79,6 +79,8 @@ the compiler inventory order. Edit the registry, then run the emitter.
 | `max/1` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
 | `json_array/1` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
 | `json_object/2` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
+| `col_type/3` | `decl` | `no_refs` | `decl(column_type)` | `live` |
+| `set/0` | `decl` | `no_refs` | `decl(refuse(removed_word))` | `refused` |
 <!-- END GENERATED surface/5 TABLE -->
 
 ### Core grammar and input aliases
@@ -88,7 +90,9 @@ construct inventory.
 
 | term-form shape | `.dl` spelling | parser treatment |
 |---|---|---|
-| `kind(Ref, log\|set)` | `log` / `set` after columns | declaration modifier |
+| `kind(Ref, log)` | `log` after columns | declaration modifier |
+| `col_type(Ref, Column, Type)` | `Column: int` / `Column: text` | typed declaration entry; source order is preserved |
+| removed `set` word | `set` after columns | `unsupported_surface(removed_word(set))` |
 | `keep(Ref, all\|count(N))` | `keep(all)` / `keep(count(N))` | declaration modifier |
 | `keyed(Ref, Positions)` | `key(P, P, ...)` | declaration modifier |
 | `(Head <- Body)` | `Head <- Body.` | level rule |
@@ -123,33 +127,30 @@ G1 is a `=@=` variant check over `prog(Decls, Rules)`, and `=@=` over a LIST
 is position- and content-exact: `[a, b] =@= [b, a]` is false, and
 `[kind(r,log), keep(r,all)] =@= [kind(r,log)]` is false even though
 `decl_keep/3`'s own fallback makes them mean the same thing at analysis
-time. `print_dl.pl` therefore reproduces the LITERAL `kind`/`keep`/`keyed`
-entries a ref has in the original `Decls` list, in their original relative
+time. `print_dl.pl` therefore reproduces the LITERAL `kind`/`keep`/`keyed`/
+`col_type` entries a ref has in the original `Decls` list, in their original relative
 order -- never `rel_kind/3`/`decl_keep/3`/`decl_key/3`'s fallback-merged
 view, and never a synthesized decl line for a ref that has zero entries
 (the extreme case: `expressions.pl`'s fixtures all have `Decls = []` even
 though their rules reference many rels -- the printed `.dl` text correctly
 shows zero decl lines for those, with the rule text alone still revealing
-every ref's name, arity, and column names via `analyze.pl:rel_columns/4`).
+every ref's name, arity, and column names via `analyze.pl:rel_columns/5`).
 
 ## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
 
-- **G1**: 110 / 110 fixtures round-trip (`parse_dl(print_dl(Term)) =@= Term`
+- **G1**: 112 / 112 fixtures round-trip (`parse_dl(print_dl(Term)) =@= Term`
   for every `fixture/5` in `v6/prolog/conformance/fixtures/*.pl`).
 - **G2**: both real files parse without error.
-  - `ghcacher.dl`: Decls 7, Rules 9, 8 findings (3 host decls + 3 matching
+  - `ghcacher.dl`: Decls 16, Rules 9, 8 findings (3 host decls + 3 matching
     probes + 2 query lines -- every one a genuine term-form GAP, not a
     parser defect).
-  - `conformance.dl`: Decls 23, Rules 28, 0 findings (the named/positional
+  - `conformance.dl`: Decls 29, Rules 28, 0 findings (the named/positional
     mix resolves silently, per the construct table above).
-- **G3**: `v6/prolog/conformance/go.pl` unchanged, 110 pass / 0 fail (this
-  parser edits nothing under `compile.pl`/`analyze.pl`/`strat.pl`/
-  `lower.pl`/`emit_ts.pl`, so this is a no-regression sanity check, not a
-  claim of new coverage).
+- **G3**: `v6/prolog/conformance/go.pl` unchanged, 112 pass / 0 fail.
 
 ## What `dl_view/*.dl` is
 
-Every fixture in the 110-fixture corpus, printed as `.dl` text by this
+Every fixture in the 112-fixture corpus, printed as `.dl` text by this
 parser's own printer, committed under `v6/prolog/compile/dl_view/`. This is
 the "language you can see" deliverable: inspect any file there to read a
 conformance fixture's PROGRAM (not its test scaffolding -- `Initial`,

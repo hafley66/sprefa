@@ -49,6 +49,9 @@ surface(max/1,          aggregate, no_refs,                      head(refuse(agg
 surface(json_array/1,   aggregate, no_refs,                      head(refuse(aggregate)),               refused).
 surface(json_object/2,  aggregate, no_refs,                      head(refuse(aggregate)),               refused).
 
+surface(col_type/3,      decl,      no_refs,                      decl(column_type),                      live).
+surface(set/0,           decl,      no_refs,                      decl(refuse(removed_word)),            refused).
+
 surface_for_term(Term, Functor/Arity, Axis, AnalyzeRole, LowerRole, Status) :-
     nonvar(Term),
     functor(Term, Functor, Arity),

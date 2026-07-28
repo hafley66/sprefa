@@ -58,10 +58,7 @@
 % trigger atom at boundaries only, never at the head of a chain).
 
 fixture(desugared_trace_equals_hand_written,
-  prog([ kind(watch/1, set),
-         kind(cache_tag/2, set),
-         kind(stars_of/2, set),
-         kind(subscribed_to/2, set),
+  prog([
          kind(every_300/1, log),  keep(every_300/1, all),
          kind(fetch/4, log),      keep(fetch/4, all),
          kind(demand_row/2, log), keep(demand_row/2, all),
@@ -103,10 +100,7 @@ fixture(desugared_trace_equals_hand_written,
 % at 6.
 
 fixture(trigger_marker_is_what_stops_backlog_replay,
-  prog([ kind(watch/1, set),
-         kind(cache_tag/2, set),
-         kind(stars_of/2, set),
-         kind(subscribed_to/2, set),
+  prog([
          kind(every_300/1, log),  keep(every_300/1, all),
          kind(fetch/4, log),      keep(fetch/4, all),
          kind(demand_row/2, log), keep(demand_row/2, all),
@@ -136,10 +130,7 @@ fixture(trigger_marker_is_what_stops_backlog_replay,
 % Carol's arrival re-fires the last rule against the standing folded_row and
 % replays the backlog she was never present for.
 fixture(unmarked_chain_replays_to_late_subscriber,
-  prog([ kind(watch/1, set),
-         kind(cache_tag/2, set),
-         kind(stars_of/2, set),
-         kind(subscribed_to/2, set),
+  prog([
          kind(every_300/1, log),  keep(every_300/1, all),
          kind(fetch/4, log),      keep(fetch/4, all),
          kind(demand_row/2, log), keep(demand_row/2, all),
@@ -175,10 +166,7 @@ fixture(unmarked_chain_replays_to_late_subscriber,
 % endpoint's response lands at tick 3 with nothing watching it; watch(other)
 % at tick 6 replays it and the whole chain runs again behind it.
 fixture(unmarked_first_stage_refires_on_late_watch,
-  prog([ kind(watch/1, set),
-         kind(cache_tag/2, set),
-         kind(stars_of/2, set),
-         kind(subscribed_to/2, set),
+  prog([
          kind(every_300/1, log),  keep(every_300/1, all),
          kind(fetch/4, log),      keep(fetch/4, all),
          kind(demand_row/2, log), keep(demand_row/2, all),
@@ -222,10 +210,7 @@ fixture(unmarked_first_stage_refires_on_late_watch,
 % engine's: 1 scheduled + 3 drains.
 
 fixture(pipe_stage_costs_one_tick,
-  prog([ kind(watch/1, set),
-         kind(cache_tag/2, set),
-         kind(stars_of/2, set),
-         kind(subscribed_to/2, set),
+  prog([
          kind(every_300/1, log),  keep(every_300/1, all),
          kind(fetch/4, log),      keep(fetch/4, all),
          kind(demand_row/2, log), keep(demand_row/2, all),
@@ -259,7 +244,7 @@ fixture(pipe_stage_costs_one_tick,
 % the replaced row's carry, so the trail is five ticks with a silent last one.
 
 fixture(chain_into_keyed_head_replaces,
-  prog([ kind(watch/1, set),
+  prog([
          kind(every_300/1, log),  keep(every_300/1, all),
          kind(fetch/4, log),      keep(fetch/4, all),
          kind(demand_row/2, log), keep(demand_row/2, all),
@@ -289,9 +274,7 @@ fixture(chain_into_keyed_head_replaces,
 % by the boundary in front of them.
 
 fixture(guard_stage_fires_on_negation_and_comparison,
-  prog([ kind(watch/1, set),
-         kind(stars_of/2, set),
-         kind(muted/1, set),
+  prog([
          kind(every_300/1, log),  keep(every_300/1, all),
          kind(fetch/4, log),      keep(fetch/4, all),
          kind(demand_row/2, log), keep(demand_row/2, all),
@@ -315,9 +298,7 @@ fixture(guard_stage_fires_on_negation_and_comparison,
 % consumed the carry produces nothing and the run stops one tick earlier (no
 % write means no carry means no further drain).
 fixture(guard_stage_silent_when_muted,
-  prog([ kind(watch/1, set),
-         kind(stars_of/2, set),
-         kind(muted/1, set),
+  prog([
          kind(every_300/1, log),  keep(every_300/1, all),
          kind(fetch/4, log),      keep(fetch/4, all),
          kind(demand_row/2, log), keep(demand_row/2, all),
@@ -339,9 +320,7 @@ fixture(guard_stage_silent_when_muted,
 
 % Same program, 42 stars: the comparison kills the write.
 fixture(guard_stage_silent_below_threshold,
-  prog([ kind(watch/1, set),
-         kind(stars_of/2, set),
-         kind(muted/1, set),
+  prog([
          kind(every_300/1, log),  keep(every_300/1, all),
          kind(fetch/4, log),      keep(fetch/4, all),
          kind(demand_row/2, log), keep(demand_row/2, all),

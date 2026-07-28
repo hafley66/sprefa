@@ -79,7 +79,7 @@
 % `scenario/1`.
 
 fixture(diag_scenario_seven_ticks_end_to_end,
-  prog([ kind(file_line/3, set),
+  prog([
          keyed(ratchet/2, [1]),
          keyed(hook_window/2, [1]),
          kind(diag_history/4, log), keep(diag_history/4, all) ],
@@ -223,9 +223,8 @@ fixture(diag_scenario_seven_ticks_end_to_end,
 % `now()` never arrives, so diag_history never sees this hazard at all and
 % stays at exactly 5.
 fixture(clock_rel_join_storms,
-  prog([ kind(file_line/3, set),
+  prog([
          keyed(ratchet/2, [1]),
-         kind(tick_rel/1, set),
          kind(diag_history/4, log), keep(diag_history/4, all),
          kind(diag_seen/4, log), keep(diag_seen/4, all) ],
        [ (diagnostic(Path, Line, Code, warning) <-

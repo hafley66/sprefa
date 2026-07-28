@@ -1,4 +1,1 @@
-rel result_a(value_a) set.
-rel result_b(value_b) set.
-
 combined(ValueA, ValueB) <- result_a(ValueA), result_b(ValueB).

@@ -1,4 +1,3 @@
-rel file_line(path, line, code) set.
 rel ratchet(code, allowed) key(1).
 rel hook_window(turn, since) key(1).
 rel diag_history(path, line, code, opened_at) log keep(all).

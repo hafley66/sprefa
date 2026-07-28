@@ -66,12 +66,14 @@ find_fixture(Stream, Name, Term, Bindings) :-
 %
 % plan(Name, Prog, RelPlans, ArrivalTargets, RuleOrder, EdgeRules)
 %   RelPlans: list of relplan(Ref, Kind, Columns, KeyPositionsOrNone,
-%             ColumnTypes) covering every ref program_refs/2 finds (arrival
+%             ColumnTypes) covering every ref program_refs/2 or typed
+%             declaration finds (arrival
 %             targets and derived rels alike -- the tick log envelope
 %             reports both). ColumnTypes (PHASE C2 RULING 1) is int|text per
 %             Columns position, inferred by analyze.pl:rel_column_types/5
-%             from the fixture's own literal values (Decls carries no column
-%             type syntax) -- lower.pl:column_def/3 is the only reader.
+%             from declaration types when present, otherwise from the
+%             fixture's own literal values -- lower.pl:column_def/3 is the
+%             only SQL storage reader.
 %   RuleOrder: level rules in strat.pl:sql_rule_order/2 order.
 %   EdgeRules: edge rules, program order (engine.pl tries edge rules in
 %              program order for each occurrence; with at most one edge rule
@@ -92,8 +94,8 @@ program_plan(fixture(Name, Prog, Initial, Schedule, _Expectations)-Bindings, Pla
     findall(relplan(Ref, Kind, Columns, KeyOrNone, ColumnTypes),
             ( member(Ref, AllRefs),
               rel_kind(Decls, Ref, Kind),
-              rel_columns(Rules, Bindings, Ref, Columns),
-              rel_column_types(Rules, Initial, Schedule, Ref, ColumnTypes),
+              rel_columns(Decls, Rules, Bindings, Ref, Columns),
+              rel_column_types(Decls, Rules, Initial, Schedule, Bindings, Ref, ColumnTypes),
               ( decl_key(Decls, Ref, Positions) -> KeyOrNone = key(Positions) ; KeyOrNone = none )
             ), RelPlans),
     % PHASE C2 RULING 1 x RULING 2: this needs RelPlans (ColumnTypes), so it

@@ -31,8 +31,7 @@ fixture(keyed_log_rejected,
 % An edge rule into an unkeyed Set rel is a type error (append into
 % membership dedup is one of the two, pick with a declaration).
 fixture(edge_into_unkeyed_set_rejected,
-  prog([ kind(ping/1, log), keep(ping/1, all),
-         kind(sink/1, set) ],
+  prog([ kind(ping/1, log), keep(ping/1, all) ],
        [ (sink(Item) <+ ping(Item)) ]),
   [],
   [ [ +ping(one) ] ],
@@ -100,7 +99,7 @@ fixture(unmarked_edge_replays_backlog,
 % view retracts, no edge fires. (Regression: the check_eventing promotion
 % found the engine failing silently on any net-shrinking tick.)
 fixture(retraction_only_tick_retracts_level_view,
-  prog([ kind(source_row/1, set) ],
+  prog([],
        [ (mirror(Item) <- source_row(Item)) ]),
   [],
   [ [ +source_row(alpha), +source_row(beta) ],
@@ -115,7 +114,7 @@ fixture(retraction_only_tick_retracts_level_view,
 % rules. Tick trace: +mirror at 1, -mirror at 2, departure fires at 3
 % (drain), closed_at's own write drains at 4.
 fixture(departed_fires_next_tick_on_retraction,
-  prog([ kind(source_row/1, set),
+  prog([
          kind(closed_at/2, log), keep(closed_at/2, all) ],
        [ (mirror(Item) <- source_row(Item)),
          (closed_at(Item, Tick) <+ finalize(mirror(Item)), now(Tick)) ]),
@@ -143,7 +142,7 @@ fixture(keyed_replace_departs_the_old_row,
 % Set arrivals dedup (q2: identical content is the same thing) while Log
 % arrivals stack: the same row delivered twice is one occurrence vs two.
 fixture(set_dedups_log_stacks,
-  prog([ kind(seen/1, set),
+  prog([
          kind(heard/1, log), keep(heard/1, all),
          kind(seen_count/1, log),  keep(seen_count/1, all),
          kind(heard_count/1, log), keep(heard_count/1, all) ],

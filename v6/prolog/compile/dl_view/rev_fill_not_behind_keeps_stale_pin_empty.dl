@@ -1,5 +1,5 @@
 rel pin_want(col1, dep_repo_id, ref_text) log keep(all).
-rel demand_rev(dep_repo_id, ref_text) set key(1, 2).
+rel demand_rev(dep_repo_id, ref_text) key(1, 2).
 rel rev_fill(dep_repo_id, ref_text, behind, ahead) log keep(all).
 rel rev_status(dep_repo_id, ref_text, behind, ahead) key(1, 2).
 

@@ -1,4 +1,3 @@
-rel watch(endpoint) set.
 rel every_300(bucket) log keep(all).
 rel fetch(endpoint, prev_tag, bucket, result) log keep(all).
 rel demand_row(endpoint, result) log keep(all).

@@ -1,6 +1,3 @@
-rel watch(endpoint) set.
-rel stars_of(body, stars) set.
-rel muted(endpoint) set.
 rel every_300(bucket) log keep(all).
 rel fetch(endpoint, col2, bucket, result) log keep(all).
 rel demand_row(endpoint, result) log keep(all).
