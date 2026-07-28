@@ -245,3 +245,9 @@ ruling(transition_rule_semantics, first_to_last_per_boundary_with_collapse_loggi
 % spelling (the semicolon) explicitly NOT ruled; user not sold.
 ruling(rel_default_policy, value_unkeyed, user,
        'user 2026-07-28 night: "rel default is value unkeyed, its a create table by itself, a literal dynamic replay subject"').
+
+% 2026-07-28 night. The variant separator in enum-shaped decls is
+% prolog's own disjunction: rel body(page(view: view) ; redirect(to:
+% text)). Zero new tokens; the pun is the point.
+ruling(enum_variant_separator, prolog_semicolon, user,
+       'user 2026-07-28 night: "semicolon as OR is ... yes please"').
