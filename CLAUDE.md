@@ -258,6 +258,30 @@ terms graded by the real harness, recoverable at
 SLOT-QUEUE-PACING, SLOT-ARM-ARGUMENT, SLOT-ERROR-VARIANT-NAME,
 SLOT-ERROR-TERMINALITY, SLOT-RETENTION-SPELLING, SLOT-COLLAPSE-CHANNEL,
 SLOT-BOOT-OCCURRENCE.
+EMITTER P0 LAB LANDED (merge 36977cb5, lab-death fcb47777, lab commit
+53fa1f54, verdict plans/2026-07-28-emitter-p0-lab-verdict.md; user
+unblocked sequencing before scale-bench landing; arc header =
+plans/2026-07-28-incremental-sql-emitter-header.md + tempering): 4
+statement families graded inline vs one-shared-helper on 4 fixtures,
+12/12 tick-log byte identity, ZERO delta-side scans (EXPLAIN receipts
+in the verdict). VERDICTS: semi-naive delta join MIXED (34 vs 7
+lines), count-IVM support HELPER (42 vs 7), DISTINCT placement MIXED,
+boundary-diff-from-delta-stream HELPER (16 vs 6, zero full-table
+snapshots execute). Statement counts flat per tick, no arrival-row
+loops. CRACKS: CURRENT_COMPILER_GATE (compiler refuses recursive/
+departure/derived-edge fixtures; P0 emitted fixture-specific modules
+graded through ScratchStore+TickFold); COUNT_CYCLE_RESEED (departure
+coverage acyclic; cyclic P3 rides the retraction verdict's reseed);
+CARTESIAN_CURRENT_SCAN (fork fixture has no equality predicate;
+current side scans). P1-P4 now have proven shapes; P1 dispatchable on
+user word. PROCESS FINDING (codex lane): the codex sandbox cannot
+write git metadata for coordinator-cut worktrees (.git/worktrees/*
+is outside its writable roots) -- sol STOPPED AND REPORTED per the
+dispatch law twice (ff-only, then git add); coordinator verified
+(lab exit 0, 12/12 identical, conformance 110 on branch, tsc clean)
+and committed the work itself. Older codex worktrees (unify, scale)
+committed fine; difference unexplained, check before next codex
+dispatch.
 TYPES ROUND 2 LANDED (merge b47d3c00, codex SOL, lab deleted, last copy
 20520177; verdict + plans/2026-07-28-types-as-rels-iteration-journal.md
 are the record): fixpoint in 4 rounds (36->46->56->66 PASS + zero-finding
