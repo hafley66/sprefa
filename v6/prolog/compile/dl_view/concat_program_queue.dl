@@ -2,7 +2,6 @@ rel open_request(session_id, tab_id) log keep(all).
 rel close_request(session_id, tab_id) log keep(all).
 rel closed(session_id, tab_id) log keep(all).
 rel drained(session_id, ordinal) log keep(all).
-rel tab_row(tab_id, body) set.
 rel open_tab(session_id, tab_id) key(1).
 rel queue_next(session_id, next) key(1).
 rel queue_slot(session_id, next, tab_id) key(1, 2).

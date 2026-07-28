@@ -221,7 +221,6 @@ fixture(level_view_reads_set_projection_not_occurrences,
 
 fixture(demand_view_fires_its_consumer_once,
   prog([ kind(stale/1, log), keep(stale/1, all),
-         kind(fetch_demand/1, set),
          kind(fetch_call/1, log), keep(fetch_call/1, all) ],
        [ (fetch_demand(Endpoint) <- stale(Endpoint)),
          (fetch_call(Endpoint) <+ fetch_demand(Endpoint)) ]),

@@ -6,11 +6,11 @@
 %     Ddl              : list of CREATE TABLE SQL strings.
 %     RelPlans         : list of relplan(Ref, log|set, Columns, key(Ps)|none,
 %                        ColumnTypes) -- ColumnTypes (PHASE C2 RULING 1) is a
-%                        int|text list parallel to Columns, inferred
-%                        upstream by analyze.pl:rel_column_types/5 from the
-%                        fixture's own literal values (Decls has no column
-%                        type syntax); column_def/3 below is the one place
-%                        that reads it.
+%                        int|text list parallel to Columns, chosen upstream
+%                        by analyze.pl:rel_column_types/7 from declaration
+%                        authority when present, otherwise from the fixture's
+%                        literal witnesses; column_def/3 below is the one
+%                        place that reads it.
 %     ArrivalStatements: list of arrivalstmt(Ref, Kind, AddSql, DelSqlOrNone,
 %                        IncrementalAddSql, IncrementalDelSqlOrNone).
 %     EdgeStatements   : list of edgestmt(HeadRef, TriggerRef, HeadColumns,

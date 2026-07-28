@@ -30,6 +30,11 @@
     "detail": ""
   },
   {
+    "name": "typed_int_without_literal_witness",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
     "name": "braces_in_head_position",
     "bucket": "identical",
     "detail": ""

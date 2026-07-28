@@ -10,7 +10,7 @@
 % filter + map in one rule: guard goal filters, head expression maps. The
 % view RETRACTS when the source row leaves (filter over a live set).
 fixture(filter_map_is_a_level_rule,
-  prog([ kind(reading/2, set) ],
+  prog([],
        [ (doubled(Name, Out) <- reading(Name, Value), Value >= 10, Out := Value * 2) ]),
   [ reading(cpu, 12), reading(disk, 4) ],
   [ [ +reading(net, 30) ],
@@ -34,7 +34,7 @@ fixture(repeat_is_a_self_carry_chain,
 % forkJoin: combined output exists only once EVERY input does; the empty
 % middle tick grades the silence while one arm is still outstanding.
 fixture(fork_join_is_a_conjunctive_body,
-  prog([ kind(result_a/1, set), kind(result_b/1, set) ],
+  prog([],
        [ (combined(ValueA, ValueB) <- result_a(ValueA), result_b(ValueB)) ]),
   [],
   [ [ +result_a(alpha) ],
@@ -46,7 +46,7 @@ fixture(fork_join_is_a_conjunctive_body,
 % forkJoin over ENVELOPES: failure is a value, so "any input errored" is a
 % second join, not an exception path; the ok join stays silent forever.
 fixture(fork_join_error_arm_is_a_value,
-  prog([ kind(outcome_a/1, set), kind(outcome_b/1, set) ],
+  prog([],
        [ (both_ok(BodyA, BodyB) <- outcome_a(ok(BodyA)), outcome_b(ok(BodyB))),
          (any_failed(Status) <- outcome_a(error(Status))),
          (any_failed(Status) <- outcome_b(error(Status))) ]),

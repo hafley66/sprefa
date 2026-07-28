@@ -1,5 +1,4 @@
 rel pin_extracted(from_span_id, to_repo_id, to_rev_id, to_path, kind) log keep(all).
-rel known_repo(to_repo_id) set.
 rel xref(from_span_id, to_repo_id, to_rev_id, to_path, col5, kind) key(1).
 
 xref(FromSpanId, ToRepoId, ToRevId, ToPath, 'none', Kind) <+ pin_extracted(FromSpanId, ToRepoId, ToRevId, ToPath, Kind).

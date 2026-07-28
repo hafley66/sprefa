@@ -2,8 +2,8 @@
 % relation kind (mirrors engine.pl:88-93 rel_kind/4, reimplemented here since
 % that predicate is not exported and depends only on Decls), which refs are
 % EDB (an arrival schedule may write them: never a rule head) vs derived
-% (headed by a level or edge rule), and per-ref column names mined from the
-% ORIGINAL surface variable names the caller recovers via
+% (headed by a level or edge rule), and per-ref column names mined from typed
+% declaration entries or the ORIGINAL surface variable names the caller recovers via
 % read_term(Stream, Term, [variable_names(Bindings)]) -- column identity comes
 % from the fixture source text, never invented here.
 %
@@ -19,7 +19,8 @@
             program_refs/2, arrival_target_refs/2, derived_refs/2,
             edge_headed_refs/2, level_headed_refs/2,
             rule_head_ref/2, rule_is_edge/1, rule_is_level/1,
-            body_ref_uses/2, rel_columns/4, rel_column_types/5, snake_name/2,
+            body_ref_uses/2, rel_columns/4, rel_columns/5,
+            rel_column_types/5, rel_column_types/7, snake_name/2,
             check_supported_subset/1, edge_trigger_shape/2,
             conjunction_goals/2, check_edge_head_column_types/2 ]).
 
@@ -145,7 +146,11 @@ comparison_goal(Goal) :-
 declared_refs(Decls, Refs) :-
     findall(Ref,
             ( member(Decl, Decls),
-              ( Decl = kind(Ref, _) ; Decl = keyed(Ref, _) ; Decl = keep(Ref, _) )
+              ( Decl = kind(Ref, _)
+              ; Decl = keyed(Ref, _)
+              ; Decl = keep(Ref, _)
+              ; Decl = col_type(Ref, _, _)
+              )
             ), Refs0),
     sort(Refs0, Refs).
 
@@ -182,6 +187,24 @@ arrival_target_refs(Rules, ArrivalRefs) :-
 rel_columns(Rules, Bindings, Name/Arity, Columns) :-
     numlist(1, Arity, Positions),
     maplist(column_name_at(Rules, Bindings, Name/Arity), Positions, Columns).
+
+rel_columns(Decls, Rules, Bindings, Ref, Columns) :-
+    Ref = _Name/Arity,
+    rel_columns(Rules, Bindings, Ref, InferredColumns),
+    findall(Column,
+            member(col_type(Ref, Column, _), Decls),
+            TypedColumns),
+    ( length(TypedColumns, Arity)
+    -> Columns = TypedColumns
+    ;  replace_declared_column_names(InferredColumns, TypedColumns, Columns)
+    ).
+
+replace_declared_column_names([], _, []).
+replace_declared_column_names([Column | Rest], TypedColumns, [Column | More]) :-
+    memberchk(Column, TypedColumns), !,
+    replace_declared_column_names(Rest, TypedColumns, More).
+replace_declared_column_names([Column | Rest], TypedColumns, [Column | More]) :-
+    replace_declared_column_names(Rest, TypedColumns, More).
 
 ref_occurrence_args(Rules, Ref, Args) :-
     member(Rule, Rules),
@@ -235,6 +258,33 @@ snake_codes([Code | Rest], Out) :-
 rel_column_types(Rules, Initial, Schedule, Name/Arity, Types) :-
     numlist(1, Arity, Positions),
     maplist(column_type_at(Rules, Initial, Schedule, Name/Arity), Positions, Types).
+
+rel_column_types(Decls, Rules, Initial, Schedule, Bindings, Ref, Types) :-
+    rel_columns(Decls, Rules, Bindings, Ref, Columns),
+    Ref = _Name/Arity,
+    numlist(1, Arity, Positions),
+    maplist(column_type_at_decl(Decls, Rules, Initial, Schedule, Ref, Columns),
+            Positions, Types).
+
+column_type_at_decl(Decls, Rules, Initial, Schedule, Ref, Columns, Position, Type) :-
+    nth1(Position, Columns, Column),
+    ( memberchk(col_type(Ref, Column, DeclaredType), Decls)
+    -> findall(WitnessType,
+                ( column_source_args(Rules, Initial, Schedule, Ref, Args),
+                  nth1(Position, Args, Witness),
+                  atomic(Witness),
+                  literal_witness_type(Witness, WitnessType)
+                ), WitnessTypes),
+       ( member(WitnessType, WitnessTypes), WitnessType \== DeclaredType
+       -> throw(unsupported_construct(
+                    decl_type_conflicts_witness(Ref, Position, DeclaredType, WitnessType)))
+       ; Type = DeclaredType
+       )
+    ; column_type_at(Rules, Initial, Schedule, Ref, Position, Type)
+    ).
+
+literal_witness_type(Witness, int) :- integer(Witness), !.
+literal_witness_type(_, text).
 
 column_type_at(Rules, Initial, Schedule, Ref, Position, Type) :-
     findall(Witness,

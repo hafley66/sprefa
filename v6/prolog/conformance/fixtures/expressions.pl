@@ -228,3 +228,21 @@ fixture(arithmetic_rejects_non_int_operand_at_runtime,
   [ text_value(not_a_number) ],
   [],
   [ throws(arith_on_non_int(not_a_number, 1)) ]).
+
+% Wave 2 declaration typing: the compiler has no literal witness for this
+% relation, so the declaration is the source of its INTEGER storage type.
+fixture(typed_int_without_literal_witness,
+  prog([ col_type(typed_input/1, value, int) ],
+       []),
+  [],
+  [],
+  []).
+
+% A declaration type that disagrees with a concrete witness is a compiler
+% refusal. The reference engine still treats the bare relation as a set.
+fixture(typed_int_contradicts_text_witness,
+  prog([ col_type(typed_conflict/1, value, int) ],
+       []),
+  [ typed_conflict(text_value) ],
+  [],
+  []).

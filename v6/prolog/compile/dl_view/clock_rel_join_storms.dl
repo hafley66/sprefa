@@ -1,6 +1,4 @@
-rel file_line(path, line, code) set.
 rel ratchet(col1, col2) key(1).
-rel tick_rel(at) set.
 rel diag_history(path, line, code, opened_at) log keep(all).
 rel diag_seen(path, line, code, at) log keep(all).
 
