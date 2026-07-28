@@ -1,0 +1,11 @@
+{
+  "name": "sqlite-udf-driver-probe",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@libsql/client": "0.17.4",
+    "better-sqlite3": "13.0.1",
+    "sqlite3": "5.1.7",
+    "sql.js": "1.13.0"
+  }
+}
