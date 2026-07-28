@@ -109,6 +109,86 @@ test("SSE teardown: activeSubscribeCount returns to baseline when the client soc
   }
 });
 
+test("HOL regression: a stalled program POST body does not block a later, well-formed POST", async () => {
+  const fixture = await bootTestServer();
+  try {
+    await fetch(`${fixture.base}/edb/program`, { method: "POST", body: TWO_LINE_PROGRAM });
+
+    // A raw request that declares a large Content-Length, writes a few bytes, and never
+    // calls .end() -- readBody's `req.on("end", ...)` never fires for this request, so
+    // its readProgram() call hangs indefinitely. Pre-fix, this request sat under the
+    // load-serializing concatMap and blocked every later program load behind it.
+    const stalledReq = http.request(`${fixture.base}/edb/program`, {
+      method: "POST",
+      headers: { "content-type": "text/plain", "content-length": String(10 * 1024 * 1024) },
+    });
+    stalledReq.on("error", () => {}); // destroyed below; a reset/abort error is expected then
+    stalledReq.write("rel stalled_marker(name: text).\n"); // far short of the declared length
+    stalledReq.flushHeaders();
+
+    try {
+      // A second, well-formed program POST issued strictly after the stalled one. Under
+      // `mergeMap` this is read and answered on its own; it must not wait on the stall.
+      const wellFormedResponse = await Promise.race([
+        fetch(`${fixture.base}/edb/program`, { method: "POST", body: TWO_LINE_PROGRAM }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("HOL timeout: second POST did not respond within 5s")), 5_000),
+        ),
+      ]);
+      assert.equal(wellFormedResponse.status, 200);
+    } finally {
+      await new Promise<void>((resolve) => {
+        stalledReq.once("close", () => resolve());
+        stalledReq.destroy();
+      });
+    }
+  } finally {
+    await teardownTestServer(fixture);
+  }
+});
+
+test("SSE regression: a program reload ends the client's response stream instead of orphaning it", async () => {
+  const fixture = await bootTestServer();
+  try {
+    await fetch(`${fixture.base}/edb/program`, { method: "POST", body: TWO_LINE_PROGRAM });
+    assert.equal(fixture.server.activeSubscribeCount(), 0);
+
+    let sseReq: http.ClientRequest | undefined;
+    const sseStreamEnded = new Promise<void>((resolve, reject) => {
+      sseReq = http.get(`${fixture.base}/subscribe/person`, (res) => {
+        assert.equal(res.statusCode, 200);
+        res.on("end", resolve);
+        res.on("error", reject);
+        res.resume(); // drain: nothing in this test reads the delta bodies
+      });
+      sseReq.on("error", reject);
+    });
+
+    try {
+      await waitUntil(async () => (fixture.server.activeSubscribeCount() === 1 ? true : undefined));
+
+      // Reload: the old runtime's deltas$ completes (3_runtime.ts dispose()), which must
+      // end this SSE client's response instead of leaving its socket open forever.
+      const reloadResponse = await fetch(`${fixture.base}/edb/program`, { method: "POST", body: TWO_LINE_PROGRAM });
+      assert.equal(reloadResponse.status, 200);
+
+      await Promise.race([
+        sseStreamEnded,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("SSE regression timeout: response stream did not end within 5s")), 5_000),
+        ),
+      ]);
+
+      await waitUntil(async () => (fixture.server.activeSubscribeCount() === 0 ? true : undefined));
+      assert.equal(fixture.server.activeSubscribeCount(), 0);
+    } finally {
+      sseReq?.destroy();
+    }
+  } finally {
+    await teardownTestServer(fixture);
+  }
+});
+
 test("POST /edb/:rel commits and GET /idb/:rel reads back", async () => {
   const fixture = await bootTestServer();
   try {
