@@ -442,6 +442,15 @@ language finding, not a reason to special-case the spine.
   read-by-name violates the magic-rel ban (needs a decl); repeat's arrival-tick salt
   collides on two same-tick resubscribes; `until(F)` formula presentation in CLI output.
 
+### Worktree dispatch law (user-set 2026-07-28, applies to every agent at every level)
+- Every worktree agent's FIRST action: `git merge --ff-only <sha>` where the
+  coordinator's prompt states the exact current main sha. If that fails, or the
+  worktree is missing expected trees, STOP AND REPORT. Working around a blocked
+  command through another mechanism (archive/tar, --no-verify, manual copying)
+  is a defect, never a fix — a permission denial ends the approach, full stop.
+- The coordinator verifies the agent's base sha in its first report and refuses
+  work built on any other base (cherry-pick at most, never a history merge).
+
 ### Lab protocol (user-set 2026-07-27, applies to every agent at every level)
 - **Planner seeds the header first.** Every lab starts from a planner-written contract
   file: the predicates/checks the lab must implement, the questions it must grade, and
