@@ -149,3 +149,43 @@ spellings with (a) decl surface, (b) generated DDL incl. edge tables,
 (c) two rules matching into it with SQL + rx lowerings, (d) tick logs for
 the domination scenario pair. No implementation outside the lab dir, no
 fixture edits, no engine claims without file:line.
+
+## ROUND 2 CONTRACT (user, 2026-07-28 evening; runner = codex gpt-5.6-sol)
+
+User words, condensed: fixpoint on finding and reaffirming the lab
+results; flush out more pros/cons on the ambiguities and fights,
+specifically ENTITY vs VALUE OBJECT (ids-as-unique vs content hash) --
+the user is NOT SOLD on struct = content-hash-every-column as the
+default; content hashes may carry a dense surrogate mate (fine); and the
+deliverable must include the ITERATION JOURNAL: how the agent validated
+idea N for reason M against ideas N-1..., how it reached the suggested
+arrangement, WHY things disagree wherever they disagree, and how both
+sides of a dichotomy can coexist WITHOUT implicit defaulting -- e.g.
+decomposed into DDL words vs body-language spellings.
+
+Round-2 requirements on top of the round-1 contract:
+1. RECOVER round 1: `git checkout b58d1ece -- v6/prolog/labs/types_as_rels/`
+   into the worktree; re-run; 36 PASS is the entry bar.
+2. FIXPOINT PROTOCOL: rounds of (a) actively try to break every prior
+   conclusion with new scenarios, (b) encode new findings as checks,
+   (c) stop only when a full round adds zero new findings. Journal each
+   round.
+3. ENTITY vs VALUE, both first-class, NO implicit default: value object
+   = content-addressed, immutable, refcount GC (round 1's plane); entity
+   = extrinsic unique id, mutable row history, explicit lifetime
+   (keyed/retention machinery), and note entities un-crack round 1's
+   cycle finding. For each policy: mutation, sharing, GC/deletion,
+   cycles, keyed interplay, tick-log shape. Then price the coexistence
+   decompositions: (a) DDL decl word per type, (b) body/use-site
+   spelling, (c) hybrid; each with the worked example re-shown.
+4. SURROGATE MATE: semantic identity = content hash, storage key = dense
+   int via the intern dictionary; validate this reconciles the round-1
+   dense-ints-vs-content-ids ruling collision; tick log prints VALUES.
+5. Re-affirm or amend every round-1 conclusion under BOTH policies
+   (cons lists, four-bit bundle, domination-by-support completeness --
+   state where support GC is complete only on the value plane and what
+   the entity plane pays instead).
+
+Extra deliverable: plans/2026-07-28-types-as-rels-iteration-journal.md
+(the numbered idea/compose/conflict/check log). Verdict file gains a
+ROUND 2 section; same PASS-only lab discipline; labs die on landing.
