@@ -136,15 +136,34 @@ descriptive-name rename.)
   identity (= the Key/Q8 ruling) and digest-vs-value for structured blob columns
   (the content_hash pattern).
 
-### v6 awaiting user rulings (consolidated 2026-07-27; full text in the cited plans)
-- ~~stale fill under a dead scope~~ RULED 2026-07-27 PM (rulings.pl
-  stale_fill_policy): surfaced as a kernel rel, program decides; drop = default,
-  admit/dead-letter = one-line rules. Rel shape owed by the switch_flow/absorption arc.
-- **sub-id/salt minting**: engine-minted salt means switch scopes never share an
-  in-flight request — the opposite of content-addressed dedup. Semantics fork, not a
-  detail. sub-forest ambiguity 3. User wants joint thinking; options laid out
-  2026-07-27 PM (per-scope vs content-addressed vs content-addressed-with-explicit-
-  freshness-column; note the TS runtime already ships content-addressed digests).
+### v6 awaiting user rulings (refreshed 2026-07-27 late PM with switch_flow evidence;
+full text: plans/2026-07-27-switch-flow.md ambiguities, plans/2026-07-27-sub-forest.md)
+- **FOREST MODEL vs MINIMAL KERNEL** (switch_flow ambiguity 1, blocks most others):
+  the lab's Q6 headline is that the minimal stored set is ZERO engine rels and zero
+  new tick phases — switchMap IS keyed replace on an ordinary program rel, the
+  flattening policy IS the scope row's primary key shape ([1]=switch, [1,2]=merge,
+  [1]+guard=exhaust), scope_done is an ordinary rule, concat's queue is a program rel
+  (and derived concat dequeues in ONE tick, beating the stored forest's two). Cost:
+  1 line becomes 3-5 per switch site; one static law (self-completion may not level-
+  rule over rows produced under its own scope); teardown-cascade cost UNMEASURED vs
+  range-DELETE (ambiguity 9, wants a lowering-tier benchmark before committing).
+- **stale-fill trichotomy** (switch_flow graded all three): orphan-as-a-row needs
+  ONE FEWER primitive than drop and collapses the fill tick-item into +Row; abort and
+  drop are observationally identical in the store; drop is the only reading that ADDS
+  a primitive (content-addressed demand cannot detect a stale fill). rulings.pl row
+  stays provisional until the user picks with this evidence in hand.
+- **sub-id/salt minting**: entangled with the above — per-instance identity exists
+  ONLY if drop is ruled. Options from 2026-07-27 PM stand (per-scope vs content-
+  addressed vs content-addressed + explicit freshness column; TS runtime already
+  ships content-addressed).
+- **switch on a multi-key register** (switch_flow ambiguity 6): one parent scope is
+  one flattening slot, so switch on a multi-key register silently serializes keys;
+  merge + per-key scope_done is the correct spelling; wants a static check, owner
+  unassigned.
+- **tabling verdict recorded** (plans/2026-07-27-tabling-verdict.md): SHIFTS
+  SEMANTICS — 97/97 corpus + 3/3 retraction stress byte-identical, but tabled \+
+  silently resolves non-stratifiable programs the engine correctly refuses
+  (not_stratified guard). Hand-rolled fixpoint stays; not a ruling, a closed question.
 - **extraction ambiguities** A12 (from-world = nullary `->`?), A1 (glob residency),
   A4 (fence escape), A14 (comment_span bind). plans/2026-07-27-extraction-spellings.md.
 - **Key(Type) vs `->`**: labs split three ways; present both files' arguments, no fiat.

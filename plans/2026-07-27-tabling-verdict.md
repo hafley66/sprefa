@@ -1,6 +1,8 @@
 # Lab: can SWI tabling replace the hand-rolled fixpoint? VERDICT: SHIFTS SEMANTICS
 
-Companion to `v6/prolog/labs/tabling_fixpoint.pl`. Contract:
+Companion to `v6/prolog/labs/tabling_fixpoint.pl`, DELETED per lab protocol;
+last copy at commit cf13ed77, recover via
+`git show cf13ed77:v6/prolog/labs/tabling_fixpoint.pl`. Contract:
 `plans/2026-07-27-tabling-fixpoint-lab-header.md`. Prior art consulted:
 `plans/research-swi/01-core.md` (verified against local swipl 10.0.2).
 

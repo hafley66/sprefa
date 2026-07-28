@@ -1,8 +1,10 @@
 # switch_flow: can switchMap itself flow, what is complete, and how small can the kernel be?
 
 Lab: `v6/prolog/labs/switch_flow.pl`, 1903 lines. **89 checks, all PASS, 70ms.**
-Run: `swipl -q -l v6/prolog/labs/switch_flow.pl -g go -g halt`; `-g report` prints
-every scenario's per-tick delta stream and final forest.
+DELETED per lab protocol; last copy at commit ac2aafdc, recover via
+`git show ac2aafdc:v6/prolog/labs/switch_flow.pl`. From that checkout,
+`-g go` grades, `-g report` prints every scenario's per-tick delta stream
+and final forest.
 
 Contract: `plans/2026-07-27-switch-flow-lab-header.md` (Q1..Q5) plus the
 coordinator's anti-bias addendum (Q6 minimize the kernel; the stale-fill ruling
