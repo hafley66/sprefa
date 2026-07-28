@@ -4,6 +4,13 @@ Contract: `plans/2026-07-28-types-as-rels-header.md`. Lab:
 `v6/prolog/labs/types_as_rels/` (dies on landing; recovery hash at the bottom
 of this file).
 
+**ROUND 2 SUPERSEDING VERDICT:** `rel` remains the common construct. Every
+compound type explicitly selects `value` or `entity`, with no implicit
+selection. Value uses a content hash for semantic identity and a dense integer
+intern mate for storage. Entity uses an extrinsic unique id, mutable current
+state, immutable history, and explicit lifetime. Cycles crack value identity
+and are represented by entities.
+
 Run: `swipl -q -l v6/prolog/labs/types_as_rels/types_as_rels.pl -g go -g halt`
 -> 36 PASS, 0 fail, nothing else on stdout or stderr.
 Untouched and re-verified: conformance `go.pl` 110 pass / 0 fail;
@@ -865,3 +872,453 @@ value_model,lowering,lattice,types_as_rels}.pl`. Last full copy at **419eb779**
 (`git show 419eb779:v6/prolog/labs/types_as_rels/value_model.pl` recovers any
 of them). Durable output distilled here; the lab dir is the coordinator's to
 delete on landing.
+
+---
+
+# ROUND 2: EXPLICIT VALUE AND ENTITY POLICIES
+
+Iteration journal:
+`plans/2026-07-28-types-as-rels-iteration-journal.md`.
+
+## Round-2 verdict line
+
+**The rel unification hypothesis HOLDS with two first-class policy bundles and
+no implicit policy. The round-1 cycle crack is scoped to value. Entity
+identity represents cycles, mutable history, and explicit lifetime.**
+
+The common declaration fact is `rel`. The policy choice changes semantic
+identity, mutation, merge, lifetime, DDL, enum history, and recursive
+termination. It does not change nested ref columns, ordinary edge rels,
+match-path syntax, or the prolog-plus-published-rels type-check split.
+
+## Fixpoint receipt
+
+| round | new findings | PASS trajectory |
+|---|---:|---:|
+| recovered entry | 0 | 36 |
+| entity break cases | 10 | 46 |
+| surrogate mate and coexistence | 10 | 56 |
+| cross-policy composition | 9 | 65 |
+| fixpoint ledger check | 0 findings, 1 check | 66 |
+| full replay | 0 | 66 |
+
+The fourth round replayed every prior conclusion under both policies and added
+zero findings. The exact attack matrix, idea order, conflicts, and checks are
+in the iteration journal.
+
+## Entity and value verdict table
+
+| dimension | `value` | `entity` |
+|---|---|---|
+| semantic identity | full content hash over type and canonical content | extrinsic unique id |
+| storage key | dense integer intern mate | dense integer id |
+| equality and sharing | equal content shares one row and increments support | equal content may have different ids; sharing occurs only by reusing an id |
+| mutation | immutable; changed content is a new hash and row | keyed current row changes under the same id |
+| history | old value remains only while supported | every create and update appends `version(Tick, Type, Id, Args)` |
+| merge | set | keyed max on stamp |
+| deletion | automatic when support reaches zero | explicit checked retirement set |
+| cycles | impossible among deep value refs | permitted |
+| variable arity | cons cells or whole-sequence semantic hash | indexed rows may change arity |
+| enum transition | a different immutable variant value | same id may change current tag; history retains both tags |
+| Key interplay | key is all canonical content; dense id is excluded | key is the extrinsic id; current row uses keyed replacement |
+| tick output | rendered value, never hash or dense id | extrinsic id plus current rendered fields |
+
+The disagreement is caused by two different identity questions. Value asks
+whether canonical contents are equal. Entity asks whether state before and
+after a change belongs to one continuing id. The policies coexist because the
+choice is stated at the declaration or producer boundary.
+
+## The surrogate mate reconciliation
+
+The two round-1 rulings occupy separate columns:
+
+| job | representation |
+|---|---|
+| semantic equality | full content hash |
+| SQL primary key and ref column | dense integer |
+| mapping | per-type intern dictionary, `semantic -> id` |
+| logical boundary | rendered values |
+
+The ordering is required:
+
+1. Canonicalize the value with every child represented by its semantic hash.
+2. Compute the parent semantic hash.
+3. Look up or insert each semantic hash in its per-type intern dictionary.
+4. Store dense child ids in SQL ref columns.
+5. Print the logical value in the tick log.
+
+`parent_semantic_hash_ignores_dense_mate` proves that reversing dictionary
+insertion does not change the parent hash.
+`parent_hash_from_dense_would_be_order_dependent` proves that hashing the
+stored dense child id would change the parent hash.
+
+`surrogate_reintern_changes_dense_not_semantic` removes the final support,
+inserts another value, and reinterns the first value. The second dense id
+differs while the semantic hash is identical. This is allowed because dense
+ids never cross the logical boundary.
+
+The value DDL shape is:
+
+```sql
+CREATE TABLE "view_value" (
+  "id" INTEGER NOT NULL,
+  "semantic" TEXT NOT NULL UNIQUE,
+  "title" TEXT NOT NULL,
+  "tags" INTEGER NOT NULL,
+  PRIMARY KEY ("id")
+) WITHOUT ROWID;
+CREATE UNIQUE INDEX "view_value_content"
+  ON "view_value" ("title", "tags");
+```
+
+Nested value rows store the dense child id, while semantic hashing consumes
+the child's semantic hash. The dictionary and value table may be one table,
+as above. The two identities remain separate columns.
+
+The validated value tick tape is:
+
+| operation | logical deltas | support |
+|---|---|---:|
+| insert `view("T")` | `[+value(view, [text("T")])]` | 1 |
+| share equal value | `[]` | 2 |
+| release first support | `[]` | 1 |
+| release final support | `[-value(view, [text("T")])]` | 0 |
+
+No dense integer or content hash appears in that tape.
+
+## Entity current state, history, and lifetime
+
+The entity DDL shape is:
+
+```sql
+CREATE TABLE "route_entity" (
+  "id" INTEGER NOT NULL,
+  "path" TEXT NOT NULL,
+  "body" INTEGER NOT NULL,
+  "children" INTEGER NOT NULL,
+  PRIMARY KEY ("id")
+) WITHOUT ROWID;
+CREATE TABLE "route_entity_history" (
+  "id" INTEGER NOT NULL,
+  "tick" INTEGER NOT NULL,
+  "path" TEXT NOT NULL,
+  "body" INTEGER NOT NULL,
+  "children" INTEGER NOT NULL,
+  PRIMARY KEY ("id", "tick")
+) WITHOUT ROWID;
+```
+
+The validated entity tape is:
+
+| operation | current boundary | history |
+|---|---|---|
+| create id 1 with path `/a` | `[+row(route, 1, [text("/a")])]` | version 1 |
+| update id 1 to path `/b` | `[-row(route, 1, [text("/a")]), +row(route, 1, [text("/b")])]` | versions 1 and 2 |
+| retire id 1 | `[-row(route, 1, [text("/b")])]` | versions 1 and 2 retained |
+
+A two-node cycle is created by minting ids 1 and 2 and updating id 1 to point
+at id 2. Retiring only id 1 is refused because id 2 would dangle. Retiring
+`[1, 2]` succeeds as one checked set. Support counting does not choose entity
+lifetime.
+
+## Cross-policy ref rule
+
+| parent policy | child policy | ref mode | reason |
+|---|---|---|---|
+| value | value | deep | immutable closure |
+| entity | value | deep | entity current rows support immutable values |
+| entity | entity | deep | stable ids permit mutable graphs and cycles |
+| value | entity | identity | deep printing would change an existing value when the entity updates |
+
+A value may contain an entity id as canonical scalar content. Matching may
+join through it explicitly. Its json value view stops at the id. This is the
+breaking scenario graded by `value_to_entity_deep_render_can_change` and the
+repair graded by `value_to_entity_opaque_text_stays_stable`.
+
+When an entity replaces a value ref, the tick interns the new value, replaces
+the entity current row, and releases the old value support. The lab grades the
+combined deltas in `entity_ref_replacement_releases_old_value`.
+
+## Coexistence decomposition A: declaration word per type
+
+Worked example:
+
+```dl
+rel route(id, path, body, children) entity.
+rel body_page(id, view) value.
+rel body_redirect(id, to) value.
+rel view(id, title, tags) value.
+```
+
+Pure RxJS lowering:
+
+```ts
+const route$ = routeWanted$.pipe(
+  scan((state, row) => entityWrite(state, row), emptyEntityState()),
+);
+const bodyPage$ = pageWanted$.pipe(
+  map(row => valueIntern('body_page', row)),
+  distinctUntilChanged(sameValueSet),
+);
+const bodyRedirect$ = redirectWanted$.pipe(
+  map(row => valueIntern('body_redirect', row)),
+  distinctUntilChanged(sameValueSet),
+);
+const view$ = viewWanted$.pipe(
+  map(row => valueIntern('view', row)),
+  distinctUntilChanged(sameValueSet),
+);
+```
+
+Price:
+
+| measure | result |
+|---|---|
+| explicit policy choice words in the example | 4 |
+| omission caught | declaration load |
+| one declared type under both policies | requires a dual-policy declaration or duplicate logical names |
+| physical layout | one selected layout per type |
+
+## Coexistence decomposition B: body use-site spelling
+
+Worked example:
+
+```dl
+rel route(id, path, body, children).
+rel body_page(id, view).
+rel body_redirect(id, to).
+rel view(id, title, tags).
+route(entity, Route, Path, Body, Children) <- route_wanted(Route, Path, Body, Children).
+body_page(value, Body, View) <- page_wanted(Body, View).
+body_redirect(value, Body, To) <- redirect_wanted(Body, To).
+view(value, View, Title, Tags) <- view_wanted(View, Title, Tags).
+```
+
+Pure RxJS lowering:
+
+```ts
+const route$ = routeWanted$.pipe(
+  map(row => policyRow('entity', row)),
+  scan((state, row) => entityWrite(state, row), emptyEntityState()),
+);
+const bodyPage$ = pageWanted$.pipe(
+  map(row => policyRow('value', row)),
+  map(row => valueIntern('body_page', row)),
+);
+const bodyRedirect$ = redirectWanted$.pipe(
+  map(row => policyRow('value', row)),
+  map(row => valueIntern('body_redirect', row)),
+);
+const view$ = viewWanted$.pipe(
+  map(row => policyRow('value', row)),
+  map(row => valueIntern('view', row)),
+);
+```
+
+Price:
+
+| measure | result |
+|---|---|
+| explicit policy choice words in the example | 4 |
+| omission caught | producer rule lowering |
+| one declared type under both policies | yes |
+| physical layout | value and entity tables plus a logical union for a dual-policy name |
+| repetition | one choice at every producer |
+
+## Coexistence decomposition C: hybrid
+
+Worked example:
+
+```dl
+rel route(id, path, body, children) policy(entity, value).
+rel body_page(id, view) value.
+rel body_redirect(id, to) value.
+rel view(id, title, tags) value.
+route(entity, Route, Path, Body, Children) <- route_wanted(Route, Path, Body, Children).
+```
+
+Pure RxJS lowering:
+
+```ts
+const route$ = routeWanted$.pipe(
+  map(row => choosePolicy('entity', row)),
+  scan((state, row) => entityWrite(state, row), emptyEntityState()),
+);
+const bodyPage$ = pageWanted$.pipe(
+  map(row => valueIntern('body_page', row)),
+);
+const bodyRedirect$ = redirectWanted$.pipe(
+  map(row => valueIntern('body_redirect', row)),
+);
+const view$ = viewWanted$.pipe(
+  map(row => valueIntern('view', row)),
+);
+```
+
+Price:
+
+| measure | result |
+|---|---|
+| explicit value/entity choice words in the example | 6 |
+| omission caught | declaration load for fixed types, producer lowering for dual-policy types |
+| one declared type under both policies | yes, only when both are listed |
+| physical layout | one layout for fixed types; split tables plus logical union for dual-policy types |
+| repetition | only dual-policy producers repeat the choice |
+
+### Ranking
+
+| rank | decomposition | reason |
+|---:|---|---|
+| 1 | hybrid | fixed types pay one declaration choice; dual-policy types remain expressible; every dual-policy producer remains explicit |
+| 2 | declaration word | 4 choice words and one physical layout per type; a shared shape needs a dual declaration extension |
+| 3 | body use-site | shared shapes work directly; every producer repeats the policy and every dual-policy name needs split storage plus a logical union |
+
+Suggested arrangement: hybrid. A declaration with exactly one policy fixes the
+policy. A declaration listing both policies has no selected member and
+requires the body word.
+
+## Worked DDL shared by all three decompositions
+
+The selected worked assignment is route entity, body variants value, and view
+value:
+
+```sql
+CREATE TABLE "route_entity" (
+  "id" INTEGER NOT NULL,
+  "path" TEXT NOT NULL,
+  "body" INTEGER NOT NULL,
+  "children" INTEGER NOT NULL,
+  PRIMARY KEY ("id")
+) WITHOUT ROWID;
+CREATE TABLE "route_entity_history" (
+  "id" INTEGER NOT NULL,
+  "tick" INTEGER NOT NULL,
+  "path" TEXT NOT NULL,
+  "body" INTEGER NOT NULL,
+  "children" INTEGER NOT NULL,
+  PRIMARY KEY ("id", "tick")
+) WITHOUT ROWID;
+CREATE TABLE "body_page_value" (
+  "id" INTEGER NOT NULL,
+  "semantic" TEXT NOT NULL UNIQUE,
+  "view" INTEGER NOT NULL,
+  PRIMARY KEY ("id")
+) WITHOUT ROWID;
+CREATE TABLE "body_redirect_value" (
+  "id" INTEGER NOT NULL,
+  "semantic" TEXT NOT NULL UNIQUE,
+  "to" TEXT NOT NULL,
+  PRIMARY KEY ("id")
+) WITHOUT ROWID;
+CREATE TABLE "view_value" (
+  "id" INTEGER NOT NULL,
+  "semantic" TEXT NOT NULL UNIQUE,
+  "title" TEXT NOT NULL,
+  "tags" INTEGER NOT NULL,
+  PRIMARY KEY ("id")
+) WITHOUT ROWID;
+```
+
+The value tables also carry their content unique indexes. The route history
+table retains tagged body ids. Value cons and nil tables remain the round-1
+list lowering.
+
+## Round-1 conclusions under both policies
+
+| round-1 conclusion | value | entity | round-2 disposition |
+|---|---|---|---|
+| struct, enum, and type are rel shorthand | holds | holds | reaffirmed at the construct level |
+| struct pins the content bundle | explicit value only | explicit entity bundle differs | amended: no struct default |
+| one construct plus policy words | explicit value | explicit entity | reaffirmed |
+| N variant rels plus derived tag | holds for immutable variants | current tag and tagged history required for variant change | amended by policy |
+| nested positions are integer refs | dense intern mates | dense entity ids | reaffirmed |
+| identity, mutation, lifetime, merge are four bits | content, immutable, support, set | extrinsic, history, retire, keyed | reaffirmed |
+| variable-arity values need cons or whole-sequence hash | holds | indexed entity rows may change arity | amended by policy |
+| cycles crack content identity | holds | extrinsic ids represent cycles | amended: no longer cracks the common rel construct |
+| support equals reachability | complete on the value DAG | false as an entity lifetime rule | amended by scope |
+| domination dissolves into support | complete on value | entity pays explicit checked retire sets | amended by scope |
+| SQL cascade kills shared children incorrectly | holds | SQL cascade also bypasses entity lifetime checks | reaffirmed |
+| second support blocks collection | holds | support does not choose entity lifetime | reaffirmed with different entity rule |
+| dense counter assignment is order-dependent | dense mate is order-dependent | extrinsic id assignment may be order-dependent | reaffirmed |
+| content identity is order-independent | semantic hash is order-independent | outside the entity contract | reaffirmed |
+| logs must print values | rendered value | id plus rendered current fields | reaffirmed |
+| dictionary rel traffic should not reach logical consumers | intern rows hidden; logical value delta emitted | no value dictionary | ambiguity resolved as lowering boundary |
+| match depth `d` costs `d - 1` joins | holds | holds | reaffirmed |
+| inline json wins for one unshared unqueried child | holds | same read comparison, with entity history added separately | reaffirmed |
+| edge tables are ordinary rels | holds | holds | reaffirmed |
+| compiler publishes type graph rows | holds | holds | reaffirmed |
+| typed and inline json coexist per column | holds | holds with explicit column policy | reaffirmed |
+| typed field uses ref; untyped json uses json1 | holds | holds | reaffirmed |
+| recursive value traversal terminates by DAG | holds | cycle traversal needs a visited rel or depth input | reaffirmed with entity cost |
+| checker inference stays in prolog; checked graph is rows | holds | holds | reaffirmed |
+| merge words name joins | set | keyed | reaffirmed |
+| monotone keyed state can retract at boundary | outside immutable value update | entity update is the direct case | reaffirmed |
+| intern scope is per type | holds | no intern dictionary | amended by policy |
+
+## Q1 through Q8 after round 2
+
+| question | value policy | entity policy | combined ruling |
+|---|---|---|---|
+| Q1 declaration unification | rel plus content bundle | rel plus entity bundle | one construct, explicit policy |
+| Q2 minting | semantic hash plus dense intern mate | extrinsic unique dense id | identity and storage columns are separate where needed |
+| Q3 domination | support-zero fixpoint is complete | explicit checked retirement set | no universal cascade word |
+| Q4 edge tables | ordinary rels | ordinary rels | reaffirmed |
+| Q5 nested matching | same join chain | same join chain | policy-independent logical matcher |
+| Q6 migration | compiler records value and child type per ref column | compiler records entity and child type per ref column | hybrid policy metadata, value-rendered oracle |
+| Q7 recursive types | DAG traversal terminates | cycles need visited relation or depth input | policy controls termination proof |
+| Q8 checking | infer in prolog, publish rows | infer in prolog, publish rows | reaffirmed hybrid checker |
+
+## Four-bit bundles and domination completeness
+
+| policy | identity | mutation | lifetime | merge |
+|---|---|---|---|---|
+| value | content hash | immutable | support zero | set |
+| entity | extrinsic id | current plus history | explicit retire | keyed |
+
+Support GC is complete only on the value plane because deep value refs form a
+DAG. The entity plane pays:
+
+1. a keyed current table,
+2. an append-only history table,
+3. explicit retention input,
+4. outside-ref checks,
+5. atomic retirement sets for cycles,
+6. a visited relation or depth input for recursive traversal.
+
+## Round-2 amendments and their breaking scenarios
+
+| amended conclusion | breaking scenario | encoded check |
+|---|---|---|
+| struct implicitly means content value | two equal rows need distinct ids, then one changes while retaining identity | `entity_equal_content_mints_distinct_ids`, `entity_update_preserves_id` |
+| cycles crack the whole rel unification | two extrinsic ids are minted first and refs close the cycle by update | `entity_cycle_can_be_constructed` |
+| support GC completes all compound lifetimes | a rootless entity cycle requires an explicit retirement set | `entity_cycle_explicit_set_retires` |
+| every list needs cons | an entity list changes from arity 1 to arity 3 under one id | `entity_variable_arity_update_preserves_id` |
+| N variant rels plus derived current tag cover enums | one entity id changes from page to redirect and history must retain both | `entity_enum_variant_change_preserves_id_and_history` |
+| one id column must choose dense or content identity | parent hash remains stable while child dense mate changes with insertion order | `parent_semantic_hash_ignores_dense_mate` |
+| all nested refs may print deeply | a value hash stays fixed while its entity child changes title | `value_to_entity_deep_render_can_change` |
+| domination dissolves without qualification | entity continuity and cycles do not follow support reachability | `lifetime_claim_is_scoped_by_policy` |
+
+## Slots after round 2
+
+| slot | round-2 fill |
+|---|---|
+| SLOT-DECL-SPELLING | hybrid: fixed declaration word; dual-policy declaration plus mandatory producer word |
+| SLOT-OWNERSHIP-MARK | value: no mark beyond value policy; entity: explicit retirement operation and retention input |
+| SLOT-ENUM-SHAPE | value: N variant rels plus derived tag; entity: shared id, current tag, tagged history, separate payload rels allowed |
+| SLOT-INTERN-SCOPE | per type for value; no intern dictionary for entity |
+| SLOT-JSON1-FATE | untyped json only; typed positions are refs with explicit child policy |
+
+## Round-2 lab checks
+
+The 30 added checks are grouped as follows:
+
+- 10 entity break checks, ending at
+  `entity_lifetime_does_not_follow_refcount`.
+- 10 surrogate-mate and coexistence checks, ending at
+  `policy_specific_ddl_shapes`.
+- 9 cross-policy checks, ending at
+  `entity_retire_tick_prints_current_row`.
+- 1 stopping check,
+  `fixpoint_stops_after_full_zero_finding_round`.
+
+The entry remains PASS-only and dies on landing.
