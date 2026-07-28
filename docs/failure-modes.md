@@ -1264,6 +1264,37 @@ sites but not against new code. **missing** = nothing.
   storage; grep what the runtime imports from the storage engine and count
   the functions — one is a smell you can smell from orbit.
 
+## 35. Dev server outlives its spawner (EXIT-trap cleanup dies with the shell)
+
+- WHAT IT LOOKS LIKE: `node src/main.ts` servers from days-old runs still
+  listening on their ports (7192/7373/17272 found 2026-07-27), squatting a
+  stale db. Compounds with the readiness-loop blindness (review finding 7):
+  a later run's `curl` readiness probe accepts ANY listener, so a squatter
+  can silently grade a whole suite against the wrong server and db.
+- HOW IT BIT US (2026-07-27): the diff reviewer found three orphaned main.ts
+  servers from earlier agent sessions; the user killed them by hand and asked
+  why they existed at all. Mechanism: every server-booting script and agent
+  one-off relies on cleanup in the SPAWNER — `trap stop_server EXIT`
+  (goal-endurance.sh:44) or an explicit kill at the end of the shell. A bash
+  EXIT trap does not run when the shell dies from an untrapped signal
+  (harness timeout SIGKILL, agent session teardown), and the node child then
+  reparents to launchd and keeps listening forever. Nothing inside main.ts
+  notices its parent vanished; nothing at the next boot reaps.
+- THE LAW: a dev server's lifetime is enforced from INSIDE the process that
+  would dangle, never only in the spawner's cleanup path — under agent
+  harnesses the spawner dies uncleanly by construction, so trap-based
+  cleanup is best-effort, not ownership.
+- THE RAIL: proposed, two halves. (a) stdin-watch in main.ts: when stdin is
+  a pipe, exit on stdin EOF — parent death closes the pipe, server exits
+  (the standard LSP-server pattern; zero deps). Scripts/agents then spawn
+  with stdin piped. (b) goal-endurance readiness asserts the pid it spawned
+  owns the port before grading (closes finding 7's squatter blindness).
+  Fail-pre-fix test owed per the pipeline before either half counts.
+- SAY THIS TO AN AGENT: if you boot a server, your kill path is not enough —
+  assume your own shell can be SIGKILLed between boot and cleanup. Until
+  rail (a) lands, verify with lsof on your port after every run, and never
+  trust a readiness probe that doesn't check WHOSE pid answered.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
@@ -1299,6 +1330,7 @@ sites but not against new code. **missing** = nothing.
 | 30 | state-home sandbox knob `DL_STATE_DIR` ignored | enforced | — (`daemon_home()` honors `DL_STATE_DIR` > `XDG_STATE_HOME` > default, one resolver src/daemon/home.rs; `.dl/state-home-single-source.dl` warns on a second reader; tests/it/hermetic_state.rs) |
 | 31 | unbounded daemon logs (launchd redirect + spawn-only cap) | enforced | OS-level `newsyslog.d` complement remains a documented recommendation, not a shipped config |
 | 32 | normalizing a folded composite id onto a lossier decomposition | missing | the sym-dict migration (next chapter) must ship the bijection count-equality gate + per-join parity probe from `plans/2026-07-21-sym-dict-correctness-proof.md`; today only R1 (df in-memory id → `NodeIdx`) landed, mint_sym/lambda_sym still fold `format!` strings |
+| 35 | dev server outlives its spawner | missing | stdin-watch exit in v6 main.ts (parent death closes the pipe) + pid-owns-port assertion in goal-endurance readiness; fail-pre-fix test per the pipeline |
 
 ## How a new rail gets born here
 
