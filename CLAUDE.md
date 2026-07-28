@@ -77,7 +77,17 @@ B external-cron documented); F3 no json term-extract, array-explode
 inexpressible; F8 rel(1) is whole-table sweep + silently inert on rule-headed
 rels, Key(text) unimplemented (feeds the Q8/Key ruling); F9 no effect_log rel
 (self-diagnosis law gap). F4 confirmed the not_stratified guard fires correctly
-on the v5 etag idiom. Still running: P0 tracing spine (worktree sonnet).
+on the v5 etag idiom. P0 tracing spine LANDED (0_trace.ts: tracingChannel +
+pino, DL_PERF_LOG opt-in, one JSONL line/tick, overhead -0.02% within noise,
+dl 79/79; ratchet filter tightened to Channel\.subscribe call shape; seam gap
+recorded in 0_trace.ts header: EDB-plane writes bypass SqlRunner via hand-
+rolled execute$). FIRST PARITY NUMBER, ugly and now visible: ingest_corpus
+over 251 rxjs .ts files = ~103s (~2.4 files/s) vs v5's 7,244 files/s; the
+harness's per-file rt.rows() full-table read is superlinear and suspect, but
+extract_ms is only ~21ms/file so engine-side cost dominates — the perf JSONL
+now exists to decompose this. Agents running: tsv2 phase A (runtime + hand
+exemplar), tsv2 phase B (prolog compiler), F7 NaN-commit crash hunt
+(fail-pre-fix test + execute$ error must carry SQL text + class 36 entry).
 gen-index.sh now excludes node_modules (INDEX.md was flip-flopping 1714 lines).
 ARCH covers/2 rows for scopes.pl landed (departure_form fixture-covered,
 uncovered 10 -> 9, map re-emitted). failure-modes class 35 filed (dangling dev
