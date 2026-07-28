@@ -8,9 +8,11 @@
  *      fixpoint seam actually runs) emits one parseable JSONL line per tick, with
  *      the exact contract fields (0_types.ts's PerfTickLine) and plausible values.
  *
- *   A third test exercises the effect/ingest fold + flush path directly (bypassing
- *   1_hosts.ts/4_ingest.ts, which have their own suites), so the exact field shapes
- *   of `effects`/`ingest` are pinned without needing a real subprocess effect.
+ *   A third test exercises the effect/bind/ingest fold + flush path directly
+ *   (bypassing 1_hosts.ts/4_ingest.ts/1_binds.ts, which have their own suites), so the
+ *   exact field shapes of `effects`/`binds`/`ingest` are pinned without needing a real
+ *   subprocess effect or bind commit (F4, 2026-07-28 cleanup audit: `binds` and its
+ *   channel's hasSubscribers state were the one seam this file left unasserted).
  */
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
@@ -67,6 +69,7 @@ test("off by default: channels carry no subscriber, no file written, even across
 
   assert.equal(diagnostics_channel.channel(PERF_CHANNEL_NAMES.sql).hasSubscribers, false);
   assert.equal(diagnostics_channel.channel(PERF_CHANNEL_NAMES.effect).hasSubscribers, false);
+  assert.equal(diagnostics_channel.channel(PERF_CHANNEL_NAMES.bind).hasSubscribers, false);
   assert.equal(diagnostics_channel.channel(PERF_CHANNEL_NAMES.ingest).hasSubscribers, false);
   assert.equal(PerfTrace.enabled, false);
 
@@ -79,6 +82,7 @@ test("off by default: channels carry no subscriber, no file written, even across
     await waitOneMacrotask();
     assert.equal(fs.existsSync(logPath), false);
     assert.equal(diagnostics_channel.channel(PERF_CHANNEL_NAMES.sql).hasSubscribers, false);
+    assert.equal(diagnostics_channel.channel(PERF_CHANNEL_NAMES.bind).hasSubscribers, false);
   } finally {
     await rt.dispose();
     cleanupDbFile(dbPath);
@@ -91,6 +95,7 @@ test("on: a real commit against a derived-rel program emits one parseable JSONL 
   PerfTrace.installFromEnv();
   try {
     assert.equal(diagnostics_channel.channel(PERF_CHANNEL_NAMES.sql).hasSubscribers, true);
+    assert.equal(diagnostics_channel.channel(PERF_CHANNEL_NAMES.bind).hasSubscribers, true);
     assert.equal(PerfTrace.enabled, true);
 
     const { rt, dbPath } = await bootParentFixture();
@@ -130,13 +135,19 @@ test("on: a real commit against a derived-rel program emits one parseable JSONL 
   }
 });
 
-test("on: effectDone/ingestDone fold into the same tick's line with the exact field shapes", async () => {
+test("on: effectDone/bindDone/ingestDone fold into the same tick's line with the exact field shapes", async () => {
+  // F4 (2026-07-28 cleanup audit): this case pinned effects/ingest exactly but left
+  // `binds` (PerfBindEntry, the input-side twin of `effects` -- 1_binds.ts's BindRunner
+  // via bindDone) entirely unasserted, and the "off by default" test above checked
+  // hasSubscribers on 3 of the 4 seam channels, omitting `bind`. Both gaps closed here:
+  // a `bindDone` call alongside effectDone/ingestDone, and a `deepEqual` on `line.binds`.
   const logPath = freshLogPath();
   process.env.DL_PERF_LOG = logPath;
   PerfTrace.installFromEnv();
   try {
     const tick = 42;
     PerfTrace.effectDone(tick, "sg", 12345, 3.5, "done");
+    PerfTrace.bindDone(tick, "clock_bucket", 1, 0.8);
     PerfTrace.ingestDone(tick, {
       path: "src/foo.ts",
       read_ms: 0.5,
@@ -157,6 +168,7 @@ test("on: effectDone/ingestDone fold into the same tick's line with the exact fi
 
     assert.equal(line.stmt_count, 0); // no sqlTraceFor calls this test
     assert.deepEqual(line.effects, [{ host: "sg", effect_id: 12345, ms: 3.5, status: "done" }]);
+    assert.deepEqual(line.binds, [{ rel: "clock_bucket", rows: 1, ms: 0.8 }]);
     assert.deepEqual(line.ingest, {
       path: "src/foo.ts",
       read_ms: 0.5,
