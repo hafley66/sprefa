@@ -228,6 +228,19 @@ statement(Kind, Item, Vars0, Vars, S0, S) :-
 % own "all" fallback is an ANALYSIS-time convenience, not something the
 % original author necessarily wrote. ════════════════════════════════════════
 
+decl_a_stmt([enum_decl(Name, VariantTerms)], S0, S) :-
+    word(`rel`, S0, S1),
+    ws0(S1, S2),
+    ident(Name, S2, S3),
+    ws0(S3, S4),
+    lit_dcg(`(`, S4, S5),
+    enum_decl_variants(VariantTerms, S5, S6),
+    ws0(S6, S7),
+    lit_dcg(`)`, S7, S8),
+    ws0(S8, S9),
+    lit_dcg(`.`, S9, S),
+    record_enum_column_orders(Name, VariantTerms).
+
 decl_a_stmt(DeclList, S0, S) :-
     word(`rel`, S0, S1),
     ws0(S1, S2),
@@ -276,6 +289,68 @@ decl_a_column(column(Name, Type), S0, S) :-
 
 typed_column_type(int, S0, S) :- word(`int`, S0, S), !.
 typed_column_type(text, S0, S) :- word(`text`, S0, S).
+
+enum_decl_variants((First ; Rest), S0, S) :-
+    enum_decl_variant(First, S0, S1),
+    ws0(S1, S2),
+    lit_dcg(`;`, S2, S3),
+    ws0(S3, S4),
+    enum_decl_variants(Rest, S4, S).
+enum_decl_variants(Variant, S0, S) :-
+    enum_decl_variant(Variant, S0, S).
+
+enum_decl_variant(Variant, S0, S) :-
+    ws0(S0, S1),
+    ident(VariantName, S1, S2),
+    ws0(S2, S3),
+    lit_dcg(`(`, S3, S4),
+    enum_decl_columns(Fields, S4, S5),
+    ws0(S5, S6),
+    lit_dcg(`)`, S6, S),
+    Variant =.. [VariantName | Fields].
+
+enum_decl_columns([], S0, S) :-
+    ws0(S0, S1),
+    peek(0'), S1, S),
+    !.
+enum_decl_columns([Field | Rest], S0, S) :-
+    ws0(S0, S1),
+    ident(ColumnName, S1, S2),
+    ws0(S2, S3),
+    lit_dcg(`:`, S3, S4),
+    ws0(S4, S5),
+    ident(TypeName, S5, S6),
+    Field =.. [':', ColumnName, TypeName],
+    ws0(S6, S7),
+    ( lit_dcg(`,`, S7, S8)
+    -> enum_decl_columns(Rest, S8, S)
+    ; Rest = [], S = S7
+    ).
+
+record_enum_column_orders(RelName, VariantTerms) :-
+    tag_rel_name(RelName, TagName),
+    record_column_order(TagName, [id, tag]),
+    forall(enum_decl_variant_term(VariantTerms, Variant),
+           record_enum_variant_column_order(RelName, Variant)).
+
+enum_decl_variant_term((Left ; Right), Variant) :-
+    !,
+    ( enum_decl_variant_term(Left, Variant)
+    ; enum_decl_variant_term(Right, Variant)
+    ).
+enum_decl_variant_term(Variant, Variant).
+
+record_enum_variant_column_order(RelName, Variant) :-
+    Variant =.. [VariantName | Fields],
+    maplist(enum_field_column_name, Fields, ColumnNames),
+    atomic_list_concat([RelName, VariantName], '_', VariantRelName),
+    record_column_order(VariantRelName, [id | ColumnNames]).
+
+enum_field_column_name(Field, ColumnName) :-
+    Field =.. [':', ColumnName, _].
+
+tag_rel_name(RelName, TagName) :-
+    atomic_list_concat([RelName, tag], '_', TagName).
 
 column_spec_names([], []).
 column_spec_names([column(Name, _) | Rest], [Name | More]) :-

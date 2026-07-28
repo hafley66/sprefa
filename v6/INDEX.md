@@ -50,13 +50,12 @@
 | [prolog/LANG.md](prolog/LANG.md) | 95 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
 | [prolog/compile/PIPELINE.md](prolog/compile/PIPELINE.md) | 153 | The tsv2 compiler pipeline, stage by stage |
 | [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 592 | TSV2 Phase C scoreboard |
-| [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 160 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
+| [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 162 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-extract/AGENTS.md](sprefa-extract/AGENTS.md) | 66 | sprefa-extract — Agent Guidance |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
-| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
 | [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
 
 ## Full header index
@@ -744,10 +743,10 @@
 7:## Ruling that reframes this whole document (relayed mid-flight)
 21:## The central superseding decision: bare identifier = variable, always
 45:## Construct table
-86:### Core grammar and input aliases
-124:## Round-trip design note (why decl lines are exact, not fallback-merged)
-139:## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
-151:## What `dl_view/*.dl` is
+88:### Core grammar and input aliases
+126:## Round-trip design note (why decl lines are exact, not fallback-merged)
+141:## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
+153:## What `dl_view/*.dl` is
 ```
 
 ### prolog/conformance/FIXTURES.md
@@ -803,14 +802,6 @@
 126:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
 139:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
 152:## Breakpoint ramp — tight gun 700 MB
-```
-
-### sprefa-store/bench/out/REPORT.md
-```
-1:# Z-set / IVM head-to-head — feasibility lab
-15:## Charts
-22:## Data
-43:## Takeaways (derived)
 ```
 
 ### tsv2/SCALE.md

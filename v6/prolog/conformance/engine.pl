@@ -64,6 +64,7 @@
 :- use_module(library(apply)).
 :- use_module(library(ordsets)).
 :- use_module(library(pairs)).
+:- use_module('../0_enum_expand', [expand_enum_program/2]).
 :- use_module(rulings).
 :- use_module(body).
 :- use_module(level_eval).
@@ -342,7 +343,8 @@ delta_ref_is_set(Decls, Rules, Row) :-
 
 % ═══ the run loop, engine-owned drains (q5) ═════════════════════════════════
 
-run_program(Prog, Initial, Schedule, FinalAll, DeltaTicks) :-
+run_program(SugaredProg, Initial, Schedule, FinalAll, DeltaTicks) :-
+    expand_enum_program(SugaredProg, Prog),
     check_program(Prog),
     seed_store(Prog, Initial, Store0),
     Prog = prog(_, Rules),

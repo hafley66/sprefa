@@ -17,6 +17,8 @@
 :- use_module('../strat', [ stratum_groups/2 ]).
 :- use_module('../lower', [ lower_program/2 ]).
 :- use_module('../analyze', [ check_supported_subset/1 ]).
+:- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
+:- use_module('../parse_dl', [ parse_dl/4 ]).
 
 % Resolved relative to this file's own load-time directory (mirrors
 % sweep.pl's compile_dir/1 pattern -- prolog_load_context/2 only answers
@@ -257,3 +259,48 @@ test(rejects_pre_in_level_body, [throws(unsupported_construct(level_body_goal(_,
     check_supported_subset(Prog).
 
 :- end_tests(supported_subset_gate).
+
+:- begin_tests(enum_decl_expansion).
+
+test(parser_retains_semicolon_enum_decl) :-
+    string_codes("rel body(page(view: view) ; redirect(to: text)).", Codes),
+    parse_dl(Codes, Prog, Bindings, Findings),
+    assertion(Prog =@= prog([
+        enum_decl(body, (page(view:view) ; redirect(to:text)))
+    ], [])),
+    assertion(Bindings == []),
+    assertion(Findings == []).
+
+test(expands_to_typed_variant_rels_and_tag_union) :-
+    Sugared = prog([
+        enum_decl(body, (page(view:view) ; redirect(to:text)))
+    ], []),
+    expand_enum_program(Sugared, Expanded),
+    Expected = prog(
+        [
+            col_type(body_page/2, id, int),
+            col_type(body_page/2, view, int),
+            keyed(body_page/2, [2]),
+            col_type(body_redirect/2, id, int),
+            col_type(body_redirect/2, to, text),
+            keyed(body_redirect/2, [2]),
+            col_type(body_tag/2, id, int),
+            col_type(body_tag/2, tag, text)
+        ],
+        [
+            (body_tag(PageId, page) <- body_page(PageId, _PageView)),
+            (body_tag(RedirectId, redirect) <- body_redirect(RedirectId, _RedirectTo))
+        ]),
+    assertion(Expanded =@= Expected).
+
+test(refuses_variant_name_collision,
+     [throws(unsupported_construct(enum_variant_name_collision(page)))]) :-
+    Sugared = prog(
+        [
+            enum_decl(body, page(view:view)),
+            col_type(page/1, id, int)
+        ],
+        []),
+    expand_enum_program(Sugared, _).
+
+:- end_tests(enum_decl_expansion).
