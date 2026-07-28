@@ -62,6 +62,9 @@ emit_d2(Stream) :-
     format(Stream, "everytool: the capability inventory {~n", []),
     forall(capability(Name, _, _), format(Stream, "  ~w~n", [Name])),
     format(Stream, "}~n", []),
+    format(Stream, "budget: the construct budget {~n", []),
+    forall(construct(Name, _, _), format(Stream, "  ~w~n", [Name])),
+    format(Stream, "}~n", []),
     % edges
     forall(refines(Child, Parent),
            format(Stream, "graphs.~w -> graphs.~w~n", [Child, Parent])),
@@ -84,6 +87,9 @@ emit_d2(Stream) :-
     format(Stream, "algo.seminaive_eval -> tech.sqlite~n", []),
     format(Stream, "algo.count_ivm -> tech.sqlite~n", []),
     format(Stream, "conformance.engine -> tech.prolog~n", []),
+    forall(covers(Subject, Name),
+           ( ( ruling(Subject, _, _, _) -> Container = ruling ; Container = conformance ),
+             format(Stream, "~w.~w -> budget.~w~n", [Container, Subject, Name]) )),
     % annotations
     forall(graph(Name, Shape, Rows, Binding),
            ( sanitize(Rows, RowsText),
@@ -133,6 +139,14 @@ emit_d2(Stream) :-
              format(Stream, "# tag everytool.~w : capability~n", [Name]) )),
     forall(prior_art_target(Target),
            format(Stream, "# tag made.~w : inherited_into_v6~n", [Target])),
+    forall(construct(Name, Tier, Status),
+           ( ( covers(_, Name) -> CoverState = covered ; CoverState = 'UNCOVERED' ),
+             format(Stream, "# @ budget.~w : tier ~w -- status ~w -- ~w~n",
+                    [Name, Tier, Status, CoverState]),
+             format(Stream, "# tag budget.~w : ~w~n", [Name, Tier]),
+             ( CoverState == 'UNCOVERED'
+             -> format(Stream, "# tag budget.~w : uncovered~n", [Name])
+             ;  true ) )),
     format(Stream, "# view focus=graphs.ast mode=cone layout=dagre dir=LR~n", []).
 
 emit_src(Stream, Container, Name, Home) :-
@@ -201,6 +215,23 @@ emit_tours(Stream) :-
            ( sanitize(Choice, ChoiceText),
              format(Stream, "      { focus: \"ruling.~w\", isolate: false, note: \"~w\" },~n",
                     [Id, ChoiceText]) )),
+    format(Stream, "    ],~n", []),
+    % 5. the construct budget: one step per construct, tier-ordered, note
+    % carries tier + status + who covers it (or UNCOVERED). Derived live from
+    % construct/3 and covers/2, so a new cut or a new fixture promotion moves
+    % this tour without anyone re-writing it.
+    format(Stream, "    \"the construct budget and its receipts\": [~n", []),
+    findall(Tier-Name, construct(Name, Tier, _), TierNamePairs),
+    keysort(TierNamePairs, SortedTierNamePairs),
+    forall(member(Tier-Name, SortedTierNamePairs),
+           ( construct(Name, Tier, Status),
+             findall(Subject, covers(Subject, Name), CoveringSubjects),
+             ( CoveringSubjects == []
+             -> CoverageText = 'UNCOVERED'
+             ;  sanitize(CoveringSubjects, CoverageText) ),
+             format(Stream,
+                    "      { focus: \"budget.~w\", isolate: false, note: \"~w, ~w -- ~w\" },~n",
+                    [Name, Tier, Status, CoverageText]) )),
     format(Stream, "    ],~n", []).
 
 refine_chain(Name, [Name | Rest]) :-
