@@ -223,7 +223,12 @@ impl ScipSource for ScipGo {
 /// The last nonempty stderr line (the indexer's own error line), trimmed.
 fn tail(stderr: &[u8]) -> String {
     let text = String::from_utf8_lossy(stderr);
-    text.lines().filter(|l| !l.trim().is_empty()).last().unwrap_or("").trim().to_string()
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .last()
+        .unwrap_or("")
+        .trim()
+        .to_string()
 }
 
 /// The shared `load` body (one prost decode serves every indexer — the wire is
@@ -268,7 +273,10 @@ fn copy_sources(
             let name = entry.file_name();
             let name = name.to_string_lossy();
             if path.is_dir() {
-                if !matches!(name.as_ref(), "node_modules" | ".git" | "dist" | "out" | "target") {
+                if !matches!(
+                    name.as_ref(),
+                    "node_modules" | ".git" | "dist" | "out" | "target"
+                ) {
                     stack.push(path);
                 }
                 continue;
@@ -377,7 +385,11 @@ pub fn byte_range(content: &[u8], range: [i32; 4], encoding: PositionEncoding) -
                 seen += 1;
             }
         }
-        if seen == line { Some(content.len()) } else { None }
+        if seen == line {
+            Some(content.len())
+        } else {
+            None
+        }
     };
     let byte_col = |line: i32, col: i32| -> Option<u32> {
         if col < 0 {
@@ -420,7 +432,10 @@ pub fn byte_range(content: &[u8], range: [i32; 4], encoding: PositionEncoding) -
     if end < start {
         return None;
     }
-    Some(Span { start, len: end - start })
+    Some(Span {
+        start,
+        len: end - start,
+    })
 }
 
 // ── the resolution joins (4c-ii; shared by the Resolve<CallF> arms and the
@@ -497,7 +512,11 @@ pub fn definition_of<'a>(
     };
     if symbol.starts_with("local ") {
         let doc = &index.documents[doc_ix];
-        return doc.occurrences.iter().find(|occ| is_def(occ)).map(|occ| (doc_ix, occ));
+        return doc
+            .occurrences
+            .iter()
+            .find(|occ| is_def(occ))
+            .map(|occ| (doc_ix, occ));
     }
     for (ix, doc) in index.documents.iter().enumerate() {
         if let Some(occ) = doc.occurrences.iter().find(|occ| is_def(occ)) {

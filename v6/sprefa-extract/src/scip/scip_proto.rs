@@ -189,17 +189,7 @@ pub struct Descriptor {
 }
 /// Nested message and enum types in `Descriptor`.
 pub mod descriptor {
-    #[derive(
-        Clone,
-        Copy,
-        Debug,
-        PartialEq,
-        Eq,
-        Hash,
-        PartialOrd,
-        Ord,
-        ::prost::Enumeration
-    )]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
     #[repr(i32)]
     pub enum Suffix {
         UnspecifiedSuffix = 0,
@@ -351,17 +341,7 @@ pub mod symbol_information {
     /// Since Kind is more fine-grained than Suffix:
     /// - If two symbols have the same Kind, they should share the same Suffix.
     /// - If two symbols have different Suffixes, they should have different Kinds.
-    #[derive(
-        Clone,
-        Copy,
-        Debug,
-        PartialEq,
-        Eq,
-        Hash,
-        PartialOrd,
-        Ord,
-        ::prost::Enumeration
-    )]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
     #[repr(i32)]
     pub enum Kind {
         UnspecifiedKind = 0,
@@ -1124,15 +1104,9 @@ impl PositionEncoding {
     pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
         match value {
             "UnspecifiedPositionEncoding" => Some(Self::UnspecifiedPositionEncoding),
-            "UTF8CodeUnitOffsetFromLineStart" => {
-                Some(Self::Utf8CodeUnitOffsetFromLineStart)
-            }
-            "UTF16CodeUnitOffsetFromLineStart" => {
-                Some(Self::Utf16CodeUnitOffsetFromLineStart)
-            }
-            "UTF32CodeUnitOffsetFromLineStart" => {
-                Some(Self::Utf32CodeUnitOffsetFromLineStart)
-            }
+            "UTF8CodeUnitOffsetFromLineStart" => Some(Self::Utf8CodeUnitOffsetFromLineStart),
+            "UTF16CodeUnitOffsetFromLineStart" => Some(Self::Utf16CodeUnitOffsetFromLineStart),
+            "UTF32CodeUnitOffsetFromLineStart" => Some(Self::Utf32CodeUnitOffsetFromLineStart),
             _ => None,
         }
     }

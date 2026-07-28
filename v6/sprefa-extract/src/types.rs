@@ -592,7 +592,12 @@ pub struct Node<F: Family> {
 
 impl<F: Family> Node<F> {
     pub fn new(span: Span, kind: F::NodeKind) -> Self {
-        Self { span, kind, name: None, _f: PhantomData }
+        Self {
+            span,
+            kind,
+            name: None,
+            _f: PhantomData,
+        }
     }
 
     pub fn with_name(mut self, name: NameId) -> Self {
@@ -613,7 +618,12 @@ pub struct Edge<F: Family> {
 
 impl<F: Family> Edge<F> {
     pub fn new(src: NodeRef, dst: NodeRef, kind: F::EdgeKind) -> Self {
-        Self { src, dst, kind, _f: PhantomData }
+        Self {
+            src,
+            dst,
+            kind,
+            _f: PhantomData,
+        }
     }
 }
 
@@ -627,7 +637,11 @@ pub struct FamilyBundle<F: Family> {
 
 impl<F: Family> Default for FamilyBundle<F> {
     fn default() -> Self {
-        Self { nodes: Vec::new(), edges: Vec::new(), aux: F::Aux::default() }
+        Self {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            aux: F::Aux::default(),
+        }
     }
 }
 
@@ -656,7 +670,13 @@ pub struct ProjectEdge<F: Family> {
 
 impl<F: Family> ProjectEdge<F> {
     pub fn new(src: NodeRef, dst_blob: BlobHash, dst_span: Span, kind: F::EdgeKind) -> Self {
-        Self { src, dst_blob, dst_span, kind, _f: PhantomData }
+        Self {
+            src,
+            dst_blob,
+            dst_span,
+            kind,
+            _f: PhantomData,
+        }
     }
 }
 
@@ -823,18 +843,30 @@ pub fn build_def_index(outputs: &[(BlobHash, &ExtractOutput)]) -> DefIndex {
         if let Some(call) = &output.call {
             for node in &call.nodes {
                 if let Some(name) = node.name {
-                    index.map.entry(output.strings.lookup(name).to_string()).or_default().push(
-                        DefSite { blob: *blob, span: node.span, family: CallF::TAG },
-                    );
+                    index
+                        .map
+                        .entry(output.strings.lookup(name).to_string())
+                        .or_default()
+                        .push(DefSite {
+                            blob: *blob,
+                            span: node.span,
+                            family: CallF::TAG,
+                        });
                 }
             }
         }
         if let Some(types) = &output.types {
             for node in &types.nodes {
                 if let Some(name) = node.name {
-                    index.map.entry(output.strings.lookup(name).to_string()).or_default().push(
-                        DefSite { blob: *blob, span: node.span, family: TypeF::TAG },
-                    );
+                    index
+                        .map
+                        .entry(output.strings.lookup(name).to_string())
+                        .or_default()
+                        .push(DefSite {
+                            blob: *blob,
+                            span: node.span,
+                            family: TypeF::TAG,
+                        });
                 }
             }
         }
@@ -898,17 +930,26 @@ pub fn corpus_defs<'a>(index: &'a DefIndex, name: &str) -> &'a [DefSite] {
 pub fn own_blob(output: &ExtractOutput, index: &DefIndex) -> Option<BlobHash> {
     let mut named_spans: Vec<Span> = Vec::new();
     if let Some(call) = &output.call {
-        named_spans.extend(call.nodes.iter().filter(|n| n.name.is_some()).map(|n| n.span));
+        named_spans.extend(
+            call.nodes
+                .iter()
+                .filter(|n| n.name.is_some())
+                .map(|n| n.span),
+        );
     }
     if let Some(types) = &output.types {
-        named_spans.extend(types.nodes.iter().filter(|n| n.name.is_some()).map(|n| n.span));
+        named_spans.extend(
+            types
+                .nodes
+                .iter()
+                .filter(|n| n.name.is_some())
+                .map(|n| n.span),
+        );
     }
     named_spans.sort();
     named_spans.dedup();
     for span in named_spans {
-        if let Some(site) =
-            index.map.values().flatten().find(|site| site.span == span)
-        {
+        if let Some(site) = index.map.values().flatten().find(|site| site.span == span) {
             return Some(site.blob);
         }
     }
@@ -921,7 +962,11 @@ pub fn own_blob(output: &ExtractOutput, index: &DefIndex) -> Option<BlobHash> {
 /// edge binds a callable), then the smallest containing span (the innermost
 /// def). Returns the index's map-key name + the site. Pure fn over the index;
 /// zero AST. Written ONCE here for the ts/rust/go resolve arms (4c/4d).
-pub fn containing_def_site(index: &DefIndex, blob: BlobHash, span: Span) -> Option<(&str, DefSite)> {
+pub fn containing_def_site(
+    index: &DefIndex,
+    blob: BlobHash,
+    span: Span,
+) -> Option<(&str, DefSite)> {
     let mut best: Option<(&str, DefSite)> = None;
     for (name, sites) in &index.map {
         for site in sites {
@@ -933,8 +978,7 @@ pub fn containing_def_site(index: &DefIndex, blob: BlobHash, span: Span) -> Opti
             let better = match best {
                 None => true,
                 Some((_, b)) => {
-                    let call_bias =
-                        (site.family == CallF::TAG, b.family == CallF::TAG);
+                    let call_bias = (site.family == CallF::TAG, b.family == CallF::TAG);
                     call_bias.0 && !call_bias.1
                         || (call_bias.0 == call_bias.1
                             && site.span.end() - site.span.start < b.span.end() - b.span.start)
@@ -1120,8 +1164,18 @@ pub struct FamilyMask {
 }
 
 impl FamilyMask {
-    pub const ALL: Self = Self { cst: true, types: true, call: true, df: true };
-    pub const NONE: Self = Self { cst: false, types: false, call: false, df: false };
+    pub const ALL: Self = Self {
+        cst: true,
+        types: true,
+        call: true,
+        df: true,
+    };
+    pub const NONE: Self = Self {
+        cst: false,
+        types: false,
+        call: false,
+        df: false,
+    };
 }
 
 /// One file's extraction: the shared per-file interner + an Option<FamilyBundle<F>>

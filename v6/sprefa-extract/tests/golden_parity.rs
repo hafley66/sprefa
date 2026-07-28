@@ -28,11 +28,10 @@
 use std::collections::BTreeSet;
 
 use sprefa_extract::{
-    BlobHash, CallEdgeKind, ExtractOutput, FamilyMask, FamilyTag, FileSet, FlatFact, GoSource,
-    IndexBag, ManifestMap, ProjectCx, ProjectDigest, Resolve, RustSource, ScipGo, ScipRust,
-    ScipSource, ScipTypescript, Span, TsSource, TypeF, build_def_index, byte_range,
-    containing_def_site, covering_def, definition_of, dispatch, flatten, join_documents,
-    site_occurrence,
+    build_def_index, byte_range, containing_def_site, covering_def, definition_of, dispatch,
+    flatten, join_documents, site_occurrence, BlobHash, CallEdgeKind, ExtractOutput, FamilyMask,
+    FamilyTag, FileSet, FlatFact, GoSource, IndexBag, ManifestMap, ProjectCx, ProjectDigest,
+    Resolve, RustSource, ScipGo, ScipRust, ScipSource, ScipTypescript, Span, TsSource, TypeF,
 };
 
 struct Case {
@@ -122,12 +121,22 @@ const CASES: &[Case] = &[
 ];
 
 const PORTED: &[&str] = &[
-    "type_node", "type_sig", "call_def", "call_site", "df_node", "df_edge", "const_value",
+    "type_node",
+    "type_sig",
+    "call_def",
+    "call_site",
+    "df_node",
+    "df_edge",
+    "const_value",
 ];
 
 /// 1-based line containing `byte_off` (newline count + 1). Matches v5's `line_at`.
 fn line_of(bytes: &[u8], byte_off: u32) -> u32 {
-    bytes[..byte_off as usize].iter().filter(|&&b| b == b'\n').count() as u32 + 1
+    bytes[..byte_off as usize]
+        .iter()
+        .filter(|&&b| b == b'\n')
+        .count() as u32
+        + 1
 }
 
 fn facet_of(line: &str) -> &str {
@@ -140,7 +149,12 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
     let mut set = BTreeSet::new();
     for fact in flatten(&out) {
         match fact {
-            FlatFact::Node { family, span, kind, name } => match family {
+            FlatFact::Node {
+                family,
+                span,
+                kind,
+                name,
+            } => match family {
                 FamilyTag::Type => {
                     set.insert(format!(
                         "type_node\t{kind}\t{}\t{}",
@@ -164,20 +178,40 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
                 }
                 FamilyTag::Cst | FamilyTag::Module => {}
             },
-            FlatFact::Edge { family, from, to, .. } => match family {
+            FlatFact::Edge {
+                family, from, to, ..
+            } => match family {
                 FamilyTag::Df => {
                     set.insert(format!("df_edge\t{}\t{}", from.start, to.start));
                 }
                 FamilyTag::Cst => {}
                 _ => {}
             },
-            FlatFact::Sig { owner, slot, pos, ty, .. } => {
-                set.insert(format!("type_sig\t{}\t{slot}\t{pos}\t{ty}", line_of(bytes, owner.start)));
+            FlatFact::Sig {
+                owner,
+                slot,
+                pos,
+                ty,
+                ..
+            } => {
+                set.insert(format!(
+                    "type_sig\t{}\t{slot}\t{pos}\t{ty}",
+                    line_of(bytes, owner.start)
+                ));
             }
             FlatFact::Site { span, callee, .. } => {
-                set.insert(format!("call_site\t{callee}\t{}", line_of(bytes, span.start)));
+                set.insert(format!(
+                    "call_site\t{callee}\t{}",
+                    line_of(bytes, span.start)
+                ));
             }
-            FlatFact::Const { owner, field, text, kind, .. } => {
+            FlatFact::Const {
+                owner,
+                field,
+                text,
+                kind,
+                ..
+            } => {
                 set.insert(format!(
                     "const_value\t{}\t{}\t{kind}\t{text}",
                     line_of(bytes, owner.start),
@@ -221,7 +255,11 @@ fn ported_facets_match_v5() {
             continue;
         }
         let dump = |xs: &[&String], n: usize| -> String {
-            xs.iter().take(n).map(|s| format!("    {s}")).collect::<Vec<_>>().join("\n")
+            xs.iter()
+                .take(n)
+                .map(|s| format!("    {s}"))
+                .collect::<Vec<_>>()
+                .join("\n")
         };
         panic!(
             "[{}] PORTED parity diff vs v5 oracle:\n  only in v5 ({}):\n{}\n  only in v6 ({}):\n{}\n\
@@ -242,7 +280,9 @@ fn ported_facets_match_v5() {
 /// Build the phase-2 corpus: every case's ExtractOutput + its real blake3 blob
 /// hash, the DefIndex folded over all of them (the resolution universe), and a
 /// borrowed ProjectCx. Shared by the type_edge parity test and the ledger test.
-fn with_resolve_cx<R>(f: impl FnOnce(&ProjectCx, &[(BlobHash, ExtractOutput, &'static Case)]) -> R) -> R {
+fn with_resolve_cx<R>(
+    f: impl FnOnce(&ProjectCx, &[(BlobHash, ExtractOutput, &'static Case)]) -> R,
+) -> R {
     let corpus: Vec<(BlobHash, ExtractOutput, &'static Case)> = CASES
         .iter()
         .map(|case| {
@@ -261,7 +301,10 @@ fn with_resolve_cx<R>(f: impl FnOnce(&ProjectCx, &[(BlobHash, ExtractOutput, &'s
         digest: ProjectDigest::default(),
         indexes: IndexBag::default(),
     };
-    cx.indexes.def_index.set(build_def_index(&pairs)).expect("fresh OnceLock");
+    cx.indexes
+        .def_index
+        .set(build_def_index(&pairs))
+        .expect("fresh OnceLock");
     f(&cx, &corpus)
 }
 
@@ -306,7 +349,11 @@ fn type_edge_resolve_parity_ts() {
                 })
                 .collect();
             if edges.len() != candidates.len() {
-                v6.insert(format!("ZIP_MISMATCH edges={} candidates={}", edges.len(), candidates.len()));
+                v6.insert(format!(
+                    "ZIP_MISMATCH edges={} candidates={}",
+                    edges.len(),
+                    candidates.len()
+                ));
             }
             let v5: BTreeSet<String> = case
                 .baseline
@@ -325,7 +372,11 @@ fn type_edge_resolve_parity_ts() {
                 only_v6.len(),
                 only_v6.iter().map(|s| format!("    {s}")).collect::<Vec<_>>().join("\n"),
             );
-            eprintln!("[{}] type_edge parity: {} rows compared, 0 divergence", case.name, v5.len());
+            eprintln!(
+                "[{}] type_edge parity: {} rows compared, 0 divergence",
+                case.name,
+                v5.len()
+            );
         }
     });
 }
@@ -357,7 +408,11 @@ fn type_edge_resolve_parity_go() {
                 })
                 .collect();
             if edges.len() != candidates.len() {
-                v6.insert(format!("ZIP_MISMATCH edges={} candidates={}", edges.len(), candidates.len()));
+                v6.insert(format!(
+                    "ZIP_MISMATCH edges={} candidates={}",
+                    edges.len(),
+                    candidates.len()
+                ));
             }
             let v5: BTreeSet<String> = case
                 .baseline
@@ -376,7 +431,11 @@ fn type_edge_resolve_parity_go() {
                 only_v6.len(),
                 only_v6.iter().map(|s| format!("    {s}")).collect::<Vec<_>>().join("\n"),
             );
-            eprintln!("[{}] type_edge parity: {} rows compared, 0 divergence", case.name, v5.len());
+            eprintln!(
+                "[{}] type_edge parity: {} rows compared, 0 divergence",
+                case.name,
+                v5.len()
+            );
         }
     });
 }
@@ -409,7 +468,11 @@ fn type_edge_resolve_parity_rust() {
                 })
                 .collect();
             if edges.len() != candidates.len() {
-                v6.insert(format!("ZIP_MISMATCH edges={} candidates={}", edges.len(), candidates.len()));
+                v6.insert(format!(
+                    "ZIP_MISMATCH edges={} candidates={}",
+                    edges.len(),
+                    candidates.len()
+                ));
             }
             let v5: BTreeSet<String> = case
                 .baseline
@@ -428,7 +491,11 @@ fn type_edge_resolve_parity_rust() {
                 only_v6.len(),
                 only_v6.iter().map(|s| format!("    {s}")).collect::<Vec<_>>().join("\n"),
             );
-            eprintln!("[{}] type_edge parity: {} rows compared, 0 divergence", case.name, v5.len());
+            eprintln!(
+                "[{}] type_edge parity: {} rows compared, 0 divergence",
+                case.name,
+                v5.len()
+            );
         }
     });
 }
@@ -458,12 +525,22 @@ fn deferred_and_v6_only_ledger() {
             let cst_only = facts
                 .iter()
                 .filter(|f| {
-                    matches!(f, FlatFact::Node { family: FamilyTag::Cst, .. }
-                        | FlatFact::Edge { family: FamilyTag::Cst, .. })
+                    matches!(
+                        f,
+                        FlatFact::Node {
+                            family: FamilyTag::Cst,
+                            ..
+                        } | FlatFact::Edge {
+                            family: FamilyTag::Cst,
+                            ..
+                        }
+                    )
                 })
                 .count();
-            let specifier_only =
-                facts.iter().filter(|f| matches!(f, FlatFact::Specifier { .. })).count();
+            let specifier_only = facts
+                .iter()
+                .filter(|f| matches!(f, FlatFact::Specifier { .. }))
+                .count();
             // The genuinely-resolved span->blob type_edge legs: v6-only, never
             // asserted (the candidate row is the parity target).
             let resolved_legs = match case.fixture_dir {
@@ -571,7 +648,10 @@ fn call_resolve_scip_ratchet_ts() {
             }
             if path.extension().and_then(|e| e.to_str()) == Some("ts") {
                 rels.push(
-                    path.strip_prefix(&fixture_root).unwrap().to_string_lossy().replace('\\', "/"),
+                    path.strip_prefix(&fixture_root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/"),
                 );
             }
         }
@@ -610,8 +690,14 @@ fn call_resolve_scip_ratchet_ts() {
         digest: ProjectDigest::default(),
         indexes: IndexBag::default(),
     };
-    cx.indexes.def_index.set(build_def_index(&pairs)).expect("fresh OnceLock");
-    cx.indexes.scip_index.set(scip_index).expect("fresh OnceLock");
+    cx.indexes
+        .def_index
+        .set(build_def_index(&pairs))
+        .expect("fresh OnceLock");
+    cx.indexes
+        .scip_index
+        .set(scip_index)
+        .expect("fresh OnceLock");
     let scip_index = cx.indexes.scip_index.get().unwrap();
     let def_index = cx.indexes.def_index.get().unwrap();
 
@@ -658,8 +744,7 @@ fn call_resolve_scip_ratchet_ts() {
                 .and_then(|(def_doc_ix, def_occ)| {
                     let def_doc = &scip_index.documents[def_doc_ix];
                     let (def_blob, def_content) = joined[def_doc_ix].as_ref().unwrap();
-                    let ident =
-                        byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
+                    let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
                     containing_def_site(def_index, *def_blob, ident)
                         .map(|(name, s)| (*def_blob, s.span, name))
                 });
@@ -740,11 +825,16 @@ fn call_resolve_scip_ratchet_ts() {
             }
         }
         expected.sort_by_key(|t| (t.0, t.1, t.2, t.3));
-        assert_eq!(actual, expected, "[{rel}] arm edges != twin expected outcomes");
+        assert_eq!(
+            actual, expected,
+            "[{rel}] arm edges != twin expected outcomes"
+        );
         eprintln!(
             "[{rel}] scip ratchet: sites {} | name_resolve {} scip_override {} external-no-edge {}",
             call.aux.sites.len(),
-            counts.name_resolve, counts.scip_override, counts.external_no_edge
+            counts.name_resolve,
+            counts.scip_override,
+            counts.external_no_edge
         );
     }
     eprintln!(
@@ -756,10 +846,30 @@ fn call_resolve_scip_ratchet_ts() {
     for line in &lines {
         eprintln!("  {line}");
     }
-    assert_eq!(counts.missing_occurrence, 0, "occurrence parity: every v6 site has a scip occurrence\n{}", lines.join("\n"));
-    assert_eq!(counts.disagreements, 0, "every NameResolve agrees with scip's corpus target\n{}", lines.join("\n"));
-    assert_eq!(counts.misses, 0, "no silent misses: every scip-corpus-resolved site has a v6 edge\n{}", lines.join("\n"));
-    assert_eq!(counts.overbound, 0, "no overbinding: every NameResolve is scip-corpus-resolved\n{}", lines.join("\n"));
+    assert_eq!(
+        counts.missing_occurrence,
+        0,
+        "occurrence parity: every v6 site has a scip occurrence\n{}",
+        lines.join("\n")
+    );
+    assert_eq!(
+        counts.disagreements,
+        0,
+        "every NameResolve agrees with scip's corpus target\n{}",
+        lines.join("\n")
+    );
+    assert_eq!(
+        counts.misses,
+        0,
+        "no silent misses: every scip-corpus-resolved site has a v6 edge\n{}",
+        lines.join("\n")
+    );
+    assert_eq!(
+        counts.overbound,
+        0,
+        "no overbinding: every NameResolve is scip-corpus-resolved\n{}",
+        lines.join("\n")
+    );
 }
 
 /// GO Resolve<CallF> RATCHET vs scip-go (4d-ii-go): the 4c-ii ts ratchet's
@@ -820,7 +930,10 @@ fn call_resolve_scip_ratchet_go() {
             }
             if path.extension().and_then(|e| e.to_str()) == Some("go") {
                 rels.push(
-                    path.strip_prefix(&fixture_root).unwrap().to_string_lossy().replace('\\', "/"),
+                    path.strip_prefix(&fixture_root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/"),
                 );
             }
         }
@@ -859,8 +972,14 @@ fn call_resolve_scip_ratchet_go() {
         digest: ProjectDigest::default(),
         indexes: IndexBag::default(),
     };
-    cx.indexes.def_index.set(build_def_index(&pairs)).expect("fresh OnceLock");
-    cx.indexes.scip_index.set(scip_index).expect("fresh OnceLock");
+    cx.indexes
+        .def_index
+        .set(build_def_index(&pairs))
+        .expect("fresh OnceLock");
+    cx.indexes
+        .scip_index
+        .set(scip_index)
+        .expect("fresh OnceLock");
     let scip_index = cx.indexes.scip_index.get().unwrap();
     let def_index = cx.indexes.def_index.get().unwrap();
 
@@ -907,8 +1026,7 @@ fn call_resolve_scip_ratchet_go() {
                 .and_then(|(def_doc_ix, def_occ)| {
                     let def_doc = &scip_index.documents[def_doc_ix];
                     let (def_blob, def_content) = joined[def_doc_ix].as_ref().unwrap();
-                    let ident =
-                        byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
+                    let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
                     containing_def_site(def_index, *def_blob, ident)
                         .map(|(name, s)| (*def_blob, s.span, name))
                 });
@@ -989,11 +1107,16 @@ fn call_resolve_scip_ratchet_go() {
             }
         }
         expected.sort_by_key(|t| (t.0, t.1, t.2, t.3));
-        assert_eq!(actual, expected, "[{rel}] arm edges != twin expected outcomes");
+        assert_eq!(
+            actual, expected,
+            "[{rel}] arm edges != twin expected outcomes"
+        );
         eprintln!(
             "[{rel}] scip ratchet: sites {} | name_resolve {} scip_override {} external-no-edge {}",
             call.aux.sites.len(),
-            counts.name_resolve, counts.scip_override, counts.external_no_edge
+            counts.name_resolve,
+            counts.scip_override,
+            counts.external_no_edge
         );
     }
     eprintln!(
@@ -1005,10 +1128,30 @@ fn call_resolve_scip_ratchet_go() {
     for line in &lines {
         eprintln!("  {line}");
     }
-    assert_eq!(counts.missing_occurrence, 0, "occurrence parity: every v6 site has a scip occurrence\n{}", lines.join("\n"));
-    assert_eq!(counts.disagreements, 0, "every NameResolve agrees with scip's corpus target\n{}", lines.join("\n"));
-    assert_eq!(counts.misses, 0, "no silent misses: every scip-corpus-resolved site has a v6 edge\n{}", lines.join("\n"));
-    assert_eq!(counts.overbound, 0, "no overbinding: every NameResolve is scip-corpus-resolved\n{}", lines.join("\n"));
+    assert_eq!(
+        counts.missing_occurrence,
+        0,
+        "occurrence parity: every v6 site has a scip occurrence\n{}",
+        lines.join("\n")
+    );
+    assert_eq!(
+        counts.disagreements,
+        0,
+        "every NameResolve agrees with scip's corpus target\n{}",
+        lines.join("\n")
+    );
+    assert_eq!(
+        counts.misses,
+        0,
+        "no silent misses: every scip-corpus-resolved site has a v6 edge\n{}",
+        lines.join("\n")
+    );
+    assert_eq!(
+        counts.overbound,
+        0,
+        "no overbinding: every NameResolve is scip-corpus-resolved\n{}",
+        lines.join("\n")
+    );
 }
 
 /// Rust Resolve<CallF> RATCHET vs scip (4d-ii): the ts ratchet's 6 legs on the
@@ -1057,7 +1200,10 @@ fn call_resolve_scip_ratchet_rust() {
             }
             if path.extension().and_then(|e| e.to_str()) == Some("rs") {
                 rels.push(
-                    path.strip_prefix(&fixture_root).unwrap().to_string_lossy().replace('\\', "/"),
+                    path.strip_prefix(&fixture_root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/"),
                 );
             }
         }
@@ -1096,8 +1242,14 @@ fn call_resolve_scip_ratchet_rust() {
         digest: ProjectDigest::default(),
         indexes: IndexBag::default(),
     };
-    cx.indexes.def_index.set(build_def_index(&pairs)).expect("fresh OnceLock");
-    cx.indexes.scip_index.set(scip_index).expect("fresh OnceLock");
+    cx.indexes
+        .def_index
+        .set(build_def_index(&pairs))
+        .expect("fresh OnceLock");
+    cx.indexes
+        .scip_index
+        .set(scip_index)
+        .expect("fresh OnceLock");
     let scip_index = cx.indexes.scip_index.get().unwrap();
     let def_index = cx.indexes.def_index.get().unwrap();
 
@@ -1146,8 +1298,7 @@ fn call_resolve_scip_ratchet_rust() {
                 .and_then(|(def_doc_ix, def_occ)| {
                     let def_doc = &scip_index.documents[def_doc_ix];
                     let (def_blob, def_content) = joined[def_doc_ix].as_ref().unwrap();
-                    let ident =
-                        byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
+                    let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
                     containing_def_site(def_index, *def_blob, ident)
                         .map(|(name, s)| (*def_blob, s.span, name))
                 });
@@ -1228,11 +1379,16 @@ fn call_resolve_scip_ratchet_rust() {
             }
         }
         expected.sort_by_key(|t| (t.0, t.1, t.2, t.3));
-        assert_eq!(actual, expected, "[{rel}] arm edges != twin expected outcomes");
+        assert_eq!(
+            actual, expected,
+            "[{rel}] arm edges != twin expected outcomes"
+        );
         eprintln!(
             "[{rel}] scip ratchet: sites {} | name_resolve {} scip_override {} external-no-edge {}",
             call.aux.sites.len(),
-            counts.name_resolve, counts.scip_override, counts.external_no_edge
+            counts.name_resolve,
+            counts.scip_override,
+            counts.external_no_edge
         );
     }
     eprintln!(
@@ -1244,10 +1400,30 @@ fn call_resolve_scip_ratchet_rust() {
     for line in &lines {
         eprintln!("  {line}");
     }
-    assert_eq!(counts.missing_occurrence, 0, "occurrence parity: every v6 site has a scip occurrence\n{}", lines.join("\n"));
-    assert_eq!(counts.disagreements, 0, "every NameResolve agrees with scip's corpus target\n{}", lines.join("\n"));
-    assert_eq!(counts.misses, 0, "no silent misses: every scip-corpus-resolved site has a v6 edge\n{}", lines.join("\n"));
-    assert_eq!(counts.overbound, 0, "no overbinding: every NameResolve is scip-corpus-resolved\n{}", lines.join("\n"));
+    assert_eq!(
+        counts.missing_occurrence,
+        0,
+        "occurrence parity: every v6 site has a scip occurrence\n{}",
+        lines.join("\n")
+    );
+    assert_eq!(
+        counts.disagreements,
+        0,
+        "every NameResolve agrees with scip's corpus target\n{}",
+        lines.join("\n")
+    );
+    assert_eq!(
+        counts.misses,
+        0,
+        "no silent misses: every scip-corpus-resolved site has a v6 edge\n{}",
+        lines.join("\n")
+    );
+    assert_eq!(
+        counts.overbound,
+        0,
+        "no overbinding: every NameResolve is scip-corpus-resolved\n{}",
+        lines.join("\n")
+    );
 }
 
 #[derive(Default)]

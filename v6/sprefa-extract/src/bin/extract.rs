@@ -29,6 +29,7 @@ LANGUAGE COVERAGE (first-match, by extension)
   rs                               full     families: cst, type, call, df, const
   go                               full     families: cst, type, call, df (no const facet)
   kt/kts                           full     families: cst, type, call, df (no const facet)
+  pl/pro/prolog/datalog/horn       full     families: cst, type, call, df
   python/c/... (any ast-grep grammar)        cst only
   any other extension              no output, exit 0 (not an error)
 
@@ -88,7 +89,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = cli.path.expect("PATH is required unless --schema is given");
     let content = std::fs::read(&path)?;
     let path_str = path.to_string_lossy();
-    let mask = cli.family.as_deref().map(parse_mask).unwrap_or(FamilyMask::ALL);
+    let mask = cli
+        .family
+        .as_deref()
+        .map(parse_mask)
+        .unwrap_or(FamilyMask::ALL);
     if cli.bench {
         bench(&path_str, &content, mask)?;
     } else {

@@ -24,6 +24,7 @@
 
 use std::collections::BTreeSet;
 
+use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstF, DfEdgeKind, DfF, DfNodeKind, ProjectEdge,
     SigSlot, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
@@ -31,13 +32,12 @@ use crate::family::{
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
 use crate::seams::{
-    DefIndex, Parser, Project, Resolve, containing_def_site, corpus_defs, covering_def, def_named,
-    own_blob,
+    containing_def_site, corpus_defs, covering_def, def_named, own_blob, DefIndex, Parser, Project,
+    Resolve,
 };
 use crate::shape::{BlobHash, FamilyTag, NodeRef, Span, Strings};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::types::ScipIndex;
-use super::astgrep::{AstGrepParser, CstProjector};
 
 // ── the tree-sitter-go parse (one parse feeds type/call/df) ──────────────────
 
@@ -161,7 +161,8 @@ fn push_entity(
     name: &str,
     kind: TypeEntityKind,
 ) {
-    sink.nodes.push(Node::new(span, kind).with_name(strings.intern(name)));
+    sink.nodes
+        .push(Node::new(span, kind).with_name(strings.intern(name)));
 }
 
 /// The byte span of a tree-sitter node `[start_byte, end_byte)`.
@@ -196,7 +197,10 @@ fn go_edge_candidates(
     let mut params: BTreeSet<String> = BTreeSet::new();
     if let Some(tp_list) = spec.child_by_field_name("type_parameters") {
         let mut cursor = tp_list.walk();
-        for tp in tp_list.children(&mut cursor).filter(|n| n.kind() == "type_parameter_declaration") {
+        for tp in tp_list
+            .children(&mut cursor)
+            .filter(|n| n.kind() == "type_parameter_declaration")
+        {
             // v5 accumulates the declared names left-to-right and filters each
             // constraint against the names seen SO FAR - ported verbatim.
             let mut cc = tp.walk();
@@ -211,18 +215,26 @@ fn go_edge_candidates(
         }
     }
 
-    let Some(ty) = spec.child_by_field_name("type") else { return };
+    let Some(ty) = spec.child_by_field_name("type") else {
+        return;
+    };
     match ty.kind() {
         "struct_type" => {
             let mut c = ty.walk();
-            let Some(list) =
-                ty.children(&mut c).find(|n| n.kind() == "field_declaration_list")
+            let Some(list) = ty
+                .children(&mut c)
+                .find(|n| n.kind() == "field_declaration_list")
             else {
                 return;
             };
             let mut c2 = list.walk();
-            for field in list.children(&mut c2).filter(|n| n.kind() == "field_declaration") {
-                let Some(ftype) = field.child_by_field_name("type") else { continue };
+            for field in list
+                .children(&mut c2)
+                .filter(|n| n.kind() == "field_declaration")
+            {
+                let Some(ftype) = field.child_by_field_name("type") else {
+                    continue;
+                };
                 let kind = if field.child_by_field_name("name").is_some() {
                     TypeEdgeKind::Field
                 } else {
@@ -252,7 +264,11 @@ fn push_candidate(
     to: &str,
     kind: TypeEdgeKind,
 ) {
-    sink.aux.candidates.push(TypeEdgeCandidate { owner, to: strings.intern(to), kind });
+    sink.aux.candidates.push(TypeEdgeCandidate {
+        owner,
+        to: strings.intern(to),
+        kind,
+    });
 }
 
 // ── arrow-type signatures (port of v5 `go_fn_type`) ──────────────────────────
@@ -273,10 +289,15 @@ fn fn_sigs(
     if let Some(plist) = node.child_by_field_name("parameters") {
         let mut cursor = plist.walk();
         for param in plist.children(&mut cursor) {
-            if !matches!(param.kind(), "parameter_declaration" | "variadic_parameter_declaration") {
+            if !matches!(
+                param.kind(),
+                "parameter_declaration" | "variadic_parameter_declaration"
+            ) {
                 continue;
             }
-            let Some(ty) = param.child_by_field_name("type") else { continue };
+            let Some(ty) = param.child_by_field_name("type") else {
+                continue;
+            };
             // A grouped parameter (`a, b int`) is ONE grammar node but TWO slots;
             // each declared name gets its own slot sharing the group's type.
             let mut name_cursor = param.walk();
@@ -300,7 +321,10 @@ fn fn_sigs(
         if result.kind() == "parameter_list" {
             let mut cursor = result.walk();
             for param in result.children(&mut cursor) {
-                if matches!(param.kind(), "parameter_declaration" | "variadic_parameter_declaration") {
+                if matches!(
+                    param.kind(),
+                    "parameter_declaration" | "variadic_parameter_declaration"
+                ) {
                     if let Some(ty) = param.child_by_field_name("type") {
                         for name in go_type_refs(ty, src, &tparams) {
                             push_sig(sink, strings, owner, SigSlot::Ret, 0, &name);
@@ -324,7 +348,12 @@ fn push_sig(
     pos: u32,
     name: &str,
 ) {
-    sink.aux.sigs.push(TypeSig { owner, slot, pos, ty: strings.intern(name) });
+    sink.aux.sigs.push(TypeSig {
+        owner,
+        slot,
+        pos,
+        ty: strings.intern(name),
+    });
 }
 
 /// The callable's declared type-parameter names (the exclusion set: a generic
@@ -373,8 +402,14 @@ fn collect_go_refs(
             }
         }
         "qualified_type" => {
-            let pkg = node.child_by_field_name("package").map(|n| go_text(n, src)).unwrap_or("");
-            let name = node.child_by_field_name("name").map(|n| go_text(n, src)).unwrap_or("");
+            let pkg = node
+                .child_by_field_name("package")
+                .map(|n| go_text(n, src))
+                .unwrap_or("");
+            let name = node
+                .child_by_field_name("name")
+                .map(|n| go_text(n, src))
+                .unwrap_or("");
             if !pkg.is_empty() && !name.is_empty() {
                 out.push(format!("{pkg}.{name}"));
             }
@@ -393,10 +428,28 @@ fn collect_go_refs(
 fn is_noise_go(name: &str) -> bool {
     matches!(
         name,
-        "int" | "int8" | "int16" | "int32" | "int64"
-            | "uint" | "uint8" | "uint16" | "uint32" | "uint64" | "uintptr"
-            | "float32" | "float64" | "complex64" | "complex128"
-            | "bool" | "string" | "byte" | "rune" | "error" | "any" | "comparable"
+        "int"
+            | "int8"
+            | "int16"
+            | "int32"
+            | "int64"
+            | "uint"
+            | "uint8"
+            | "uint16"
+            | "uint32"
+            | "uint64"
+            | "uintptr"
+            | "float32"
+            | "float64"
+            | "complex64"
+            | "complex128"
+            | "bool"
+            | "string"
+            | "byte"
+            | "rune"
+            | "error"
+            | "any"
+            | "comparable"
     )
 }
 
@@ -419,7 +472,9 @@ fn go_receiver_type(method: tree_sitter::Node, src: &[u8]) -> Option<String> {
     }
     match ty.kind() {
         "type_identifier" => Some(go_text(ty, src).to_string()),
-        "qualified_type" => ty.child_by_field_name("name").map(|n| go_text(n, src).to_string()),
+        "qualified_type" => ty
+            .child_by_field_name("name")
+            .map(|n| go_text(n, src).to_string()),
         _ => None,
     }
 }
@@ -456,8 +511,14 @@ fn project_call(
 /// span-containment resolution. Port of v5 `end_of(child)` (the body end line).
 fn def_span(child: tree_sitter::Node) -> Span {
     let start = child.start_byte();
-    let end = child.child_by_field_name("body").unwrap_or(child).end_byte();
-    Span { start: start as u32, len: (end - start) as u32 }
+    let end = child
+        .child_by_field_name("body")
+        .unwrap_or(child)
+        .end_byte();
+    Span {
+        start: start as u32,
+        len: (end - start) as u32,
+    }
 }
 
 /// Walk every callable declaration, minting one def node per Free function /
@@ -479,16 +540,18 @@ fn go_walk_call_defs(
                 if let Some(name_node) = child.child_by_field_name("name") {
                     let span = def_span(child);
                     let name = go_text(name_node, src).to_string();
-                    sink.nodes.push(Node::new(span, CallKind::Free).with_name(strings.intern(&name)));
+                    sink.nodes
+                        .push(Node::new(span, CallKind::Free).with_name(strings.intern(&name)));
                     go_walk_call_defs(child, src, strings, sink, true);
                     continue;
                 }
             }
             // @callable go method
             "method_declaration" => {
-                if let (Some(name_node), Some(_)) =
-                    (child.child_by_field_name("name"), go_receiver_type(child, src))
-                {
+                if let (Some(name_node), Some(_)) = (
+                    child.child_by_field_name("name"),
+                    go_receiver_type(child, src),
+                ) {
                     let span = def_span(child);
                     let name = go_text(name_node, src).to_string();
                     sink.nodes
@@ -531,9 +594,9 @@ fn go_walk_call_sites(
             if let Some(func) = child.child_by_field_name("function") {
                 let callee = match func.kind() {
                     "identifier" => Some(go_text(func, src).to_string()),
-                    "selector_expression" => {
-                        func.child_by_field_name("field").map(|field| go_text(field, src).to_string())
-                    }
+                    "selector_expression" => func
+                        .child_by_field_name("field")
+                        .map(|field| go_text(field, src).to_string()),
                     _ => None,
                 };
                 if let Some(callee) = callee {
@@ -613,9 +676,10 @@ fn go_walk_fns(
                 }
             }
             "method_declaration" => {
-                if let (Some(name_node), Some(owner)) =
-                    (child.child_by_field_name("name"), go_receiver_type(child, src))
-                {
+                if let (Some(name_node), Some(owner)) = (
+                    child.child_by_field_name("name"),
+                    go_receiver_type(child, src),
+                ) {
                     let fn_sym = format!("{file}::method::{owner}.{}", go_text(name_node, src));
                     go_flow_fn(child, src, &fn_sym, strings, sink);
                 }
@@ -642,7 +706,10 @@ fn go_flow_fn(
     if let Some(params) = fn_node.child_by_field_name("parameters") {
         let mut cursor = params.walk();
         for param in params.children(&mut cursor) {
-            if !matches!(param.kind(), "parameter_declaration" | "variadic_parameter_declaration") {
+            if !matches!(
+                param.kind(),
+                "parameter_declaration" | "variadic_parameter_declaration"
+            ) {
                 continue;
             }
             let mut name_cursor = param.walk();
@@ -655,7 +722,13 @@ fn go_flow_fn(
             }
             for name_node in names {
                 let name = go_text(name_node, src).to_string();
-                let node = df_push(sink, strings, name_node.start_byte() as u32, DfNodeKind::Param, Some(&name));
+                let node = df_push(
+                    sink,
+                    strings,
+                    name_node.start_byte() as u32,
+                    DfNodeKind::Param,
+                    Some(&name),
+                );
                 scope.insert(name, node);
             }
         }
@@ -687,10 +760,16 @@ fn flow_go(
             }
             Some(read)
         }
-        "interpreted_string_literal" | "raw_string_literal" | "int_literal" | "float_literal"
-        | "imaginary_literal" | "rune_literal" | "true" | "false" | "nil" | "iota" => {
-            Some(df_push(sink, strings, start_byte, DfNodeKind::Lit, None))
-        }
+        "interpreted_string_literal"
+        | "raw_string_literal"
+        | "int_literal"
+        | "float_literal"
+        | "imaginary_literal"
+        | "rune_literal"
+        | "true"
+        | "false"
+        | "nil"
+        | "iota" => Some(df_push(sink, strings, start_byte, DfNodeKind::Lit, None)),
         // f(args): every argument flows into the call result; a selector callee
         // `recv.M(args)` flows the receiver in too. Go has no syntactic ctor
         // marker (capitalization means EXPORTED), so every call is `call_res`.
@@ -802,7 +881,15 @@ fn flow_go(
                     .children(&mut cursor)
                     .filter(|n| n.kind() == "identifier")
                     .collect();
-                go_bind(&names, &rhs_ids, DfNodeKind::LetBind, src, strings, scope, sink);
+                go_bind(
+                    &names,
+                    &rhs_ids,
+                    DfNodeKind::LetBind,
+                    src,
+                    strings,
+                    scope,
+                    sink,
+                );
             }
             None
         }
@@ -832,7 +919,15 @@ fn flow_go(
                     .filter(|n| n.kind() == "identifier")
                     .copied()
                     .collect();
-                go_bind(&names, &rhs_ids, DfNodeKind::VarWrite, src, strings, scope, sink);
+                go_bind(
+                    &names,
+                    &rhs_ids,
+                    DfNodeKind::VarWrite,
+                    src,
+                    strings,
+                    scope,
+                    sink,
+                );
                 for target in targets
                     .iter()
                     .filter(|n| n.kind() != "identifier" && n.kind() != ",")
@@ -856,7 +951,13 @@ fn flow_go(
                 let mut list_cursor = list.walk();
                 for expr in list.children(&mut list_cursor) {
                     if let Some(value) = flow_go(expr, src, fn_sym, strings, scope, sink) {
-                        let ret = df_push(sink, strings, expr.start_byte() as u32, DfNodeKind::Ret, None);
+                        let ret = df_push(
+                            sink,
+                            strings,
+                            expr.start_byte() as u32,
+                            DfNodeKind::Ret,
+                            None,
+                        );
                         df_edge(sink, value, ret);
                         minted = true;
                     }
@@ -940,7 +1041,13 @@ fn flow_go(
             if let Some(body) = node.child_by_field_name("body") {
                 flow_go(body, src, fn_sym, strings, scope, sink);
             }
-            Some(df_push(sink, strings, start_byte, DfNodeKind::Loop, Some(&loop_var)))
+            Some(df_push(
+                sink,
+                strings,
+                start_byte,
+                DfNodeKind::Loop,
+                Some(&loop_var),
+            ))
         }
         // `func(...) {...}`: lift as its OWN fn scope under v5's `lam_sym`
         // (`{fn_sym}::closure::{row}_{col}`, tree-sitter's 0-based row/col of the
@@ -954,7 +1061,10 @@ fn flow_go(
             if let Some(params) = node.child_by_field_name("parameters") {
                 let mut cursor = params.walk();
                 for param in params.children(&mut cursor) {
-                    if !matches!(param.kind(), "parameter_declaration" | "variadic_parameter_declaration") {
+                    if !matches!(
+                        param.kind(),
+                        "parameter_declaration" | "variadic_parameter_declaration"
+                    ) {
                         continue;
                     }
                     let mut name_cursor = param.walk();
@@ -981,7 +1091,13 @@ fn flow_go(
             if let Some(body) = node.child_by_field_name("body") {
                 flow_go(body, src, &lam_sym, strings, scope, sink);
             }
-            Some(df_push(sink, strings, start_byte, DfNodeKind::Closure, Some(&lam_sym)))
+            Some(df_push(
+                sink,
+                strings,
+                start_byte,
+                DfNodeKind::Closure,
+                Some(&lam_sym),
+            ))
         }
         // everything else (blocks/statement lists, expression statements,
         // parenthesized/index/slice/type-assertion/conversion expressions,
@@ -1025,7 +1141,13 @@ fn go_bind(
         if name == "_" {
             continue;
         }
-        let bind = df_push(sink, strings, name_node.start_byte() as u32, kind, Some(&name));
+        let bind = df_push(
+            sink,
+            strings,
+            name_node.start_byte() as u32,
+            kind,
+            Some(&name),
+        );
         let rhs = if rhs_ids.len() == names.len() {
             rhs_ids.get(i).cloned().flatten()
         } else {
@@ -1057,7 +1179,15 @@ fn go_flow_spec(
         .child_by_field_name("value")
         .map(|value| go_flow_expr_list(value, src, fn_sym, strings, scope, sink))
         .unwrap_or_default();
-    go_bind(&names, &rhs_ids, DfNodeKind::LetBind, src, strings, scope, sink);
+    go_bind(
+        &names,
+        &rhs_ids,
+        DfNodeKind::LetBind,
+        src,
+        strings,
+        scope,
+        sink,
+    );
 }
 
 /// A composite literal's body (`literal_value`): each `keyed_element`'s value
@@ -1080,8 +1210,12 @@ fn go_flow_literal_fields(
             "literal_element" => Some(child),
             _ => continue,
         };
-        let Some(value_wrap) = value_wrap else { continue };
-        let Some(inner) = value_wrap.named_child(0) else { continue };
+        let Some(value_wrap) = value_wrap else {
+            continue;
+        };
+        let Some(inner) = value_wrap.named_child(0) else {
+            continue;
+        };
         if let Some(value) = flow_go(inner, src, fn_sym, strings, scope, sink) {
             df_edge(sink, value, owner);
         }
@@ -1139,7 +1273,13 @@ fn df_push(
     name: Option<&str>,
 ) -> NodeRef {
     let node_ref = NodeRef(sink.nodes.len() as u32);
-    let mut node = Node::new(Span { start: byte, len: 0 }, kind);
+    let mut node = Node::new(
+        Span {
+            start: byte,
+            len: 0,
+        },
+        kind,
+    );
     if let Some(name) = name.filter(|candidate| !candidate.is_empty()) {
         node = node.with_name(strings.intern(name));
     }
@@ -1183,11 +1323,14 @@ impl Source for GoSource {
         // failed ast-grep parse leaves cst None (no panic).
         let cst = if mask.cst {
             let arena = AstGrepParser.make_arena();
-            AstGrepParser.parse(&arena, path, content).ok().map(|parsed| {
-                let mut bundle = FamilyBundle::<CstF>::default();
-                CstProjector.project(&parsed, &mut strings, &mut bundle);
-                bundle
-            })
+            AstGrepParser
+                .parse(&arena, path, content)
+                .ok()
+                .map(|parsed| {
+                    let mut bundle = FamilyBundle::<CstF>::default();
+                    CstProjector.project(&parsed, &mut strings, &mut bundle);
+                    bundle
+                })
         } else {
             None
         };
@@ -1223,7 +1366,13 @@ impl Source for GoSource {
             }
         }
 
-        ExtractOutput { strings, cst, types, call, df }
+        ExtractOutput {
+            strings,
+            cst,
+            types,
+            call,
+            df,
+        }
     }
 }
 
@@ -1289,21 +1438,35 @@ fn resolve_type_dst(
 
 impl Resolve<TypeF> for GoSource {
     fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<TypeF>> {
-        let Some(types) = &output.types else { return Vec::new() };
+        let Some(types) = &output.types else {
+            return Vec::new();
+        };
         let index = cx.indexes.def_index.get();
         let mut edges = Vec::new();
         for candidate in GoSource::type_edge_candidates(output) {
             // src: the TypeF entity at the owner span. Exists by construction
             // (candidates are minted beside their entity); a miss would break
             // the parity golden's zip count loudly, so it is not hidden here.
-            let Some(src_ix) = types.nodes.iter().position(|node| node.span == candidate.owner)
+            let Some(src_ix) = types
+                .nodes
+                .iter()
+                .position(|node| node.span == candidate.owner)
             else {
                 continue;
             };
-            let (dst_blob, dst_span) =
-                resolve_type_dst(types, &output.strings, index, output.strings.lookup(candidate.to))
-                    .unwrap_or_default();
-            edges.push(ProjectEdge::new(NodeRef(src_ix as u32), dst_blob, dst_span, candidate.kind));
+            let (dst_blob, dst_span) = resolve_type_dst(
+                types,
+                &output.strings,
+                index,
+                output.strings.lookup(candidate.to),
+            )
+            .unwrap_or_default();
+            edges.push(ProjectEdge::new(
+                NodeRef(src_ix as u32),
+                dst_blob,
+                dst_span,
+                candidate.kind,
+            ));
         }
         edges
     }
@@ -1357,7 +1520,10 @@ impl GoSource {
         let call = output.call.as_ref()?;
         if let Some(r) = def_named(call, &output.strings, callee) {
             let span = call.node(r).span;
-            if let Some(site) = corpus_defs(index, callee).iter().find(|site| site.span == span) {
+            if let Some(site) = corpus_defs(index, callee)
+                .iter()
+                .find(|site| site.span == span)
+            {
                 return Some((site.blob, site.span));
             }
         }
@@ -1368,8 +1534,13 @@ impl GoSource {
                 blobs.push(site.blob);
             }
         }
-        let [blob] = blobs.as_slice() else { return None };
-        let site = sites.iter().find(|s| s.family == FamilyTag::Call).unwrap_or(&sites[0]);
+        let [blob] = blobs.as_slice() else {
+            return None;
+        };
+        let site = sites
+            .iter()
+            .find(|s| s.family == FamilyTag::Call)
+            .unwrap_or(&sites[0]);
         Some((*blob, site.span))
     }
 }
@@ -1404,24 +1575,36 @@ fn scip_call_target<'a>(
 
 impl Resolve<CallF> for GoSource {
     fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<CallF>> {
-        let Some(call) = &output.call else { return Vec::new() };
-        let Some(def_index) = cx.indexes.def_index.get() else { return Vec::new() };
+        let Some(call) = &output.call else {
+            return Vec::new();
+        };
+        let Some(def_index) = cx.indexes.def_index.get() else {
+            return Vec::new();
+        };
         // The scip leg: the corpus index + the rev-correct reader + this
         // file's own document (found by content hash). Any missing piece ->
         // pure name-match (v5-shaped).
-        let scip = cx.indexes.scip_index.get().zip(cx.reader).and_then(|(index, reader)| {
-            let joined = join_documents(index, reader);
-            let blob = own_blob(output, def_index)?;
-            let doc_ix =
-                joined.iter().position(|j| j.as_ref().map_or(false, |(b, _)| *b == blob))?;
-            Some((index, joined, doc_ix))
-        });
+        let scip = cx
+            .indexes
+            .scip_index
+            .get()
+            .zip(cx.reader)
+            .and_then(|(index, reader)| {
+                let joined = join_documents(index, reader);
+                let blob = own_blob(output, def_index)?;
+                let doc_ix = joined
+                    .iter()
+                    .position(|j| j.as_ref().map_or(false, |(b, _)| *b == blob))?;
+                Some((index, joined, doc_ix))
+            });
         let mut edges = Vec::new();
         for site in &call.aux.sites {
             // The caller is the innermost covering CallF def (the 4a
             // caller-binding discipline); a package-level site has no caller
             // node and emits no row.
-            let Some(caller) = covering_def(call, site.span) else { continue };
+            let Some(caller) = covering_def(call, site.span) else {
+                continue;
+            };
             let callee = output.strings.lookup(site.callee);
             let name_t = GoSource::call_name_match(output, def_index, callee);
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
@@ -1443,4 +1626,3 @@ impl Resolve<CallF> for GoSource {
         edges
     }
 }
-

@@ -15,8 +15,8 @@ use ast_grep_language::SupportLang;
 use crate::family::{CstEdgeKind, CstF};
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{ParseError, Parser, Project};
-use crate::source::{ExtractOutput, FamilyMask, Source};
 use crate::shape::{NodeRef, Span, Strings};
+use crate::source::{ExtractOutput, FamilyMask, Source};
 
 /// The owned ast-grep root: owns its source `String` + the tree-sitter `Tree`.
 /// `Send`; the borrowed `Node<'r>` is not, so projection (which walks it) runs on
@@ -42,11 +42,15 @@ impl Parser for AstGrepParser {
 
     fn make_arena(&self) {}
 
-    fn parse<'a>(&self, _arena: &'a (), path: &str, content: &'a [u8]) -> Result<SgRoot, ParseError> {
-        let lang = SupportLang::from_path(path)
-            .ok_or_else(|| ParseError::NoGrammar(path.to_string()))?;
-        let src =
-            std::str::from_utf8(content).map_err(|err| ParseError::Utf8(err.to_string()))?;
+    fn parse<'a>(
+        &self,
+        _arena: &'a (),
+        path: &str,
+        content: &'a [u8],
+    ) -> Result<SgRoot, ParseError> {
+        let lang =
+            SupportLang::from_path(path).ok_or_else(|| ParseError::NoGrammar(path.to_string()))?;
+        let src = std::str::from_utf8(content).map_err(|err| ParseError::Utf8(err.to_string()))?;
         Ok(AstGrep::new(src, lang))
     }
 }
@@ -79,7 +83,8 @@ impl Project<CstF> for CstProjector {
                 sink.nodes.push(Node::new(span, kind));
                 if let Some(parent_ix) = nearest_named {
                     // child edge: parent -> child (v5 `child(parent, child)`).
-                    sink.edges.push(Edge::new(parent_ix, ix, CstEdgeKind::Child));
+                    sink.edges
+                        .push(Edge::new(parent_ix, ix, CstEdgeKind::Child));
                 }
                 Some(ix)
             } else {
@@ -120,14 +125,23 @@ impl Source for AstgrepSource {
         let mut strings = Strings::new();
         let cst = if mask.cst {
             let arena = AstGrepParser.make_arena();
-            AstGrepParser.parse(&arena, path, content).ok().map(|parsed| {
-                let mut bundle = FamilyBundle::<CstF>::default();
-                CstProjector.project(&parsed, &mut strings, &mut bundle);
-                bundle
-            })
+            AstGrepParser
+                .parse(&arena, path, content)
+                .ok()
+                .map(|parsed| {
+                    let mut bundle = FamilyBundle::<CstF>::default();
+                    CstProjector.project(&parsed, &mut strings, &mut bundle);
+                    bundle
+                })
         } else {
             None
         };
-        ExtractOutput { strings, cst, types: None, call: None, df: None }
+        ExtractOutput {
+            strings,
+            cst,
+            types: None,
+            call: None,
+            df: None,
+        }
     }
 }

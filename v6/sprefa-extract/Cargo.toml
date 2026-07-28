@@ -51,6 +51,9 @@ tree-sitter-go = "0.23"
 # tree-sitter-go 0.23, and deps only `tree-sitter-language` + `cc` (no
 # tree-sitter core): cargo UNIFIES it, one copy, no dupes.
 tree-sitter-kotlin-sg = "0.4"
+# MIT superset grammar for ISO Prolog plus the SWI/DCG/ProbLog syntax used by
+# v6/prolog. ABI 14 and LanguageFn match the tree-sitter 0.25 runtime above.
+tree-sitter-prolog = "0.1"
 # serde on the FLAT wire envelope only (never on the generic Node<F>). The store
 # seam + the parity-golden normalize + the stdout JSONL all read this one shape.
 serde = { version = "1", features = ["derive"] }

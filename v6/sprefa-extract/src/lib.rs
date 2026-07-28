@@ -31,16 +31,20 @@ pub use dispatch::dispatch;
 pub use family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfEdgeKind, DfF, DfNodeKind,
     Family, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind,
-    TypeEntityKind, TypeFAux, TypeF, TypeSig,
+    TypeEntityKind, TypeF, TypeFAux, TypeSig,
 };
-pub use lang::{source_for, sources, AstgrepSource, GoSource, KotlinSource, RustSource, TsSource};
+pub use lang::{
+    source_for, sources, AstgrepSource, GoSource, KotlinSource, PrologSource, RustSource, TsSource,
+};
 pub use rows::{Edge, FamilyBundle, Node};
-pub use scip::{ScipGo, ScipRust, ScipTypescript, byte_range, definition_of, join_documents, site_occurrence};
+pub use scip::{
+    byte_range, definition_of, join_documents, site_occurrence, ScipGo, ScipRust, ScipTypescript,
+};
 pub use seams::{
+    build_def_index, containing_def_site, corpus_defs, covering_def, def_named, own_blob,
     BlobSource, DefIndex, DefSite, FileSet, IndexBag, ManifestMap, OccurrenceRole, ParseError,
-    Parser, PositionEncoding, Project, ProjectCx, ProjectDigest, Resolve, ScipDocument,
-    ScipError, ScipIndex, ScipOccurrence, ScipSource, ScipSymbolInfo, build_def_index,
-    containing_def_site, corpus_defs, covering_def, def_named, own_blob,
+    Parser, PositionEncoding, Project, ProjectCx, ProjectDigest, Resolve, ScipDocument, ScipError,
+    ScipIndex, ScipOccurrence, ScipSource, ScipSymbolInfo,
 };
 pub use shape::{BlobHash, FamilyTag, NameId, NodeRef, Span, Strings};
 pub use source::{ExtractOutput, FamilyMask, Source};

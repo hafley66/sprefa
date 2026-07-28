@@ -17,22 +17,42 @@ struct Case {
 const CASES: &[Case] = &[
     Case {
         tag: FamilyTag::Cst,
-        mask: FamilyMask { cst: true, types: false, call: false, df: false },
+        mask: FamilyMask {
+            cst: true,
+            types: false,
+            call: false,
+            df: false,
+        },
         snap: "tests/fixtures/ts/sample.cstf.snap",
     },
     Case {
         tag: FamilyTag::Type,
-        mask: FamilyMask { cst: false, types: true, call: false, df: false },
+        mask: FamilyMask {
+            cst: false,
+            types: true,
+            call: false,
+            df: false,
+        },
         snap: "tests/fixtures/ts/sample.typef.snap",
     },
     Case {
         tag: FamilyTag::Call,
-        mask: FamilyMask { cst: false, types: false, call: true, df: false },
+        mask: FamilyMask {
+            cst: false,
+            types: false,
+            call: true,
+            df: false,
+        },
         snap: "tests/fixtures/ts/sample.callf.snap",
     },
     Case {
         tag: FamilyTag::Df,
-        mask: FamilyMask { cst: false, types: false, call: false, df: true },
+        mask: FamilyMask {
+            cst: false,
+            types: false,
+            call: false,
+            df: true,
+        },
         snap: "tests/fixtures/ts/sample.dff.snap",
     },
 ];

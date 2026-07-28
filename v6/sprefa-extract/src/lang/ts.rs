@@ -22,19 +22,29 @@ use oxc_ast::ast::Program;
 use oxc_ast_visit::Visit as OxcVisit;
 use oxc_span::{GetSpan, SourceType};
 
-use crate::family::{CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfEdgeKind, DfF, DfNodeKind, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF};
+use super::astgrep::{AstGrepParser, CstProjector};
+use crate::family::{
+    CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfEdgeKind, DfF,
+    DfNodeKind, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind,
+    TypeEntityKind, TypeF,
+};
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
-use crate::seams::{DefIndex, ParseError, Parser, Project, Resolve, containing_def_site, corpus_defs, covering_def, def_named, own_blob};
+use crate::seams::{
+    containing_def_site, corpus_defs, covering_def, def_named, own_blob, DefIndex, ParseError,
+    Parser, Project, Resolve,
+};
 use crate::shape::{BlobHash, FamilyTag, NameId, NodeRef, Span, Strings};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::types::ScipIndex;
-use super::astgrep::{AstGrepParser, CstProjector};
 
 /// `oxc_span::Span` (start + end) -> our byte `Span` (start + len). One
 /// coordinate; the engine derives line/col from the file bytes when needed.
 fn to_span(s: oxc_span::Span) -> Span {
-    Span { start: s.start, len: s.end - s.start }
+    Span {
+        start: s.start,
+        len: s.end - s.start,
+    }
 }
 
 /// The Parser: oxc arena parse for TS/TSX/JS/JSX. `Arena = Allocator`;
@@ -63,10 +73,9 @@ impl Parser for OxcParser {
         path: &str,
         content: &'a [u8],
     ) -> Result<Program<'a>, ParseError> {
-        let source_type = source_type_for(path)
-            .ok_or_else(|| ParseError::NoGrammar(path.to_string()))?;
-        let src =
-            std::str::from_utf8(content).map_err(|err| ParseError::Utf8(err.to_string()))?;
+        let source_type =
+            source_type_for(path).ok_or_else(|| ParseError::NoGrammar(path.to_string()))?;
+        let src = std::str::from_utf8(content).map_err(|err| ParseError::Utf8(err.to_string()))?;
         let ret = oxc_parser::Parser::new(arena, src, source_type).parse();
         if ret.panicked {
             return Err(ParseError::Parse(format!("oxc panicked on {path}")));
@@ -98,7 +107,12 @@ pub struct TypeProjector;
 impl Project<TypeF> for TypeProjector {
     type Parsed<'a> = Program<'a>;
 
-    fn project(&self, program: &Program<'_>, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
+    fn project(
+        &self,
+        program: &Program<'_>,
+        strings: &mut Strings,
+        sink: &mut FamilyBundle<TypeF>,
+    ) {
         for stmt in &program.body {
             use ts::Statement as S;
             match stmt {
@@ -112,7 +126,13 @@ impl Project<TypeF> for TypeProjector {
                         class_entity(class, strings, sink)
                     }
                     ts::ExportDefaultDeclarationKind::TSInterfaceDeclaration(interface) => {
-                        push_entity(sink, strings, interface.span, interface.id.name.to_string(), TypeEntityKind::Interface);
+                        push_entity(
+                            sink,
+                            strings,
+                            interface.span,
+                            interface.id.name.to_string(),
+                            TypeEntityKind::Interface,
+                        );
                     }
                     ts::ExportDefaultDeclarationKind::FunctionDeclaration(func) => {
                         fn_entity(func, strings, sink)
@@ -186,7 +206,13 @@ fn decl_entity(decl: &ts::Declaration, strings: &mut Strings, sink: &mut FamilyB
 
 fn class_entity(class: &ts::Class, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
     let Some(id) = &class.id else { return };
-    push_entity(sink, strings, class.span, id.name.to_string(), TypeEntityKind::Class);
+    push_entity(
+        sink,
+        strings,
+        class.span,
+        id.name.to_string(),
+        TypeEntityKind::Class,
+    );
     for element in &class.body.body {
         if let ts::ClassElement::MethodDefinition(method) = element {
             // Skip constructors and computed/private keys; a normal method's
@@ -195,7 +221,13 @@ fn class_entity(class: &ts::Class, strings: &mut Strings, sink: &mut FamilyBundl
                 continue;
             }
             if let ts::PropertyKey::StaticIdentifier(key) = &method.key {
-                push_entity(sink, strings, method.span, key.name.to_string(), TypeEntityKind::Method);
+                push_entity(
+                    sink,
+                    strings,
+                    method.span,
+                    key.name.to_string(),
+                    TypeEntityKind::Method,
+                );
                 // A method IS a type: carry its arrow signature (param/ret refs).
                 // v5 emits NO method-signature type_edges, so no candidates.
                 fn_sigs(
@@ -214,7 +246,13 @@ fn class_entity(class: &ts::Class, strings: &mut Strings, sink: &mut FamilyBundl
 
 fn fn_entity(func: &ts::Function, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
     let Some(id) = &func.id else { return };
-    push_entity(sink, strings, func.span, id.name.to_string(), TypeEntityKind::Function);
+    push_entity(
+        sink,
+        strings,
+        func.span,
+        id.name.to_string(),
+        TypeEntityKind::Function,
+    );
     fn_sigs(
         func.span,
         &func.type_parameters,
@@ -230,14 +268,24 @@ fn fn_entity(func: &ts::Function, strings: &mut Strings, sink: &mut FamilyBundle
 /// level: the binding name owns a Function entity. Plain value consts (no
 /// function initializer) carry no type shape and are skipped (v5: the
 /// "don't mint an entity for every const" rule).
-fn var_fn_entity(var: &ts::VariableDeclaration, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
+fn var_fn_entity(
+    var: &ts::VariableDeclaration,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
     for declarator in &var.declarations {
         let ts::BindingPattern::BindingIdentifier(name) = &declarator.id else {
             continue;
         };
         match &declarator.init {
             Some(ts::Expression::ArrowFunctionExpression(arrow)) => {
-                push_entity(sink, strings, declarator.span, name.name.to_string(), TypeEntityKind::Function);
+                push_entity(
+                    sink,
+                    strings,
+                    declarator.span,
+                    name.name.to_string(),
+                    TypeEntityKind::Function,
+                );
                 fn_sigs(
                     declarator.span,
                     &arrow.type_parameters,
@@ -249,7 +297,13 @@ fn var_fn_entity(var: &ts::VariableDeclaration, strings: &mut Strings, sink: &mu
                 );
             }
             Some(ts::Expression::FunctionExpression(func)) => {
-                push_entity(sink, strings, declarator.span, name.name.to_string(), TypeEntityKind::Function);
+                push_entity(
+                    sink,
+                    strings,
+                    declarator.span,
+                    name.name.to_string(),
+                    TypeEntityKind::Function,
+                );
                 fn_sigs(
                     declarator.span,
                     &func.type_parameters,
@@ -319,7 +373,10 @@ fn push_sig(
     name: &str,
 ) {
     sink.aux.sigs.push(crate::family::TypeSig {
-        owner: Span { start: owner.start, len: owner.end - owner.start },
+        owner: Span {
+            start: owner.start,
+            len: owner.end - owner.start,
+        },
         slot,
         pos,
         ty: strings.intern(name),
@@ -344,7 +401,10 @@ fn type_param_names(
 /// Every `TSTypeReference` name under a type subtree, excluding the callable's
 /// own type-parameter names. Port of v5 `ts_refs_in_type`.
 fn refs_in_type(ty: &ts::TSType, exclude: &BTreeSet<String>) -> Vec<String> {
-    let mut collector = TypeRefCollector { exclude, out: Vec::new() };
+    let mut collector = TypeRefCollector {
+        exclude,
+        out: Vec::new(),
+    };
     collector.visit_ts_type(ty);
     collector.out
 }
@@ -400,13 +460,21 @@ fn edge_candidates(program: &Program<'_>, strings: &mut Strings, sink: &mut Fami
                 }
             }
             S::ExportDefaultDeclaration(export) => match &export.declaration {
-                ts::ExportDefaultDeclarationKind::ClassDeclaration(class) => class_edge_candidates(class, strings, sink),
-                ts::ExportDefaultDeclarationKind::TSInterfaceDeclaration(interface) => interface_edge_candidates(interface, strings, sink),
-                ts::ExportDefaultDeclarationKind::FunctionDeclaration(func) => fn_edge_candidates(func, strings, sink),
+                ts::ExportDefaultDeclarationKind::ClassDeclaration(class) => {
+                    class_edge_candidates(class, strings, sink)
+                }
+                ts::ExportDefaultDeclarationKind::TSInterfaceDeclaration(interface) => {
+                    interface_edge_candidates(interface, strings, sink)
+                }
+                ts::ExportDefaultDeclarationKind::FunctionDeclaration(func) => {
+                    fn_edge_candidates(func, strings, sink)
+                }
                 _ => {}
             },
             S::ClassDeclaration(class) => class_edge_candidates(class, strings, sink),
-            S::TSInterfaceDeclaration(interface) => interface_edge_candidates(interface, strings, sink),
+            S::TSInterfaceDeclaration(interface) => {
+                interface_edge_candidates(interface, strings, sink)
+            }
             S::TSTypeAliasDeclaration(alias) => alias_edge_candidates(alias, strings, sink),
             S::TSEnumDeclaration(enum_decl) => enum_edge_candidates(enum_decl, strings, sink),
             S::FunctionDeclaration(func) => fn_edge_candidates(func, strings, sink),
@@ -416,12 +484,22 @@ fn edge_candidates(program: &Program<'_>, strings: &mut Strings, sink: &mut Fami
     }
 }
 
-fn decl_edge_candidates(decl: &ts::Declaration, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
+fn decl_edge_candidates(
+    decl: &ts::Declaration,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
     match decl {
         ts::Declaration::ClassDeclaration(class) => class_edge_candidates(class, strings, sink),
-        ts::Declaration::TSInterfaceDeclaration(interface) => interface_edge_candidates(interface, strings, sink),
-        ts::Declaration::TSTypeAliasDeclaration(alias) => alias_edge_candidates(alias, strings, sink),
-        ts::Declaration::TSEnumDeclaration(enum_decl) => enum_edge_candidates(enum_decl, strings, sink),
+        ts::Declaration::TSInterfaceDeclaration(interface) => {
+            interface_edge_candidates(interface, strings, sink)
+        }
+        ts::Declaration::TSTypeAliasDeclaration(alias) => {
+            alias_edge_candidates(alias, strings, sink)
+        }
+        ts::Declaration::TSEnumDeclaration(enum_decl) => {
+            enum_edge_candidates(enum_decl, strings, sink)
+        }
         ts::Declaration::FunctionDeclaration(func) => fn_edge_candidates(func, strings, sink),
         ts::Declaration::VariableDeclaration(var) => var_fn_edge_candidates(var, strings, sink),
         _ => {}
@@ -469,7 +547,14 @@ fn param_constraint_candidates(
     if let Some(tp) = type_parameters {
         for param in &tp.params {
             if let Some(constraint) = &param.constraint {
-                refs_candidates(sink, strings, owner, constraint, &params, TypeEdgeKind::Generic);
+                refs_candidates(
+                    sink,
+                    strings,
+                    owner,
+                    constraint,
+                    &params,
+                    TypeEdgeKind::Generic,
+                );
             }
         }
     }
@@ -489,7 +574,10 @@ fn fn_body_uses(
 ) {
     let params = param_constraint_candidates(owner, type_parameters, strings, sink);
     if let Some(body) = body {
-        let mut collector = TypeRefCollector { exclude: &params, out: Vec::new() };
+        let mut collector = TypeRefCollector {
+            exclude: &params,
+            out: Vec::new(),
+        };
         collector.visit_function_body(body);
         for name in collector.out {
             push_candidate(sink, strings, owner, &name, TypeEdgeKind::Uses);
@@ -503,23 +591,45 @@ fn fn_edge_candidates(func: &ts::Function, strings: &mut Strings, sink: &mut Fam
     if func.id.is_none() {
         return;
     }
-    fn_body_uses(func.span, &func.type_parameters, func.body.as_deref(), strings, sink);
+    fn_body_uses(
+        func.span,
+        &func.type_parameters,
+        func.body.as_deref(),
+        strings,
+        sink,
+    );
 }
 
 /// `const foo = (...) => ...` / `const foo = function (...) {...}` at the top
 /// level: the binding name owns the function's edges (v5 `ts_var_fn_edges`).
 /// Plain value consts carry no type shape and are skipped.
-fn var_fn_edge_candidates(var: &ts::VariableDeclaration, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
+fn var_fn_edge_candidates(
+    var: &ts::VariableDeclaration,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
     for declarator in &var.declarations {
         let ts::BindingPattern::BindingIdentifier(_) = &declarator.id else {
             continue;
         };
         match &declarator.init {
             Some(ts::Expression::ArrowFunctionExpression(arrow)) => {
-                fn_body_uses(declarator.span, &arrow.type_parameters, Some(&arrow.body), strings, sink);
+                fn_body_uses(
+                    declarator.span,
+                    &arrow.type_parameters,
+                    Some(&arrow.body),
+                    strings,
+                    sink,
+                );
             }
             Some(ts::Expression::FunctionExpression(func)) => {
-                fn_body_uses(declarator.span, &func.type_parameters, func.body.as_deref(), strings, sink);
+                fn_body_uses(
+                    declarator.span,
+                    &func.type_parameters,
+                    func.body.as_deref(),
+                    strings,
+                    sink,
+                );
             }
             _ => {}
         }
@@ -558,12 +668,26 @@ fn class_edge_candidates(class: &ts::Class, strings: &mut Strings, sink: &mut Fa
         match element {
             ts::ClassElement::PropertyDefinition(prop) => {
                 if let Some(ann) = &prop.type_annotation {
-                    refs_candidates(sink, strings, owner, &ann.type_annotation, &params, TypeEdgeKind::Field);
+                    refs_candidates(
+                        sink,
+                        strings,
+                        owner,
+                        &ann.type_annotation,
+                        &params,
+                        TypeEdgeKind::Field,
+                    );
                 }
             }
             ts::ClassElement::AccessorProperty(prop) => {
                 if let Some(ann) = &prop.type_annotation {
-                    refs_candidates(sink, strings, owner, &ann.type_annotation, &params, TypeEdgeKind::Field);
+                    refs_candidates(
+                        sink,
+                        strings,
+                        owner,
+                        &ann.type_annotation,
+                        &params,
+                        TypeEdgeKind::Field,
+                    );
                 }
             }
             // Constructor parameter properties (`constructor(private db: Db)`)
@@ -577,7 +701,14 @@ fn class_edge_candidates(class: &ts::Class, strings: &mut Strings, sink: &mut Fa
                         continue;
                     }
                     if let Some(ann) = &fp.type_annotation {
-                        refs_candidates(sink, strings, owner, &ann.type_annotation, &params, TypeEdgeKind::Field);
+                        refs_candidates(
+                            sink,
+                            strings,
+                            owner,
+                            &ann.type_annotation,
+                            &params,
+                            TypeEdgeKind::Field,
+                        );
                     }
                 }
             }
@@ -588,7 +719,11 @@ fn class_edge_candidates(class: &ts::Class, strings: &mut Strings, sink: &mut Fa
 
 /// Port of v5 `ts_interface_edges`: extends is "generic" (identifier + type
 /// args), property signatures are "field", constraint refs are "generic".
-fn interface_edge_candidates(interface: &ts::TSInterfaceDeclaration, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
+fn interface_edge_candidates(
+    interface: &ts::TSInterfaceDeclaration,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
     let owner = interface.span;
     let params = param_constraint_candidates(owner, &interface.type_parameters, strings, sink);
     for ext in &interface.extends {
@@ -604,7 +739,14 @@ fn interface_edge_candidates(interface: &ts::TSInterfaceDeclaration, strings: &m
     for member in &interface.body.body {
         if let ts::TSSignature::TSPropertySignature(prop) = member {
             if let Some(ann) = &prop.type_annotation {
-                refs_candidates(sink, strings, owner, &ann.type_annotation, &params, TypeEdgeKind::Field);
+                refs_candidates(
+                    sink,
+                    strings,
+                    owner,
+                    &ann.type_annotation,
+                    &params,
+                    TypeEdgeKind::Field,
+                );
             }
         }
     }
@@ -613,7 +755,11 @@ fn interface_edge_candidates(interface: &ts::TSInterfaceDeclaration, strings: &m
 /// Port of v5 `ts_alias_edges`: a union alias is a sum type — alternatives
 /// that are plain refs are "variant" (their type args stay "field"); anything
 /// else is shape ("field"). Non-union: all refs are "field".
-fn alias_edge_candidates(alias: &ts::TSTypeAliasDeclaration, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
+fn alias_edge_candidates(
+    alias: &ts::TSTypeAliasDeclaration,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
     let owner = alias.span;
     let params = param_constraint_candidates(owner, &alias.type_parameters, strings, sink);
     if let ts::TSType::TSUnionType(union) = &alias.type_annotation {
@@ -635,13 +781,24 @@ fn alias_edge_candidates(alias: &ts::TSTypeAliasDeclaration, strings: &mut Strin
         }
         return;
     }
-    refs_candidates(sink, strings, owner, &alias.type_annotation, &params, TypeEdgeKind::Field);
+    refs_candidates(
+        sink,
+        strings,
+        owner,
+        &alias.type_annotation,
+        &params,
+        TypeEdgeKind::Field,
+    );
 }
 
 /// Port of v5 `ts_enum_edges`: every member is a "variant" whose `to` is the
 /// synthetic `Owner::Member` text — exactly as v5 synthesizes it (Identifier
 /// and String member names only; computed names are skipped).
-fn enum_edge_candidates(enum_decl: &ts::TSEnumDeclaration, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
+fn enum_edge_candidates(
+    enum_decl: &ts::TSEnumDeclaration,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
     let owner = enum_decl.span;
     let owner_name = enum_decl.id.name.to_string();
     for member in &enum_decl.body.members {
@@ -650,7 +807,13 @@ fn enum_edge_candidates(enum_decl: &ts::TSEnumDeclaration, strings: &mut Strings
             ts::TSEnumMemberName::String(s) => s.value.to_string(),
             _ => continue,
         };
-        push_candidate(sink, strings, owner, &format!("{owner_name}::{name}"), TypeEdgeKind::Variant);
+        push_candidate(
+            sink,
+            strings,
+            owner,
+            &format!("{owner_name}::{name}"),
+            TypeEdgeKind::Variant,
+        );
     }
 }
 
@@ -678,13 +841,22 @@ pub struct CallProjector;
 impl Project<CallF> for CallProjector {
     type Parsed<'a> = Program<'a>;
 
-    fn project(&self, program: &Program<'_>, strings: &mut Strings, sink: &mut FamilyBundle<CallF>) {
+    fn project(
+        &self,
+        program: &Program<'_>,
+        strings: &mut Strings,
+        sink: &mut FamilyBundle<CallF>,
+    ) {
         // Top-level defs (depth 0): free functions, class methods, var-bound fns.
         call_defs(program, strings, sink);
         // One walk for the rest: nested named-fn defs (depth > 0) + every call
         // site. The walker owns its output (no &mut strings/sink inside the
         // visitor), drained here so the two &mut params never alias through self.
-        let mut walker = CallWalker { depth: 0, nested_defs: Vec::new(), sites: Vec::new() };
+        let mut walker = CallWalker {
+            depth: 0,
+            nested_defs: Vec::new(),
+            sites: Vec::new(),
+        };
         walker.visit_program(program);
         for (span, name) in walker.nested_defs {
             push_def(sink, strings, span, name, CallKind::Free);
@@ -736,18 +908,42 @@ fn module_specifiers(program: &Program<'_>, strings: &mut Strings, sink: &mut Fa
         match stmt {
             ts::Statement::ImportDeclaration(import) => match &import.specifiers {
                 // `import './m'`: path-only form — name = the module path.
-                None => push_specifier(sink, strings, import.source.span, &import.source.value, SpecifierKind::SideEffect),
+                None => push_specifier(
+                    sink,
+                    strings,
+                    import.source.span,
+                    &import.source.value,
+                    SpecifierKind::SideEffect,
+                ),
                 Some(specs) => {
                     for spec in specs {
                         match spec {
                             ts::ImportDeclarationSpecifier::ImportSpecifier(named) => {
-                                push_specifier(sink, strings, named.span, &named.local.name, SpecifierKind::Named)
+                                push_specifier(
+                                    sink,
+                                    strings,
+                                    named.span,
+                                    &named.local.name,
+                                    SpecifierKind::Named,
+                                )
                             }
                             ts::ImportDeclarationSpecifier::ImportDefaultSpecifier(default) => {
-                                push_specifier(sink, strings, default.span, &default.local.name, SpecifierKind::Default)
+                                push_specifier(
+                                    sink,
+                                    strings,
+                                    default.span,
+                                    &default.local.name,
+                                    SpecifierKind::Default,
+                                )
                             }
                             ts::ImportDeclarationSpecifier::ImportNamespaceSpecifier(ns) => {
-                                push_specifier(sink, strings, ns.span, &ns.local.name, SpecifierKind::Namespace)
+                                push_specifier(
+                                    sink,
+                                    strings,
+                                    ns.span,
+                                    &ns.local.name,
+                                    SpecifierKind::Namespace,
+                                )
                             }
                         }
                     }
@@ -767,10 +963,22 @@ fn module_specifiers(program: &Program<'_>, strings: &mut Strings, sink: &mut Fa
                 // `export * as ns from './m'`: the bound name is the alias.
                 Some(exported) => {
                     let name = module_export_name(exported);
-                    push_specifier(sink, strings, exported.span(), &name, SpecifierKind::Reexport);
+                    push_specifier(
+                        sink,
+                        strings,
+                        exported.span(),
+                        &name,
+                        SpecifierKind::Reexport,
+                    );
                 }
                 // `export * from './m'`: path-only form — name = the module path.
-                None => push_specifier(sink, strings, export.source.span, &export.source.value, SpecifierKind::Reexport),
+                None => push_specifier(
+                    sink,
+                    strings,
+                    export.source.span,
+                    &export.source.value,
+                    SpecifierKind::Reexport,
+                ),
             },
             _ => {}
         }
@@ -784,7 +992,11 @@ fn push_specifier(
     name: &str,
     kind: SpecifierKind,
 ) {
-    sink.aux.specifiers.push(Specifier { span: to_span(span), name: strings.intern(name), kind });
+    sink.aux.specifiers.push(Specifier {
+        span: to_span(span),
+        name: strings.intern(name),
+        kind,
+    });
 }
 
 /// A `ModuleExportName`'s text as written (identifier or string-literal name).
@@ -838,7 +1050,13 @@ fn fn_call_def(func: &ts::Function, strings: &mut Strings, sink: &mut FamilyBund
     if func.body.is_none() {
         return;
     }
-    push_def(sink, strings, func.span, id.name.to_string(), CallKind::Free);
+    push_def(
+        sink,
+        strings,
+        func.span,
+        id.name.to_string(),
+        CallKind::Free,
+    );
 }
 
 /// One def per class method. The CONSTRUCTOR's call-name is the CLASS name so a
@@ -848,13 +1066,21 @@ fn class_call_defs(class: &ts::Class, strings: &mut Strings, sink: &mut FamilyBu
     let Some(id) = &class.id else { return };
     let owner = id.name.to_string();
     for element in &class.body.body {
-        let ts::ClassElement::MethodDefinition(method) = element else { continue };
-        let ts::PropertyKey::StaticIdentifier(key) = &method.key else { continue };
+        let ts::ClassElement::MethodDefinition(method) = element else {
+            continue;
+        };
+        let ts::PropertyKey::StaticIdentifier(key) = &method.key else {
+            continue;
+        };
         if method.value.body.is_none() {
             continue;
         }
         let is_ctor = method.kind == ts::MethodDefinitionKind::Constructor;
-        let name = if is_ctor { owner.clone() } else { key.name.to_string() };
+        let name = if is_ctor {
+            owner.clone()
+        } else {
+            key.name.to_string()
+        };
         push_def(sink, strings, method.span, name, CallKind::Method);
     }
 }
@@ -862,9 +1088,15 @@ fn class_call_defs(class: &ts::Class, strings: &mut Strings, sink: &mut FamilyBu
 /// `const foo = (...) => ...` / `const foo = function () {}`: a Free def owned
 /// by the binding name. Bodiless function expressions are skipped. Port of v5
 /// `ts_var_call_defs`.
-fn var_call_defs(var: &ts::VariableDeclaration, strings: &mut Strings, sink: &mut FamilyBundle<CallF>) {
+fn var_call_defs(
+    var: &ts::VariableDeclaration,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
     for declarator in &var.declarations {
-        let ts::BindingPattern::BindingIdentifier(name) = &declarator.id else { continue };
+        let ts::BindingPattern::BindingIdentifier(name) = &declarator.id else {
+            continue;
+        };
         let has_body = match &declarator.init {
             Some(ts::Expression::ArrowFunctionExpression(_)) => true,
             Some(ts::Expression::FunctionExpression(func)) => func.body.is_some(),
@@ -873,7 +1105,13 @@ fn var_call_defs(var: &ts::VariableDeclaration, strings: &mut Strings, sink: &mu
         if !has_body {
             continue;
         }
-        push_def(sink, strings, declarator.span, name.name.to_string(), CallKind::Free);
+        push_def(
+            sink,
+            strings,
+            declarator.span,
+            name.name.to_string(),
+            CallKind::Free,
+        );
     }
 }
 
@@ -922,8 +1160,12 @@ fn lambda_entry_decl(walker: &mut LambdaDefs, decl: &ts::Declaration) {
 /// a covered scope; field initializers are not.
 fn lambda_entry_class(walker: &mut LambdaDefs, class: &ts::Class) {
     for element in &class.body.body {
-        let ts::ClassElement::MethodDefinition(method) = element else { continue };
-        let Some(body) = method.value.body.as_deref() else { continue };
+        let ts::ClassElement::MethodDefinition(method) = element else {
+            continue;
+        };
+        let Some(body) = method.value.body.as_deref() else {
+            continue;
+        };
         walker.visit_function_body(body);
     }
 }
@@ -989,7 +1231,8 @@ fn push_def(
     name: impl AsRef<str>,
     kind: CallKind,
 ) {
-    sink.nodes.push(Node::new(to_span(span), kind).with_name(strings.intern(name.as_ref())));
+    sink.nodes
+        .push(Node::new(to_span(span), kind).with_name(strings.intern(name.as_ref())));
 }
 
 /// One collected call site before it is interned into the aux.
@@ -1032,7 +1275,10 @@ impl<'a> OxcVisit<'a> for CallWalker {
 
     fn visit_call_expression(&mut self, call: &ts::CallExpression<'a>) {
         if let Some(callee) = callee_name(&call.callee) {
-            self.sites.push(CollectedSite { span: call.callee.span(), callee });
+            self.sites.push(CollectedSite {
+                span: call.callee.span(),
+                callee,
+            });
         }
         oxc_ast_visit::walk::walk_call_expression(self, call);
     }
@@ -1041,7 +1287,10 @@ impl<'a> OxcVisit<'a> for CallWalker {
         // `new Foo(x)`: the callee is the constructed name; resolves to the
         // class's ctor call_def (whose name is the class name).
         if let Some(callee) = callee_name(&new_expr.callee) {
-            self.sites.push(CollectedSite { span: new_expr.span, callee });
+            self.sites.push(CollectedSite {
+                span: new_expr.span,
+                callee,
+            });
         }
         oxc_ast_visit::walk::walk_new_expression(self, new_expr);
     }
@@ -1056,7 +1305,10 @@ impl<'a> OxcVisit<'a> for CallWalker {
             _ => None,
         };
         if let Some(callee) = callee {
-            self.sites.push(CollectedSite { span: element.opening_element.span, callee });
+            self.sites.push(CollectedSite {
+                span: element.opening_element.span,
+                callee,
+            });
         }
         oxc_ast_visit::walk::walk_jsx_element(self, element);
     }
@@ -1115,12 +1367,21 @@ impl Project<DfF> for DfProjector<'_> {
 
 type Scope = std::collections::HashMap<String, NodeRef>;
 
-fn df_flow_stmt(stmt: &ts::Statement, file: &str, strings: &mut Strings, sink: &mut FamilyBundle<DfF>) {
+fn df_flow_stmt(
+    stmt: &ts::Statement,
+    file: &str,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<DfF>,
+) {
     use ts::Statement as S;
     match stmt {
         S::FunctionDeclaration(func) => {
             if let Some(body) = func.body.as_deref() {
-                let name = func.id.as_ref().map(|id| id.name.to_string()).unwrap_or_default();
+                let name = func
+                    .id
+                    .as_ref()
+                    .map(|id| id.name.to_string())
+                    .unwrap_or_default();
                 let fn_sym = format!("{file}::function::{name}");
                 let mut scope = Scope::new();
                 df_seed_params(&func.params, strings, &mut scope, sink);
@@ -1135,7 +1396,11 @@ fn df_flow_stmt(stmt: &ts::Statement, file: &str, strings: &mut Strings, sink: &
         S::ExportDefaultDeclaration(export) => match &export.declaration {
             ts::ExportDefaultDeclarationKind::FunctionDeclaration(func) => {
                 if let Some(body) = func.body.as_deref() {
-                    let name = func.id.as_ref().map(|id| id.name.to_string()).unwrap_or_default();
+                    let name = func
+                        .id
+                        .as_ref()
+                        .map(|id| id.name.to_string())
+                        .unwrap_or_default();
                     let fn_sym = format!("{file}::function::{name}");
                     let mut scope = Scope::new();
                     df_seed_params(&func.params, strings, &mut scope, sink);
@@ -1159,12 +1424,21 @@ fn df_flow_stmt(stmt: &ts::Statement, file: &str, strings: &mut Strings, sink: &
     }
 }
 
-fn df_flow_decl(decl: &ts::Declaration, file: &str, strings: &mut Strings, sink: &mut FamilyBundle<DfF>) {
+fn df_flow_decl(
+    decl: &ts::Declaration,
+    file: &str,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<DfF>,
+) {
     use ts::Declaration as D;
     match decl {
         D::FunctionDeclaration(func) => {
             if let Some(body) = func.body.as_deref() {
-                let name = func.id.as_ref().map(|id| id.name.to_string()).unwrap_or_default();
+                let name = func
+                    .id
+                    .as_ref()
+                    .map(|id| id.name.to_string())
+                    .unwrap_or_default();
                 let fn_sym = format!("{file}::function::{name}");
                 let mut scope = Scope::new();
                 df_seed_params(&func.params, strings, &mut scope, sink);
@@ -1179,11 +1453,24 @@ fn df_flow_decl(decl: &ts::Declaration, file: &str, strings: &mut Strings, sink:
 /// Each method body flows like a free function's, scoped under v5's
 /// `{file}::method::{Owner}.{method}` sym. Field initializers are not covered
 /// (no natural enclosing callable scope). Port of v5 `ts_flow_class`.
-fn df_flow_class(class: &ts::Class, file: &str, strings: &mut Strings, sink: &mut FamilyBundle<DfF>) {
-    let owner = class.id.as_ref().map(|id| id.name.to_string()).unwrap_or_default();
+fn df_flow_class(
+    class: &ts::Class,
+    file: &str,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<DfF>,
+) {
+    let owner = class
+        .id
+        .as_ref()
+        .map(|id| id.name.to_string())
+        .unwrap_or_default();
     for element in &class.body.body {
-        let ts::ClassElement::MethodDefinition(method) = element else { continue };
-        let Some(body) = method.value.body.as_deref() else { continue };
+        let ts::ClassElement::MethodDefinition(method) = element else {
+            continue;
+        };
+        let Some(body) = method.value.body.as_deref() else {
+            continue;
+        };
         let method_name = match &method.key {
             ts::PropertyKey::StaticIdentifier(key) => key.name.to_string(),
             _ => String::new(),
@@ -1226,7 +1513,14 @@ fn df_lift_fn(
     df_seed_params(params, strings, &mut scope, sink);
     if expression {
         if let Some(ts::Statement::ExpressionStatement(expr_stmt)) = body.statements.first() {
-            let value = df_flow_expr(&expr_stmt.expression, file, fn_sym, strings, &mut scope, sink);
+            let value = df_flow_expr(
+                &expr_stmt.expression,
+                file,
+                fn_sym,
+                strings,
+                &mut scope,
+                sink,
+            );
             let ret = df_push(sink, strings, expr_stmt.span, DfNodeKind::Ret, None);
             df_edge(sink, value, ret);
         }
@@ -1256,7 +1550,15 @@ fn df_flow_body_stmt(
                     match &declarator.init {
                         Some(ts::Expression::ArrowFunctionExpression(arrow)) => {
                             let sym = format!("{file}::function::{}", binding.name);
-                            df_lift_fn(&arrow.params, &arrow.body, arrow.expression, file, &sym, strings, sink);
+                            df_lift_fn(
+                                &arrow.params,
+                                &arrow.body,
+                                arrow.expression,
+                                file,
+                                &sym,
+                                strings,
+                                sink,
+                            );
                             continue;
                         }
                         Some(ts::Expression::FunctionExpression(func)) => {
@@ -1274,7 +1576,13 @@ fn df_flow_body_stmt(
                     .as_ref()
                     .map(|init| df_flow_expr(init, file, fn_sym, strings, scope, sink));
                 if let Some(name) = binding_name(&declarator.id) {
-                    let bind = df_push(sink, strings, declarator.span, DfNodeKind::LetBind, Some(&name));
+                    let bind = df_push(
+                        sink,
+                        strings,
+                        declarator.span,
+                        DfNodeKind::LetBind,
+                        Some(&name),
+                    );
                     if let Some(rhs) = rhs {
                         df_edge(sink, rhs, bind);
                     }
@@ -1314,7 +1622,13 @@ fn df_flow_body_stmt(
                         .as_ref()
                         .map(|init| df_flow_expr(init, file, fn_sym, strings, scope, sink));
                     if let Some(name) = binding_name(&declarator.id) {
-                        let bind = df_push(sink, strings, declarator.span, DfNodeKind::LetBind, Some(&name));
+                        let bind = df_push(
+                            sink,
+                            strings,
+                            declarator.span,
+                            DfNodeKind::LetBind,
+                            Some(&name),
+                        );
                         if let Some(rhs) = rhs {
                             df_edge(sink, rhs, bind);
                         }
@@ -1378,7 +1692,13 @@ fn df_for_in_of(
     if let ts::ForStatementLeft::VariableDeclaration(var) = left {
         if let Some(declarator) = var.declarations.first() {
             if let Some(name) = binding_name(&declarator.id) {
-                let bind = df_push(sink, strings, declarator.span, DfNodeKind::LetBind, Some(&name));
+                let bind = df_push(
+                    sink,
+                    strings,
+                    declarator.span,
+                    DfNodeKind::LetBind,
+                    Some(&name),
+                );
                 df_edge(sink, collection, bind);
                 scope.insert(name, bind);
             }
@@ -1401,12 +1721,22 @@ fn df_flow_call(
 ) -> NodeRef {
     use ts::Expression as E;
     let receiver = match &call.callee {
-        E::StaticMemberExpression(member) => {
-            Some(df_flow_expr(&member.object, file, fn_sym, strings, scope, sink))
-        }
-        E::ComputedMemberExpression(member) => {
-            Some(df_flow_expr(&member.object, file, fn_sym, strings, scope, sink))
-        }
+        E::StaticMemberExpression(member) => Some(df_flow_expr(
+            &member.object,
+            file,
+            fn_sym,
+            strings,
+            scope,
+            sink,
+        )),
+        E::ComputedMemberExpression(member) => Some(df_flow_expr(
+            &member.object,
+            file,
+            fn_sym,
+            strings,
+            scope,
+            sink,
+        )),
         _ => None,
     };
     let mut arg_ids = Vec::new();
@@ -1502,10 +1832,24 @@ fn df_flow_expr(
             for property in &object.properties {
                 match property {
                     ts::ObjectPropertyKind::ObjectProperty(prop) => {
-                        value_ids.push(df_flow_expr(&prop.value, file, fn_sym, strings, scope, sink));
+                        value_ids.push(df_flow_expr(
+                            &prop.value,
+                            file,
+                            fn_sym,
+                            strings,
+                            scope,
+                            sink,
+                        ));
                     }
                     ts::ObjectPropertyKind::SpreadProperty(spread) => {
-                        value_ids.push(df_flow_expr(&spread.argument, file, fn_sym, strings, scope, sink));
+                        value_ids.push(df_flow_expr(
+                            &spread.argument,
+                            file,
+                            fn_sym,
+                            strings,
+                            scope,
+                            sink,
+                        ));
                     }
                 }
             }
@@ -1520,12 +1864,20 @@ fn df_flow_expr(
             for element in &array.elements {
                 match element {
                     ts::ArrayExpressionElement::SpreadElement(spread) => {
-                        element_ids.push(df_flow_expr(&spread.argument, file, fn_sym, strings, scope, sink));
+                        element_ids.push(df_flow_expr(
+                            &spread.argument,
+                            file,
+                            fn_sym,
+                            strings,
+                            scope,
+                            sink,
+                        ));
                     }
                     ts::ArrayExpressionElement::Elision(_) => {}
                     _ => {
                         if let Some(expr) = element.as_expression() {
-                            element_ids.push(df_flow_expr(expr, file, fn_sym, strings, scope, sink));
+                            element_ids
+                                .push(df_flow_expr(expr, file, fn_sym, strings, scope, sink));
                         }
                     }
                 }
@@ -1537,12 +1889,26 @@ fn df_flow_expr(
             new_node
         }
         // recv.prop / recv[prop]: receiver flows into a `member` node.
-        E::StaticMemberExpression(member) => {
-            df_flow_member(&member.object, Some(member.property.name.as_str()), span, file, fn_sym, strings, scope, sink)
-        }
-        E::ComputedMemberExpression(member) => {
-            df_flow_member(&member.object, None, span, file, fn_sym, strings, scope, sink)
-        }
+        E::StaticMemberExpression(member) => df_flow_member(
+            &member.object,
+            Some(member.property.name.as_str()),
+            span,
+            file,
+            fn_sym,
+            strings,
+            scope,
+            sink,
+        ),
+        E::ComputedMemberExpression(member) => df_flow_member(
+            &member.object,
+            None,
+            span,
+            file,
+            fn_sym,
+            strings,
+            scope,
+            sink,
+        ),
         // `a + b` is its own `concat` kind (so a string-construction query matches
         // `kind IN (template, concat)`); any other binary op is `binop`.
         E::BinaryExpression(binary) => {
@@ -1563,7 +1929,15 @@ fn df_flow_expr(
         // `closure` VALUE node carrying that exact sym as its name.
         E::ArrowFunctionExpression(arrow) => {
             let lam_sym = format!("{fn_sym}::closure::{}", span.start);
-            df_lift_fn(&arrow.params, &arrow.body, arrow.expression, file, &lam_sym, strings, sink);
+            df_lift_fn(
+                &arrow.params,
+                &arrow.body,
+                arrow.expression,
+                file,
+                &lam_sym,
+                strings,
+                sink,
+            );
             df_push(sink, strings, span, DfNodeKind::Closure, Some(&lam_sym))
         }
         E::FunctionExpression(func) => match func.body.as_deref() {
@@ -1575,18 +1949,34 @@ fn df_flow_expr(
             None => df_push(sink, strings, span, DfNodeKind::Expr, None),
         },
         // Transparent wrappers: flow the inner expression straight through.
-        E::ParenthesizedExpression(paren) => df_flow_expr(&paren.expression, file, fn_sym, strings, scope, sink),
-        E::TSAsExpression(inner) => df_flow_expr(&inner.expression, file, fn_sym, strings, scope, sink),
-        E::TSSatisfiesExpression(inner) => df_flow_expr(&inner.expression, file, fn_sym, strings, scope, sink),
-        E::TSNonNullExpression(inner) => df_flow_expr(&inner.expression, file, fn_sym, strings, scope, sink),
-        E::AwaitExpression(inner) => df_flow_expr(&inner.argument, file, fn_sym, strings, scope, sink),
-        E::TSTypeAssertion(inner) => df_flow_expr(&inner.expression, file, fn_sym, strings, scope, sink),
-        E::TSInstantiationExpression(inner) => df_flow_expr(&inner.expression, file, fn_sym, strings, scope, sink),
+        E::ParenthesizedExpression(paren) => {
+            df_flow_expr(&paren.expression, file, fn_sym, strings, scope, sink)
+        }
+        E::TSAsExpression(inner) => {
+            df_flow_expr(&inner.expression, file, fn_sym, strings, scope, sink)
+        }
+        E::TSSatisfiesExpression(inner) => {
+            df_flow_expr(&inner.expression, file, fn_sym, strings, scope, sink)
+        }
+        E::TSNonNullExpression(inner) => {
+            df_flow_expr(&inner.expression, file, fn_sym, strings, scope, sink)
+        }
+        E::AwaitExpression(inner) => {
+            df_flow_expr(&inner.argument, file, fn_sym, strings, scope, sink)
+        }
+        E::TSTypeAssertion(inner) => {
+            df_flow_expr(&inner.expression, file, fn_sym, strings, scope, sink)
+        }
+        E::TSInstantiationExpression(inner) => {
+            df_flow_expr(&inner.expression, file, fn_sym, strings, scope, sink)
+        }
         E::ChainExpression(chain) => {
             use ts::ChainElement as Chain;
             use ts::MemberExpression as Member;
             match &chain.expression {
-                Chain::CallExpression(call) => df_flow_call(call, span, file, fn_sym, strings, scope, sink),
+                Chain::CallExpression(call) => {
+                    df_flow_call(call, span, file, fn_sym, strings, scope, sink)
+                }
                 other => match other.member_expression() {
                     Some(Member::StaticMemberExpression(member)) => df_flow_member(
                         &member.object,
@@ -1598,12 +1988,26 @@ fn df_flow_expr(
                         scope,
                         sink,
                     ),
-                    Some(Member::ComputedMemberExpression(member)) => {
-                        df_flow_member(&member.object, None, span, file, fn_sym, strings, scope, sink)
-                    }
-                    Some(Member::PrivateFieldExpression(member)) => {
-                        df_flow_member(&member.object, None, span, file, fn_sym, strings, scope, sink)
-                    }
+                    Some(Member::ComputedMemberExpression(member)) => df_flow_member(
+                        &member.object,
+                        None,
+                        span,
+                        file,
+                        fn_sym,
+                        strings,
+                        scope,
+                        sink,
+                    ),
+                    Some(Member::PrivateFieldExpression(member)) => df_flow_member(
+                        &member.object,
+                        None,
+                        span,
+                        file,
+                        fn_sym,
+                        strings,
+                        scope,
+                        sink,
+                    ),
                     None => df_push(sink, strings, span, DfNodeKind::Expr, None),
                 },
             }
@@ -1701,14 +2105,16 @@ fn df_seed_params(
                             ts::PropertyKey::StringLiteral(string) => string.value.to_string(),
                             _ => binding.name.to_string(),
                         };
-                        let node = df_push(sink, strings, binding.span, DfNodeKind::Param, Some(&key));
+                        let node =
+                            df_push(sink, strings, binding.span, DfNodeKind::Param, Some(&key));
                         scope.insert(binding.name.to_string(), node);
                     }
                 }
                 if let Some(rest) = &object.rest {
                     if let ts::BindingPattern::BindingIdentifier(binding) = &rest.argument {
                         let name = binding.name.to_string();
-                        let node = df_push(sink, strings, binding.span, DfNodeKind::Param, Some(&name));
+                        let node =
+                            df_push(sink, strings, binding.span, DfNodeKind::Param, Some(&name));
                         scope.insert(name, node);
                     }
                 }
@@ -1863,7 +2269,10 @@ impl<'s> ConstWalker<'s> {
             }
             ts::Expression::TemplateLiteral(t) => {
                 let span = t.span();
-                let text = self.content.get(span.start as usize..span.end as usize).unwrap_or_default();
+                let text = self
+                    .content
+                    .get(span.start as usize..span.end as usize)
+                    .unwrap_or_default();
                 self.values.push(ConstValue {
                     owner,
                     field: prefix,
@@ -1883,7 +2292,8 @@ impl<'s> ConstWalker<'s> {
                             let field = match prefix {
                                 None => Some(self.strings.intern(&key)),
                                 Some(parent) => Some(
-                                    self.strings.intern(&format!("{}.{key}", self.strings.lookup(parent))),
+                                    self.strings
+                                        .intern(&format!("{}.{key}", self.strings.lookup(parent))),
                                 ),
                             };
                             self.collect_values(&prop.value, owner, field);
@@ -1901,8 +2311,12 @@ impl<'s> ConstWalker<'s> {
     /// left alone. Port of v5 `ts_var_const_facts` (mutable-skip counter dropped).
     fn var_facts(&mut self, v: &ts::VariableDeclaration) {
         for declarator in &v.declarations {
-            let ts::BindingPattern::BindingIdentifier(name) = &declarator.id else { continue };
-            let Some(init) = &declarator.init else { continue };
+            let ts::BindingPattern::BindingIdentifier(name) = &declarator.id else {
+                continue;
+            };
+            let Some(init) = &declarator.init else {
+                continue;
+            };
             if matches!(
                 init,
                 ts::Expression::ArrowFunctionExpression(_) | ts::Expression::FunctionExpression(_)
@@ -1916,8 +2330,9 @@ impl<'s> ConstWalker<'s> {
                 continue; // mutable binding: v5 counts const_mutable_skips; v6 drops (facts-only)
             }
             let owner = to_span(declarator.span);
-            self.entities
-                .push(Node::new(owner, TypeEntityKind::Const).with_name(self.strings.intern(&name.name)));
+            self.entities.push(
+                Node::new(owner, TypeEntityKind::Const).with_name(self.strings.intern(&name.name)),
+            );
             self.collect_values(init, owner, None);
         }
     }
@@ -1979,7 +2394,13 @@ pub(crate) fn collect_const_facts(
     strings: &mut Strings,
     sink: &mut FamilyBundle<TypeF>,
 ) {
-    let mut walker = ConstWalker { content, depth: 0, strings, entities: Vec::new(), values: Vec::new() };
+    let mut walker = ConstWalker {
+        content,
+        depth: 0,
+        strings,
+        entities: Vec::new(),
+        values: Vec::new(),
+    };
     for stmt in &program.body {
         if let Some(v) = var_decl_of(stmt) {
             walker.var_facts(v);
@@ -2024,11 +2445,14 @@ impl Source for TsSource {
         // failed ast-grep parse leaves cst None (no panic).
         let cst = if mask.cst {
             let arena = AstGrepParser.make_arena();
-            AstGrepParser.parse(&arena, path, content).ok().map(|parsed| {
-                let mut bundle = FamilyBundle::<CstF>::default();
-                CstProjector.project(&parsed, &mut strings, &mut bundle);
-                bundle
-            })
+            AstGrepParser
+                .parse(&arena, path, content)
+                .ok()
+                .map(|parsed| {
+                    let mut bundle = FamilyBundle::<CstF>::default();
+                    CstProjector.project(&parsed, &mut strings, &mut bundle);
+                    bundle
+                })
         } else {
             None
         };
@@ -2066,7 +2490,13 @@ impl Source for TsSource {
             }
         }
 
-        ExtractOutput { strings, cst, types, call, df }
+        ExtractOutput {
+            strings,
+            cst,
+            types,
+            call,
+            df,
+        }
     }
 }
 
@@ -2127,21 +2557,35 @@ fn resolve_type_dst(
 
 impl Resolve<TypeF> for TsSource {
     fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<TypeF>> {
-        let Some(types) = &output.types else { return Vec::new() };
+        let Some(types) = &output.types else {
+            return Vec::new();
+        };
         let index = cx.indexes.def_index.get();
         let mut edges = Vec::new();
         for candidate in TsSource::type_edge_candidates(output) {
             // src: the TypeF entity at the owner span. Exists by construction
             // (candidates are minted beside their entity); a miss would break
             // the parity golden's zip count loudly, so it is not hidden here.
-            let Some(src_ix) = types.nodes.iter().position(|node| node.span == candidate.owner)
+            let Some(src_ix) = types
+                .nodes
+                .iter()
+                .position(|node| node.span == candidate.owner)
             else {
                 continue;
             };
-            let (dst_blob, dst_span) =
-                resolve_type_dst(types, &output.strings, index, output.strings.lookup(candidate.to))
-                    .unwrap_or_default();
-            edges.push(ProjectEdge::new(NodeRef(src_ix as u32), dst_blob, dst_span, candidate.kind));
+            let (dst_blob, dst_span) = resolve_type_dst(
+                types,
+                &output.strings,
+                index,
+                output.strings.lookup(candidate.to),
+            )
+            .unwrap_or_default();
+            edges.push(ProjectEdge::new(
+                NodeRef(src_ix as u32),
+                dst_blob,
+                dst_span,
+                candidate.kind,
+            ));
         }
         edges
     }
@@ -2187,7 +2631,10 @@ impl TsSource {
         let call = output.call.as_ref()?;
         if let Some(r) = def_named(call, &output.strings, callee) {
             let span = call.node(r).span;
-            if let Some(site) = corpus_defs(index, callee).iter().find(|site| site.span == span) {
+            if let Some(site) = corpus_defs(index, callee)
+                .iter()
+                .find(|site| site.span == span)
+            {
                 return Some((site.blob, site.span));
             }
         }
@@ -2198,8 +2645,13 @@ impl TsSource {
                 blobs.push(site.blob);
             }
         }
-        let [blob] = blobs.as_slice() else { return None };
-        let site = sites.iter().find(|s| s.family == FamilyTag::Call).unwrap_or(&sites[0]);
+        let [blob] = blobs.as_slice() else {
+            return None;
+        };
+        let site = sites
+            .iter()
+            .find(|s| s.family == FamilyTag::Call)
+            .unwrap_or(&sites[0]);
         Some((*blob, site.span))
     }
 }
@@ -2232,24 +2684,36 @@ fn scip_call_target<'a>(
 
 impl Resolve<CallF> for TsSource {
     fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<CallF>> {
-        let Some(call) = &output.call else { return Vec::new() };
-        let Some(def_index) = cx.indexes.def_index.get() else { return Vec::new() };
+        let Some(call) = &output.call else {
+            return Vec::new();
+        };
+        let Some(def_index) = cx.indexes.def_index.get() else {
+            return Vec::new();
+        };
         // The scip leg: the corpus index + the rev-correct reader + this
         // file's own document (found by content hash). Any missing piece ->
         // pure name-match (v5-shaped).
-        let scip = cx.indexes.scip_index.get().zip(cx.reader).and_then(|(index, reader)| {
-            let joined = join_documents(index, reader);
-            let blob = own_blob(output, def_index)?;
-            let doc_ix =
-                joined.iter().position(|j| j.as_ref().map_or(false, |(b, _)| *b == blob))?;
-            Some((index, joined, doc_ix))
-        });
+        let scip = cx
+            .indexes
+            .scip_index
+            .get()
+            .zip(cx.reader)
+            .and_then(|(index, reader)| {
+                let joined = join_documents(index, reader);
+                let blob = own_blob(output, def_index)?;
+                let doc_ix = joined
+                    .iter()
+                    .position(|j| j.as_ref().map_or(false, |(b, _)| *b == blob))?;
+                Some((index, joined, doc_ix))
+            });
         let mut edges = Vec::new();
         for site in &call.aux.sites {
             // The caller is the innermost covering CallF def (the 4a
             // caller-binding discipline); a module-level site has no caller
             // node and emits no row.
-            let Some(caller) = covering_def(call, site.span) else { continue };
+            let Some(caller) = covering_def(call, site.span) else {
+                continue;
+            };
             let callee = output.strings.lookup(site.callee);
             let name_t = TsSource::call_name_match(output, def_index, callee);
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {

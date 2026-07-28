@@ -35,6 +35,7 @@
 
 use std::collections::BTreeSet;
 
+use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
     CallF, CallKind, CallSite, CstF, DfEdgeKind, DfF, DfNodeKind, SigSlot, TypeEntityKind, TypeF,
     TypeSig,
@@ -43,7 +44,6 @@ use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{Parser, Project};
 use crate::shape::{NodeRef, Span, Strings};
 use crate::source::{ExtractOutput, FamilyMask, Source};
-use super::astgrep::{AstGrepParser, CstProjector};
 
 // ── the tree-sitter-kotlin parse (one parse feeds type/call/df) ─────────────
 
@@ -161,7 +161,8 @@ fn push_entity(
     name: &str,
     kind: TypeEntityKind,
 ) {
-    sink.nodes.push(Node::new(span, kind).with_name(strings.intern(name)));
+    sink.nodes
+        .push(Node::new(span, kind).with_name(strings.intern(name)));
 }
 
 // ── arrow-type signatures (port of v5 `kotlin_fn_type`) ─────────────────────
@@ -231,7 +232,12 @@ fn push_sig(
     pos: u32,
     name: &str,
 ) {
-    sink.aux.sigs.push(TypeSig { owner, slot, pos, ty: strings.intern(name) });
+    sink.aux.sigs.push(TypeSig {
+        owner,
+        slot,
+        pos,
+        ty: strings.intern(name),
+    });
 }
 
 fn is_kotlin_type_node(kind: &str) -> bool {
@@ -271,7 +277,10 @@ fn collect_kotlin_refs(
             out.push(name);
         }
         let mut cursor = node.walk();
-        for child in node.children(&mut cursor).filter(|n| n.kind() != "type_identifier") {
+        for child in node
+            .children(&mut cursor)
+            .filter(|n| n.kind() != "type_identifier")
+        {
             collect_kotlin_refs(child, src, params, out);
         }
         return;
@@ -287,8 +296,18 @@ fn collect_kotlin_refs(
 fn is_noise_kotlin(name: &str) -> bool {
     matches!(
         name,
-        "Int" | "Long" | "Short" | "Byte" | "Float" | "Double" | "Boolean" | "Char"
-            | "String" | "Unit" | "Any" | "Nothing"
+        "Int"
+            | "Long"
+            | "Short"
+            | "Byte"
+            | "Float"
+            | "Double"
+            | "Boolean"
+            | "Char"
+            | "String"
+            | "Unit"
+            | "Any"
+            | "Nothing"
     )
 }
 
@@ -362,7 +381,8 @@ fn kt_walk_call_defs(
                 // funs have no body, so fall back to the decl end (v5's exact
                 // fallback). line_of(span.start) == v5's def.line.
                 let span = def_span(child);
-                sink.nodes.push(Node::new(span, kind).with_name(strings.intern(&name)));
+                sink.nodes
+                    .push(Node::new(span, kind).with_name(strings.intern(&name)));
                 // v5 threads the fn's df_sym as `enclosing` and resets the
                 // owner: a nested local fun is Free, not a method.
                 kt_walk_call_defs(child, src, strings, sink, None, true);
@@ -385,7 +405,8 @@ fn kt_walk_call_defs(
             // span - the df closure VALUE node carries that name instead).
             // @callable kotlin lambda
             "lambda_literal" if in_fn => {
-                sink.nodes.push(Node::new(node_span(child), CallKind::Lambda));
+                sink.nodes
+                    .push(Node::new(node_span(child), CallKind::Lambda));
                 kt_walk_call_defs(child, src, strings, sink, parent, true);
             }
             _ => kt_walk_call_defs(child, src, strings, sink, parent, in_fn),
@@ -398,8 +419,13 @@ fn kt_walk_call_defs(
 /// function_body end, or the decl end for a bodyless fun).
 fn def_span(child: tree_sitter::Node) -> Span {
     let start = child.start_byte();
-    let end = kt_first_child(child, "function_body").unwrap_or(child).end_byte();
-    Span { start: start as u32, len: (end - start) as u32 }
+    let end = kt_first_child(child, "function_body")
+        .unwrap_or(child)
+        .end_byte();
+    Span {
+        start: start as u32,
+        len: (end - start) as u32,
+    }
 }
 
 /// Walk every `call_expression`, minting one call site per call. Port of v5
@@ -432,9 +458,14 @@ fn kt_walk_call_sites(
 /// `kt_callee`: the lead is the call's first child that is not the
 /// `call_suffix`; a bare `simple_identifier` is the callee, or the trailing
 /// `simple_identifier` of a `navigation_expression` (`recv.qux()` -> "qux").
-fn kt_callee<'a>(call: tree_sitter::Node<'a>, src: &[u8]) -> Option<(String, tree_sitter::Node<'a>)> {
+fn kt_callee<'a>(
+    call: tree_sitter::Node<'a>,
+    src: &[u8],
+) -> Option<(String, tree_sitter::Node<'a>)> {
     let mut cursor = call.walk();
-    let lead = call.children(&mut cursor).find(|c| c.kind() != "call_suffix")?;
+    let lead = call
+        .children(&mut cursor)
+        .find(|c| c.kind() != "call_suffix")?;
     match lead.kind() {
         "simple_identifier" => Some((kt_text(lead, src).to_string(), lead)),
         "navigation_expression" => {
@@ -542,17 +573,32 @@ fn kt_flow_fn(
     let mut scope = Scope::new();
     if let Some(params) = kt_first_child(fn_node, "function_value_parameters") {
         let mut cursor = params.walk();
-        for p in params.children(&mut cursor).filter(|n| n.kind() == "parameter") {
+        for p in params
+            .children(&mut cursor)
+            .filter(|n| n.kind() == "parameter")
+        {
             if let Some(idn) = kt_first_child(p, "simple_identifier") {
                 let v = kt_text(idn, src).to_string();
-                let id = df_push(sink, strings, idn.start_byte() as u32, DfNodeKind::Param, Some(&v));
+                let id = df_push(
+                    sink,
+                    strings,
+                    idn.start_byte() as u32,
+                    DfNodeKind::Param,
+                    Some(&v),
+                );
                 scope.insert(v, id);
             }
         }
     }
     if let Some(body) = kt_first_child(fn_node, "function_body") {
         if let Some(tail) = flow_kt(body, src, &fn_sym, strings, &mut scope, sink) {
-            let ret = df_push(sink, strings, body.start_byte() as u32, DfNodeKind::Ret, None);
+            let ret = df_push(
+                sink,
+                strings,
+                body.start_byte() as u32,
+                DfNodeKind::Ret,
+                None,
+            );
             df_edge(sink, tail, ret);
         }
     }
@@ -623,7 +669,10 @@ fn flow_kt(
             if let Some(suffix) = kt_first_child(node, "call_suffix") {
                 if let Some(vargs) = kt_first_child(suffix, "value_arguments") {
                     let mut cursor = vargs.walk();
-                    for va in vargs.children(&mut cursor).filter(|n| n.kind() == "value_argument") {
+                    for va in vargs
+                        .children(&mut cursor)
+                        .filter(|n| n.kind() == "value_argument")
+                    {
                         // Named form: value_argument = simple_identifier '=' expr.
                         let mut vc = va.walk();
                         let kids: Vec<tree_sitter::Node> = va.children(&mut vc).collect();
@@ -743,7 +792,10 @@ fn flow_kt(
             let mut seeded = false;
             if let Some(lp) = kt_first_child(node, "lambda_parameters") {
                 let mut cursor = lp.walk();
-                for vd in lp.children(&mut cursor).filter(|n| n.kind() == "variable_declaration") {
+                for vd in lp
+                    .children(&mut cursor)
+                    .filter(|n| n.kind() == "variable_declaration")
+                {
                     if let Some(idn) = kt_first_child(vd, "simple_identifier") {
                         let v = kt_text(idn, src).to_string();
                         let id = df_push(
@@ -768,7 +820,13 @@ fn flow_kt(
                 let ret = df_push(sink, strings, node.end_byte() as u32, DfNodeKind::Ret, None);
                 df_edge(sink, t, ret);
             }
-            Some(df_push(sink, strings, start_byte, DfNodeKind::Closure, Some(&lam_sym)))
+            Some(df_push(
+                sink,
+                strings,
+                start_byte,
+                DfNodeKind::Closure,
+                Some(&lam_sym),
+            ))
         }
         // return EXPR: the returned value flows into the fn's `ret` node.
         "jump_expression" => {
@@ -795,8 +853,12 @@ fn flow_kt(
         "additive_expression" | "multiplicative_expression" | "infix_expression" => {
             let mut cursor = node.walk();
             let kids: Vec<tree_sitter::Node> = node.named_children(&mut cursor).collect();
-            let l = kids.first().and_then(|n| flow_kt(*n, src, fn_sym, strings, scope, sink));
-            let r = kids.last().and_then(|n| flow_kt(*n, src, fn_sym, strings, scope, sink));
+            let l = kids
+                .first()
+                .and_then(|n| flow_kt(*n, src, fn_sym, strings, scope, sink));
+            let r = kids
+                .last()
+                .and_then(|n| flow_kt(*n, src, fn_sym, strings, scope, sink));
             let id = df_push(sink, strings, start_byte, DfNodeKind::Binop, None);
             if let Some(lid) = l {
                 df_edge(sink, lid, id);
@@ -851,7 +913,13 @@ fn df_push(
     name: Option<&str>,
 ) -> NodeRef {
     let node_ref = NodeRef(sink.nodes.len() as u32);
-    let mut node = Node::new(Span { start: byte, len: 0 }, kind);
+    let mut node = Node::new(
+        Span {
+            start: byte,
+            len: 0,
+        },
+        kind,
+    );
     if let Some(name) = name.filter(|candidate| !candidate.is_empty()) {
         node = node.with_name(strings.intern(name));
     }
@@ -898,11 +966,14 @@ impl Source for KotlinSource {
         // ast-grep parse leaves cst None (no panic).
         let cst = if mask.cst {
             let arena = AstGrepParser.make_arena();
-            AstGrepParser.parse(&arena, path, content).ok().map(|parsed| {
-                let mut bundle = FamilyBundle::<CstF>::default();
-                CstProjector.project(&parsed, &mut strings, &mut bundle);
-                bundle
-            })
+            AstGrepParser
+                .parse(&arena, path, content)
+                .ok()
+                .map(|parsed| {
+                    let mut bundle = FamilyBundle::<CstF>::default();
+                    CstProjector.project(&parsed, &mut strings, &mut bundle);
+                    bundle
+                })
         } else {
             None
         };
@@ -938,6 +1009,12 @@ impl Source for KotlinSource {
             }
         }
 
-        ExtractOutput { strings, cst, types, call, df }
+        ExtractOutput {
+            strings,
+            cst,
+            types,
+            call,
+            df,
+        }
     }
 }

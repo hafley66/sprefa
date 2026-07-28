@@ -940,6 +940,7 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-go",
  "tree-sitter-kotlin-sg",
+ "tree-sitter-prolog",
 ]
 
 [[package]]
@@ -1178,6 +1179,16 @@ name = "tree-sitter-php"
 version = "0.23.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f066e94e9272cfe4f1dcb07a1c50c66097eca648f2d7233d299c8ae9ed8c130c"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-prolog"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d475fc08c018acb005af5a1030fe9752c918c65d7d263ad5edafe8488157f02"
 dependencies = [
  "cc",
  "tree-sitter-language",
