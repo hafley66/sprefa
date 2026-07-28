@@ -344,10 +344,23 @@ async function handleIdbRead(state: ServerState, relName: string, response: http
  *  Teardown law: a dropped curl (socket close) must unsubscribe -- refCount honesty.
  *  request.socket's "close" is the one reliable signal across both a graceful client
  *  disconnect and an abrupt one (curl -N killed, `response.destroy()` from the client
- *  side, etc.), and `takeUntil` on it ends this inner. `finalize` then returns the
- *  count to baseline exactly once, whether the end came from the socket, from the
- *  runtime's stream completing (program disposed), or from the app graph itself
- *  shutting down. */
+ *  side, etc.), and `takeUntil` on it ends this inner. `finalize` always decrements
+ *  the active count exactly once; whether it also ends the response depends on which
+ *  of three ways this inner ends:
+ *    - socket close: `takeUntil` fires, the socket is already gone, so `finalize`
+ *      only decrements the count. Calling `response.end()` on a closed socket would
+ *      be redundant.
+ *    - the runtime's `deltas$` completing (program reload: the old runtime's
+ *      `dispose()` completes `commits$`, which completes `deltas$` -- 3_runtime.ts):
+ *      the pipe completes on its own, `takeUntil` never fired, so `finalize` both
+ *      decrements the count and calls `response.end()` -- otherwise the client's
+ *      socket would hang open past its program's lifetime with no more deltas ever
+ *      coming (the pre-fix bug: nothing ended it, so it hung until the process died).
+ *    - the app graph itself shutting down (this inner's subscription torn down, e.g.
+ *      by `DlServer.close()` disposing the running program): `finalize` runs on
+ *      unsubscribe the same as on completion, `takeUntil` never fired, so
+ *      `response.end()` runs here too -- this is what lets `DlServer.close()` resolve
+ *      instead of waiting on a socket nothing will ever end. */
 function sseClient$(
   state: ServerState,
   relName: string,
@@ -370,12 +383,24 @@ function sseClient$(
   response.flushHeaders();
   bumpActive(1);
 
+  // Tracks which of the three end cases fired: only a true socket close skips
+  // `response.end()` (see docblock above).
+  let endedBySocketClose = false;
+  const socketClosed$ = fromEvent(request.socket, "close").pipe(
+    tap(() => {
+      endedBySocketClose = true;
+    }),
+  );
+
   return runtime.deltas$.pipe(
     filter((event: DeltaEvent) => event.rel === relName),
     tap((event) => response.write(`data: ${JSON.stringify(event)}\n\n`)),
     map((delta): DlAppEvent => ({ kind: "delta", delta })),
-    takeUntil(fromEvent(request.socket, "close")),
-    finalize(() => bumpActive(-1)),
+    takeUntil(socketClosed$),
+    finalize(() => {
+      bumpActive(-1);
+      if (!endedBySocketClose) response.end();
+    }),
   );
 }
 
@@ -546,8 +571,13 @@ export function serveDl(config: { dbPath: string; port: number }): Observable<Dl
 
         // Read + bridge BEFORE the switch: only an accepted program may replace the
         // running one. A rejected one has already been answered 400 and drops out here.
+        // `mergeMap` (not `concatMap`): body read + parse + the 400 path run per-request,
+        // concurrently, so one POST with a stalled/partial body cannot hold up a later
+        // POST's body from being read at all. Only a request that resolves to an
+        // ACCEPTED parsed program reaches `accepted$`, which still enters the serialized
+        // swap stage below (`switchMap` -> `runProgram$`'s own `concatMap`) unchanged.
         const accepted$ = programExchanges$.pipe(
-          concatMap((exchange) =>
+          mergeMap((exchange) =>
             from(readProgram(exchange)).pipe(
               catchError((failure: unknown) => {
                 serveFailure(exchange.response, "POST", "/edb/program", failure);
