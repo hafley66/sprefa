@@ -296,8 +296,15 @@ parent hashes consume child SEMANTIC hashes; resolves the dense-ints-vs-
 content-ids ruling collision. Coexistence ranked hybrid > decl-word >
 use-site (worked example in all three in the verdict). Support GC
 complete ONLY on the value DAG; entity plane pays explicit retirement.
-AWAITING USER: coexistence pick (hybrid recommended), decl spelling
-(b/c/a from round 1), then the types arc can leave design.
+RULED 2026-07-29 (rulings.pl tail): decl_column_spelling =
+colon_typed_ordered_columns (rel name(col: type, ...), source order
+significant, Key(text) wrappers dead); enum_decl_in_rel = semicolon
+variants in-decl; no_policy_suffix_words (set REMOVED, bare rel = set
+table per engine.pl fallback, log = the only kind word, plane carried
+by key(...) + id binds per the verdict's own optional-sugar note;
+entity extras still need a future non-suffix spelling). Types arc has
+left design; spelling migration wave 2 (drop set, land : types +
+semicolon enums in parse_dl/print_dl/registry) is dispatchable.
 RULED same night: rel_default_policy = value_unkeyed (bare rel = table =
 replay subject); enum_variant_separator = prolog semicolon; enum storage
 = N variant rels + derived tag view (lab (b), user walked through the
