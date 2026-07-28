@@ -48,7 +48,20 @@
  *     feature on the input side.
  */
 
-import { EMPTY, type Observable, defer, from, interval, map, merge, mergeMap, of, catchError } from "rxjs";
+import {
+  EMPTY,
+  type Observable,
+  type SchedulerLike,
+  asyncScheduler,
+  defer,
+  from,
+  interval,
+  map,
+  merge,
+  mergeMap,
+  of,
+  catchError,
+} from "rxjs";
 
 import type { Program } from "sprefa-store-engine/src/lower/ast.ts";
 
@@ -96,9 +109,15 @@ function distinctPeriods(periodRows: readonly Row[]): readonly number[] {
 /** One period's ticking clock: an `interval` firing every `periodSecs` seconds,
  *  each firing emitting exactly one `clock_bucket` row for that period. `interval`
  *  (not `timer`) so every period's first row lands one period after activation,
- *  the same as every later one -- no special-cased "fire immediately" branch. */
-function clockIntervalFor(periodSecs: number): Observable<readonly Row[]> {
-  return interval(periodSecs * 1000).pipe(
+ *  the same as every later one -- no special-cased "fire immediately" branch.
+ *  `scheduler` is rxjs's own `SchedulerLike` (0_types.ts's `BindConfig` seam) --
+ *  this is the ONE place wall-clock cadence enters the process; a test passes a
+ *  `TestScheduler` here to run the cadence on virtual time. `bucketFor` below
+ *  still reads real `Date.now()` regardless of which scheduler drives the firing
+ *  (this file's header + 0_types.ts's Binds section: bucket VALUES stay real
+ *  wall-clock on purpose, only the firing CADENCE is injected). */
+function clockIntervalFor(periodSecs: number, scheduler: SchedulerLike): Observable<readonly Row[]> {
+  return interval(periodSecs * 1000, scheduler).pipe(
     map((): readonly Row[] => [{ period: periodSecs, bucket: bucketFor(periodSecs) }]),
   );
 }
@@ -120,7 +139,7 @@ export const clockBind: BindDef = {
       }),
       mergeMap((periodRows) => {
         const periods = distinctPeriods(periodRows);
-        return periods.length > 0 ? merge(...periods.map(clockIntervalFor)) : EMPTY;
+        return periods.length > 0 ? merge(...periods.map((periodSecs) => clockIntervalFor(periodSecs, config.scheduler))) : EMPTY;
       }),
     );
   },
@@ -154,6 +173,7 @@ export class BindRunner implements IBindRunner {
     private readonly runtime: IDlRuntime,
     binds: readonly BindDef[],
     program: Program,
+    private readonly scheduler: SchedulerLike = asyncScheduler,
   ) {
     const edbRelNames = new Set(
       program.rels.filter((decl) => decl.origin === "EDB").map((decl) => decl.name),
@@ -164,7 +184,9 @@ export class BindRunner implements IBindRunner {
       activeBinds.length > 0
         ? merge(
             ...activeBinds.map((bind) =>
-              bind.source$({ runtime: this.runtime }).pipe(mergeMap((rows) => from(this.commitOnce(bind, rows)))),
+              bind
+                .source$({ runtime: this.runtime, scheduler: this.scheduler })
+                .pipe(mergeMap((rows) => from(this.commitOnce(bind, rows)))),
             ),
           )
         : EMPTY;

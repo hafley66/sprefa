@@ -23,7 +23,7 @@
  * location.
  */
 
-import type { Observable } from "rxjs";
+import type { Observable, SchedulerLike } from "rxjs";
 import type { Program, RelDecl, RelRef } from "sprefa-store-engine/src/lower/ast.ts";
 import type { FactLine } from "sprefa-store-engine/src/engine/ingest.ts";
 
@@ -229,9 +229,19 @@ export interface CacheDb {
  *  structural IDlRuntime (never the concrete class, same numbering-law reason
  *  as HostDef.run/HostRunner above) -- a bind reads its own config rows off it
  *  (e.g. the clock bind's `clock_period` rows) the same way it will later
- *  write through it. */
+ *  write through it. `scheduler` is rxjs's own `SchedulerLike` (nothing
+ *  invented, per the vocabulary law): the ONE seam wall-clock cadence enters
+ *  this package through. A bind that schedules its own recurring work (the
+ *  clock bind's `interval`) MUST take this scheduler rather than reading the
+ *  ambient default, so a test can inject rxjs's `TestScheduler` and run the
+ *  cadence on virtual time. Production always constructs `BindConfig` with
+ *  rxjs's own `asyncScheduler` (1_binds.ts, BindRunner's constructor default),
+ *  so real behavior is byte-identical to before this seam existed. `Date.now()`
+ *  bucket VALUES (the clock bind's `bucketFor`) are NOT covered by this seam --
+ *  they stay real wall-clock on purpose (this file's Binds section header). */
 export interface BindConfig {
   readonly runtime: IDlRuntime;
+  readonly scheduler: SchedulerLike;
 }
 
 /** A registered input source, symmetric to HostDef on the output side: `rel`
@@ -266,9 +276,13 @@ export interface IBindRunner {
   readonly commits$: Observable<BindCommitDone>;
 }
 
-/** The static side of the BindRunner class: its constructor is the whole surface. */
+/** The static side of the BindRunner class: its constructor is the whole surface.
+ *  `scheduler` is the same rxjs `SchedulerLike` `BindConfig` carries -- BindRunner's
+ *  constructor is the one place a `BindConfig` gets built (per bind, on activation),
+ *  so it is the caller-facing seam a test or `serveDl` injects a `TestScheduler` or
+ *  `asyncScheduler` through. */
 export interface IBindRunnerStatics {
-  new (runtime: IDlRuntime, binds: readonly BindDef[], program: Program): IBindRunner;
+  new (runtime: IDlRuntime, binds: readonly BindDef[], program: Program, scheduler: SchedulerLike): IBindRunner;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -601,8 +615,13 @@ export type ShHost = (decl: HostDecl) => HostDef;
 /** The whole app as one cold observable: subscribing boots the http front on
  *  `cfg.port` against `cfg.dbPath` and IS the app's lifetime; `DlServer.close()` (or
  *  unsubscribing) ends it. The server owns one mutable slot, empty until a program
- *  loads via POST /edb/program. */
-export type ServeDl = (cfg: { dbPath: string; port: number }) => Observable<DlAppEvent>;
+ *  loads via POST /edb/program. `cfg.scheduler` is the SAME rxjs `SchedulerLike` seam
+ *  `BindConfig`/`IBindRunnerStatics` take (1_binds.ts) -- optional so every existing
+ *  caller (main.ts) keeps compiling unchanged; omitted, `serveDl` defaults to rxjs's
+ *  own `asyncScheduler`. A test that needs virtual time for a bind's cadence (e.g. the
+ *  clock bind's `interval`) passes a `TestScheduler` here instead of reaching into
+ *  module state -- the only parameterization this seam needed. */
+export type ServeDl = (cfg: { dbPath: string; port: number; scheduler?: SchedulerLike }) => Observable<DlAppEvent>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Static-side proof helper. `implements` covers a class's instance side and

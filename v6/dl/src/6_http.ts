@@ -58,6 +58,8 @@ import path from "node:path";
 import {
   EMPTY,
   Observable,
+  type SchedulerLike,
+  asyncScheduler,
   catchError,
   concatMap,
   defer,
@@ -233,7 +235,7 @@ async function readProgram(exchange: Exchange): Promise<ProgramLoad | null> {
 
 async function bootProgram(
   state: ServerState,
-  config: { readonly dbPath: string },
+  config: { readonly dbPath: string; readonly scheduler: SchedulerLike },
   load: ProgramLoad,
 ): Promise<{ readonly runtime: DlRuntime; readonly hostRunner: HostRunner; readonly bindRunner: BindRunner }> {
   await disposeCurrentProgram(state);
@@ -258,7 +260,11 @@ async function bootProgram(
   // today) actually activate, by checking the loaded program's declared EDB rel
   // names -- no decl surface exists in the .dl grammar for a program to name its
   // OWN bind, so `result.program` (not `result.hosts`) is what BindRunner reads.
-  const bindRunner = new BindRunner(runtime, builtinBinds, result.program);
+  // `config.scheduler` is the rxjs SchedulerLike seam (0_types.ts's BindConfig):
+  // real callers default to asyncScheduler (serveDl below); a test injects a
+  // TestScheduler through the SAME cfg object serveDl already takes, so a
+  // bind's cadence (the clock bind's `interval`) can run on virtual time.
+  const bindRunner = new BindRunner(runtime, builtinBinds, result.program, config.scheduler);
 
   state.bridgeOk = result;
   state.runtime = runtime;
@@ -275,7 +281,7 @@ async function bootProgram(
  *  immediately POSTs a row cannot beat the tick loop into existence. */
 function runProgram$(
   state: ServerState,
-  config: { readonly dbPath: string },
+  config: { readonly dbPath: string; readonly scheduler: SchedulerLike },
   load: ProgramLoad,
 ): Observable<DlAppEvent> {
   // Only a BOOT failure is caught here (answer 500, no program runs). A fault raised
@@ -562,9 +568,16 @@ function serverHandle(
   };
 }
 
-export function serveDl(config: { dbPath: string; port: number }): Observable<DlAppEvent> {
+export function serveDl(config: { dbPath: string; port: number; scheduler?: SchedulerLike }): Observable<DlAppEvent> {
   return defer(() => {
     const state = newServerState();
+    // The rxjs SchedulerLike seam (0_types.ts's BindConfig/IBindRunnerStatics):
+    // real serving defaults to asyncScheduler so behavior is byte-identical to
+    // before this seam existed; a test passes a TestScheduler through this SAME
+    // cfg object (the "parameterize through the existing config object" call for
+    // a server whose construction otherwise has no injection point) to run a
+    // bind's cadence on virtual time.
+    const scheduler = config.scheduler ?? asyncScheduler;
     let activeSubscriptions = 0;
     const bumpActive = (delta: number): void => {
       activeSubscriptions += delta;
@@ -599,7 +612,7 @@ export function serveDl(config: { dbPath: string; port: number }): Observable<Dl
         );
 
         return merge(
-          accepted$.pipe(switchMap((load) => runProgram$(state, config, load))),
+          accepted$.pipe(switchMap((load) => runProgram$(state, { dbPath: config.dbPath, scheduler }, load))),
           otherExchanges$.pipe(mergeMap((exchange) => routeRequest(state, exchange, bumpActive))),
           of<DlAppEvent>({ kind: "listening", server: serverHandle(state, server, port, () => activeSubscriptions) }),
         );

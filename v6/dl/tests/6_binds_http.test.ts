@@ -6,25 +6,56 @@
  * rather than imported: that file doesn't export them, and this file owns no edits
  * to it).
  *
- * Proves, against fixtures/clock-swr-demo.dl:
- *   1. clock_bucket (the clock bind's own EDB rel) advances at least twice within a
- *      few declared periods, with NO code in this test ever POSTing to /edb/clock_bucket
- *      -- the row arrives purely from the bind's own interval timer.
- *   2. poll_due (a plain derived rule reading clock_bucket) re-fires on every advance,
- *      observed over GET /subscribe/poll_due -- SSE delta events, not just a snapshot
- *      read, so "re-fired" means a real tick delta, not merely "the final value differs".
- *   3. Reloading the server to a program with NO `clock_period` rel stops the old
- *      timer: clock_bucket does not advance again after the reload, proving bind
- *      lifetime is scoped to its program the same way host effects are (switchMap's
- *      unsubscribe of the old program's whole branch, 6_http.ts's runProgram$).
+ * Two tests, split along the SAME real-vs-virtual-time line 4_binds.test.ts draws
+ * (that file's header explains the reason in full):
+ *
+ *   1. "clock_bucket advances ... poll_due re-fires on SSE" -- kept on the REAL
+ *      default scheduler. Its assertions depend on `bucketFor` (1_binds.ts) computing
+ *      two DIFFERENT bucket values across two firings, and `bucketFor` reads real
+ *      `Date.now()` regardless of which scheduler drives the interval's CADENCE
+ *      (this seam deliberately does not virtualize wall-clock bucket VALUES). Proves,
+ *      against fixtures/clock-swr-demo.dl:
+ *        a. clock_bucket advances at least twice within a few declared periods, with
+ *           NO code in this test ever POSTing to /edb/clock_bucket -- the row arrives
+ *           purely from the bind's own interval timer.
+ *        b. poll_due (a plain derived rule reading clock_bucket) re-fires on every
+ *           advance, observed over GET /subscribe/poll_due -- SSE delta events, not
+ *           just a snapshot read, so "re-fired" means a real tick delta.
+ *
+ *   2. "reloading ... removes the old interval's scheduled action" -- rewritten onto
+ *      an injected rxjs TestScheduler (0_types.ts's ServeDl.scheduler seam,
+ *      threaded through the SAME cfg object serveDl already takes -- 6_http.ts had no
+ *      other injection point, so this is the "parameterize through the existing
+ *      config object" call the dispatch asked for rather than a module-state hack).
+ *      Proves reloading the server to a program with NO `clock_period` rel removes
+ *      the OLD program's scheduled interval action -- the SAME "assert the timer, not
+ *      the row" direction F3 named, because a leaked interval whose firings land the
+ *      same real wall-clock second re-commits an IDENTICAL (period, bucket) row under
+ *      retention-1, which row-equality alone cannot tell apart from a dead timer.
+ *
+ * SABOTAGE RECEIPT (F3, mandatory per the dispatch, shared with 4_binds.test.ts):
+ * 1_binds.ts's BindRunner constructor was temporarily rewritten to hold an internal
+ * Subject-backed subscription that never unsubscribes from the merged bind sources
+ * (see 4_binds.test.ts's header for the exact diff). Test 2 below went RED under
+ * that sabotage: `waitForScheduledAction(scheduler, count => count === 0)` timed out
+ * after its bounded real poll (2s) because the leaked action never left the
+ * scheduler's queue, so `scheduler.actions.length` never reached 0 after the
+ * reload -- a discriminating failure (a timeout rather than a direct assertion
+ * mismatch only because that predicate wait sits before the `assert.equal`, to
+ * absorb the same async settling gap 4_binds.test.ts's `waitForScheduledAction`
+ * call absorbs). Test 1 was unaffected (it never inspects the scheduler's action
+ * queue). The sabotage was reverted before this file was finalized; test 2 was
+ * re-run GREEN against the real implementation.
  */
 import assert from "node:assert/strict";
 import http from "node:http";
 import { test } from "node:test";
 
 import type { Subscription } from "rxjs";
+import { TestScheduler } from "rxjs/testing";
 
 import { serveDl, type DlServer } from "../src/6_http.ts";
+import { advanceVirtualSeconds, waitForScheduledAction } from "./2_helpers_binds.ts";
 import { cleanupDbFile, freshDbPath } from "./1_helpers_db.ts";
 import { readFixture } from "./0_helpers.ts";
 import { waitUntil } from "./2_helpers_hosts.ts";
@@ -36,11 +67,14 @@ interface ServerFixture {
   readonly running: Subscription;
 }
 
-async function bootTestServer(): Promise<ServerFixture> {
+/** `scheduler` defaults to omitted (serveDl's own default, rxjs's `asyncScheduler`,
+ *  real wall-clock) -- test 2 below passes a `TestScheduler` to run a bind's cadence
+ *  on virtual time. */
+async function bootTestServer(scheduler?: TestScheduler): Promise<ServerFixture> {
   const dbPath = freshDbPath();
   let running: Subscription | undefined;
   const server = await new Promise<DlServer>((resolve, reject) => {
-    running = serveDl({ dbPath, port: 0 }).subscribe({
+    running = serveDl({ dbPath, port: 0, scheduler }).subscribe({
       next: (event) => {
         if (event.kind === "listening") resolve(event.server);
       },
@@ -78,7 +112,7 @@ rel poll_due(period: int, bucket: int).
 poll_due(period, bucket) <- clock_bucket(period, bucket).
 `;
 
-test("clock bind: clock_bucket advances on its own, poll_due re-fires on SSE, reload stops the timer", async () => {
+test("clock bind: clock_bucket advances on its own, poll_due re-fires on SSE", async () => {
   const fixture = await bootTestServer();
   const sseEvents: string[] = [];
   let sseReq: http.ClientRequest | undefined;
@@ -129,23 +163,66 @@ test("clock bind: clock_bucket advances on its own, poll_due re-fires on SSE, re
     // SSE client, one per real advance, proving the derived rule re-ran rather than
     // this test only observing the final snapshot.
     assert.ok(sseEvents.length >= 2, `expected >=2 poll_due SSE events, got ${sseEvents.length}: ${sseEvents.join(" | ")}`);
-
-    // ---- reload: swap to a program with NO clock_period -> the old timer dies ----
-    sseReq!.destroy();
-    await loadProgram(fixture.base, NO_PERIOD_PROGRAM);
-
-    const snapshotAfterReload = await readRel(fixture.base, "clock_bucket");
-    // Longer than one declared period in the OLD program (2s): if the old interval
-    // somehow survived the switchMap teardown, this window would catch its firing.
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    const snapshotAfterWaiting = await readRel(fixture.base, "clock_bucket");
-    assert.deepEqual(
-      snapshotAfterWaiting,
-      snapshotAfterReload,
-      "clock_bucket must not change after reloading to a program with no clock_period -- the old program's timer must be dead",
-    );
   } finally {
     sseReq?.destroy();
+    await teardownTestServer(fixture);
+  }
+});
+
+test("clock bind: reloading to a program with no clock_period removes the old interval's scheduled action", async () => {
+  const scheduler = new TestScheduler(() => {});
+  const fixture = await bootTestServer(scheduler);
+  try {
+    // A one-second period keeps this fast, same reasoning as 4_binds.test.ts's
+    // ONE_SECOND_CLOCK_PROGRAM (the demo fixture's 2s period is exercised by the
+    // first test above, on real time).
+    await loadProgram(
+      fixture.base,
+      `rel clock_period(period_secs: int).
+clock_period(1).
+
+rel(1) clock_bucket(period: int, bucket: int).
+`,
+    );
+
+    await waitForScheduledAction(scheduler, (actionCount) => actionCount > 0);
+    advanceVirtualSeconds(scheduler, 1);
+    await waitUntil(async () => {
+      const rows = await readRel(fixture.base, "clock_bucket");
+      return rows.length === 1 ? rows : undefined;
+    });
+    assert.ok(
+      scheduler.actions.length > 0,
+      "the clock's interval action must still be scheduled while the first program is running",
+    );
+
+    // ---- reload: swap to a program with NO clock_period -> the old timer dies ----
+    await loadProgram(fixture.base, NO_PERIOD_PROGRAM);
+
+    // switchMap (6_http.ts's runProgram$, `accepted$.pipe(switchMap(...))`) tears
+    // down the old program's whole branch -- including the old BindRunner's
+    // commits$, hence the old interval's scheduled action -- as soon as the new
+    // accepted$ value arrives, which happens before the new program's own async
+    // boot completes. `waitForScheduledAction` is still a bounded REAL poll (not a
+    // stand-in for the cadence): it is here only because `loadProgram`'s 200
+    // response is written from further down the SAME merge than the switchMap
+    // teardown, so there is a small async gap between "response received" and
+    // "old action definitely gone" to close.
+    await waitForScheduledAction(scheduler, (actionCount) => actionCount === 0);
+    assert.equal(
+      scheduler.actions.length,
+      0,
+      "reloading to a program with no clock_period must remove the old interval's scheduled action -- no leaked timer",
+    );
+
+    // Advance virtual time well past several more periods of the OLD program: a
+    // leaked subscription would reschedule a new action here (confirmed: this line
+    // goes RED under the held-internal-subscription sabotage described in this
+    // file's header). The new program declares no clock_period, so clockBind's own
+    // tolerance for a missing config rel (1_binds.ts) keeps this at zero regardless.
+    advanceVirtualSeconds(scheduler, 5);
+    assert.equal(scheduler.actions.length, 0, "no new scheduled action may appear after the reload");
+  } finally {
     await teardownTestServer(fixture);
   }
 });
