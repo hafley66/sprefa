@@ -1,0 +1,130 @@
+# ghcacher.dl — v5 gh-cache.dl (examples/gh-cache.dl:1-141) re-expressed in the v6 dl
+# surface. Extraction-lab discipline: zero engine/grammar changes. Every point where
+# the v6 surface cannot say what v5 said is called out inline AND recorded, with
+# file:line evidence, in ghcacher-findings.md (read that file for the full grading).
+#
+# THREE STRUCTURAL GAPS this file works around, all load-bearing for the shape below
+# (full detail + evidence in findings.md):
+#
+#   1. No @async / @next in v6/dl/grammar/dl.langium (grepped, zero matches). The `?`
+#      probe (ProbeItem) is v6's ENTIRE effect-firing surface: `host?(args)` demands a
+#      content-addressed request, and HostRunner (v6/dl/src/1_hosts.ts:357-523) answers
+#      it out of band. No separate `@async` marker exists or is needed — every probe is
+#      async by construction. This part maps cleanly onto salt_minting=content_addressed.
+#
+#   2. No @next carry: a rule cannot read "what I derived last tick." v5's etag/etag_next
+#      split exists to freeze etag at tick-start so `poll`'s bootstrap negation
+#      (`!etag(ep,_)`) never closes a cycle back through resp -> poll. Ported literally
+#      (negation instead of @next-freeze), that same shape is a NEGATION EDGE inside a
+#      cycle (poll -[neg]-> etag -> resp -> poll), which v6's stratify() rejects at load
+#      (0_ast_bridge.ts:948-951, diag code "non-stratifiable" — reproduced empirically,
+#      see findings.md). Worked around here by dropping the negation entirely: `etag`
+#      is the UNION of an always-true bootstrap fact and the resp-derived value, which
+#      is ordinary positive recursion (stratifiable, ships in conformance.dl as
+#      proves_recursion). Net effect: `poll(ep, "")` never goes away, so the empty-etag
+#      identity keeps getting demanded every tick — harmless (content-addressed cache
+#      hit, no-op) but not what v5's negation intended, and NOT a general substitute for
+#      @next (see findings.md's cadence finding for the case this does NOT cover).
+#
+#   3. No clock/tick builtin: v6/dl/src/5_diag.ts:48-56 is the WHOLE builtin rel surface
+#      (file/node/edge/sig/site/const/span_line/diag) — no `clock(secs, bucket)`, no
+#      wall-clock anything, and v6/dl/src/main.ts has no setInterval/scheduler at all.
+#      There is nothing in the language OR the runtime that changes on its own with
+#      wall-clock time. gh-cache.dl's whole rate/cadence mechanic (clock bucket salts
+#      the request id so an unchanged resource still gets re-checked every N seconds)
+#      has no v6 spelling. This file's `poll` therefore only re-fires when `etag`
+#      actually changes (a resource CHANGE re-triggers exactly one more fetch); an
+#      UNCHANGED resource is never re-checked, ever. This is SLOT-SWR's answer for this
+#      port: see findings.md for the two candidate spellings and why the in-language one
+#      is what is below.
+#
+# --- what to poll --------------------------------------------------------------
+rel watch(ep: text).
+watch("repos/cli/cli").
+
+# --- the conditional request (the cache) ---------------------------------------
+# Same shell body as v5 (examples/gh-cache.dl:75-80); only the head shape differs (v6's
+# ShDecl has no `-> (...)` output split — inputCols are inferred by scanning the
+# template for {col}/$col, v6/dl/src/0_ast_bridge.ts:449-451). ep/prev precede
+# status/tag/body in the column list on purpose: v6's probe-arg-to-column mapping uses
+# the DECLARED order when a probe passes no extra (salt) args (0_ast_bridge.ts:547-548),
+# so inputs must be declared before outputs for the zero-salt case used below.
+sh fetch(ep: text, prev: text, status: int, tag: text, body: text) =
+  `R=$(gh api {ep} -i -H "If-None-Match: $prev" 2>/dev/null)
+   C=$(printf '%s' "$R" | head -1 | grep -oE '[0-9]{3}' | head -1)
+   E=$(printf '%s' "$R" | grep -iE '^etag:' | head -1 | sed -E 's/^[Ee]tag:[[:space:]]*//; s/\r$//')
+   B=$(printf '%s' "$R" | awk 'f{print} /^\r?$/{f=1}' | tr -d '\n')
+   printf '%s\n%s\n%s' "$C" "$E" "$B"`.
+
+# etag: bootstrap fact UNION resp-derived value (gap #2 above). Deliberately NOT
+# `rel(1)`: retention markers only govern EDB-style commit() writes (applyRelWrite,
+# v6/dl/src/3_runtime.ts:420-490); a rule-headed rel like this one is recomputed and
+# diffed every tick regardless of its retention marker (diffAgainstTables,
+# 3_runtime.ts:574-589, checks no retention at all) — `rel(1)` here would be a silent
+# no-op AND, if it ever did apply, its "keep newest only" sweep is a GLOBAL sweep of
+# the whole table (3_runtime.ts:457-469), not a per-`ep` upsert, which would be actively
+# wrong for more than one watched endpoint. See findings.md's retention finding.
+rel etag(ep: text, tag: text).
+etag(ep, "") <- watch(ep).
+etag(ep, tag) <- resp(ep, 200, tag, _).
+
+rel poll(ep: text, prev: text).
+poll(ep, prev) <- watch(ep), etag(ep, prev).
+
+# Fire it. Content-addressed on (fetch, ep, prev) — the probe IS the async effect;
+# there is no separate @async marker to write. Every status lands (not just 200): the
+# template always emits status/tag/body, matching v5's raw `resp` (examples/gh-cache.dl:
+# 89-90) before its 200-only filter.
+rel resp(ep: text, status: int, tag: text, body: text).
+resp(ep, status, tag, body) <- poll(ep, prev), fetch?(ep, prev, status, tag, body).
+
+# --- normalize: entities from 200 bodies ----------------------------------------
+# v5 uses term-form `jsonp`/`json` (examples/gh-cache.dl:110,113,121-124) to extract
+# fields from the bound `body` string in-rule. v6 has neither op (grepped dl.langium
+# and 5_diag.ts's builtin list — no json/jsonp anywhere); the only extraction surface
+# left is another `sh` host, chained by a second probe off the SAME `body` value. This
+# is the most direct spelling the grammar allows for field extraction, but it costs a
+# real subprocess per distinct body (jq), where v5's jsonp was in-process.
+sh extract_stars(body: text, n: text) =
+  `printf '%s' "$body" | jq -r '.stargazers_count // empty'`.
+rel stars(ep: text, n: text).
+stars(ep, n) <- resp(ep, 200, _, body), extract_stars?(body, n).
+
+sh extract_full_name(body: text, name: text) =
+  `printf '%s' "$body" | jq -r '.full_name // empty'`.
+rel full_name(ep: text, name: text).
+full_name(ep, name) <- resp(ep, 200, _, body), extract_full_name?(body, name).
+
+# v5's pull_request (examples/gh-cache.dl:120-124) needs `json(body, q:[... {...} ...])`
+# to explode a JSON ARRAY into one row per element with correlated sibling/nested
+# fields in one match. No v6 equivalent exists (no array-explode op at all, term-match
+# or otherwise) — INEXPRESSIBLE, not attempted here. See findings.md.
+
+# --- the change feed (append-only) -----------------------------------------------
+# v5 needs an explicit @next carry (examples/gh-cache.dl:132-137) because a PLAIN
+# derived rule in v5 (like in v6) is recomputed from current support every tick, so an
+# entity that stops being currently derivable would otherwise vanish from the log. No
+# @next exists in v6, so this is written as a plain derived rule instead, relying on a
+# DIFFERENT property: `resp`'s identity is content-addressed on (ep, prev), prev is
+# itself a value that only ever advances forward (etag never repeats an old tag once a
+# newer one is known — gap #3 above already caps how far it advances), and zero salts
+# are used on the fetch probe, so a landed `__resp_fetch` row is NEVER superseded
+# (1_hosts.ts:86, "absent any salt_N key... identityDigest === fullDigest, no
+# supersession ever fires") and therefore never disappears. `stars`/`full_name` inherit
+# that permanence through the join, and `change_log` inherits it from them, with
+# ordinary rel set-semantics (2_schema.ts:16-17) doing the (ep,kind,val) dedup v5's
+# accumulator did explicitly. This is an EMPIRICALLY-REASONED substitute, not a general
+# @next replacement — it only works because the probe's identity is keyed on values
+# that strictly advance and nothing here uses a salt. See findings.md's accumulate
+# finding for what would break this (a salted probe, or a `rel(1)` in the chain).
+rel change_log(ep: text, kind: text, val: text).
+change_log(ep, "stars", n) <- stars(ep, n).
+change_log(ep, "full_name", v) <- full_name(ep, v).
+
+# --- read the cache ---------------------------------------------------------------
+# No `effect_log` builtin exists in v6 (5_diag.ts's builtin list has no such rel); the
+# closest visibility into effect state is GET /idb/__resp_fetch (a minted EDB rel) or
+# the effect_cache table directly (not surfaced as a queryable rel at all). Query lines
+# below cover what v6 CAN show.
+? change_log(ep, kind, val).
+? etag(ep, tag).
