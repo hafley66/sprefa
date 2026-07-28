@@ -219,7 +219,30 @@ conformance 110, roundtrip, plunit 17/17 on the branch): INTEGER columns
 drop the json CASE wrapper via canonical_column_expr/3 int/text split;
 generated SELECTs simplify to plain columns. Codex worktree removed,
 branch deleted. Luna-ready brief queue: endurance-as-gate, lower/types.ts
-I-prefix renames, v5 rails.dl descriptive names. MATCH FRONTIER LAB LANDED 2026-07-28 PM (merge aeba1b72, 63 PASS, lab
+I-prefix renames, v5 rails.dl descriptive names.
+TYPES-AS-RELS LAB LANDED (merge 7a416fac, 36 PASS, lab deleted, last copy
+b58d1ece, verdict = plans/2026-07-28-types-as-rels-verdict.md): hypothesis
+HOLDS on the value plane -- one construct (rel), struct = rel+set with
+key(every content column), id = content_id() stdlib bind, enum = N variant
+rels + DERIVED tag view, list = fixed-arity cons cells (amendment 1,
+souffle made the same call), policy bundle = FOUR bits (identity/mutation/
+lifetime/MERGE, amendment 2). THE CRACK: cycles -- content ids cannot
+express cyclic graphs (parent id derives from child ids); cyclic needs
+extrinsic keys where support counting stops being a complete collector.
+DOMINATION DISSOLVES into support counting, complete because interned
+graphs are DAGs by construction; graded: shared child survives (support
+2->1), last release cascades 5 rows one tick; SQL ON DELETE CASCADE on the
+same store deletes the shared child + leaves dangling refs = decisively
+wrong + no rx lowering (finding 6) -- FK cascade must NOT be emitted.
+Spellings priced (b) prolog functors > (c) plain rels > (a) json braces,
+criteria visible, no fiat. Slots: OWNERSHIP-MARK = no mark on value plane;
+ENUM-SHAPE = variant rels + derived tag; INTERN-SCOPE = per type;
+JSON1-FATE = untyped json only never cache. Souffle verified (RecordTable
+flyweight, monotonic = no GC precedent; bit-packing recollection REFUTED,
+split is by field count). Top ambiguities: dense-ints-vs-content-ids
+RULING CONFLICT (two standing rulings collide); tick log must print
+VALUES not ids or migration/grading break; dictionary rels appear in
+boundary deltas. ALL AWAITING USER RULINGS alongside the match-lab set. MATCH FRONTIER LAB LANDED 2026-07-28 PM (merge aeba1b72, 63 PASS, lab
 deleted per protocol, last copy 5ba7b0c5, verdict =
 plans/2026-07-28-match-frontier-lab-verdict.md): event axis HOLDS, four
 cracks: Ta (DISSOLVES into pending rel, confirmed by tick-log diff both
