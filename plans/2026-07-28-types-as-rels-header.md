@@ -1,0 +1,109 @@
+# TYPES-AS-RELS DESIGN HEADER (planner contract, user go 2026-07-28 PM)
+
+User directive, verbatim intent: "a rational type system that makes rel and
+types/enums all almost look the same (i dont care if modeling a type graph
+requires N type tables flatly with N edge tables (who is pointing to who),
+make safe assumptions of non domination (identity not tied to parent) ...
+or do, how would we even indicate that (this is cascade delete logic which
+should likely be embedded into the code)."
+
+This un-banks the nested/reference storage header banked by the
+typed-columns ruling (rulings.pl 2026-07-28: struct-as-rel + surrogate id,
+the intern-dictionary pattern). Deliverable is a DESIGN DOC with priced
+options, no implementation.
+
+## Fixed constraints (ruled, do not relitigate)
+
+- Typed columns: int/text INTEGER/TEXT landed; compound terms currently
+  inline-flat json1 (`{"fn":..,"args":[..]}`) with canonical-text CASE at
+  read. This header designs what that punt becomes; migration path is a
+  question, not a given.
+- Vocabulary law: rx/prolog/sql words only. SQL already owns most of this
+  domain: FOREIGN KEY, ON DELETE CASCADE, PRIMARY KEY, recursive CTE.
+  Prolog owns functor/arity/args. rx owns lifetime/teardown framing. No @
+  symbols (user 2026-07-28).
+- ARCH.pl symmetric struct/tuple discipline: "a rel is a set of structs, a
+  struct is a row, terms nest in columns -- one value world, so matching
+  gives branching." The design must keep that symmetry or name the break.
+- LIFETIME IS DOMINATED callout + plans/2026-07-27-mode-dominance.md:
+  domination machinery exists on the subscription axis; question 3 asks
+  whether ownership is the same machinery.
+- Content-addressed identity is the ruled default for effects
+  (salt_minting); the intern dictionary (v5 storage-diet A=1a dense ids)
+  is the precedent for value identity.
+- Self-host bar (user): "if they got an optional higher type system that
+  is also a win" -- the type layer is optional, programs without decls
+  keep working.
+- RULED mid-header (user 2026-07-28 PM): "a type ref is just always
+  surrogates, not even a question." Every nested type position lowers to a
+  surrogate id column, never inline. Manual relational references, if ever
+  needed, are the exception spelling to price, not the default. The
+  center-of-gravity question of this whole header is: what does nesting
+  lower to in rels (Q5 is primary, Q2 shrinks to minting policy only).
+
+## Questions (each = priced options + recommendation, exhaustive tables
+## where the option space is enumerable)
+
+Q1 DECL UNIFICATION. One spelling family for rel/struct/enum. What
+actually differs between `rel route(id, body)` and a struct decl of the
+same shape -- storage, identity, subscribability, or nothing? Enum = sum
+type: price at least (a) one table + tag column, (b) N variant tables +
+shared id space, (c) variant tables + a tag edge table. Include how the
+existing envelope enums (FetchResult) land in each.
+
+Q2 MINTING POLICY ONLY (surrogates themselves are RULED, see constraints).
+Content-addressed intern (same value = same id, shared rows, the stated
+non-domination default) vs opaque minted ids. Where each breaks: mutation
+of a shared node, retraction counting (two parents, one child), the Key/Q8
+identity-columns thread. Interaction with IVM support counting.
+
+Q3 DOMINATION SPELLING (the cascade-delete question). How to say "child
+rows die with the parent row." Price: (a) SQL-native FOREIGN KEY ... ON
+DELETE CASCADE emitted in DDL, semantics in the database; (b) domination
+as IVM support: the parent edge declared as the child's ONLY support, so
+existing retraction machinery cascades with zero new code -- explore
+whether cascade delete DISSOLVES into support counting the way Ta may
+dissolve into pending rels; (c) explicit edge-table column marking. For
+each: what the generated code contains, what the tick log shows when a
+parent dies, and the rx lowering (per the snippet law). Surface spelling
+options must be no-@ and inside the vocabulary law.
+
+Q4 EDGE TABLES AS RELS. The who-points-to-who tables: are they ordinary
+rels -- queryable by dl rules, visible to measures/LSP, subscribe-able?
+If yes, the type graph is program data and the everytool bet applies; name
+any place that self-reference bites (bootstrapping, migration ticks).
+
+Q5 NESTED MATCH LOWERING. `route.field.sub` destructuring across the
+flattened graph: the SQL (joins over edge tables) and rx lowerings at 1,
+2, 3 levels deep; where json1 inline stays as a fast path or cache; the
+point where join depth costs more than inline duplication (cite the
+storage-diet receipts if used).
+
+Q6 MIGRATION AND COEXISTENCE. Per-rel opt-in? Can inline-flat json1 and
+reference storage coexist in one program; what the compiler needs to know
+per column; what the oracle/tick-log grade looks like during migration.
+
+Q7 RECURSIVE TYPES. Trees/graphs as self-referential edge tables;
+querying = recursive CTE (the engine's own fixpoint machinery); where the
+not_stratified guard interacts; termination story.
+
+Q8 TYPE-CHECK RESIDENCY. With types as rows, is the checker itself dl
+rules over the type tables (self-hosting win, ties to books/v6/algos/
+unify_hm.pl) or compiler-side prolog only? Price both.
+
+## Named slots for user rulings
+
+SLOT-DECL-SPELLING (the unified decl surface), SLOT-OWNERSHIP-MARK (the
+domination spelling), SLOT-ENUM-SHAPE (sum-type table layout),
+SLOT-INTERN-SCOPE (intern per rel, per type, or global),
+SLOT-JSON1-FATE (fast path, cache, or removed).
+
+## Deliverable
+
+plans/2026-07-28-types-as-rels-plan.md: verdict-first summary, per-question
+priced tables, recommendation ordering, the slots filled-or-open, and a
+worked example: one small program (a route tree with an enum body) shown
+in (a) proposed decl surface, (b) generated DDL including edge tables,
+(c) two rules matching into it with their SQL and rx lowerings, (d) the
+tick log when a dominated parent dies vs a shared child surviving.
+No implementation, no fixture edits, no engine claims without file:line.
