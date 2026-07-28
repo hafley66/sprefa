@@ -711,6 +711,40 @@ storage-only, never semantic identity (consistent with the types-r2
 surrogate-mate ruling). Named slots: LIBSQL_UDF_API unresolved (the
 eventual driver decision), INTERN_SIDE_EFFECT staging,
 NODE_SQLITE3_ABI.
+EXPRESSION+AGGREGATE LIFT LANDED (opus worktree agent, 6 commits,
+merged; coordinator re-ran conformance 120/0, sweep BOTH modes 60
+compiled/57 identical/0 wrong, plunit 40/40, tsv2 12/12, gate,
+roundtrip on merged main): comparisons/arith/:= binds/concat/head
+arithmetic fused into emitted SQL (WHERE + SELECT expressions);
+aggregates count/sum = per-group accumulators, min/max = insert
+delta-compare + GROUP-SCOPED delete recompute (EXPLAIN receipts:
+SEARCH via PK, 1 of 5000 groups touched; sabotage receipts in test
+headers); compiled 34 -> 60, identical 31 -> 57, conformance 115 ->
+120 (+5 oracle-verified fixtures incl 2 pinning cross-type join).
+Fail-first receipts red->green: TEXT-collapse (plunit
+expression_miscompile_guards) + @libsql REAL bind corruption
+(bootBind.test.ts -- BOTH harness boot loops bound params raw, the
+one path skipping int->bigint). NEW final-state grading leg in the
+sweep (closes the empty-schedule vacuity + makes keep(count)
+non-lowering VISIBLE: final_wrong 3, all pre-existing). Q4
+reconciliation caught a THIRD miscompile class: cross-type join
+under affinity conversion ('1' vs 1 join = 1 row where oracle
+derives none) -- now join_column_type_mismatch refusal. json
+agg heads STAY refused: ordering reproducible in SQL but the
+tick-log encoder renders prolog cons text ([|](4,...)), not json --
+encoding gap, not order gap. Named cracks: edge bodies still refuse
+comparisons/binds (no guard seam in the arrival-projection arm);
+braces/list VALUES now refuse (were silently storing "null" /
+{}(...) -- the phase-C "identical (vacuous)" braces row was a
+miscompile); reconcile-frontier asymmetry commented in place.
+POST-MERGE DEFECT, coordinator-found: text_door_receipt red on main
+-- 20 lifted fixtures type via SCHEDULE literal witnesses, printed
+.dl6 views carry no decls so the text door refuses
+arith_operand_not_int; PLUS the receipt hardcodes =:= 34. Proven
+fix: typed decls in the view text compile clean through the door
+(hand receipt in chat). Fix = synthesize inferred colon-typed decls
+into dl_view emission + dynamic receipt gate. Dispatched in the
+3-lane blast.
 
 ### Hands-on findings 2026-07-29 (coordinator wrote+ran a cold program; scratch fixture, receipts in chat)
 - **keyed() on a level-rule head is SILENTLY INERT** (F8/retention-inert
