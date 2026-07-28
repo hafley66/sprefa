@@ -1,5 +1,10 @@
 # Stream modes: (cardinality, lifetime) with dominance
 
+> **EXECUTED AND PARTLY CORRECTED** by the mode lattice lab
+> (plans/2026-07-27-mode-lattice.md): the single `min` proposed below is wrong for
+> rule bodies (join_max required), and case 5 needs a demand term. Read the lab
+> doc first; this file is the pre-lab plan kept for the case tables.
+
 Source: 2026-07-27 session (v6 prolog compiler tier). Status: design locked,
 lab unbuilt (`mode_lab` in ARCH.pl). The compile-time analysis that answers
 "does asking terminate" and "is the result 1 value or many" for every ask.

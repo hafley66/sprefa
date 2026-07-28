@@ -1,5 +1,12 @@
 # sub_lifetimes: the subscription forest (runtime half of lifetimes)
 
+> **SUPERSEDED 2026-07-27 late PM** by rulings.pl `subscription_kernel =
+> minimal_with_coverage_check_and_ghost_view`: the stored forest below was
+> eliminated by plans/2026-07-27-switch-flow.md section 7 and the red-team pass
+> (plans/2026-07-27-redteam-minimal-kernel.md). Kept as the record of the design
+> that lost and WHY its mechanism (demand rows, prefix teardown) still shaped the
+> winning one.
+
 Lab: `v6/prolog/labs/sub_lifetimes.pl`. 41 checks, all PASS. DELETED per lab
 protocol; last lives at commit 2fff3f61, recover via
 `git show 2fff3f61:v6/prolog/labs/sub_lifetimes.pl`.
