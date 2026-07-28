@@ -223,3 +223,16 @@ ruling(lifecycle_arm_vocabulary, rx_observer_words, user,
 % word; user overruled: the block word is match.
 ruling(match_block_word, match, user,
        'user 2026-07-28 PM: "match" over partition/groupBy').
+
+% 2026-07-28 evening. The match-frontier lab's C2 crack: a key replaced
+% N times inside one boundary shows only first-to-last; the intermediate
+% values are invisible and the transition count depends on batching. User
+% accepts the collapse as the semantics AND requires it be observable:
+% when a transition-consuming rule's boundary collapses multiple replaces
+% (at any sync/next/async frontier: Tn, Ti drain, world batch), the
+% runtime logs the collapse through the tracing spine (a debug event
+% naming rel, key, and the number of collapsed occurrences), never
+% silently. Same warn-paint discipline as effect_abort. Obligation
+% attaches to the arms implementation arc.
+ruling(transition_rule_semantics, first_to_last_per_boundary_with_collapse_logging, user,
+       'user 2026-07-28 evening: "that is fine i think, we should log when that transition rule of sync/next/async boundaries happen"').
