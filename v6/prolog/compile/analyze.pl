@@ -9,8 +9,9 @@
 %
 % Compiles the SUBSET engine.pl semantics that the two Phase B target
 % fixtures use: edge rule bodies are `TriggerAtom` alone (no extra
-% joined goal, no pre/1, no departed/1, no guard); level rules are acyclic
-% (no self-recursion), non-aggregate, with `not/1` allowed. Anything wider
+% joined goal, no pre/1, no departed/1, no guard); level rules are
+% non-aggregate, with `not/1` and single-reference self recursion allowed.
+% Anything wider
 % throws unsupported_construct(What) at analysis time -- a compiler finding,
 % not a silent guess.
 

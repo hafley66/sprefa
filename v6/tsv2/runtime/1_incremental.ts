@@ -374,30 +374,49 @@ export const IncrementalRuntime: IIncrementalRuntime = {
   ): Observable<void> {
     if (arrivals.length === 0) return of(undefined);
     const relationByName = new Map(relations.map((relation) => [relation.rel, relation]));
-    const arrivalsByRel = new Map<string, { readonly sequence: number; readonly row: IRow }[]>();
+    type ArrivalEntry = { readonly sequence: number; readonly row: IRow };
+    type ArrivalGroup = {
+      readonly relation: IIncrementalRelationPlan;
+      readonly sign: 1 | -1;
+      readonly entries: ArrivalEntry[];
+    };
+    const groupedArrivals: ArrivalGroup[] = [];
     for (const [sequence, arrival] of arrivals.entries()) {
-      const grouped = arrivalsByRel.get(arrival.rel);
-      const entry = { sequence, row: arrival.row };
-      if (grouped === undefined) arrivalsByRel.set(arrival.rel, [entry]);
-      else grouped.push(entry);
-    }
-    const groupedArrivals = [...arrivalsByRel].map(([rel, entries]) => {
-      const relation = relationByName.get(rel);
-      if (relation === undefined || relation.arrivalAddSql === null) {
-        throw new Error(`incremental arrival relation missing: ${rel}`);
+      const relation = relationByName.get(arrival.rel);
+      if (relation === undefined) {
+        throw new Error(`incremental arrival relation missing: ${arrival.rel}`);
       }
-      return { relation, entries };
-    });
-    const statements = groupedArrivals.map(({ relation, entries }): SqlStatement => ({
-      sql: relation.arrivalAddSql!,
+      const sign = arrival.sign === "add" ? 1 : -1;
+      const sql = sign === 1 ? relation.arrivalAddSql : relation.arrivalDelSql;
+      if (sql === null) {
+        throw new Error(
+          sign === -1 && relation.kind === "log"
+            ? `retract from log rel '${arrival.rel}'`
+            : `incremental ${sign === 1 ? "add" : "delete"} statement missing: ${arrival.rel}`,
+        );
+      }
+      const previous = groupedArrivals.at(-1);
+      const entry = { sequence, row: arrival.row };
+      if (
+        previous !== undefined &&
+        previous.relation.rel === relation.rel &&
+        previous.sign === sign
+      ) {
+        previous.entries.push(entry);
+      } else {
+        groupedArrivals.push({ relation, sign, entries: [entry] });
+      }
+    }
+    const statements = groupedArrivals.map(({ relation, sign, entries }): SqlStatement => ({
+      sql: (sign === 1 ? relation.arrivalAddSql : relation.arrivalDelSql)!,
       args: [JSON.stringify(entries.map((entry) => entry.row))],
     }));
     return seam.runner.batch(seam.db, statements).pipe(
       concatMap((results) => {
         const events: DeltaEvent[] = [];
         for (const [groupIndex, result] of results.entries()) {
-          const { relation, entries } = groupedArrivals[groupIndex]!;
-          if (relation.kind === "log") {
+          const { relation, sign, entries } = groupedArrivals[groupIndex]!;
+          if (relation.kind === "log" && sign === 1) {
             for (const entry of entries) {
               events.push({
                 rel: relation.rel,
@@ -418,7 +437,7 @@ export const IncrementalRuntime: IIncrementalRuntime = {
             stagedKeys.add(key);
             events.push({
               rel: relation.rel,
-              sign: 1,
+              sign,
               sequence: entry.sequence,
               row: entry.row,
             });
@@ -490,23 +509,59 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     seam: ISqlSeam,
     statements: readonly IIncrementalLevelStatement[],
     relations: readonly IIncrementalRelationPlan[],
+    reconcileEveryTick: boolean,
   ): Observable<void> {
+    if (statements.length === 0) return of(undefined);
     const relationByName = new Map(relations.map((relation) => [relation.rel, relation]));
     const retractionTerms = relations.map(
       (relation) =>
         `EXISTS (SELECT 1 FROM ${quoteIdentifier(relation.deltaTableName)} WHERE "_sign" = -1 LIMIT 1)`,
     );
+    const reconcile = (): Observable<void> => {
+      const sql = statements.flatMap((statement) => statement.supportSql);
+      return seam.runner.batch(seam.db, sql).pipe(
+        concatMap((results) => {
+          const events: DeltaEvent[] = [];
+          let sequence = 0;
+          for (const [statementIndex, statement] of statements.entries()) {
+            const relation = relationByName.get(statement.headRel);
+            if (relation === undefined) {
+              throw new Error(`incremental level head relation missing: ${statement.headRel}`);
+            }
+            const resultOffset = statementIndex * statement.supportSql.length;
+            const deletedRows = resultRows(
+              results[resultOffset + 3]!,
+              statement.headColumns,
+            );
+            const insertedRows = resultRows(
+              results[resultOffset + 4]!,
+              statement.headColumns,
+            );
+            for (const row of deletedRows) {
+              events.push({ rel: statement.headRel, sign: -1, sequence, row });
+              sequence += 1;
+            }
+            for (const row of insertedRows) {
+              events.push({ rel: statement.headRel, sign: 1, sequence, row });
+              sequence += 1;
+            }
+          }
+          return stageEvents(
+            seam,
+            relations,
+            events,
+            [{ tableName: (relation) => relation.nextFrontierTableName, phase: 1 }],
+          );
+        }),
+      );
+    };
+    if (reconcileEveryTick) return reconcile();
     if (retractionTerms.length === 0) return of(undefined);
     const retractionSql =
       `SELECT CASE WHEN ${retractionTerms.join(" OR ")} THEN 1 ELSE 0 END AS has_retraction`;
     return seam.runner.execute(seam.db, retractionSql).pipe(
       concatMap((result) =>
-        Number(result.rows[0]?.has_retraction ?? 0) === 0
-          ? of(undefined)
-          : sequenceWork(
-              statements,
-              (statement) => recomputeLevelStatement(seam, statement, relationByName),
-            )
+        Number(result.rows[0]?.has_retraction ?? 0) === 0 ? of(undefined) : reconcile()
       ),
     );
   },

@@ -15,4 +15,4 @@ line=$(/usr/bin/time -l node --experimental-transform-types \
         v6/sprefa-store/js/src/gen/reach.gen.ts "$1" "$2" 2>"$tmp" | grep '^CSV,' | head -1)
 rss=$(awk '/maximum resident set size/ {print $1}' "$tmp"); rm -f "$tmp"
 [[ -z "$line" ]] && exit 1
-echo "${line},0,$(awk -v b="${rss:-0}" 'BEGIN{printf "%.1f", b/1048576}')" >&2
+echo "${line},0,$(awk -v b="${rss:-0}" 'BEGIN{printf "%.1f", b/1048576}'),N/A,N/A,N/A" >&2

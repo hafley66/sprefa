@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shared wrapper: run a prolog engine over pure_reach.pl under /usr/bin/time -l,
-# merge its 6-field CSV (stdout) with measured RSS, emit the harness 8-field
+# merge its 6-field CSV (stdout) with measured RSS, emit the harness 11-field
 # CSV on stderr. Usage: pure_wrap.sh <engine-cmd...> -- <layers> <width>
 set -uo pipefail
 dir="$(cd "$(dirname "$0")/.." && pwd)"
@@ -13,4 +13,4 @@ rss=$(awk '/maximum resident set size/ {print $1}' "$tmp")
 rm -f "$tmp"
 [[ -z "$line" ]] && exit 1
 rss_mb=$(awk -v b="${rss:-0}" 'BEGIN{printf "%.1f", b/1048576}')
-echo "${line},0,${rss_mb}" >&2
+echo "${line},0,${rss_mb},N/A,N/A,N/A" >&2

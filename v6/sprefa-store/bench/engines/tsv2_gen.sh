@@ -109,4 +109,5 @@ if [[ -n "$rss" ]]; then
 else
   rss_mb="$(sed -n 's/.*"worker_rss_mb":\([0-9.]*\).*/\1/p' "$record" | tail -1)"
 fi
-echo "${measured_line},0,${rss_mb}" >&2
+host_peak_mb="$(sed -n 's/.*"host_peak_mb":\([0-9.]*\).*/\1/p' "$record" | tail -1)"
+echo "${measured_line},0,${rss_mb},${host_peak_mb:-N/A},N/A,N/A" >&2

@@ -28,10 +28,10 @@ Engines:
 
 ## Data
 
-| engine | nodes | edges | killed | setup ms | retract ms | ops | RSS MB |
-|---|---:|---:|---:|---:|---:|---:|---:|
+| engine | nodes | edges | killed | setup ms | retract ms | ops | RSS MB | host peak MB | SQLite high-water MB | db MB |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 EOF
-tail -n +2 "$CSV" | awk -F, '{printf "| %s | %s | %s | %s | %s | %s | %s | %s |\n",$1,$2,$3,$4,$5,$6,$7,$8}'
+tail -n +2 "$CSV" | awk -F, '{printf "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11}'
 
 echo
 echo "## Takeaways (derived)"

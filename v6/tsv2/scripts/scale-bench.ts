@@ -86,6 +86,7 @@ async function main(): Promise<void> {
   );
 
   const tickDurations: number[] = [];
+  let hostPeakBytes = process.memoryUsage().heapUsed;
   let previous = process.hrtime.bigint();
   const started = previous;
   const lines = await lastValueFrom(
@@ -93,6 +94,7 @@ async function main(): Promise<void> {
       tap(() => {
         const now = process.hrtime.bigint();
         tickDurations.push(Number(now - previous) / 1_000_000);
+        hostPeakBytes = Math.max(hostPeakBytes, process.memoryUsage().heapUsed);
         previous = now;
       }),
       toArray(),
@@ -120,6 +122,7 @@ async function main(): Promise<void> {
     final_table_sizes: tableSizes,
     ms_per_1k_arrivals: totalWallMs / (arrivals / 1000),
     worker_rss_mb: process.memoryUsage().rss / 1_048_576,
+    host_peak_mb: hostPeakBytes / 1_048_576,
   };
   if (logPath !== undefined) writeFileSync(logPath, `${lines.join("\n")}\n`);
   if (recordPath !== "/dev/null") appendFileSync(recordPath, `${JSON.stringify(result)}\n`);
