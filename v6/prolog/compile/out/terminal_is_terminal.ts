@@ -62,6 +62,9 @@ const relColumns: Record<string, readonly string[]> = {
 const arrivalTargets: readonly string[] = ["stream_end", "stream_item"];
 
 const boot: readonly IBootStatement[] = [
+  { sql: `DELETE FROM "stream_status"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", 'running' FROM "stream_item" b0 WHERE NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = b0."args")`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", 'done' FROM "stream_end" b0`, params: [] },
 ];
 
 type Snapshot = {

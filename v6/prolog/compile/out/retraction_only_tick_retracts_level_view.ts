@@ -60,6 +60,8 @@ const relColumns: Record<string, readonly string[]> = {
 const arrivalTargets: readonly string[] = ["source_row"];
 
 const boot: readonly IBootStatement[] = [
+  { sql: `DELETE FROM "mirror"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "mirror" ("item") SELECT b0."item" FROM "source_row" b0`, params: [] },
 ];
 
 type Snapshot = {

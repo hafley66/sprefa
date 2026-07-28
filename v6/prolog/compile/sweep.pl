@@ -25,7 +25,7 @@
 :- use_module(library(apply)).
 :- use_module(library(filesex)).
 :- use_module(compile, [ program_plan/2 ]).
-:- use_module(lower, [ lower_program/2, boot_statements/3 ]).
+:- use_module(lower, [ lower_program/2, boot_statements/4 ]).
 :- use_module(emit_ts, [ emit_program/5 ]).
 :- use_module('../conformance/body', [ rel_ref/2 ]).
 
@@ -94,10 +94,19 @@ sweep :-
 % output nothing re-checks. Only .ts and .schedule.json are cleared (one
 % per compiled fixture, by construction); manifest.json/run-results.json are
 % overwritten wholesale every run regardless.
+%
+% PHASE C2 fix: '.schedule.json' is 14 characters, not 13 -- the Length=13
+% off-by-one made every `sub_atom(Entry, _, 13, 0, '.schedule.json')` call
+% fail outright (a 13-char substring can never unify with a 14-char atom),
+% so this clause never actually matched anything and every fixture that
+% ever fell OUT of the compiled set left its stale .schedule.json behind
+% permanently (caught during the PHASE C2 RULING 2 sweep: two fixtures that
+% briefly compiled before a later-added safety check refused them stayed on
+% disk, untracked, across repeated re-sweeps).
 clear_stale_compiled_outputs(OutDir) :-
     directory_files(OutDir, Entries),
     forall(( member(Entry, Entries),
-             ( sub_atom(Entry, _, 3, 0, '.ts') ; sub_atom(Entry, _, 13, 0, '.schedule.json') )
+             ( sub_atom(Entry, _, 3, 0, '.ts') ; sub_atom(Entry, _, 14, 0, '.schedule.json') )
            ),
            ( atomic_list_concat([OutDir, '/', Entry], Path), delete_file(Path) )).
 
@@ -113,7 +122,8 @@ sweep_one(File, Name, Term, Bindings, result(Name, File, Bucket, Reason)) :-
           lower_program(Plan, Lowered),
           Term = fixture(Name, _Prog, Initial, Schedule, _Expectations),
           Plan = plan(_, _, RelPlans, _, _, _),
-          boot_statements(RelPlans, Initial, BootStatements),
+          Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+          boot_statements(RelPlans, Initial, LevelStatements, BootStatements),
           call(emit_ts:emit_program, Name, Plan, Lowered, BootStatements, Text),
           out_dir(OutDir),
           format(atom(TsPath), '~w/~w.ts', [OutDir, Name]),

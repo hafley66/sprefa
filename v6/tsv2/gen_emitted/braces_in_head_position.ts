@@ -61,6 +61,8 @@ const arrivalTargets: readonly string[] = ["seed"];
 
 const boot: readonly IBootStatement[] = [
   { sql: `INSERT OR IGNORE INTO "seed" ("name") VALUES (?)`, params: ["cli"] },
+  { sql: `DELETE FROM "doc_out"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "doc_out" ("col1") SELECT json_object('fn', '{}', 'args', json_array(json_object('fn', ':', 'args', json_array('repo', b0."name")))) FROM "seed" b0`, params: [] },
 ];
 
 type Snapshot = {

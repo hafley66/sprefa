@@ -37,7 +37,7 @@
 :- use_module(library(readutil)).
 :- use_module(library(http/json)).
 :- use_module('../compile', [ read_fixture_term/4, program_plan/2 ]).
-:- use_module('../lower', [ lower_program/2, boot_statements/3 ]).
+:- use_module('../lower', [ lower_program/2, boot_statements/4 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -70,8 +70,8 @@ check(Name) :-
     program_plan(Term-Bindings, Plan),
     lower_program(Plan, Lowered),
     Plan = plan(_, _, RelPlans, _ArrivalTargets, _, _),
-    boot_statements(RelPlans, Initial, BootStatements),
     Lowered = lowered(_, Ddl, ArrivalStatements, EdgeStatements, LevelStatements, DeltaStatements, RelPlans, _),
+    boot_statements(RelPlans, Initial, LevelStatements, BootStatements),
     tmp_db_file(Name, DbFile),
     ( exists_file(DbFile) -> delete_file(DbFile) ; true ),
     run_batch(DbFile, Ddl),

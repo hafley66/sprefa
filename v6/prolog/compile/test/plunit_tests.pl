@@ -227,7 +227,12 @@ test(rejects_aggregate_head, [throws(unsupported_construct(aggregate_head(_)))])
     Prog = prog([], [ (total(count(X)) <- item(X)) ]),
     check_supported_subset(Prog).
 
-test(rejects_edge_body_with_extra_goal, [throws(unsupported_construct(edge_body_shape(_, _)))]) :-
+% PHASE C2 RULING 2 renamed this refusal from the blanket edge_body_shape to
+% the precise edge_marked_with_extra_goal (analyze.pl:edge_trigger_shape/2):
+% a marked-single trigger with any extra body goal is the OUT-OF-SCOPE
+% "marked + extra guard" bucket (SCOREBOARD.md's 9-fixture tally), distinct
+% from the unmarked-conjunction shape this ruling widened.
+test(rejects_edge_body_with_extra_goal, [throws(unsupported_construct(edge_marked_with_extra_goal(_)))]) :-
     Prog = prog([keyed(scope/1, [1])], [ (scope(X) <+ (only(open(X)), not(closed(X)))) ]),
     check_supported_subset(Prog).
 

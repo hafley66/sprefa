@@ -31,6 +31,12 @@
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
+% relplan_kind/3 (Ref -> log|set): PHASE C2 RULING 2's per-arm resolver needs
+% the TRIGGER's kind (to choose the log-unconditional vs set-dedup branch of
+% the emitted triggerOccurrences call), and RelPlans is available straight
+% off the Lowered term this module already renders -- reused, not
+% reimplemented.
+:- use_module(lower, [ relplan_kind/3 ]).
 
 % ═══ small text helpers ══════════════════════════════════════════════════════
 
@@ -157,12 +163,16 @@ local_types_lines(
 % @libsql/client binds a JS `number` parameter as SQLite REAL, not INTEGER --
 % verified empirically (a bound `1` lands as the TEXT value "1.0" in a
 % TEXT-affinity column, `1n` lands as "1"), a driver behavior, not a bug in
-% any SQL text this compiler emits. Every column here is declared TEXT
-% (lower.pl:column_def/2), so an integer-valued arrival or edge-projected
-% value must cross the driver seam as a bigint to keep its digit-for-digit
-% text form; a genuine fractional number (none in this compiler's corpus
-% today) passes through unchanged. Used everywhere a raw IRow (an arrival's
-% own row, or an edge projection's numbered-placeholder bind) becomes
+% any SQL text this compiler emits. A TEXT column (lower.pl:column_def/3)
+% therefore needs an integer-valued arrival or edge-projected value to cross
+% the driver seam as a bigint to keep its digit-for-digit text form; an
+% INTEGER column (PHASE C2 RULING 1) round-trips correctly either way
+% (verified empirically: both a bound bigint and a bound plain number land
+% as SQLite INTEGER storage and read back as a JS number), so applying this
+% unconditionally to every bind is simplest and correct for both column
+% types. A genuine fractional number (none in this compiler's corpus today)
+% passes through unchanged. Used everywhere a raw IRow (an arrival's own
+% row, or an edge projection's numbered-placeholder bind) becomes
 % SqlStatement args.
 
 % The return type is NOT `readonly` -- @libsql/client's own `InArgs` is
@@ -173,6 +183,40 @@ local_types_lines(
 bind_args_helper_lines(
     [ 'function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {',
       '  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));',
+      '}'
+    ]).
+
+% ═══ trigger occurrence helper (PHASE C2 RULING 2) ══════════════════════════
+% engine.pl's absorb_arrivals/8 (r7 + q1): a Log rel's `+Row` arrival is
+% UNCONDITIONALLY a trigger occurrence (duplicates stack, r7 "one +Row per
+% new stamp"); a Set rel's `+Row` arrival is a trigger occurrence ONLY when
+% the row was not already present -- an exact-duplicate add is dedup, not a
+% new occurrence, and mints no trigger. The dedup check is PROGRESSIVE
+% across one tick's own arrival list (engine.pl folds Store0 forward through
+% absorb_arrivals/8's own recursion), not just against the tick-start
+% snapshot: two identical `+Row` arrivals to a Set rel in the SAME tick
+% occurrence-fire only the FIRST. `beforeRows` is the tick-start snapshot
+% (runTick's own `before`, captured by readSnapshot before this tick's
+% applyArrivals runs); `seen` starts from it and grows as earlier arrivals
+% in THIS tick are folded in, exactly mirroring that recursion.
+trigger_occurrences_helper_lines(
+    [ 'function triggerOccurrences(',
+      '  kind: "log" | "set",',
+      '  relName: string,',
+      '  beforeRows: readonly IRow[],',
+      '  arrivals: IArrivalBatch,',
+      '): IArrivalBatch {',
+      '  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === relName && arrival.sign === "add");',
+      '  const seen = new Set<string>(beforeRows.map((row) => JSON.stringify(row)));',
+      '  const occurrences: IArrivalRow[] = [];',
+      '  for (const arrival of arrivals) {',
+      '    if (arrival.rel !== relName || arrival.sign !== "add") continue;',
+      '    const key = JSON.stringify(arrival.row);',
+      '    if (seen.has(key)) continue;',
+      '    seen.add(key);',
+      '    occurrences.push(arrival);',
+      '  }',
+      '  return occurrences;',
       '}'
     ]).
 
@@ -299,78 +343,135 @@ arrival_statement_fn_lines(Name, Lines) :-
       '}'
     ].
 
-% ═══ edge rule resolution (one resolver function per edge rule) ═════════════
+% ═══ edge rule resolution (one resolver function per ARM -- PHASE C2 RULING
+% 2: an unmarked_conjunction rule with N body atoms lowers to N edgestmt
+% entries, one per atom acting as trigger) ═══════════════════════════════
 % ProjectSql (from lower.pl) is already aliased AS HeadColumns
-% (lower.pl:edge_statement/3 passes HeadColumns, not `none`, to
-% head_select_list/4 for exactly this reason), so the resolver reads
-% `result.rows[0][columnName]` the same way runtime/rows.ts's selectRows
-% does -- no string surgery on the SQL text happens in this file.
+% (lower.pl:edge_statement_single/5 passes HeadColumns, not `none`, to
+% head_select_list/4 for exactly this reason), so the resolver reads each
+% projected row back by named column access the same way runtime/rows.ts's
+% selectRows does -- no string surgery on the SQL text happens in this file.
+%
+% A trigger occurrence's ProjectSql, once OtherAtoms is nonempty, is a real
+% JOIN and can return ZERO, ONE, or MANY rows for a SINGLE triggering
+% arrival (the forkJoin/rendezvous case the ruling names: the LAST-arriving
+% input's occurrence, joined against every CURRENTLY matching row of the
+% other atoms, can multiply). The resolver therefore iterates
+% `result.rows` in full, not just its first entry (round 2's shape, correct
+% only when there was never another atom to join).
+%
+% Global Index (this arm's 0-based position in the WHOLE flattened
+% EdgeStatements list, not per-head) disambiguates names: multiple rules
+% -- or multiple arms of ONE rule -- can share a HeadRef (merge_family.pl's
+% `out(Item) <+ event_a(Item)` / `out(Item) <+ event_b(Item)`), which would
+% otherwise collide on `resolve<Head>Writes`.
 
-edge_resolver_blocks(EdgeStatements, ConstLines, FnLines) :-
-    maplist(edge_resolver_block, EdgeStatements, ConstLineGroups, FnLineGroups),
+edge_resolver_blocks(EdgeStatements, RelPlans, ConstLines, FnLines) :-
+    findall(Index-EdgeStmt, nth0(Index, EdgeStatements, EdgeStmt), IndexedStatements),
+    maplist(edge_resolver_block_indexed(RelPlans), IndexedStatements, ConstLineGroups, FnLineGroups),
     flatten_with_blank_separators(ConstLineGroups, ConstLines),
     flatten_with_blank_separators(FnLineGroups, FnLines).
 
-edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, UpsertSql), ConstLines, FnLines) :-
+edge_resolver_block_indexed(RelPlans, Index-edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql), ConstLines, FnLines) :-
+    relplan_kind(RelPlans, TriggerRef, TriggerKind),
+    relplan_kind(RelPlans, HeadRef, HeadKind),
+    edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql), TriggerKind, HeadKind, Index, ConstLines, FnLines).
+
+% HeadKind decides how projected rows become SqlStatements (engine.pl
+% apply_edge_writes/6, :236-254, unchanged distinction from before this
+% ruling): a `set` head upserts by key, LAST WRITE WINS across every
+% triggering arrival AND every row a single arrival's join produced (a
+% `Map<string, IRow>` keyed by the key-column values, natural overwrite via
+% `.set()`); a `log` head APPENDS every projected row unconditionally --
+% collapsing through a key Map would be wrong (KeyColumns is `[]` for a Log
+% head, so every row would collapse to the SAME key and only the last
+% survive, contradicting q1's "duplicate rows are distinct occurrences").
+edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql), TriggerKind, HeadKind, Index, ConstLines, FnLines) :-
     ref_name(TriggerRef, TriggerName),
     upper_snake(HeadRef, Upper),
-    format(atom(ProjectConst), 'EDGE_~w_PROJECT_SQL', [Upper]),
-    format(atom(UpsertConst), 'EDGE_~w_UPSERT_SQL', [Upper]),
-    format(atom(ColumnsConst), 'EDGE_~w_HEAD_COLUMNS', [Upper]),
-    format(atom(IndicesConst), 'EDGE_~w_KEY_INDICES', [Upper]),
+    format(atom(ProjectConst), 'EDGE_~w_~w_PROJECT_SQL', [Upper, Index]),
+    format(atom(WriteConst), 'EDGE_~w_~w_WRITE_SQL', [Upper, Index]),
+    format(atom(ColumnsConst), 'EDGE_~w_~w_HEAD_COLUMNS', [Upper, Index]),
     js_template(ProjectSql, ProjectTemplate),
-    js_template(UpsertSql, UpsertTemplate),
+    js_template(WriteSql, WriteTemplate),
     quoted_string_array_text(HeadColumns, ColumnsArrayText),
-    key_indices(HeadColumns, KeyColumns, Indices),
-    atomic_list_concat(Indices, ', ', IndicesJoined),
-    format(atom(IndicesArrayText), '[~w]', [IndicesJoined]),
     format(atom(ProjectLine), 'const ~w = ~w;', [ProjectConst, ProjectTemplate]),
-    format(atom(UpsertLine), 'const ~w = ~w;', [UpsertConst, UpsertTemplate]),
+    format(atom(WriteLine), 'const ~w = ~w;', [WriteConst, WriteTemplate]),
     format(atom(ColumnsLine), 'const ~w: readonly string[] = ~w;', [ColumnsConst, ColumnsArrayText]),
-    format(atom(IndicesLine), 'const ~w: readonly number[] = ~w;', [IndicesConst, IndicesArrayText]),
-    ConstLines = [ProjectLine, UpsertLine, ColumnsLine, IndicesLine],
+    ( HeadKind == log
+    -> ConstLines = [ProjectLine, WriteLine, ColumnsLine]
+    ;  format(atom(IndicesConst), 'EDGE_~w_~w_KEY_INDICES', [Upper, Index]),
+       key_indices(HeadColumns, KeyColumns, Indices),
+       atomic_list_concat(Indices, ', ', IndicesJoined),
+       format(atom(IndicesArrayText), '[~w]', [IndicesJoined]),
+       format(atom(IndicesLine), 'const ~w: readonly number[] = ~w;', [IndicesConst, IndicesArrayText]),
+       ConstLines = [ProjectLine, WriteLine, ColumnsLine, IndicesLine]
+    ),
     pascal_case(HeadRef, Pascal),
-    format(atom(FnName), 'resolve~wWrites', [Pascal]),
-    format(atom(SigLine), 'function ~w(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {', [FnName]),
-    format(atom(FilterLine), '  const triggerRows = arrivals.filter((arrival) => arrival.rel === "~w" && arrival.sign === "add");', [TriggerName]),
+    format(atom(FnName), 'resolve~w_~wWrites', [Pascal, Index]),
+    format(atom(SigLine), 'function ~w(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {', [FnName]),
+    format(atom(TriggerLine), '  const triggerRows = triggerOccurrences("~w", "~w", before.~w, arrivals);', [TriggerKind, TriggerName, TriggerName]),
     format(atom(ForkLine),
            '  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: ~w, args: bindArgs(arrival.row) }))).pipe(',
            [ProjectConst]),
-    format(atom(RowLine), '        const projectedRow = ~w.map((column) => result.rows[0]![column] as IRowValue) as IRow;', [ColumnsConst]),
-    format(atom(KeyLine), '        const key = JSON.stringify(~w.map((index) => projectedRow[index]));', [IndicesConst]),
-    % bindArgs again, not just at the project bind above: the projected
-    % value just read back through result.rows[0] may itself be a plain JS
-    % number (an INTEGER query-result column, not a TEXT one), and this
-    % second bind is the one that actually writes the destination TEXT
-    % column -- the same "number" -> REAL -> "N.0" hazard applies here
-    % independently of the project-side fix.
-    format(atom(UpsertMapLine),
-           '      return [...resolved.values()].map((row): SqlStatement => ({ sql: ~w, args: bindArgs(row) }));',
-           [UpsertConst]),
-    FnLines =
-    [ SigLine,
-      FilterLine,
-      % forkJoin([]) COMPLETES WITHOUT EMITTING (verified against rxjs
-      % 7.8.2, not assumed) -- a drain tick, or any tick where no arrival
-      % matches this trigger, has an empty triggerRows, and without this
-      % guard the WHOLE tick() chain silently completes with no ITickDeltas
-      % at all for that tick (a real bug caught running the emitted program
-      % against the real seam, not by typecheck -- tsgo has no way to know
-      % forkJoin([]) is empty-completing rather than []-emitting).
-      '  if (triggerRows.length === 0) return of([]);',
-      ForkLine,
-      '    map((results) => {',
-      '      const resolved = new Map<string, IRow>();',
-      '      for (const result of results) {',
-      RowLine,
-      KeyLine,
-      '        resolved.set(key, projectedRow);',
-      '      }',
-      UpsertMapLine,
-      '    }),',
-      '  );',
-      '}'
-    ].
+    format(atom(RowsLine), '        const projectedRows = result.rows.map((row) => ~w.map((column) => row[column] as IRowValue) as IRow);', [ColumnsConst]),
+    % bindArgs again, not just at the project bind above: a projected value
+    % just read back through result.rows may itself be a plain JS number
+    % (an INTEGER query-result column, not a TEXT one), and this second bind
+    % is the one that actually writes the destination column -- the same
+    % "number" -> REAL -> "N.0" hazard applies here independently of the
+    % project-side fix (harmless, and still correct, against an INTEGER
+    % destination column too -- PHASE C2 RULING 1, verified empirically).
+    ( HeadKind == log
+    -> format(atom(PushLine), '          written.push({ sql: ~w, args: bindArgs(projectedRow) });', [WriteConst]),
+       MapBodyLines =
+       [ '      const written: SqlStatement[] = [];',
+         '      for (const result of results) {',
+         RowsLine,
+         '        for (const projectedRow of projectedRows) {',
+         PushLine,
+         '        }',
+         '      }',
+         '      return written;'
+       ]
+    ;  format(atom(IndicesConst), 'EDGE_~w_~w_KEY_INDICES', [Upper, Index]),
+       format(atom(KeyLine), '          const key = JSON.stringify(~w.map((index) => projectedRow[index]));', [IndicesConst]),
+       format(atom(WriteMapLine),
+              '      return [...resolved.values()].map((row): SqlStatement => ({ sql: ~w, args: bindArgs(row) }));',
+              [WriteConst]),
+       MapBodyLines =
+       [ '      const resolved = new Map<string, IRow>();',
+         '      for (const result of results) {',
+         RowsLine,
+         '        for (const projectedRow of projectedRows) {',
+         KeyLine,
+         '          resolved.set(key, projectedRow);',
+         '        }',
+         '      }',
+         WriteMapLine
+       ]
+    ),
+    append(
+        [ [ SigLine,
+            TriggerLine,
+            % forkJoin([]) COMPLETES WITHOUT EMITTING (verified against rxjs
+            % 7.8.2, not assumed) -- a drain tick, or any tick where no
+            % arrival matches this trigger, has an empty triggerRows, and
+            % without this guard the WHOLE tick() chain silently completes
+            % with no ITickDeltas at all for that tick (a real bug caught
+            % running the emitted program against the real seam, not by
+            % typecheck -- tsgo has no way to know forkJoin([]) is
+            % empty-completing rather than []-emitting).
+            '  if (triggerRows.length === 0) return of([]);',
+            ForkLine,
+            '    map((results) => {'
+          ],
+          MapBodyLines,
+          [ '    }),',
+            '  );',
+            '}'
+          ]
+        ], FnLines).
 
 key_indices(HeadColumns, KeyColumns, Indices) :-
     findall(Index0,
@@ -450,11 +551,18 @@ rel_entry_line(relplan(Ref, _Kind, _Columns, _Key, _ColumnTypes), Line) :-
 % arrival-driven rel directly without an edge rule in between. A program
 % with zero edge rules (demand_laziness_effect_rows) has carryPending fixed
 % at `false` -- not a per-tick computation, a structural fact about that
-% program shape (no rule ever writes mid-tick).
+% program shape (no rule ever writes mid-tick). HeadRefs are DEDUPED (sort/2)
+% before building conditions: PHASE C2 RULING 2 lets several edgestmt arms
+% share one HeadRef (multiple rules, or multiple atoms of one unmarked
+% body), and an un-deduped fold would repeat the identical `X.add.length >
+% 0 || X.del.length > 0` disjunct once per arm -- harmless logically
+% (idempotent OR), just noise in the emitted text.
 carry_pending_expr([], 'false') :- !.
 carry_pending_expr(EdgeStatements, Expr) :-
+    findall(HeadRef, member(edgestmt(HeadRef, _, _, _, _, _), EdgeStatements), HeadRefs0),
+    sort(HeadRefs0, HeadRefs),
     findall(Cond,
-            ( member(edgestmt(HeadRef, _, _, _, _, _), EdgeStatements),
+            ( member(HeadRef, HeadRefs),
               ref_name(HeadRef, Name),
               format(atom(Cond), '~w.add.length > 0 || ~w.del.length > 0', [Name, Name]) ),
             Conds),
@@ -476,7 +584,7 @@ run_tick_fn_lines(Name, [], Lines) :- !,
     ].
 run_tick_fn_lines(Name, EdgeStatements, Lines) :-
     EdgeStatements \== [],
-    maplist(edge_resolve_call_expr, EdgeStatements, ResolveCallExprs),
+    edge_resolve_call_exprs(EdgeStatements, ResolveCallExprs),
     ( ResolveCallExprs = [SingleCall]
     -> format(atom(EdgeWritesExpr), '~w', [SingleCall])
     ; atomic_list_concat(ResolveCallExprs, ', ', JoinedCalls),
@@ -501,9 +609,20 @@ run_tick_fn_lines(Name, EdgeStatements, Lines) :-
       '}'
     ].
 
-edge_resolve_call_expr(edgestmt(HeadRef, _, _, _, _, _), Expr) :-
+% Each arm's resolver call passes `before` (PHASE C2 RULING 2: a Set-kind
+% trigger's occurrence detection needs the tick-start snapshot to tell a
+% genuine new row from a same-tick or standing duplicate -- triggerOccurrences
+% above); Index is this arm's 0-based position in the whole flattened
+% EdgeStatements list, matching edge_resolver_blocks/4's own naming.
+edge_resolve_call_exprs(EdgeStatements, Exprs) :-
+    findall(Expr,
+            ( nth0(Index, EdgeStatements, edgestmt(HeadRef, _, _, _, _, _)),
+              edge_resolve_call_expr(HeadRef, Index, Expr) ),
+            Exprs).
+
+edge_resolve_call_expr(HeadRef, Index, Expr) :-
     pascal_case(HeadRef, Pascal),
-    format(atom(Expr), 'resolve~wWrites(seam, arrivals)', [Pascal]).
+    format(atom(Expr), 'resolve~w_~wWrites(seam, before, arrivals)', [Pascal, Index]).
 
 program_export_lines(Name,
     [ 'export const program: IGenProgramWithBoot = {',
@@ -526,6 +645,7 @@ emit_program(Name, _Plan, Lowered, BootStatements, Text) :-
     imports_lines(HasEdgeRules, ImportLines),
     local_types_lines(LocalTypeLines),
     bind_args_helper_lines(BindArgsHelperLines),
+    ( EdgeStatements == [] -> TriggerOccurrencesHelperLines = [] ; trigger_occurrences_helper_lines(TriggerOccurrencesHelperLines) ),
     ddl_lines(Ddl, DdlLines),
     rel_columns_lines(RelPlans, RelColumnsLines),
     arrival_targets_lines(ArrivalTargets, ArrivalTargetsLines),
@@ -536,14 +656,15 @@ emit_program(Name, _Plan, Lowered, BootStatements, Text) :-
     arrival_statement_fn_lines(Name, ArrivalStatementFnLines),
     ( EdgeStatements == []
     -> EdgeConstLines = [], EdgeFnLines = []
-    ; edge_resolver_blocks(EdgeStatements, EdgeConstLines, EdgeFnLines)
+    ; edge_resolver_blocks(EdgeStatements, RelPlans, EdgeConstLines, EdgeFnLines)
     ),
     recompute_levels_fn_lines(LevelStatements, RecomputeLevelsFnLines),
     build_deltas_fn_lines(RelPlans, EdgeStatements, BuildDeltasFnLines),
     run_tick_fn_lines(Name, EdgeStatements, RunTickFnLines),
     program_export_lines(Name, ProgramExportLines),
     Sections0 =
-    [ HeaderLines, ImportLines, LocalTypeLines, BindArgsHelperLines, DdlLines, RelColumnsLines, ArrivalTargetsLines,
+    [ HeaderLines, ImportLines, LocalTypeLines, BindArgsHelperLines, TriggerOccurrencesHelperLines,
+      DdlLines, RelColumnsLines, ArrivalTargetsLines,
       BootLines, SnapshotTypeLines, ReadSnapshotFnLines,
       ArrivalStatementsLines, ArrivalStatementFnLines,
       EdgeConstLines, EdgeFnLines,

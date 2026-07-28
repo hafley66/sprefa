@@ -96,6 +96,10 @@ program_plan(fixture(Name, Prog, Initial, Schedule, _Expectations)-Bindings, Pla
               rel_column_types(Rules, Initial, Schedule, Ref, ColumnTypes),
               ( decl_key(Decls, Ref, Positions) -> KeyOrNone = key(Positions) ; KeyOrNone = none )
             ), RelPlans),
+    % PHASE C2 RULING 1 x RULING 2: this needs RelPlans (ColumnTypes), so it
+    % runs here rather than inside check_supported_subset/1 above (which
+    % runs before RelPlans exists).
+    check_edge_head_column_types(RelPlans, Rules),
     sql_rule_order(Rules, RuleOrder),
     include(rule_is_edge, Rules, EdgeRules),
     Plan = plan(Name, Prog, RelPlans, ArrivalTargets, RuleOrder, EdgeRules).
@@ -111,7 +115,8 @@ compile_fixture(Name, FixtureFile, OutFile, Emitter) :-
     program_plan(Term-Bindings, Plan),
     lower_program(Plan, Lowered),
     Plan = plan(_, _, RelPlans, _, _, _),
-    boot_statements(RelPlans, Initial, BootStatements),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    boot_statements(RelPlans, Initial, LevelStatements, BootStatements),
     call(Emitter, Name, Plan, Lowered, BootStatements, Text),
     setup_call_cleanup(
         open(OutFile, write, Stream),

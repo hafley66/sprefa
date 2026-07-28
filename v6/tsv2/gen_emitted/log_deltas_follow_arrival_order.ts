@@ -60,6 +60,8 @@ const relColumns: Record<string, readonly string[]> = {
 const arrivalTargets: readonly string[] = ["line"];
 
 const boot: readonly IBootStatement[] = [
+  { sql: `DELETE FROM "seen"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "seen" ("path") SELECT b0."path" FROM "line" b0`, params: [] },
 ];
 
 type Snapshot = {

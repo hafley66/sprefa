@@ -47,6 +47,25 @@ function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
 }
 
+function triggerOccurrences(
+  kind: "log" | "set",
+  relName: string,
+  beforeRows: readonly IRow[],
+  arrivals: IArrivalBatch,
+): IArrivalBatch {
+  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === relName && arrival.sign === "add");
+  const seen = new Set<string>(beforeRows.map((row) => JSON.stringify(row)));
+  const occurrences: IArrivalRow[] = [];
+  for (const arrival of arrivals) {
+    if (arrival.rel !== relName || arrival.sign !== "add") continue;
+    const key = JSON.stringify(arrival.row);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    occurrences.push(arrival);
+  }
+  return occurrences;
+}
+
 const ddl: readonly string[] = [
   `CREATE TABLE "demanded" ("target" TEXT NOT NULL, "session_id" TEXT NOT NULL, PRIMARY KEY ("target", "session_id")) WITHOUT ROWID`,
   `CREATE TABLE "open_scope" ("session_id" TEXT NOT NULL, "target" TEXT NOT NULL, PRIMARY KEY ("session_id")) WITHOUT ROWID`,
@@ -68,6 +87,10 @@ const arrivalTargets: readonly string[] = ["route_change", "route_row"];
 const boot: readonly IBootStatement[] = [
   { sql: `INSERT OR IGNORE INTO "route_row" ("route_id", "body") VALUES (?, ?)`, params: ["settings", "body_settings"] },
   { sql: `INSERT OR IGNORE INTO "route_row" ("route_id", "body") VALUES (?, ?)`, params: ["profile", "body_profile"] },
+  { sql: `DELETE FROM "demanded"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_scope" b0`, params: [] },
+  { sql: `DELETE FROM "route_view"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "route_view" ("route_id", "body") SELECT json_extract(b0."target", '$.args[0]'), b1."body" FROM "demanded" b0, "route_row" b1 WHERE json_extract(b0."target", '$.fn') = 'route_data' AND b1."route_id" = json_extract(b0."target", '$.args[0]')`, params: [] },
 ];
 
 type Snapshot = {
@@ -115,23 +138,25 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
   return seam.runner.batch(seam.db, statements);
 }
 
-const EDGE_OPEN_SCOPE_PROJECT_SQL = `SELECT ?1 AS "session_id", json_object('fn', 'route_data', 'args', json_array(?2)) AS "target"`;
-const EDGE_OPEN_SCOPE_UPSERT_SQL = `INSERT INTO "open_scope" ("session_id", "target") VALUES (?, ?) ON CONFLICT("session_id") DO UPDATE SET "target" = excluded."target"`;
-const EDGE_OPEN_SCOPE_HEAD_COLUMNS: readonly string[] = ["session_id", "target"];
-const EDGE_OPEN_SCOPE_KEY_INDICES: readonly number[] = [0];
+const EDGE_OPEN_SCOPE_0_PROJECT_SQL = `SELECT ?1 AS "session_id", json_object('fn', 'route_data', 'args', json_array(?2)) AS "target"`;
+const EDGE_OPEN_SCOPE_0_WRITE_SQL = `INSERT INTO "open_scope" ("session_id", "target") VALUES (?, ?) ON CONFLICT("session_id") DO UPDATE SET "target" = excluded."target"`;
+const EDGE_OPEN_SCOPE_0_HEAD_COLUMNS: readonly string[] = ["session_id", "target"];
+const EDGE_OPEN_SCOPE_0_KEY_INDICES: readonly number[] = [0];
 
-function resolveOpenScopeWrites(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const triggerRows = arrivals.filter((arrival) => arrival.rel === "route_change" && arrival.sign === "add");
+function resolveOpenScope_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
+  const triggerRows = triggerOccurrences("log", "route_change", before.route_change, arrivals);
   if (triggerRows.length === 0) return of([]);
-  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_OPEN_SCOPE_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
+  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_OPEN_SCOPE_0_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
     map((results) => {
       const resolved = new Map<string, IRow>();
       for (const result of results) {
-        const projectedRow = EDGE_OPEN_SCOPE_HEAD_COLUMNS.map((column) => result.rows[0]![column] as IRowValue) as IRow;
-        const key = JSON.stringify(EDGE_OPEN_SCOPE_KEY_INDICES.map((index) => projectedRow[index]));
-        resolved.set(key, projectedRow);
+        const projectedRows = result.rows.map((row) => EDGE_OPEN_SCOPE_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projectedRow of projectedRows) {
+          const key = JSON.stringify(EDGE_OPEN_SCOPE_0_KEY_INDICES.map((index) => projectedRow[index]));
+          resolved.set(key, projectedRow);
+        }
       }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_OPEN_SCOPE_UPSERT_SQL, args: bindArgs(row) }));
+      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_OPEN_SCOPE_0_WRITE_SQL, args: bindArgs(row) }));
     }),
   );
 }
@@ -163,7 +188,7 @@ function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDelta
   return readSnapshot(seam).pipe(
     concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) =>
-      resolveOpenScopeWrites(seam, arrivals).pipe(
+      resolveOpenScope_0Writes(seam, before, arrivals).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),

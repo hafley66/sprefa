@@ -46,7 +46,7 @@
 | [plans/2026-07-24-v6-dl-mvp-slice.md](plans/2026-07-24-v6-dl-mvp-slice.md) | 664 | v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24) |
 | [plans/2026-07-25-sql-builder-build-vs-buy.md](plans/2026-07-25-sql-builder-build-vs-buy.md) | 322 | SQL query-builder / templating: build-vs-buy for `lowerSql.ts` |
 | [prolog/LANG.md](prolog/LANG.md) | 95 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
-| [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 358 | TSV2 Phase C scoreboard |
+| [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 580 | TSV2 Phase C scoreboard |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
@@ -639,10 +639,10 @@
 ```
 1:# TSV2 Phase C scoreboard
 15:## Totals (current)
-37:## Per-fixture table: compiled (17)
-59:## Per-construct blocked tally (UNSUPPORTED, ranked)
-80:## Widening / fix history (chronological, each transition measured)
-204:## Findings
+46:## Per-fixture table: compiled (30)
+91:## Per-construct blocked tally (UNSUPPORTED, ranked) — post PHASE C2 RULING 2
+122:## Widening / fix history (chronological, each transition measured)
+339:## Findings
 ```
 
 ### prolog/conformance/FIXTURES.md

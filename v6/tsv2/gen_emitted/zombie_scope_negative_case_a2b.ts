@@ -68,6 +68,12 @@ const relColumns: Record<string, readonly string[]> = {
 const arrivalTargets: readonly string[] = ["detail_row", "open_detail", "open_pane"];
 
 const boot: readonly IBootStatement[] = [
+  { sql: `DELETE FROM "live_detail"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "live_detail" ("pane_id", "target") SELECT b0."pane_id", json_object('fn', 'detail', 'args', json_array(b0."item_id")) FROM "open_detail" b0`, params: [] },
+  { sql: `DELETE FROM "demanded"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "demanded" ("target", "pane_id") SELECT b0."target", b0."pane_id" FROM "live_detail" b0`, params: [] },
+  { sql: `DELETE FROM "detail_view"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "detail_view" ("item_id", "body") SELECT json_extract(b0."target", '$.args[0]'), b1."body" FROM "demanded" b0, "detail_row" b1 WHERE json_extract(b0."target", '$.fn') = 'detail' AND b1."item_id" = json_extract(b0."target", '$.args[0]')`, params: [] },
 ];
 
 type Snapshot = {

@@ -62,6 +62,8 @@ const relColumns: Record<string, readonly string[]> = {
 const arrivalTargets: readonly string[] = ["result_a", "result_b"];
 
 const boot: readonly IBootStatement[] = [
+  { sql: `DELETE FROM "combined"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "combined" ("value_a", "value_b") SELECT b0."value_a", b1."value_b" FROM "result_a" b0, "result_b" b1`, params: [] },
 ];
 
 type Snapshot = {

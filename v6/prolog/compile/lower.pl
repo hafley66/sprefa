@@ -21,15 +21,16 @@
 %                        a tick's mutations; the runtime diffs the two row
 %                        lists (see ROUND 2 note below).
 %
-% plus boot_statements/3, a SEPARATE list of bootstmt(Sql, Params) (needs
-% Initial, which plan/6 does not carry).
+% plus boot_statements/4, a SEPARATE list of bootstmt(Sql, Params) (needs
+% Initial, which plan/6 does not carry, plus LevelStatements for the t=0
+% level closure -- PHASE C2 RULING 2, boot_level_recompute_statements/2).
 %
 % TARGET-NEUTRAL BY CONSTRUCTION (user directive, mid-arc: a future Rust
 % backend must consume this unchanged): every field above is SQL text plus
 % plain Prolog structure -- no TypeScript syntax, no rxjs, no host-language
 % idiom anywhere in this file. `emit_ts.pl` is the ONE backend that renders
 % this term. A future emit_rust.pl reads the identical lowered/8 +
-% boot_statements/3 + RelPlans and renders sqlx/rusqlite calls around the
+% boot_statements/4 + RelPlans and renders sqlx/rusqlite calls around the
 % SAME SQL strings -- SQLite is the shared middle language both backends
 % speak; nothing here decides how a HOST assembles statements into a program.
 %
@@ -122,7 +123,7 @@
 % rows a joint fixpoint would for an ACYCLIC chain; a genuine positive cycle
 % inside one group is refused at strat.pl:topo_order_group/2.
 
-:- module(lower, [ lower_program/2, boot_statements/3 ]).
+:- module(lower, [ lower_program/2, boot_statements/4, relplan_kind/3 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -356,23 +357,82 @@ eq_placeholder(QuotedColumn, Text) :- format(atom(Text), '~w = ?', [QuotedColumn
 placeholders(0, []) :- !.
 placeholders(N, ['?' | Rest]) :- N > 0, N1 is N - 1, placeholders(N1, Rest).
 
-% ═══ edge rule lowering (round 2: project one arrival row + upsert, no
-% self-join, no tick) ═════════════════════════════════════════════════════
-% Supported shape only (analyze.pl:check_edge_rule_shape already refused
-% anything wider): `Head <+ only(TriggerAtom)`, TriggerAtom a Log-kind EDB
-% ref with plain-variable arguments, Head a keyed Set ref.
+% ═══ edge rule lowering ═══════════════════════════════════════════════════
+% PHASE C2 RULING 2: a rule's body classifies via analyze.pl:edge_trigger_
+% shape/2 into marked_single(TriggerAtom) (unchanged from round 2: exactly
+% one trigger, no other body goal, TriggerAtom must be Log-kind) or
+% unmarked_conjunction(Atoms) (N >= 1 plain positive atoms, no only/1
+% anywhere -- engine.pl's unmarked fallback wraps EVERY one as its own
+% independent trigger, body.pl:96-110/153-155). Lowering produces ONE
+% edgestmt/6 PER CANDIDATE TRIGGER ATOM (edge_statements_for_rule/3): for
+% marked_single that is the existing single edgestmt, unchanged; for
+% unmarked_conjunction with N atoms it is N edgestmt entries, one per atom
+% acting as the trigger with the OTHER N-1 atoms as a real SQL join against
+% their CURRENT table contents (compile_positive_uses/6, reused unchanged
+% from the level-rule side, seeded with the trigger atom's own numbered-
+% placeholder bindings as Bound0 so a variable shared between the trigger
+% and another atom becomes an equality constraint rather than a fresh,
+% unconstrained alias column). N=1 (marked_single, or an unmarked body with
+% exactly one atom) has zero OTHER atoms to join, so ProjectSql stays the
+% same bare `SELECT <head-expr-list>` with no FROM clause -- byte-identical
+% to round 2's text for every already-IDENTICAL marked_single fixture
+% (verified via the plunit SQL-text snapshot tests, unchanged).
 
-edge_statement(RelPlans, (Head <+ only(TriggerAtom)), edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, UpsertSql)) :-
+edge_statements_for_rule(RelPlans, (Head <+ Body), EdgeStatements) :-
+    edge_trigger_shape(Body, Shape),
+    ( Shape = marked_single(TriggerAtom)
+    -> rel_ref(TriggerAtom, TriggerRef),
+       ( relplan_kind(RelPlans, TriggerRef, log) -> true
+       ; throw(unsupported_construct(edge_trigger_not_log(TriggerRef))) ),
+       edge_statement_single(RelPlans, Head, TriggerAtom, [], EdgeStmt),
+       EdgeStatements = [EdgeStmt]
+    ; Shape = unmarked_conjunction(Atoms)
+    -> findall(EdgeStmt,
+               ( select(TriggerAtom, Atoms, OtherAtoms),
+                 edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, EdgeStmt) ),
+               EdgeStatements)
+    ).
+
+% One arm: TriggerAtom's own args bind to numbered placeholders (unchanged
+% compile_trigger_bound/2); OtherAtoms (possibly []) join against the
+% CURRENT store, seeded with that same placeholder Bound so shared
+% variables become equality constraints, not fresh columns.
+%
+% HeadRef's own kind decides the WRITE shape (engine.pl apply_edge_writes/6,
+% :236-254): a Log head APPENDS unconditionally, every derived row a
+% distinct occurrence, no key concept at all (keyed_log_rel already refuses
+% a Log rel EVER being declared keyed); a Set head UPSERTS by key,
+% last-write-wins (unchanged from before this ruling). KeyColumns is `[]`
+% for a Log head -- edge_resolver_block (emit_ts.pl) branches on HeadKind
+% too, since a Log head's resolver must NOT collapse multiple derived rows
+% into one Map entry the way a Set head's last-write-wins fold does (every
+% key would otherwise be the same empty `[]`).
+edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql)) :-
     rel_ref(TriggerAtom, TriggerRef),
-    ( relplan_kind(RelPlans, TriggerRef, log) -> true
-    ; throw(unsupported_construct(edge_trigger_not_log(TriggerRef))) ),
     rel_ref(Head, HeadRef),
-    ( relplan_kind(RelPlans, HeadRef, set) -> true
-    ; throw(unsupported_construct(edge_write_log_head(HeadRef))) ),
-    ( memberchk(relplan(HeadRef, set, _, key(KeyPositions), _), RelPlans) -> true
-    ; throw(unsupported_construct(edge_into_unkeyed_set(HeadRef))) ),
+    relplan_kind(RelPlans, HeadRef, HeadKind),
+    ( HeadKind == set
+    -> ( memberchk(relplan(HeadRef, set, _, key(KeyPositions), _), RelPlans) -> true
+       ; throw(unsupported_construct(edge_into_unkeyed_set(HeadRef))) )
+    ; true  % log: no key concept, KeyPositions unused below
+    ),
     TriggerAtom =.. [_ | TriggerArgs],
-    compile_trigger_bound(TriggerArgs, Bound),
+    compile_trigger_bound(TriggerArgs, TriggerBound),
+    ( OtherAtoms == []
+    -> Bound = TriggerBound, FromSql = none, WhereSql = none
+    ;  % maplist, NEVER findall (analyze.pl:ref_occurrence_args/3's own
+       % comment names this exact hazard): findall copies its template per
+       % solution, which would sever OtherArgs from the SAME variable
+       % objects Head's arguments share -- head_select_list's bound_lookup
+       % would then never find them, throwing unbound_head_var even though
+       % the variables genuinely ARE bound (confirmed empirically: this
+       % bug shipped in an earlier draft and unmarked_edge_replays_backlog
+       % is the fixture that caught it).
+       maplist(other_atom_use, OtherAtoms, OtherUses),
+       compile_positive_uses(RelPlans, OtherUses, TriggerBound, Bound, FromParts, WhereTexts),
+       atomic_list_concat(FromParts, ', ', FromSql),
+       ( WhereTexts == [] -> WhereSql = none ; atomic_list_concat(WhereTexts, ' AND ', WhereSql) )
+    ),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     % Aliased AS HeadColumns (not `none`, unlike a level rule's SELECT,
     % which has an explicit INSERT column list and does not need aliases):
@@ -383,31 +443,43 @@ edge_statement(RelPlans, (Head <+ only(TriggerAtom)), edgestmt(HeadRef, TriggerR
     % identical to expression-list separators to any naive re-splitter.
     head_select_list(Head, Bound, HeadColumns, SelectExprs),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
-    format(atom(ProjectSql), 'SELECT ~w', [SelectSql]),
-    % KeyColumns indexes HeadColumns (the keyed rel's OWN columns), not
-    % TriggerColumns -- round 1 indexed the wrong list here (silently
-    % correct only by fixture coincidence: open_scope and route_change both
-    % have session_id at position 1). Fixed in this rewrite.
-    nth1_list(KeyPositions, HeadColumns, KeyColumns),
+    ( FromSql == none
+    -> format(atom(ProjectSql), 'SELECT ~w', [SelectSql])
+    ; WhereSql == none
+    -> format(atom(ProjectSql), 'SELECT ~w FROM ~w', [SelectSql, FromSql])
+    ; format(atom(ProjectSql), 'SELECT ~w FROM ~w WHERE ~w', [SelectSql, FromSql, WhereSql])
+    ),
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
     length(HeadColumns, ColumnCount), placeholders(ColumnCount, ValuePlaceholders),
     atomic_list_concat(ValuePlaceholders, ', ', ValuePlaceholdersSql),
-    maplist(quote_ident, KeyColumns, QuotedKeyColumns),
-    atomic_list_concat(QuotedKeyColumns, ', ', KeyColumnsSql),
-    subtract(HeadColumns, KeyColumns, NonKeyColumns),
-    ( NonKeyColumns == []
-    -> format(atom(ConflictClause), 'ON CONFLICT(~w) DO NOTHING', [KeyColumnsSql])
-    ;  maplist(quote_ident, NonKeyColumns, QuotedNonKeyColumns),
-       maplist(excluded_assignment, QuotedNonKeyColumns, SetParts),
-       atomic_list_concat(SetParts, ', ', SetSql),
-       format(atom(ConflictClause), 'ON CONFLICT(~w) DO UPDATE SET ~w', [KeyColumnsSql, SetSql])
-    ),
-    format(atom(UpsertSql), 'INSERT INTO ~w (~w) VALUES (~w) ~w',
-           [QuotedHeadTable, HeadColumnsSql, ValuePlaceholdersSql, ConflictClause]).
+    ( HeadKind == log
+    -> KeyColumns = [],
+       format(atom(WriteSql), 'INSERT INTO ~w (~w) VALUES (~w)',
+              [QuotedHeadTable, HeadColumnsSql, ValuePlaceholdersSql])
+    ;  % KeyColumns indexes HeadColumns (the keyed rel's OWN columns), not
+       % TriggerColumns -- round 1 indexed the wrong list here (silently
+       % correct only by fixture coincidence: open_scope and route_change
+       % both have session_id at position 1). Fixed in this rewrite.
+       nth1_list(KeyPositions, HeadColumns, KeyColumns),
+       maplist(quote_ident, KeyColumns, QuotedKeyColumns),
+       atomic_list_concat(QuotedKeyColumns, ', ', KeyColumnsSql),
+       subtract(HeadColumns, KeyColumns, NonKeyColumns),
+       ( NonKeyColumns == []
+       -> format(atom(ConflictClause), 'ON CONFLICT(~w) DO NOTHING', [KeyColumnsSql])
+       ;  maplist(quote_ident, NonKeyColumns, QuotedNonKeyColumns),
+          maplist(excluded_assignment, QuotedNonKeyColumns, SetParts),
+          atomic_list_concat(SetParts, ', ', SetSql),
+          format(atom(ConflictClause), 'ON CONFLICT(~w) DO UPDATE SET ~w', [KeyColumnsSql, SetSql])
+       ),
+       format(atom(WriteSql), 'INSERT INTO ~w (~w) VALUES (~w) ~w',
+              [QuotedHeadTable, HeadColumnsSql, ValuePlaceholdersSql, ConflictClause])
+    ).
 
 excluded_assignment(QuotedColumn, Text) :- format(atom(Text), '~w = excluded.~w', [QuotedColumn, QuotedColumn]).
+
+other_atom_use(Atom, use(Ref, Args, pos, unmarked)) :- rel_ref(Atom, Ref), Atom =.. [_ | Args].
 
 % Numbered placeholders (?1, ?2, ...), one per trigger argument position, in
 % TRIGGER-argument order -- the emitter passes `arrival.row` (already in
@@ -573,7 +645,12 @@ lower_program(plan(Name, prog(_Decls, _Rules), RelPlans, ArrivalTargets, RuleOrd
     maplist(rel_ddl(EdgeHeadedRefs), RelPlans, DdlGroups), append(DdlGroups, Ddl),
     include(arrival_target_relplan(ArrivalTargets), RelPlans, ArrivalRelPlans),
     maplist(arrival_statement, ArrivalRelPlans, ArrivalStatements),
-    maplist(edge_statement(RelPlans), EdgeRules, EdgeStatements),
+    % PHASE C2 RULING 2: one rule may lower to MULTIPLE edgestmt entries now
+    % (an unmarked_conjunction body with N atoms produces N arms), so this
+    % maplist collects a GROUP per rule and flattens, rather than assuming
+    % one-to-one.
+    maplist(edge_statements_for_rule(RelPlans), EdgeRules, EdgeStatementGroups),
+    append(EdgeStatementGroups, EdgeStatements),
     level_statement_groups(RelPlans, RuleOrder, LevelStatements),
     maplist(delta_statement, RelPlans, DeltaStatements).
 
@@ -581,7 +658,28 @@ arrival_target_relplan(ArrivalTargets, relplan(Ref, _, _, _, _)) :- memberchk(Re
 
 % Boot statements, computed on demand (needs Initial, which plan/6 does not
 % carry -- compile.pl calls this directly with the fixture's Initial list).
-boot_statements(RelPlans, Initial, BootStatements) :-
-    maplist(boot_seed_statement_for(Initial), RelPlans, SeedGroups), append(SeedGroups, BootStatements).
+% LevelStatements (from THIS SAME lower_program/2 call, Lowered's own field)
+% seeds the t=0 level closure -- see boot_level_recompute_statements/2 below,
+% surfaced as a real gap by PHASE C2 RULING 2's widening: the first fixture
+% with both non-empty Initial data AND a level rule reading it
+% (head_move_flips_current_tree_in_one_tick) only reached compilation once
+% unmarked edge triggers were accepted, and its "before" snapshot was empty
+% at tick 1 without this.
+boot_statements(RelPlans, Initial, LevelStatements, BootStatements) :-
+    maplist(boot_seed_statement_for(Initial), RelPlans, SeedGroups), append(SeedGroups, SeedStatements),
+    boot_level_recompute_statements(LevelStatements, LevelBootStatements),
+    append(SeedStatements, LevelBootStatements, BootStatements).
 
 boot_seed_statement_for(Initial, RelPlan, Statements) :- boot_seed_statement(RelPlan, Initial, Statements).
+
+% engine.pl:run_program computes level_closure(PlainLevel, AggRules, BaseRows,
+% 0, Level0) ONCE, immediately after seeding Initial rows and before tick 1's
+% state(...) exists -- the SAME DELETE/INSERT-SELECT SQL recomputeLevels runs
+% inside a tick (lower.pl:level_statement_group/3), run once more here with
+% no bind params (a literal statement, not a template) so a level view over
+% Initial-seeded data starts at its real t=0 rows rather than empty.
+boot_level_recompute_statements(LevelStatements, BootStatements) :-
+    findall(bootstmt(Sql, []),
+            ( member(levelstmt(_, DeleteSql, InsertSqls), LevelStatements),
+              ( Sql = DeleteSql ; member(Sql, InsertSqls) ) ),
+            BootStatements).
