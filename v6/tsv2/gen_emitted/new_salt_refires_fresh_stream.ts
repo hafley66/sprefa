@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -106,6 +106,11 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
     watch_request: selectRows(seam, `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' THEN json_extract("col1", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col1", '$.args')) || ')' ELSE "col1" END AS "col1", CASE WHEN json_valid("args") AND json_type("args") = 'object' THEN json_extract("args", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("args", '$.args')) || ')' ELSE "args" END AS "args", CASE WHEN json_valid("salt") AND json_type("salt") = 'object' THEN json_extract("salt", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("salt", '$.args')) || ')' ELSE "salt" END AS "salt" FROM "watch_request"`, relColumns.watch_request!),
   });
 }
+
+const finalSelect: Record<string, string> = {
+  demand: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' THEN json_extract("args", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("args", '$.args')) || ')' ELSE "args" END AS "args", CASE WHEN json_valid("salt") AND json_type("salt") = 'object' THEN json_extract("salt", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("salt", '$.args')) || ')' ELSE "salt" END AS "salt" FROM "demand"`,
+  watch_request: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' THEN json_extract("col1", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col1", '$.args')) || ')' ELSE "col1" END AS "col1", CASE WHEN json_valid("args") AND json_type("args") = 'object' THEN json_extract("args", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("args", '$.args')) || ')' ELSE "args" END AS "args", CASE WHEN json_valid("salt") AND json_type("salt") = 'object' THEN json_extract("salt", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("salt", '$.args')) || ')' ELSE "salt" END AS "salt" FROM "watch_request"`,
+};
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   watch_request: { kind: "log", addSql: `INSERT INTO "watch_request" ("col1", "args", "salt") VALUES (?, ?, ?)`, delSql: null },
@@ -241,5 +246,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

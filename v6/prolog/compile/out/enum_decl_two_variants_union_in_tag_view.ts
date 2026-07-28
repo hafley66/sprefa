@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -101,6 +101,12 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
     result_tag: selectRows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag" FROM "result_tag"`, relColumns.result_tag!),
   });
 }
+
+const finalSelect: Record<string, string> = {
+  result_error: `SELECT "id", CASE WHEN json_valid("message") AND json_type("message") = 'object' THEN json_extract("message", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("message", '$.args')) || ')' ELSE "message" END AS "message" FROM "result_error"`,
+  result_ok: `SELECT "id", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value" FROM "result_ok"`,
+  result_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag" FROM "result_tag"`,
+};
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   result_error: { kind: "set", addSql: `INSERT OR IGNORE INTO "result_error" ("id", "message") VALUES (?, ?)`, delSql: `DELETE FROM "result_error" WHERE "id" = ? AND "message" = ?` },
@@ -211,5 +217,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

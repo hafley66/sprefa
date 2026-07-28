@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -142,6 +142,14 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
     open_feed: selectRows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target" FROM "open_feed"`, relColumns.open_feed!),
   });
 }
+
+const finalSelect: Record<string, string> = {
+  cache_row: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "cache_row"`,
+  demanded: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id" FROM "demanded"`,
+  feed_view: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "feed_view"`,
+  fill_arrived: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "fill_arrived"`,
+  open_feed: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target" FROM "open_feed"`,
+};
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   fill_arrived: { kind: "log", addSql: `INSERT INTO "fill_arrived" ("target", "body") VALUES (?, ?)`, delSql: null },
@@ -289,5 +297,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

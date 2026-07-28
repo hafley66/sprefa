@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -144,6 +144,14 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
     route_view: selectRows(seam, `SELECT CASE WHEN json_valid("route_id") AND json_type("route_id") = 'object' THEN json_extract("route_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("route_id", '$.args')) || ')' ELSE "route_id" END AS "route_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "route_view"`, relColumns.route_view!),
   });
 }
+
+const finalSelect: Record<string, string> = {
+  demanded: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id" FROM "demanded"`,
+  open_scope: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target" FROM "open_scope"`,
+  route_change: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("route_id") AND json_type("route_id") = 'object' THEN json_extract("route_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("route_id", '$.args')) || ')' ELSE "route_id" END AS "route_id" FROM "route_change"`,
+  route_row: `SELECT CASE WHEN json_valid("route_id") AND json_type("route_id") = 'object' THEN json_extract("route_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("route_id", '$.args')) || ')' ELSE "route_id" END AS "route_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "route_row"`,
+  route_view: `SELECT CASE WHEN json_valid("route_id") AND json_type("route_id") = 'object' THEN json_extract("route_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("route_id", '$.args')) || ')' ELSE "route_id" END AS "route_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "route_view"`,
+};
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   route_change: { kind: "log", addSql: `INSERT INTO "route_change" ("session_id", "route_id") VALUES (?, ?)`, delSql: null },
@@ -291,5 +299,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

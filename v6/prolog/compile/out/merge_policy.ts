@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -177,6 +177,17 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
     tab_view: selectRows(seam, `SELECT CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' THEN json_extract("tab_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')) || ')' ELSE "tab_id" END AS "tab_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "tab_view"`, relColumns.tab_view!),
   });
 }
+
+const finalSelect: Record<string, string> = {
+  close_request: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' THEN json_extract("tab_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')) || ')' ELSE "tab_id" END AS "tab_id" FROM "close_request"`,
+  closed: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' THEN json_extract("tab_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')) || ')' ELSE "tab_id" END AS "tab_id" FROM "closed"`,
+  demanded: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' THEN json_extract("col1", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col1", '$.args')) || ')' ELSE "col1" END AS "col1", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id" FROM "demanded"`,
+  live_tab: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' THEN json_extract("tab_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')) || ')' ELSE "tab_id" END AS "tab_id" FROM "live_tab"`,
+  open_request: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' THEN json_extract("tab_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')) || ')' ELSE "tab_id" END AS "tab_id" FROM "open_request"`,
+  open_tab: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' THEN json_extract("tab_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')) || ')' ELSE "tab_id" END AS "tab_id" FROM "open_tab"`,
+  tab_row: `SELECT CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' THEN json_extract("tab_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')) || ')' ELSE "tab_id" END AS "tab_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "tab_row"`,
+  tab_view: `SELECT CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' THEN json_extract("tab_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')) || ')' ELSE "tab_id" END AS "tab_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "tab_view"`,
+};
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   close_request: { kind: "log", addSql: `INSERT INTO "close_request" ("session_id", "tab_id") VALUES (?, ?)`, delSql: null },
@@ -357,5 +368,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

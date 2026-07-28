@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -136,6 +136,15 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
     open_pane: selectRows(seam, `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' THEN json_extract("col1", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col1", '$.args')) || ')' ELSE "col1" END AS "col1", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' THEN json_extract("col2", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col2", '$.args')) || ')' ELSE "col2" END AS "col2" FROM "open_pane"`, relColumns.open_pane!),
   });
 }
+
+const finalSelect: Record<string, string> = {
+  demanded: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target", CASE WHEN json_valid("pane_id") AND json_type("pane_id") = 'object' THEN json_extract("pane_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("pane_id", '$.args')) || ')' ELSE "pane_id" END AS "pane_id" FROM "demanded"`,
+  detail_row: `SELECT CASE WHEN json_valid("item_id") AND json_type("item_id") = 'object' THEN json_extract("item_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item_id", '$.args')) || ')' ELSE "item_id" END AS "item_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "detail_row"`,
+  detail_view: `SELECT CASE WHEN json_valid("item_id") AND json_type("item_id") = 'object' THEN json_extract("item_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item_id", '$.args')) || ')' ELSE "item_id" END AS "item_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "detail_view"`,
+  live_detail: `SELECT CASE WHEN json_valid("pane_id") AND json_type("pane_id") = 'object' THEN json_extract("pane_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("pane_id", '$.args')) || ')' ELSE "pane_id" END AS "pane_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target" FROM "live_detail"`,
+  open_detail: `SELECT CASE WHEN json_valid("pane_id") AND json_type("pane_id") = 'object' THEN json_extract("pane_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("pane_id", '$.args')) || ')' ELSE "pane_id" END AS "pane_id", CASE WHEN json_valid("item_id") AND json_type("item_id") = 'object' THEN json_extract("item_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item_id", '$.args')) || ')' ELSE "item_id" END AS "item_id" FROM "open_detail"`,
+  open_pane: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' THEN json_extract("col1", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col1", '$.args')) || ')' ELSE "col1" END AS "col1", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' THEN json_extract("col2", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col2", '$.args')) || ')' ELSE "col2" END AS "col2" FROM "open_pane"`,
+};
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   detail_row: { kind: "set", addSql: `INSERT OR IGNORE INTO "detail_row" ("item_id", "body") VALUES (?, ?)`, delSql: `DELETE FROM "detail_row" WHERE "item_id" = ? AND "body" = ?` },
@@ -258,5 +267,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

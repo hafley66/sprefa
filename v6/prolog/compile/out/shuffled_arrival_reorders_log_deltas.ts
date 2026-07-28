@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -90,6 +90,11 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
     seen: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path" FROM "seen"`, relColumns.seen!),
   });
 }
+
+const finalSelect: Record<string, string> = {
+  line: `SELECT "_stream_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("_name") AND json_type("_name") = 'object' THEN json_extract("_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("_name", '$.args')) || ')' ELSE "_name" END AS "_name" FROM "line"`,
+  seen: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path" FROM "seen"`,
+};
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   line: { kind: "log", addSql: `INSERT INTO "line" ("_stream_id", "path", "_name") VALUES (?, ?, ?)`, delSql: null },
@@ -196,5 +201,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

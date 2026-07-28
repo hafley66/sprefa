@@ -1,0 +1,1 @@
+{"final":{"demand":[["src","sha_aaa"],["src","sha_bbb"]],"watch_request":[["alice","src","sha_aaa"],["bob","src","sha_aaa"],["carol","src","sha_bbb"]]}}

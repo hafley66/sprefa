@@ -1,0 +1,1 @@
+{"final":{"cache":[["gh_repos","tag_v1","body_one"]],"fetch_result":[["gh_repos","error(500)"],["gh_repos","error(502)"],["gh_repos","fresh(tag_v1,body_one)"]],"gave_up":[["gh_repos"]],"phase":[["gh_repos","idle"]],"poll_due":[["gh_repos"],["gh_repos"],["gh_repos"]],"retries":[["gh_repos",2]]}}

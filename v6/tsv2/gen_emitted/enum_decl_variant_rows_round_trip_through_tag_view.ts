@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -101,6 +101,12 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
     body_tag: selectRows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag" FROM "body_tag"`, relColumns.body_tag!),
   });
 }
+
+const finalSelect: Record<string, string> = {
+  body_page: `SELECT "id", "view" FROM "body_page"`,
+  body_redirect: `SELECT "id", CASE WHEN json_valid("to") AND json_type("to") = 'object' THEN json_extract("to", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to", '$.args')) || ')' ELSE "to" END AS "to" FROM "body_redirect"`,
+  body_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag" FROM "body_tag"`,
+};
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   body_page: { kind: "set", addSql: `INSERT OR IGNORE INTO "body_page" ("id", "view") VALUES (?, ?)`, delSql: `DELETE FROM "body_page" WHERE "id" = ? AND "view" = ?` },
@@ -211,5 +217,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

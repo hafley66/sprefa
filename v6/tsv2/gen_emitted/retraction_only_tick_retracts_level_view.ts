@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -90,6 +90,11 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
     source_row: selectRows(seam, `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' THEN json_extract("item", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item", '$.args')) || ')' ELSE "item" END AS "item" FROM "source_row"`, relColumns.source_row!),
   });
 }
+
+const finalSelect: Record<string, string> = {
+  mirror: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' THEN json_extract("item", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item", '$.args')) || ')' ELSE "item" END AS "item" FROM "mirror"`,
+  source_row: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' THEN json_extract("item", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item", '$.args')) || ')' ELSE "item" END AS "item" FROM "source_row"`,
+};
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   source_row: { kind: "set", addSql: `INSERT OR IGNORE INTO "source_row" ("item") VALUES (?)`, delSql: `DELETE FROM "source_row" WHERE "item" = ?` },
@@ -196,5 +201,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

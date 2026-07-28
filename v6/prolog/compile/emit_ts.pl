@@ -159,7 +159,7 @@ local_types_lines(
       '  params: readonly (string | number)[];',
       '}',
       '',
-      'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };'
+      'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };'
     ]).
 
 % ═══ integer bind helper (phase C sweep finding) ═══════════════════════════
@@ -297,6 +297,22 @@ snapshot_read_entry_line(deltastmt(Ref, SelectSql, _DeltaTable, _BoundarySql), L
     ref_name(Ref, Name),
     js_template(SelectSql, Template),
     format(atom(Line), '    ~w: selectRows(seam, ~w, relColumns.~w!),', [Name, Template, Name]).
+
+% ═══ finalSelect (EXPRESSION + AGGREGATE LIFT arc, final-state grading leg) ══
+% The SAME per-rel "read every row" SQL readSnapshot uses (deltastmt's
+% SelectAllSql, canonical-text rendered), exported by rel name so a grader
+% can compare the program's END state against the oracle's FinalAll. This is
+% NOT part of the tick path -- nothing inside tick() reads it, so the
+% host_residency criterion (zero full-table reads into JS per tick) is
+% untouched; it runs exactly once, after the fold, in the sweep harness.
+final_select_lines(DeltaStatements, Lines) :-
+    maplist(final_select_entry_line, DeltaStatements, EntryLines),
+    append([ ['const finalSelect: Record<string, string> = {'], EntryLines, ['};'] ], Lines).
+
+final_select_entry_line(deltastmt(Ref, SelectSql, _DeltaTable, _BoundarySql), Line) :-
+    ref_name(Ref, Name),
+    js_template(SelectSql, Template),
+    format(atom(Line), '  ~w: ~w,', [Name, Template]).
 
 % ═══ arrivals ════════════════════════════════════════════════════════════════
 
@@ -821,6 +837,7 @@ program_export_lines(Name,
       '  relColumns,',
       '  arrivalTargets,',
       '  boot,',
+      '  finalSelect,',
       '  tick: runTick,',
       '};'
     ]) :-
@@ -842,6 +859,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     boot_lines(BootStatements, BootLines),
     snapshot_type_lines(RelPlans, SnapshotTypeLines),
     read_snapshot_fn_lines(DeltaStatements, ReadSnapshotFnLines),
+    final_select_lines(DeltaStatements, FinalSelectLines),
     arrival_statements_lines(ArrivalStatements, ArrivalStatementsLines),
     arrival_statement_fn_lines(Name, ArrivalStatementFnLines),
     incremental_relation_lines(RelPlans, ArrivalStatements, DeltaStatements, IncrementalRelationLines),
@@ -865,7 +883,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     Sections0 =
     [ HeaderLines, ImportLines, LocalTypeLines, BindArgsHelperLines, TriggerOccurrencesHelperLines,
       DdlLines, RelColumnsLines, ArrivalTargetsLines,
-      BootLines, SnapshotTypeLines, ReadSnapshotFnLines,
+      BootLines, SnapshotTypeLines, ReadSnapshotFnLines, FinalSelectLines,
       ArrivalStatementsLines, ArrivalStatementFnLines,
       IncrementalRelationLines, IncrementalEdgeStatementLines, IncrementalLevelStatementLines,
       EdgeConstLines, EdgeFnLines,

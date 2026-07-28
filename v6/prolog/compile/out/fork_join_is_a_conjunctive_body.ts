@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -100,6 +100,12 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
     result_b: selectRows(seam, `SELECT CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' THEN json_extract("value_b", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')) || ')' ELSE "value_b" END AS "value_b" FROM "result_b"`, relColumns.result_b!),
   });
 }
+
+const finalSelect: Record<string, string> = {
+  combined: `SELECT CASE WHEN json_valid("value_a") AND json_type("value_a") = 'object' THEN json_extract("value_a", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value_a", '$.args')) || ')' ELSE "value_a" END AS "value_a", CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' THEN json_extract("value_b", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')) || ')' ELSE "value_b" END AS "value_b" FROM "combined"`,
+  result_a: `SELECT CASE WHEN json_valid("value_a") AND json_type("value_a") = 'object' THEN json_extract("value_a", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value_a", '$.args')) || ')' ELSE "value_a" END AS "value_a" FROM "result_a"`,
+  result_b: `SELECT CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' THEN json_extract("value_b", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')) || ')' ELSE "value_b" END AS "value_b" FROM "result_b"`,
+};
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   result_a: { kind: "set", addSql: `INSERT OR IGNORE INTO "result_a" ("value_a") VALUES (?)`, delSql: `DELETE FROM "result_a" WHERE "value_a" = ?` },
@@ -210,5 +216,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

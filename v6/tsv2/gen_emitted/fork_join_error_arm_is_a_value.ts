@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -114,6 +114,13 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
     outcome_b: selectRows(seam, `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' THEN json_extract("col1", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col1", '$.args')) || ')' ELSE "col1" END AS "col1" FROM "outcome_b"`, relColumns.outcome_b!),
   });
 }
+
+const finalSelect: Record<string, string> = {
+  any_failed: `SELECT CASE WHEN json_valid("status") AND json_type("status") = 'object' THEN json_extract("status", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("status", '$.args')) || ')' ELSE "status" END AS "status" FROM "any_failed"`,
+  both_ok: `SELECT CASE WHEN json_valid("body_a") AND json_type("body_a") = 'object' THEN json_extract("body_a", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body_a", '$.args')) || ')' ELSE "body_a" END AS "body_a", CASE WHEN json_valid("body_b") AND json_type("body_b") = 'object' THEN json_extract("body_b", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body_b", '$.args')) || ')' ELSE "body_b" END AS "body_b" FROM "both_ok"`,
+  outcome_a: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' THEN json_extract("col1", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col1", '$.args')) || ')' ELSE "col1" END AS "col1" FROM "outcome_a"`,
+  outcome_b: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' THEN json_extract("col1", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col1", '$.args')) || ')' ELSE "col1" END AS "col1" FROM "outcome_b"`,
+};
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   outcome_a: { kind: "set", addSql: `INSERT OR IGNORE INTO "outcome_a" ("col1") VALUES (?)`, delSql: `DELETE FROM "outcome_a" WHERE "col1" = ?` },
@@ -228,5 +235,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

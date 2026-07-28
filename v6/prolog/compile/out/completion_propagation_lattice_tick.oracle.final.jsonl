@@ -1,0 +1,1 @@
+{"final":{"closed_inner":[["outer_x","inner_x"],["outer_y","inner_y"]],"closed_outer":[["outer_x"],["outer_y"]],"end_a_signal":[["outer_x"],["outer_y"]],"end_b_signal":[["outer_x"],["outer_y"]],"end_c_signal":[["inner_x"],["inner_y"]],"open_inner":[["outer_x","inner_x"],["outer_y","inner_y"]],"open_outer":[["outer_x"],["outer_y"]]}}

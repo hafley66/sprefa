@@ -1,0 +1,1 @@
+{"final":{"close_request":[["session_one","tab_a"]],"closed":[["session_one","tab_a"]],"demanded":[["tab(tab_b)","session_one"]],"live_tab":[["session_one","tab_b"]],"open_request":[["session_one","tab_a"],["session_one","tab_b"]],"open_tab":[["session_one","tab_a"],["session_one","tab_b"]],"tab_row":[["tab_a","body_a"],["tab_b","body_b"]],"tab_view":[["tab_b","body_b"]]}}

@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -101,6 +101,12 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
     stream_status: selectRows(seam, `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' THEN json_extract("args", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("args", '$.args')) || ')' ELSE "args" END AS "args", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' THEN json_extract("col2", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col2", '$.args')) || ')' ELSE "col2" END AS "col2" FROM "stream_status"`, relColumns.stream_status!),
   });
 }
+
+const finalSelect: Record<string, string> = {
+  stream_end: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' THEN json_extract("args", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("args", '$.args')) || ')' ELSE "args" END AS "args", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' THEN json_extract("col2", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col2", '$.args')) || ')' ELSE "col2" END AS "col2" FROM "stream_end"`,
+  stream_item: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' THEN json_extract("args", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("args", '$.args')) || ')' ELSE "args" END AS "args", "col2", CASE WHEN json_valid("col3") AND json_type("col3") = 'object' THEN json_extract("col3", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col3", '$.args')) || ')' ELSE "col3" END AS "col3" FROM "stream_item"`,
+  stream_status: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' THEN json_extract("args", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("args", '$.args')) || ')' ELSE "args" END AS "args", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' THEN json_extract("col2", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col2", '$.args')) || ')' ELSE "col2" END AS "col2" FROM "stream_status"`,
+};
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   stream_end: { kind: "log", addSql: `INSERT INTO "stream_end" ("args", "col2") VALUES (?, ?)`, delSql: null },
@@ -211,5 +217,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

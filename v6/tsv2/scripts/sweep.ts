@@ -31,7 +31,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { catchError, concatMap, from, map, of, toArray, type Observable } from "rxjs";
+import { catchError, concatMap, forkJoin, from, map, of, toArray, type Observable } from "rxjs";
 
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import { TickFold } from "../runtime/tickLoop.ts";
@@ -56,14 +56,27 @@ interface IEmittedBootStatement {
   readonly params: readonly (string | number)[];
 }
 
-type EmittedProgram = IGenProgram & { readonly boot: readonly IEmittedBootStatement[] };
+type EmittedProgram = IGenProgram & {
+  readonly boot: readonly IEmittedBootStatement[];
+  readonly finalSelect: Record<string, string>;
+};
 
 type RunBucket = "identical" | "wrong" | "run_error" | "no_oracle_log";
+
+/** Final-state leg (EXPRESSION + AGGREGATE LIFT arc). Reported ALONGSIDE the
+ *  tick-log bucket, never folded into it: the tick-log diff stays the gate
+ *  every earlier arc was graded on, and this adds the grade an EMPTY-schedule
+ *  fixture has no other way to earn (both sides print zero tick lines, which
+ *  the tick-log diff calls IDENTICAL on no evidence -- SCOREBOARD.md Finding
+ *  2's vacuous-pass class). `no_oracle_final` means the oracle run threw. */
+type FinalBucket = "final_identical" | "final_wrong" | "no_oracle_final";
 
 interface IFixtureRunResult {
   readonly name: string;
   readonly bucket: RunBucket;
   readonly detail: string;
+  readonly finalBucket: FinalBucket;
+  readonly finalDetail: string;
 }
 
 function readManifest(): readonly IManifestEntry[] {
@@ -85,6 +98,67 @@ function readOracleLines(name: string): readonly string[] | null {
   }
 }
 
+function readOracleFinalLine(name: string): string | null {
+  try {
+    const text = readFileSync(join(COMPILE_OUT, `${name}.oracle.final.jsonl`), "utf8");
+    return text.split("\n").filter((line) => line.length > 0)[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The oracle side encodes a value with ticklog.pl's `value_json/2`: an
+ *  integer as a JSON number, everything else as a JSON string. The emitted
+ *  side reads an INTEGER-affinity column back as a JS number and a
+ *  TEXT-affinity column as a JS string (rows.ts's own note), so the SAME rule
+ *  applied here is what makes a TEXT-collapsed integer ("12" stored in a TEXT
+ *  column) show up as a diff instead of passing silently. */
+function finalValueJson(value: unknown): string {
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "number" && Number.isInteger(value)) return `${value}`;
+  return JSON.stringify(String(value));
+}
+
+function finalStateLine(rowsByRel: Record<string, readonly (readonly unknown[])[]>): string {
+  const relNames = Object.keys(rowsByRel).sort();
+  const parts: string[] = [];
+  for (const rel of relNames) {
+    const rows = rowsByRel[rel]!;
+    if (rows.length === 0) continue;
+    const rowTexts = rows.map((row) => `[${row.map(finalValueJson).join(",")}]`).sort();
+    parts.push(`${JSON.stringify(rel)}:[${rowTexts.join(",")}]`);
+  }
+  return `{"final":{${parts.join(",")}}}`;
+}
+
+function readFinalState(seam: ISqlSeam, program: EmittedProgram): Observable<string> {
+  const relNames = Object.keys(program.finalSelect);
+  if (relNames.length === 0) return of(finalStateLine({}));
+  return forkJoin(
+    relNames.map((rel) =>
+      seam.runner.execute(seam.db, program.finalSelect[rel]!).pipe(
+        map((result) => ({
+          rel,
+          rows: result.rows.map((row) => (program.relColumns[rel] ?? []).map((column) => row[column])),
+        })),
+      ),
+    ),
+  ).pipe(
+    map((entries) => {
+      const rowsByRel: Record<string, readonly (readonly unknown[])[]> = {};
+      for (const entry of entries) rowsByRel[entry.rel] = entry.rows;
+      return finalStateLine(rowsByRel);
+    }),
+  );
+}
+
+function gradeFinalState(name: string, actualLine: string): { bucket: FinalBucket; detail: string } {
+  const oracleLine = readOracleFinalLine(name);
+  if (oracleLine === null) return { bucket: "no_oracle_final", detail: "oracle run threw; no final state to diff" };
+  if (oracleLine === actualLine) return { bucket: "final_identical", detail: "" };
+  return { bucket: "final_wrong", detail: `actual=${actualLine.slice(0, 400)} oracle=${oracleLine.slice(0, 400)}` };
+}
+
 function loadEmitted(name: string): Promise<EmittedProgram> {
   const specifier = ["..", "gen_emitted", `${name}.ts`].join("/");
   return import(specifier).then((loaded: { program: EmittedProgram }) => loaded.program);
@@ -99,18 +173,29 @@ function runBoot(seam: ISqlSeam, statements: readonly IEmittedBootStatement[]): 
       );
 }
 
-function gradeAgainstOracle(name: string, actualLines: readonly string[]): IFixtureRunResult {
+function gradeAgainstOracle(
+  name: string,
+  actualLines: readonly string[],
+  finalGrade: { bucket: FinalBucket; detail: string },
+): IFixtureRunResult {
   const oracle = readOracleLines(name);
+  const withFinal = (bucket: RunBucket, detail: string): IFixtureRunResult => ({
+    name,
+    bucket,
+    detail,
+    finalBucket: finalGrade.bucket,
+    finalDetail: finalGrade.detail,
+  });
   if (oracle === null) {
-    return { name, bucket: "no_oracle_log", detail: "oracle run threw (see oracle_dump.pl ORACLE_THROW output); nothing to diff" };
+    return withFinal("no_oracle_log", "oracle run threw (see oracle_dump.pl ORACLE_THROW output); nothing to diff");
   }
   const identical = actualLines.length === oracle.length && actualLines.every((line, index) => line === oracle[index]);
-  if (identical) return { name, bucket: "identical", detail: "" };
+  if (identical) return withFinal("identical", "");
   const firstDiffIndex = actualLines.findIndex((line, index) => line !== oracle[index]);
   const excerptIndex = firstDiffIndex === -1 ? Math.min(actualLines.length, oracle.length) : firstDiffIndex;
   const actualExcerpt = actualLines[excerptIndex] ?? "<missing tick>";
   const oracleExcerpt = oracle[excerptIndex] ?? "<missing tick>";
-  return { name, bucket: "wrong", detail: `first diff at line ${excerptIndex + 1}: actual=${actualExcerpt} oracle=${oracleExcerpt}` };
+  return withFinal("wrong", `first diff at line ${excerptIndex + 1}: actual=${actualExcerpt} oracle=${oracleExcerpt}`);
 }
 
 function runFixture(name: string): Observable<IFixtureRunResult> {
@@ -121,11 +206,18 @@ function runFixture(name: string): Observable<IFixtureRunResult> {
       return ScratchStore.boot(seam, program.ddl).pipe(
         concatMap(() => runBoot(seam, program.boot)),
         concatMap(() => TickFold.run(program, seam, schedule).pipe(toArray())),
+        concatMap((lines) => readFinalState(seam, program).pipe(map((finalLine) => ({ lines, finalLine })))),
       );
     }),
-    map((lines) => gradeAgainstOracle(name, lines)),
+    map(({ lines, finalLine }) => gradeAgainstOracle(name, lines, gradeFinalState(name, finalLine))),
     catchError((error: unknown) =>
-      of<IFixtureRunResult>({ name, bucket: "run_error", detail: error instanceof Error ? error.message : String(error) }),
+      of<IFixtureRunResult>({
+        name,
+        bucket: "run_error",
+        detail: error instanceof Error ? error.message : String(error),
+        finalBucket: "final_wrong",
+        finalDetail: "run threw before the final state could be read",
+      }),
     ),
   );
 }
@@ -133,6 +225,11 @@ function runFixture(name: string): Observable<IFixtureRunResult> {
 function summaryLine(results: readonly IFixtureRunResult[]): string {
   const countOf = (bucket: RunBucket): number => results.filter((result) => result.bucket === bucket).length;
   return `RUN total=${results.length} identical=${countOf("identical")} wrong=${countOf("wrong")} run_error=${countOf("run_error")} no_oracle_log=${countOf("no_oracle_log")}`;
+}
+
+function finalSummaryLine(results: readonly IFixtureRunResult[]): string {
+  const countOf = (bucket: FinalBucket): number => results.filter((result) => result.finalBucket === bucket).length;
+  return `FINAL total=${results.length} final_identical=${countOf("final_identical")} final_wrong=${countOf("final_wrong")} no_oracle_final=${countOf("no_oracle_final")}`;
 }
 
 function main(): void {
@@ -146,6 +243,12 @@ function main(): void {
         process.stdout.write(`${summaryLine(results)}\n`);
         for (const result of results) {
           if (result.bucket !== "identical") process.stdout.write(`  ${result.bucket.toUpperCase()} ${result.name} ${result.detail}\n`);
+        }
+        process.stdout.write(`${finalSummaryLine(results)}\n`);
+        for (const result of results) {
+          if (result.finalBucket !== "final_identical") {
+            process.stdout.write(`  ${result.finalBucket.toUpperCase()} ${result.name} ${result.finalDetail}\n`);
+          }
         }
       },
       error: (failure) => {

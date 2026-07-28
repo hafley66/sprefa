@@ -43,7 +43,7 @@ interface IBootStatement {
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -106,6 +106,11 @@ function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
     worktree_file: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' THEN json_extract("digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("digest", '$.args')) || ')' ELSE "digest" END AS "digest", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind" FROM "worktree_file"`, relColumns.worktree_file!),
   });
 }
+
+const finalSelect: Record<string, string> = {
+  worktree_edit: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' THEN json_extract("digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("digest", '$.args')) || ')' ELSE "digest" END AS "digest", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind" FROM "worktree_edit"`,
+  worktree_file: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' THEN json_extract("digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("digest", '$.args')) || ')' ELSE "digest" END AS "digest", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind" FROM "worktree_file"`,
+};
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   worktree_edit: { kind: "log", addSql: `INSERT INTO "worktree_edit" ("path", "digest", "kind") VALUES (?, ?, ?)`, delSql: null },
@@ -241,5 +246,6 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   arrivalTargets,
   boot,
+  finalSelect,
   tick: runTick,
 };

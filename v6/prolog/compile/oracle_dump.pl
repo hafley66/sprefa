@@ -39,8 +39,52 @@ dump_one(OutDir, Name) :-
           with_output_to(string(Text), print_ticklog(Prog, Initial, Schedule)),
           format(atom(OutFile), '~w/~w.oracle.jsonl', [OutDir, Name]),
           setup_call_cleanup(open(OutFile, write, Stream), format(Stream, "~w", [Text]), close(Stream)),
+          dump_final_state(OutDir, Name, Prog, Initial, Schedule),
           format("ORACLE_OK ~w~n", [Name])
         ),
         Error,
         format("ORACLE_THROW ~w ~q~n", [Name, Error])
     ).
+
+% ═══ final-state leg (EXPRESSION + AGGREGATE LIFT arc) ══════════════════════
+% The tick log alone cannot grade a fixture whose Schedule is EMPTY: both
+% sides print zero lines and the sweep calls that IDENTICAL. SCOREBOARD.md
+% already flags four such vacuous passes; the expression and aggregate
+% buckets this arc lifts are almost entirely empty-schedule fixtures (25 of
+% the 30 target fixtures), so a tick-log-only grade would have claimed them
+% on no evidence at all.
+%
+% This writes the SAME envelope shape the tick log uses, over run_program/5's
+% FinalAll (store rows + the final level closure, engine.pl:run_ticks/7's own
+% first clause) instead of over one tick's deltas:
+%
+%   {"final":{"relName":[[..],[..]],...}}
+%
+% Rel names ascending, rows sorted lexicographically by their own JSON text
+% (the same msort/2 rule rel_delta_json/3 applies to add/del), a rel with
+% zero rows omitted, values encoded by ticklog.pl's own value_json/2 (reused,
+% never reimplemented: integers as JSON numbers, atoms and canonical compound
+% text as JSON strings). Log-rel duplicate rows survive as duplicate entries,
+% since FinalAll is a multiset (engine.pl store_rows/2 msorts without
+% dedup).
+dump_final_state(OutDir, Name, Prog, Initial, Schedule) :-
+    run_program(Prog, Initial, Schedule, FinalAll, _DeltaTicks),
+    final_state_line(FinalAll, Line),
+    format(atom(FinalFile), '~w/~w.oracle.final.jsonl', [OutDir, Name]),
+    setup_call_cleanup(open(FinalFile, write, Stream),
+                       format(Stream, "~w~n", [Line]),
+                       close(Stream)).
+
+final_state_line(FinalAll, Line) :-
+    findall(Ref, ( member(Row, FinalAll), rel_ref(Row, Ref) ), Refs0),
+    sort(Refs0, Refs),
+    findall(RelJson, ( member(Ref, Refs), final_rel_json(Ref, FinalAll, RelJson) ), RelJsons),
+    atomic_list_concat(RelJsons, ',', Inner),
+    format(atom(Line), '{"final":{~w}}', [Inner]).
+
+final_rel_json(Name/Arity, FinalAll, Json) :-
+    findall(Row, ( member(Row, FinalAll), rel_ref(Row, Name/Arity) ), Rows),
+    maplist(row_json, Rows, RowJsonsRaw),
+    msort(RowJsonsRaw, RowJsons),
+    atomic_list_concat(RowJsons, ',', Inner),
+    format(atom(Json), '"~w":[~w]', [Name, Inner]).
