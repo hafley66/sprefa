@@ -55,3 +55,27 @@ fi
 awk -F, 'NR>1 && $1=="sqlite-disk" && $7!="WALL" && $7!="" {print $7}' "$CSV" \
   | sort -u | paste -sd, - \
   | awk '{print "- sqlite retract statement count across all scales: {" $0 "} (O(depth), not O(rows))."}'
+
+if [[ -s "$OUT/tsv2-results.jsonl" || -s "$OUT/v1-results.jsonl" ]]; then
+  echo
+  echo "## Generated-program scale data: tsv2 and v1"
+  echo
+  echo "Each row is a fresh in-memory SQLite cell. Both engines recompute the Datalog result per tick; one warmup is discarded."
+  echo
+  echo "| engine | shape | rows per EDB rel | status | reason | total wall ms | mean tick ms | p95 tick ms | max tick ms | final table rows | ms per 1k arrivals | RSS MB |"
+  echo "|---|---|---:|---|---|---:|---:|---:|---:|---|---:|---:|"
+  node -e '
+    const fs = require("fs");
+    const rows = process.argv.slice(1).flatMap((path) => {
+      if (!fs.existsSync(path)) return [];
+      return fs.readFileSync(path, "utf8").split("\n").filter(Boolean).map(JSON.parse);
+    });
+    const order = { s1: 1, s2: 2, s3: 3 };
+    rows.sort((a, b) => order[a.shape] - order[b.shape] || a.rows - b.rows || a.engine.localeCompare(b.engine));
+    for (const r of rows) {
+      const sizes = r.final_table_sizes ? Object.entries(r.final_table_sizes).map(([k,v]) => `${k}=${v}`).join("; ") : "-";
+      const reason = r.reason ?? r.observed_failure ?? "-";
+      console.log(`| ${r.engine} | ${r.shape} | ${r.rows} | ${r.status} | ${reason} | ${r.total_wall_ms ?? "-"} | ${r.mean_tick_ms ?? "-"} | ${r.p95_tick_ms ?? "-"} | ${r.max_tick_ms ?? "-"} | ${sizes} | ${r.ms_per_1k_arrivals ?? "-"} | ${r.worker_rss_mb ?? "-"} |`);
+    }
+  ' "$OUT/tsv2-results.jsonl" "$OUT/v1-results.jsonl"
+fi
