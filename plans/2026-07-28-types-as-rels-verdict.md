@@ -1,8 +1,8 @@
 # TYPES-AS-RELS VERDICT (lab, 2026-07-28)
 
 Contract: `plans/2026-07-28-types-as-rels-header.md`. Lab:
-`v6/prolog/labs/types_as_rels/` (dies on landing; last full copy is the commit
-recorded at the bottom of this file).
+`v6/prolog/labs/types_as_rels/` (dies on landing; recovery hash at the bottom
+of this file).
 
 Run: `swipl -q -l v6/prolog/labs/types_as_rels/types_as_rels.pl -g go -g halt`
 -> 36 PASS, 0 fail, nothing else on stdout or stderr.
@@ -861,5 +861,7 @@ ours, not cited.
   agree, not that a parser produces them.
 
 Lab files, for the death protocol: `v6/prolog/labs/types_as_rels/{schema,
-value_model,lowering,types_as_rels}.pl`, last full copy at the commit that
-lands this verdict.
+value_model,lowering,lattice,types_as_rels}.pl`. Last full copy at **419eb779**
+(`git show 419eb779:v6/prolog/labs/types_as_rels/value_model.pl` recovers any
+of them). Durable output distilled here; the lab dir is the coordinator's to
+delete on landing.
