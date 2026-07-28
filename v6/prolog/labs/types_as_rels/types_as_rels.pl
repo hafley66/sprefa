@@ -22,6 +22,7 @@
 :- discontiguous check/2.
 :- use_module(schema).
 :- use_module(value_model).
+:- use_module('1_entity_model').
 :- use_module(lowering).
 :- use_module(lattice).
 
@@ -401,3 +402,87 @@ check(set_boundary_never_retracts_on_arrival,
 monotone_step(Kind, Arrival, State0, State) :-
     lub(Kind, State0, Arrival, State),
     leq(Kind, State0, State).
+
+% ═══ FIXPOINT ROUND 1: ENTITY BREAK CASES ══════════════════════════════════
+% Attack: apply every value-plane conclusion to an entity with an extrinsic
+% id, mutable current row, immutable history, and explicit lifetime.
+
+check(both_policies_require_explicit_decl,
+      ( resolve_policy(decl(route, value), _),
+        resolve_policy(decl(route, entity), _),
+        \+ resolve_policy(decl(route), _) )).
+
+check(both_policy_bundles_have_four_bits,
+      ( policy_bundle(value, policy(ValueIdentity, ValueMutation,
+                                    ValueLifetime, ValueMerge)),
+        policy_bundle(entity, policy(EntityIdentity, EntityMutation,
+                                     EntityLifetime, EntityMerge)),
+        ValueIdentity == content_hash,
+        ValueMutation == immutable,
+        ValueLifetime == support_zero,
+        ValueMerge == set,
+        EntityIdentity == extrinsic_id,
+        EntityMutation == mutable_history,
+        EntityLifetime == explicit_retire,
+        EntityMerge == keyed )).
+
+check(entity_equal_content_mints_distinct_ids,
+      ( empty_entity_store(Store0),
+        create_entity(route, [text('/a')], Store0, Store1, FirstId, _),
+        create_entity(route, [text('/a')], Store1, _, SecondId, _),
+        FirstId =:= 1,
+        SecondId =:= 2 )).
+
+check(entity_update_preserves_id,
+      ( empty_entity_store(Store0),
+        create_entity(route, [text('/a')], Store0, Store1, RouteId, _),
+        update_entity(RouteId, [text('/b')], Store1, Store, _),
+        entity_rows(Store, Rows),
+        Rows == [entity(route, RouteId, [text('/b')])] )).
+
+check(entity_update_appends_history,
+      ( empty_entity_store(Store0),
+        create_entity(route, [text('/a')], Store0, Store1, RouteId, _),
+        update_entity(RouteId, [text('/b')], Store1, Store, _),
+        entity_history(Store, History),
+        History == [ version(1, route, RouteId, [text('/a')]),
+                     version(2, route, RouteId, [text('/b')]) ] )).
+
+check(entity_update_boundary_retracts_and_adds,
+      ( empty_entity_store(Store0),
+        create_entity(route, [text('/a')], Store0, Store1, RouteId, _),
+        update_entity(RouteId, [text('/b')], Store1, _, Deltas),
+        Deltas == [ -row(route, RouteId, [text('/a')]),
+                    +row(route, RouteId, [text('/b')]) ] )).
+
+check(entity_cycle_can_be_constructed,
+      ( empty_entity_store(Store0),
+        create_entity(node, [], Store0, Store1, FirstId, _),
+        create_entity(node, [id(FirstId)], Store1, Store2, SecondId, _),
+        update_entity(FirstId, [id(SecondId)], Store2, Store, _),
+        entity_refs(Store, FirstId, [SecondId]),
+        entity_refs(Store, SecondId, [FirstId]) )).
+
+check(entity_cycle_partial_retire_is_refused,
+      ( empty_entity_store(Store0),
+        create_entity(node, [], Store0, Store1, FirstId, _),
+        create_entity(node, [id(FirstId)], Store1, Store2, SecondId, _),
+        update_entity(FirstId, [id(SecondId)], Store2, Store, _),
+        \+ retire_entities([FirstId], Store, _, _) )).
+
+check(entity_cycle_explicit_set_retires,
+      ( empty_entity_store(Store0),
+        create_entity(node, [], Store0, Store1, FirstId, _),
+        create_entity(node, [id(FirstId)], Store1, Store2, SecondId, _),
+        update_entity(FirstId, [id(SecondId)], Store2, Store3, _),
+        retire_entities([FirstId, SecondId], Store3, Store, Deltas),
+        Deltas == [ -row(node, FirstId, [id(SecondId)]),
+                    -row(node, SecondId, [id(FirstId)]) ],
+        entity_row_count(Store, 0),
+        entity_history(Store, History),
+        length(History, 3) )).
+
+check(entity_lifetime_does_not_follow_refcount,
+      ( empty_entity_store(Store0),
+        create_entity(route, [text('/a')], Store0, Store, _, _),
+        entity_row_count(Store, 1) )).

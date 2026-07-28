@@ -11,11 +11,22 @@
           [ table_ddl/2, all_ddl/1, elem_ddl/1,
             match_path_sql/3, inline_json_sql/3,
             spelling/2, spelling_text/2, spelling_constructs/2,
-            spelling_tables/2, normalized_tables/1 ]).
+            spelling_tables/2, normalized_tables/1,
+            policy_bundle/2, resolve_policy/2 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(schema).
+
+% Both policy bundles have four named positions. A declaration resolves only
+% when it carries a policy word. There is deliberately no decl(Name) clause.
+policy_bundle(value,
+              policy(content_hash, immutable, support_zero, set)).
+policy_bundle(entity,
+              policy(extrinsic_id, mutable_history, explicit_retire, keyed)).
+
+resolve_policy(decl(_, Policy), Bundle) :-
+    policy_bundle(Policy, Bundle).
 
 % ═══ DDL ════════════════════════════════════════════════════════════════════
 % Every value table is (id, content columns...) with the id as PRIMARY KEY and
