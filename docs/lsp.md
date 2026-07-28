@@ -128,6 +128,82 @@ server in the workspace. Once the VSCode client above is running `dl --lsp`, the
 integration: the "that is not allowed" rule is a datalog row, surfaced the same
 way rust-analyzer surfaces a borrow error.
 
+## v6 interim: point `--diag-db` at the v6 dl server's db
+
+The v6 `dl` rewrite (`v6/dl`) lives at `v6/dl/src`, not `src/`, and has no LSP
+server of its own yet. `--diag-db` (M5.3, see above) closes that gap with zero
+new code on either side: the v6 server already creates the exact `diag_v5`
+view this reader polls (`v6/dl/src/5_diag.ts` `DIAG_V5_VIEW_SQL`, same 9-column
+schema as `diagDecl`), in whatever sqlite file it was booted against
+(`DL_DB_PATH`, default `~/.local/state/dl/mvp.sqlite`). Pointing this binary's
+`--diag-db` at that same file is the whole bridge.
+
+```
+# terminal 1: v6 server
+cd v6/dl && DL_DB_PATH=/tmp/mvp.sqlite DL_PORT=7171 node --experimental-transform-types src/main.ts
+curl -s -X POST localhost:7171/edb/program --data-binary @fixtures/sg-rail.dl
+# ... POST rows into whatever EDB rel the program's diag rule reads (see
+# fixtures/sg-rail.dl or the smoke program below) ...
+
+# terminal 2: v5 LSP over the same db
+v6/tools/lsp-v5-bridge.sh /tmp/mvp.sqlite
+```
+
+`v6/tools/lsp-v5-bridge.sh [db-path]` wraps `dl --lsp --diag-db <db-path>`,
+resolving the `dl` binary via `DL_BIN` env, then `PATH`, then
+`target/{release,debug}/dl`. Point an editor's generic-LSP client at the
+script instead of the raw binary so a rebuilt/reinstalled `dl` is picked up
+without touching the client config.
+
+**Gotcha — path resolution, not absolutization**: the v6 server normalizes
+every `path` column relative to its OWN `process.cwd()`
+(`DL_ROOT`, `v6/dl/src/4_ingest.ts`) before it lands in `rel_diag`, so
+`diag_v5.path` is usually relative. This reader resolves a relative
+`diag_v5.path` against ITS OWN cwd (`publish_diag_v5_path` above) — a
+different process, a different cwd, unless the two are made to agree. Run
+both processes from the same directory (the natural case: an editor's
+workspace root) so the relative path round-trips to the same absolute file
+on both sides; otherwise the published URI still resolves (`Path::join`
+does not choke on `..` segments and the OS follows them at open time) but
+carries an ugly `../../..` prefix, which is a correctness smell worth fixing
+at the workspace-root level rather than patching path strings by hand.
+
+**Gotcha — poll latency**: `--diag-db` polls `PRAGMA data_version` on a
+500ms cadence (`diag_db_poll_loop`); a diagnostic published moments after a
+`POST /edb/:rel` insert is a poll-interval delay, not a bug. `didOpen`/
+`didSave` are no-ops in this mode — diagnostics arrive from the poll thread
+only, never from editor events (`run_diag_db_mode`'s doc comment).
+
+Receipt (raw, from a smoke run with no editor — POST a 2-rule program
+`rel finding(path,line,col,msg). diag(path:path,line:line,col:col,
+severity:"warn",code:"smoke",msg:msg) <- finding(path,line,col,msg).`, insert
+one `finding` row, then feed `initialize` over stdin to `dl --lsp --diag-db`):
+
+```
+>>> SEND initialize
+Content-Length: 206
+
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"processId": ...,
+"rootUri": "file:///.../v6/dl", "capabilities": {}}}
+
+<<< RECV (initialize response)
+Content-Length: 417
+
+{"jsonrpc":"2.0","id":1,"result":{"capabilities":{...}}}
+
+<<< RECV
+Content-Length: 359
+
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":
+{"uri":"file:///.../v6/dl/fixtures/smoke-target.rs","diagnostics":
+[{"range":{"start":{"line":3,"character":1},"end":{"line":3,"character":1}},
+"severity":2,"code":"smoke","source":"dl","message":"smoke test finding"}]}}
+```
+
+The publish arrived on the FIRST poll cycle, before `initialized`/`didOpen`
+were even sent — confirming diagnostics in this mode come purely from the db
+poll, independent of the editor message stream.
+
 ## Why this and not a bespoke linter
 
 The lint is a datalog rule over the same fact base as every other query. A rule
