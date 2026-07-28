@@ -101,6 +101,71 @@ fixture(json_object_dup_key_rejected,
   [],
   [ throws(json_object_dup_key([name, name])) ]).
 
+% ═══ aggregates ACROSS TICKS (added by the expression+aggregate lift arc) ═══
+% Every aggregate fixture above has an EMPTY Schedule, so the whole q7/q9
+% aggregate family was graded only at the t=0 level closure -- the tick log is
+% empty on both sides and says nothing (the vacuous-pass class SCOREBOARD.md
+% Finding 2 names). These two put an aggregate under real arrivals AND a real
+% retraction, which is what actually exercises a compiled program's
+% group-scoped maintenance path.
+%
+% Both grade three things the empty-schedule fixtures cannot: the PER-TICK
+% delta of an aggregate row (a group whose value moves must show -old then
+% +new at the boundary, never just +new), the SILENCE of a group that did not
+% move, and the DISAPPEARANCE of a group whose last member is retracted.
+
+% star_row is an unkeyed Set rel, so `-star_row(...)` is an ordinary
+% exact-row removal. Tick 1 seeds two repos; tick 2 adds a row to an existing
+% group (cli's max moves 4 -> 10, count 1 -> 2) and opens a new group; tick 3
+% retracts shell's only row, which must take the whole shell group away.
+fixture(aggregate_count_min_max_track_arrivals_and_retraction,
+  prog([],
+       [ (stat(Repo, count(Stars), min(Stars), max(Stars)) <- star_row(Repo, Stars)) ]),
+  [],
+  [ [ +star_row(cli, 4), +star_row(shell, 7) ],
+    [ +star_row(cli, 10), +star_row(docs, 2) ],
+    [ -star_row(shell, 7) ] ],
+  [ deltas(stat/4,
+           [ [ +stat(cli, 1, 4, 4), +stat(shell, 1, 7, 7) ],
+             [ -stat(cli, 1, 4, 4), +stat(cli, 2, 4, 10), +stat(docs, 1, 2, 2) ],
+             [ -stat(shell, 1, 7, 7) ] ]),
+    final(stat/4, [ stat(cli, 2, 4, 10), stat(docs, 1, 2, 2) ]) ]).
+
+% The retraction case min/max cannot decompose (the match-frontier lab's rx
+% table records incremental min/max over a retractable set as IMPOSSIBLE):
+% removing the CURRENT minimum tells you nothing about the next one without
+% re-reading the group. Tick 2 retracts cli's min (4) with 10 and 6 still
+% present, so min must move 4 -> 6 and that can only come from a recompute.
+% Tick 3 retracts a NON-extreme row (6), which changes count and nothing else,
+% and tick 4 touches an unrelated group so the untouched one stays silent.
+fixture(aggregate_min_recomputes_when_the_minimum_is_retracted,
+  prog([],
+       [ (stat(Repo, count(Stars), min(Stars), max(Stars)) <- star_row(Repo, Stars)) ]),
+  [ star_row(cli, 4), star_row(cli, 10), star_row(cli, 6), star_row(docs, 3) ],
+  [ [ -star_row(cli, 4) ],
+    [ -star_row(cli, 6) ],
+    [ +star_row(docs, 9) ] ],
+  [ deltas(stat/4,
+           [ [ -stat(cli, 3, 4, 10), +stat(cli, 2, 6, 10) ],
+             [ -stat(cli, 2, 6, 10), +stat(cli, 1, 10, 10) ],
+             [ -stat(docs, 1, 3, 3), +stat(docs, 2, 3, 9) ] ]),
+    final(stat/4, [ stat(cli, 1, 10, 10), stat(docs, 2, 3, 9) ]) ]).
+
+% sum over a group that both grows and shrinks, with a second grouped column
+% carried through untouched -- the decomposable half of the family, graded on
+% the same across-ticks shape so count/sum and min/max share one receipt
+% style.
+fixture(aggregate_sum_tracks_a_growing_and_shrinking_group,
+  prog([],
+       [ (budget(Team, sum(Cost)) <- spend(Team, _Item, Cost)) ]),
+  [ spend(core, disk, 10), spend(core, cpu, 5) ],
+  [ [ +spend(core, net, 7) ],
+    [ -spend(core, disk, 10) ] ],
+  [ deltas(budget/2,
+           [ [ -budget(core, 15), +budget(core, 22) ],
+             [ -budget(core, 22), +budget(core, 12) ] ]),
+    final(budget/2, [ budget(core, 12) ]) ]).
+
 % The whole arm end to end: decode a raw doc, fan out, re-aggregate into a
 % NEW document. Construction was the missing half in v5 (gh-cache.dl stores
 % bodies as opaque Str). Note the q9 consequence: an aggregate form sits at a

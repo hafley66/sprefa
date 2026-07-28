@@ -622,12 +622,32 @@ export const IncrementalRuntime: IIncrementalRuntime = {
           throw new Error(`incremental level head relation missing: ${statement.headRel}`);
         }
         if (statement.aggregateSql !== null) {
+          // afterEdges=false HERE, unlike applyLevelsAfterEdges. engine.pl's
+          // carry set is edge-written rows plus POST-WRITE level growth
+          // (tick/7: `ord_subtract(Level, MidLevel, PostWriteLevelRows)` --
+          // rows that became true because EDGE WRITES moved the store between
+          // the two level closures). A reconcile pass is a correction inside
+          // the same closure, not post-write growth, so its rows must not
+          // reach the next-tick frontier.
+          //
+          // MEASURED: with afterEdges=true here, both across-ticks aggregate
+          // fixtures grew one spurious empty drain tick past the oracle's last
+          // line (actual {"tick":4,"deltas":{}} vs oracle <missing tick>) --
+          // promoteFrontiers reports carryPending from any row in a
+          // nextFrontier table, and the reconcile's +1 events had landed
+          // there.
+          //
+          // ASYMMETRY, named not hidden: the refCount branch just below still
+          // stages its reconcile rows into nextFrontier phase 1, the shape P3
+          // shipped. No corpus fixture distinguishes the two (every program
+          // whose reconcile INSERTS rows also has edge rules), so this arc did
+          // not change it; if one ever does, this comment is the pointer.
           return applyAggregateLevelStatement(
             seam,
             statement,
             statement.aggregateSql,
             relation,
-            true,
+            false,
             nextSequence,
           );
         }

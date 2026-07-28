@@ -11,23 +11,22 @@
  * Usage: node --experimental-transform-types scripts/run-emitted.ts <name>
  */
 
-import { concat, concatMap, ignoreElements, type Observable } from "rxjs";
+import { concat, concatMap, ignoreElements } from "rxjs";
 
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import { TickFold } from "../runtime/tickLoop.ts";
-import type { IArrivalBatch, IGenProgram, ISqlSeam } from "../runtime/types.ts";
+import { BootRunner } from "../runtime/2_boot.ts";
+import type { IArrivalBatch, IBootStatement, IGenProgram } from "../runtime/types.ts";
 import {
   DEMAND_LAZINESS_SCHEDULE,
   DEMAND_LAZINESS_SCHEDULE_PERTURBED,
   SWITCH_AS_KEYED_REPLACE_SCHEDULE,
 } from "../tests/schedules.ts";
 
-interface IEmittedBootStatement {
-  readonly sql: string;
-  readonly params: readonly (string | number)[];
-}
-
-type EmittedProgram = IGenProgram & { readonly boot: readonly IEmittedBootStatement[] };
+type EmittedProgram = IGenProgram & {
+  readonly boot: readonly IBootStatement[];
+  readonly finalSelect: Record<string, string>;
+};
 
 // gen_emitted/ is compiler OUTPUT under reconciliation: it is excluded from
 // this package's type graph (tsconfig "exclude") until it conforms, so the
@@ -51,14 +50,6 @@ function loadEmitted(moduleName: string): Promise<EmittedProgram> {
   return import(specifier).then((loaded: { program: EmittedProgram }) => loaded.program);
 }
 
-function runBoot(seam: ISqlSeam, statements: readonly IEmittedBootStatement[]): Observable<never> {
-  return concat(
-    ...statements.map((statement) =>
-      seam.runner.execute(seam.db, { sql: statement.sql, args: [...statement.params] }),
-    ),
-  ).pipe(ignoreElements());
-}
-
 function main(): void {
   const name = process.argv[2];
   const moduleName = name === undefined ? undefined : MODULE_OF[name];
@@ -72,7 +63,7 @@ function main(): void {
   void loadEmitted(moduleName).then((program) => {
     const seam = ScratchStore.open(":memory:");
     ScratchStore.boot(seam, program.ddl)
-      .pipe(concatMap(() => concat(runBoot(seam, program.boot), TickFold.run(program, seam, schedule))))
+      .pipe(concatMap(() => concat(BootRunner.run(seam, program.boot).pipe(ignoreElements()), TickFold.run(program, seam, schedule))))
       .subscribe({
         next: (line) => process.stdout.write(`${line}\n`),
         error: (failure) => {

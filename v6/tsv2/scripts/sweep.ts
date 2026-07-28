@@ -33,9 +33,10 @@ import { fileURLToPath } from "node:url";
 
 import { catchError, concatMap, forkJoin, from, map, of, toArray, type Observable } from "rxjs";
 
+import { BootRunner } from "../runtime/2_boot.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import { TickFold } from "../runtime/tickLoop.ts";
-import type { IArrivalBatch, ISqlSeam, IGenProgram } from "../runtime/types.ts";
+import type { IArrivalBatch, IBootStatement, ISqlSeam, IGenProgram } from "../runtime/types.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMPILE_OUT = join(HERE, "..", "..", "prolog", "compile", "out");
@@ -47,17 +48,12 @@ interface IManifestEntry {
   readonly reason: string;
 }
 
-// Local mirror of run-emitted.ts's own IEmittedBootStatement/EmittedProgram
-// pair (that file does not export them) -- both scripts render the SAME
-// emit_ts.pl output shape independently, matching the project's existing
-// per-script local-type pattern (e.g. generated files' own IBootStatement).
-interface IEmittedBootStatement {
-  readonly sql: string;
-  readonly params: readonly (string | number)[];
-}
-
+// The two extra fields emit_ts.pl adds beyond IGenProgram's five pinned
+// names. `IBootStatement` and the loop that runs it are no longer per-script
+// copies: both this file and run-emitted.ts had their own, and both bound
+// `params` RAW, which is fail-first check (b) -- see runtime/2_boot.ts.
 type EmittedProgram = IGenProgram & {
-  readonly boot: readonly IEmittedBootStatement[];
+  readonly boot: readonly IBootStatement[];
   readonly finalSelect: Record<string, string>;
 };
 
@@ -164,15 +160,6 @@ function loadEmitted(name: string): Promise<EmittedProgram> {
   return import(specifier).then((loaded: { program: EmittedProgram }) => loaded.program);
 }
 
-function runBoot(seam: ISqlSeam, statements: readonly IEmittedBootStatement[]): Observable<unknown> {
-  return statements.length === 0
-    ? of(undefined)
-    : from(statements).pipe(
-        concatMap((statement) => seam.runner.execute(seam.db, { sql: statement.sql, args: [...statement.params] })),
-        toArray(),
-      );
-}
-
 function gradeAgainstOracle(
   name: string,
   actualLines: readonly string[],
@@ -204,7 +191,7 @@ function runFixture(name: string): Observable<IFixtureRunResult> {
       const schedule = readSchedule(name);
       const seam = ScratchStore.open(":memory:");
       return ScratchStore.boot(seam, program.ddl).pipe(
-        concatMap(() => runBoot(seam, program.boot)),
+        concatMap(() => BootRunner.run(seam, program.boot)),
         concatMap(() => TickFold.run(program, seam, schedule).pipe(toArray())),
         concatMap((lines) => readFinalState(seam, program).pipe(map((finalLine) => ({ lines, finalLine })))),
       );

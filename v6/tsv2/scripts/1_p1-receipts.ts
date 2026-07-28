@@ -168,8 +168,13 @@ async function explainSupport(
     readonly details: readonly string[];
   }[];
 }> {
+  // supportSql is null exactly on an AGGREGATE level statement, which is
+  // maintained by the group-scoped plan instead (IAggregateLevelPlan). This
+  // receipts script only walks the scale_generated program, which has no
+  // aggregate heads, so an empty list here is unreachable in practice and the
+  // narrowing is the honest way to say so rather than a `!`.
   const statements = await Promise.all(
-    statement.supportSql.map(async (sql, index) => {
+    (statement.supportSql ?? []).map(async (sql, index) => {
       const result = await firstValueFrom(
         seam.runner.execute(seam.db, `EXPLAIN QUERY PLAN ${sql}`),
       );

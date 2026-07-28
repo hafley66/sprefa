@@ -14,12 +14,24 @@ import { concatMap, from, map, of, toArray, type Observable } from "rxjs";
 
 import type { IBootStatement, IBootRunner, ISqlSeam } from "./types.ts";
 
+/** Integer params cross as bigint. `@libsql/client` binds a JS number as
+ *  SQLite REAL, so a bound `1` lands in a TEXT-affinity column as "1.0" while
+ *  `1n` lands as "1" (tests/bootBind.test.ts measures both). Identical rule to
+ *  emit_ts.pl's emitted `bindArgs` helper and 1_incremental.ts's own; the boot
+ *  path was the one seam still binding raw. Harmless against an INTEGER
+ *  column, which round-trips either form. */
+function bootArgs(params: readonly (string | number)[]): (string | number | bigint)[] {
+  return params.map((param) =>
+    typeof param === "number" && Number.isInteger(param) ? BigInt(param) : param,
+  );
+}
+
 export const BootRunner: IBootRunner = {
   run(seam: ISqlSeam, statements: readonly IBootStatement[]): Observable<void> {
     if (statements.length === 0) return of(undefined);
     return from(statements).pipe(
       concatMap((statement) =>
-        seam.runner.execute(seam.db, { sql: statement.sql, args: [...statement.params] }),
+        seam.runner.execute(seam.db, { sql: statement.sql, args: bootArgs(statement.params) }),
       ),
       toArray(),
       map(() => undefined),

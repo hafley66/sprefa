@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"star_row":{"add":[],"del":[["cli",4]]},"stat":{"add":[["cli",2,6,10]],"del":[["cli",3,4,10]]}}}
+{"tick":2,"deltas":{"star_row":{"add":[],"del":[["cli",6]]},"stat":{"add":[["cli",1,10,10]],"del":[["cli",2,6,10]]}}}
+{"tick":3,"deltas":{"star_row":{"add":[["docs",9]],"del":[]},"stat":{"add":[["docs",2,3,9]],"del":[["docs",1,3,3]]}}}
