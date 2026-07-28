@@ -238,6 +238,210 @@ technique(protocols,     bind_facts_at_link,          'signatures in program, bi
 :- use_module('src/kernel.pl').
 
 % ═════════════════════════════════════════════════════════════════════════════
+% CONSTRUCT-COVERAGE — the language construct budget and its receipts. Answers
+% the user's own question (2026-07-27, "where is the automated map of language
+% features and what they cover"): arch_map.pl's atlas covered ARCHITECTURE
+% only; this section adds the LANGUAGE dimension. construct/3 is the budget;
+% covers/2 grounds each construct in a conformance fixture file or a user
+% ruling that actually exercises or decides it, the same way `algorithm`
+% grounds in a Home file. `go` checks that every status is closed and every
+% covers/2 endpoint resolves to a declared construct plus a real fixture file
+% (on disk under conformance/fixtures/) or a real ruling id (in rulings.pl).
+%
+% COUNT RECONCILIATION (full line-by-line accounting in
+% plans/2026-07-27-construct-coverage.md): plans/2026-07-27-aggregate-
+% analysis.md:120-130 totals 30 T0-T4 grammar constructs. rulings.pl:100-104
+% then cuts `|>` and `quote(...)` (-2) and rulings.pl:84-89 adopts
+% `departed/1` as a new T4 construct (+1) — rulings.pl's own line 102 says so:
+% "30 - 2 cuts + 1 departure form = 29". plans/2026-07-27-extraction-
+% spellings.md:25 and :444-445, filed LATER the same day (commit timestamps:
+% aggregate-analysis 15:38, rulings.pl 16:06, extraction-spellings 18:07),
+% states the budget stayed at "28" and does not carry the departure addition
+% forward. This section counts 29, the fuller accounting that includes every
+% ruled addition; the gap against a naive read of "28" is exactly that one
+% uncarried digit in extraction-spellings.md, and it is cited here both ways
+% instead of silently picking one. Tiers T5 and above (effect arrow, envelope
+% enums, streaming wrappers, tail asks) are NOT part of this budget — the
+% aggregate doc's own count table (1d) stops at T4, and this section follows
+% it exactly.
+%
+% construct(Name, Tier, Status). Tier in {t0,t1,t2,t3,t4}, matching the
+% aggregate doc's tier map. Status is a CLOSED 3-value set (coarser than the
+% aggregate doc's own inconsistent per-row prose -- "(add)", "(add to
+% Surface)", "NEW", "RESPECIFIED" -- because the coarse split is what a
+% mechanical check can actually verify without parsing prose):
+%   kept        - name and semantics carried from LANG.md (or an earlier
+%                 ruled lab) unchanged.
+%   respecified - the NAME survives but this arc changed its semantics
+%                 materially (`<+` under R2 is the only one).
+%   new         - no prior name or spelling; either invented this arc or a
+%                 replacement spelling for a keyword LANG.md itself killed.
+% ═════════════════════════════════════════════════════════════════════════════
+
+:- use_module('conformance/rulings.pl').
+
+construct(enum_decl,            t0, kept).
+construct(struct_decl,          t0, kept).
+construct(rel_decl,             t0, kept).
+construct(key_type,             t0, kept).
+construct(option_type,          t0, kept).
+construct(level_rule,           t0, kept).
+construct(fact,                 t0, kept).
+construct(negation,             t0, kept).
+construct(aggregate_head_forms, t0, kept).
+construct(comparison_ops,       t0, kept).
+construct(arithmetic_ops,       t0, kept).
+construct(bind_goal,            t0, kept).
+construct(fn_application,       t0, kept).
+construct(interpolation,        t0, kept).
+construct(named_column_atoms,   t0, kept).
+construct(wildcard,             t0, kept).
+construct(snapshot_ask,         t0, kept).
+
+construct(from_world_modifier,  t1, new).    % unbundled from the killed `source` keyword
+construct(bind_decl,            t1, kept).
+construct(quoted_region,        t1, kept).
+construct(grammar_import,       t1, kept).
+
+construct(graph_operator_position, t2, kept).
+
+construct(edge_rule,            t4, respecified).  % R2: arrow=trigger, rel-kind=storage
+construct(rel_kind_decl,        t4, new).          % the 1b convergence construct
+construct(trigger_marker,       t4, new).          % Q6; replaces the killed delta()
+construct(now_read,             t4, kept).
+construct(pre_read,             t4, kept).
+construct(retention_clause,     t4, kept).
+construct(departure_form,       t4, new).          % R4, ruled 2026-07-27 PM
+
+construct_status(kept).
+construct_status(respecified).
+construct_status(new).
+
+construct_tier(t0).
+construct_tier(t1).
+construct_tier(t2).
+construct_tier(t3).
+construct_tier(t4).
+
+% ── covers(FixtureFileOrRuling, Construct) ───────────────────────────────────
+% FixtureFileOrRuling is a fixture basename (matches fixture_file/1 in
+% tools/arch_map.pl, one of v6/prolog/conformance/fixtures/*.pl) or a ruling
+% id (matches ruling/4 in conformance/rulings.pl). One atom can be both --
+% `json_arm` names a fixture file AND a ruling; a covers/2 fact naming it is
+% grounded either way. Every edge below is cited line-by-line in
+% plans/2026-07-27-construct-coverage.md against a fixture header comment, a
+% FIXTURES.md rule, or a ruling comment; no edge is asserted from naming
+% alone, and constructs with NO covers/2 fact are the uncovered list (also
+% itemized in that file, each with the citation for WHY it is uncovered).
+
+covers(check_eventing,       rel_kind_decl).
+covers(check_eventing,       key_type).
+covers(check_eventing,       retention_clause).
+covers(check_eventing,       edge_rule).
+covers(check_eventing,       negation).
+covers(check_eventing,       now_read).
+covers(check_eventing,       aggregate_head_forms).
+covers(check_eventing,       trigger_marker).
+
+covers(engine_core,          rel_kind_decl).
+covers(engine_core,          retention_clause).
+covers(engine_core,          key_type).
+covers(engine_core,          edge_rule).
+covers(engine_core,          now_read).
+covers(engine_core,          aggregate_head_forms).
+covers(engine_core,          trigger_marker).
+covers(engine_core,          negation).
+
+covers(expressions,          bind_goal).
+covers(expressions,          comparison_ops).
+covers(expressions,          arithmetic_ops).
+covers(expressions,          fn_application).
+covers(expressions,          interpolation).
+
+covers(json_arm,             struct_decl).
+covers(json_arm,             aggregate_head_forms).
+covers(json_arm,             bind_goal).
+
+covers(merge_family,         rel_kind_decl).
+covers(merge_family,         key_type).
+covers(merge_family,         retention_clause).
+covers(merge_family,         edge_rule).
+covers(merge_family,         pre_read).
+covers(merge_family,         bind_goal).
+
+covers(occurrence_identity,  rel_kind_decl).
+covers(occurrence_identity,  key_type).
+covers(occurrence_identity,  retention_clause).
+covers(occurrence_identity,  edge_rule).
+covers(occurrence_identity,  pre_read).
+covers(occurrence_identity,  trigger_marker).
+covers(occurrence_identity,  bind_goal).
+
+covers(operators,            rel_kind_decl).
+covers(operators,            retention_clause).
+covers(operators,            trigger_marker).
+covers(operators,            comparison_ops).
+covers(operators,            arithmetic_ops).
+covers(operators,            fact).
+covers(operators,            bind_goal).
+
+covers(shell_stream,         rel_kind_decl).
+covers(shell_stream,         retention_clause).
+covers(shell_stream,         key_type).
+covers(shell_stream,         edge_rule).
+covers(shell_stream,         trigger_marker).
+
+covers(spine_semantics,      rel_kind_decl).
+covers(spine_semantics,      key_type).
+covers(spine_semantics,      retention_clause).
+covers(spine_semantics,      edge_rule).
+covers(spine_semantics,      now_read).
+covers(spine_semantics,      trigger_marker).
+covers(spine_semantics,      fact).
+
+covers(state_machine,        rel_kind_decl).
+covers(state_machine,        key_type).
+covers(state_machine,        retention_clause).
+covers(state_machine,        edge_rule).
+covers(state_machine,        pre_read).
+covers(state_machine,        trigger_marker).
+covers(state_machine,        bind_goal).
+covers(state_machine,        enum_decl).
+covers(state_machine,        struct_decl).
+
+covers(temporal_pipe,        edge_rule).
+covers(temporal_pipe,        trigger_marker).
+covers(temporal_pipe,        retention_clause).
+covers(temporal_pipe,        comparison_ops).
+
+covers(timeless_rail,        level_rule).
+covers(timeless_rail,        negation).
+covers(timeless_rail,        aggregate_head_forms).
+covers(timeless_rail,        option_type).
+covers(timeless_rail,        comparison_ops).
+
+covers(q2_scoping,                rel_kind_decl).
+covers(q3_rel_kind_shape,         rel_kind_decl).
+covers(q4_edge_propagation,       edge_rule).
+covers(q6_trigger_marker,         trigger_marker).
+covers(q7_aggregate_multiplicity, aggregate_head_forms).
+covers(q8_key_vs_arrow,           key_type).
+covers(q9_aggregate_heads,        aggregate_head_forms).
+covers(q10_retention,             retention_clause).
+covers(r7_boundary_diff,          rel_kind_decl).
+covers(r_equal_row_write,         key_type).
+covers(r1_rider_pre_chains,       pre_read).
+covers(r4_departure,              departure_form).
+covers(r6_pre_visibility,         pre_read).
+covers(s2_file_rels,              key_type).
+covers(s3_dirtiness,              level_rule).
+
+covers_endpoint_exists(Subject) :- ruling(Subject, _, _, _), !.
+covers_endpoint_exists(Subject) :-
+    format(atom(Path), "v6/prolog/conformance/fixtures/~w.pl", [Subject]),
+    exists_file(Path), !.
+
+% ═════════════════════════════════════════════════════════════════════════════
 % BUILD ORDER — task(Name, Status, Needs). `roadmap` topsorts it; learning
 % order = the same sort, because a technique is learnable once its inputs are.
 % ═════════════════════════════════════════════════════════════════════════════
@@ -290,6 +494,13 @@ check(graphs_refine_ast, ( forall((graph(G, _, _, _), G \== ast),
 check(roadmap_is_total,  ( findall(N-Ns, task(N, _, Ns), Ps),
                            topsort(Ps, [], O),
                            length(Ps, L), length(O, L) )).
+check(construct_status_closed, ( forall(construct(_, _, Status),
+                                        construct_status(Status)) )).
+check(construct_tier_known,    ( forall(construct(_, Tier, _),
+                                        construct_tier(Tier)) )).
+check(covers_endpoints_ground, ( forall(covers(Subject, Name),
+                                        ( construct(Name, _, _),
+                                          covers_endpoint_exists(Subject) )) )).
 
 reaches_ast(ast).
 reaches_ast(G) :- refines(G, Parent), reaches_ast(Parent).
