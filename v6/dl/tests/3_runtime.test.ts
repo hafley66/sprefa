@@ -12,10 +12,15 @@
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { diffDerivedRel } from "../src/3_runtime.ts";
+import { firstValueFrom } from "rxjs";
+
+import { open_db } from "sprefa-store-engine/src/engine/lib.ts";
+
+import { diffDerivedRel, DlRuntime, execute$ } from "../src/3_runtime.ts";
 import type { DeltaEvent } from "../tasks.d.ts";
 import {
   bootFixture,
@@ -25,6 +30,8 @@ import {
   cleanupDbFile,
   deltaDump,
   edbBatch,
+  fakeBridgeOk,
+  freshDbPath,
   rowsOf,
   singleEdbRelProgram,
 } from "./1_helpers_db.ts";
@@ -398,5 +405,88 @@ test("support coverage is reported, not assumed: negation and aggregate heads ca
   } finally {
     await gapped.rt.dispose();
     cleanupDbFile(gapped.dbPath);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// F7 (docs/failure-modes.md class 36): a non-finite number reaching the storage-plane
+// splice site used to become the literal text "NaN" inside SQL, unquoted, which SQLite
+// reads as a column reference and fails with the unrelated-looking "no such column:
+// NaN" -- 4_hosts.test.ts's regression tests fix the ghcacher-shaped ROOT CAUSE (a
+// host-output-parsing bug that could produce that NaN in the first place); the two
+// tests below are the defense-in-depth layer named in the incident's fix requirements:
+// a guard at the encode splice site (named rel + column, before any SQL runs), and
+// execute$ carrying the failing statement's own text on ANY SQL failure, not just this
+// one -- the incident's own postmortem could not see the statement at all.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** No arbitrary sleeps: retries `check` on a short interval until it returns a defined
+ *  value or the attempt budget runs out. */
+async function waitForDefined<T>(check: () => T | undefined, attempts = 50, intervalMs = 20): Promise<T> {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const result = check();
+    if (result !== undefined) return result;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(`waitForDefined: condition not met after ${attempts * intervalMs}ms`);
+}
+
+test("commit's guard rejects a non-finite number before it reaches SQL text, naming the rel and column", async () => {
+  // Booted by hand rather than bootFixture: an exception raised inside the tick
+  // pipeline is architecturally FATAL to the shared deltas$ stream (main.ts's own
+  // documented behavior -- "a fault raised later by the tick loop... stays on the
+  // stream," confirmed in the F7 incident), and commit()'s own promise settles through
+  // a SEPARATE channel (reportsSubject) that a pipeline fault never reaches, so it
+  // never resolves OR rejects on this path -- it hangs, same as any other
+  // tick-processing exception. The guard's descriptive error is observed the same way
+  // any of those would be: on deltas$ itself.
+  const dbPath = freshDbPath();
+  const bridgeOk = fakeBridgeOk(singleEdbRelProgram("status_rel", ["status"]), undefined, undefined, {
+    status_rel: ["int"],
+  });
+  const rt = await DlRuntime.boot({ dbPath, bridge: bridgeOk });
+  let capturedError: unknown;
+  const subscription = rt.deltas$.subscribe({
+    error: (failure: unknown) => {
+      capturedError = failure;
+    },
+  });
+  try {
+    // Never settles on its own (see above); rt.dispose() below completes
+    // reportsSubject, which then rejects this with an unrelated EmptyError -- swallowed
+    // here since the guard's error (asserted below, off deltas$) is what this test is
+    // actually about.
+    rt.commit(edbBatch({ status_rel: [{ status: Number.NaN }] })).catch(() => {});
+    const failure = await waitForDefined(() => capturedError);
+    assert.ok(failure instanceof Error);
+    assert.match(failure.message, /status_rel/);
+    assert.match(failure.message, /column 'status'/);
+  } finally {
+    subscription.unsubscribe();
+    await rt.dispose();
+    cleanupDbFile(dbPath);
+  }
+});
+
+test("execute$ carries the failing statement's own text (truncated) in the thrown error", async () => {
+  const dbPath = path.join(os.tmpdir(), `dl-execute-diag-${Date.now()}.sqlite`);
+  const db = open_db(`file:${dbPath}`);
+  try {
+    const longBogusSql = `SELECT ${"x".repeat(2000)} FROM no_such_table_at_all`;
+    await assert.rejects(
+      () => firstValueFrom(execute$(db, longBogusSql)),
+      (failure: unknown) => {
+        assert.ok(failure instanceof Error);
+        assert.match(failure.message, /execute\$ failed on statement:/);
+        assert.match(failure.message, /SELECT x{10,}/);
+        // Truncated, not the whole 2000+-char statement dumped into the error text.
+        assert.ok(failure.message.length < longBogusSql.length);
+        assert.ok(failure.cause !== undefined, "the original driver failure should ride as `cause`");
+        return true;
+      },
+    );
+  } finally {
+    db.close();
+    cleanupDbFile(dbPath);
   }
 });

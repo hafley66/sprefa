@@ -142,12 +142,43 @@ function tryParseJsonLines(text: string): unknown[] | null {
   return parsedLines;
 }
 
+/** `raw` numeric IFF it is non-empty and parses cleanly; otherwise the raw text itself,
+ *  never a coerced NaN. Shared by both branches below so a value's own text is what
+ *  decides its type -- never a DIFFERENT line/column's text (that cross-contamination,
+ *  via the old single global `columnLooksNumeric` guess, is F7's root cause: docs/
+ *  failure-modes.md class 36). */
+function coerceWhitespaceValue(raw: string): Value {
+  return raw !== "" && !Number.isNaN(Number(raw)) ? Number(raw) : raw;
+}
+
 function parseWhitespaceColumns(text: string, responseCols: readonly string[]): Row[] {
-  const splitLines = text
+  const lines = text
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .map((line) => line.split(/\s+/));
+    .filter((line) => line.length > 0);
+
+  // ONE ROW, one VALUE per LINE: a template with more than one output-only column that
+  // prints each field on its own line (`printf '%s\n%s\n%s' "$status" "$tag" "$body"`,
+  // fixtures/ghcacher.dl:52-57's shape) is unambiguous with the multi-ROW convention
+  // below only when there is exactly one output column -- with more than one, a field's
+  // OWN value routinely contains internal whitespace (a JSON body, free text), so
+  // splitting a line into words-as-columns shreds it. When the line count matches the
+  // column count exactly, read it as one row, line-per-column: this is the literal
+  // shape that produced F7 (a body line's internal words landed in the wrong columns,
+  // and one resulting "row" ran Number() over a non-numeric token, minting a bare NaN
+  // that reached SQL text unquoted).
+  if (responseCols.length > 1 && lines.length === responseCols.length) {
+    const row: Record<string, Value> = {};
+    responseCols.forEach((column, index) => {
+      row[column] = coerceWhitespaceValue(lines[index] ?? "");
+    });
+    return [row as Row];
+  }
+
+  // MULTIPLE ROWS, whitespace-separated columns WITHIN each line (a line-oriented tool
+  // like `ls -la`, one row per line): "looks numeric" is decided once per column from
+  // the first row's value at that position, then applied uniformly.
+  const splitLines = lines.map((line) => line.split(/\s+/));
   const columnLooksNumeric = responseCols.map((_, columnIndex) => {
     const firstValue = splitLines[0]?.[columnIndex];
     return firstValue !== undefined && firstValue !== "" && !Number.isNaN(Number(firstValue));

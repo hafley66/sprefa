@@ -278,6 +278,137 @@ test("template fill: {col} splices raw, $col goes to env", async () => {
   assert.deepEqual(rows, [{ greeting: "hello", subject: "world", echoed: "hello-world" }]);
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// F7 regression (docs/failure-modes.md class 36): a `sh` host with MORE THAN ONE
+// output-only column, whose template prints one VALUE per LINE (fixtures/
+// ghcacher.dl:52-57's `printf '%s\n%s\n%s' "$C" "$E" "$B"` shape) used to be
+// misread by parseWhitespaceColumns as ONE ROW PER LINE (whitespace-split WITHIN
+// each line) instead of one row with one column value PER LINE. For a body value
+// containing internal spaces (any real JSON payload), that shredded a single
+// response into several malformed rows, and one of them ran Number() over a
+// non-numeric token (the OTHER line's own value, landed in the wrong column) and
+// minted a bare NaN that reached SQL text unquoted -- `SQLITE_ERROR: no such
+// column: NaN` out of `execute$` (3_runtime.ts).
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("multi-line sh output (one value per line, >1 output column) parses to ONE row, not one row per line", async () => {
+  const decl: HostDecl = {
+    name: "triple",
+    columns: [
+      { name: "id", ty: "text" },
+      { name: "status", ty: "int" },
+      { name: "tag", ty: "text" },
+      { name: "body", ty: "text" },
+    ],
+    template: `printf '200\\n"etag-value"\\nsome body text with several spaced words'`,
+    inputCols: ["id"],
+  };
+  const host = shHost(decl);
+  const rows = await drain(host.run({ id: "x" }));
+  // Pre-fix this was 3 rows (one per line), the middle one holding `status: NaN`
+  // (Number() applied to the tag line's own text, which landed in the status slot).
+  assert.equal(rows.length, 1);
+  assert.deepEqual(rows[0], {
+    id: "x",
+    status: 200,
+    tag: `"etag-value"`,
+    body: "some body text with several spaced words",
+  });
+});
+
+const GHCACHER_SHAPE_DL = `
+rel watch(ep: text).
+watch("test/repo").
+
+rel etag(ep: text, tag: text).
+etag(ep, "") <- watch(ep).
+etag(ep, tag) <- resp(ep, 200, tag, _).
+
+rel poll(ep: text, prev: text).
+poll(ep, prev) <- watch(ep), etag(ep, prev).
+
+sh fetch(ep: text, prev: text, status: int, tag: text, body: text) =
+  \`STATUS=200
+   TAG="etag-stub-abc123"
+   PREV_UNUSED="$prev"
+   FILLER=$(printf '%.0sx' $(seq 1 4000))
+   BODY=$(printf '{"full_name": "%s", "stargazers_count": 44821, "description": "a quoted description with several words", "filler": "%s"}' "$ep" "$FILLER")
+   printf '%s\\n%s\\n%s' "$STATUS" "$TAG" "$BODY"\`.
+
+rel resp(ep: text, status: int, tag: text, body: text).
+resp(ep, status, tag, body) <- poll(ep, prev), fetch?(ep, prev, status, tag, body).
+
+sh extract_stars(body: text, n: text) =
+  \`printf '%s' "$body" | jq -r '.stargazers_count // empty'\`.
+rel stars(ep: text, n: text).
+stars(ep, n) <- resp(ep, 200, _, body), extract_stars?(body, n).
+
+sh extract_full_name(body: text, name: text) =
+  \`printf '%s' "$body" | jq -r '.full_name // empty'\`.
+rel full_name(ep: text, name: text).
+full_name(ep, name) <- resp(ep, 200, _, body), extract_full_name?(body, name).
+
+rel change_log(ep: text, kind: text, val: text).
+change_log(ep, "stars", n) <- stars(ep, n).
+change_log(ep, "full_name", v) <- full_name(ep, v).
+`;
+
+function bridgeGhcacherShapeProgram(): BridgeOk {
+  const bridgeResult = bridge(GHCACHER_SHAPE_DL, builtinRelsForTests());
+  assert.equal(
+    bridgeResult.kind,
+    "ok",
+    bridgeResult.kind === "err" ? bridgeResult.diags.map((diag) => diag.message).join("; ") : undefined,
+  );
+  return bridgeResult as BridgeOk;
+}
+
+test("F7 regression end to end: ghcacher's fetch/resp/stars/full_name/change_log chain lands one real (non-NaN) response and the stream survives past it", async () => {
+  const bridgeOk = bridgeGhcacherShapeProgram();
+  const hosts = bridgeOk.hosts.map(shHost);
+  const fixture = await bootHostRunnerFixture(bridgeOk, hosts);
+  try {
+    const respRows = await waitUntil(async () => {
+      const rows = await fixture.rt.rows("resp");
+      return rows.length > 0 ? rows : undefined;
+    });
+
+    // Exactly one row, not the 3 malformed ones the unfixed parser produced.
+    assert.equal(respRows.length, 1);
+    const respRow = respRows[0]!;
+    assert.equal(respRow.ep, "test/repo");
+    assert.equal(respRow.status, 200);
+    assert.equal(respRow.tag, "etag-stub-abc123");
+    assert.ok(
+      typeof respRow.body === "string" && respRow.body.length > 4000,
+      "body should be the multi-KB JSON payload",
+    );
+    assert.doesNotThrow(() => JSON.parse(String(respRow.body)));
+
+    const starsRows = await waitUntil(async () => {
+      const rows = await fixture.rt.rows("stars");
+      return rows.length > 0 ? rows : undefined;
+    });
+    assert.deepEqual(starsRows, [{ ep: "test/repo", n: "44821" }]);
+
+    const fullNameRows = await waitUntil(async () => {
+      const rows = await fixture.rt.rows("full_name");
+      return rows.length > 0 ? rows : undefined;
+    });
+    assert.deepEqual(fullNameRows, [{ ep: "test/repo", name: "test/repo" }]);
+
+    // change_log's own rows prove the post-response tick(s) reached the whole
+    // derived chain, not just resp -- this is the "post-response tick" receipt.
+    const changeLogRows = await rowsOf(fixture.rt, "change_log");
+    assert.deepEqual(changeLogRows, [
+      { ep: "test/repo", kind: "full_name", val: "test/repo" },
+      { ep: "test/repo", kind: "stars", val: "44821" },
+    ]);
+  } finally {
+    await disposeHostFixture(fixture);
+  }
+});
+
 test("error effect: cache state 'error', no resp rows, stream lives", async () => {
   const dlText = `
 rel bad_result(path: text, out: text).

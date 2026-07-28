@@ -1295,6 +1295,74 @@ sites but not against new code. **missing** = nothing.
   rail (a) lands, verify with lsof on your port after every run, and never
   trust a readiness probe that doesn't check WHOSE pid answered.
 
+## 36. Non-finite number spliced unquoted into SQL text (bare `NaN` reads as a column reference)
+
+- WHAT IT LOOKS LIKE: a commit against a derived-effect rel throws
+  `SQLITE_ERROR: no such column: NaN` (or `Infinity`) out of a generic SQL
+  execution wrapper, with the actual failing statement invisible -- the
+  driver's error object carries no SQL text at all. The message names a
+  "column" that was never declared anywhere in the program, because it isn't
+  a column: it's the literal text of a JS `NaN`/`Infinity` value, string-
+  spliced into a `VALUES(...)` tuple UNQUOTED (`row.join(",")`), which
+  SQLite's parser reads as a bare identifier rather than a number.
+- HOW IT BIT US 2026-07-27 (v6/dl ghcacher expression, F7 finding -> this
+  fix): a `sh` host with more than one OUTPUT-only column, whose template
+  printed one value per LINE (`printf '%s\n%s\n%s' "$status" "$tag" "$body"`,
+  fixtures/ghcacher.dl:52-57's real `fetch` host, mirroring examples/
+  gh-cache.dl's shape), hit `parseWhitespaceColumns` (v6/dl/src/1_hosts.ts),
+  which was built for a DIFFERENT convention (one ROW per LINE, whitespace-
+  split WITHIN each line). For >1 output column that read the same output
+  text backwards: each of the 3 lines became its own malformed "row," and
+  the middle one (built from the TAG line's own text) ran `Number()` over a
+  non-numeric ETag-shaped token that landed, by the parser's positional
+  mapping, in the STATUS slot -- an `int` column. `Number("<etag text>")` is
+  `NaN`, and `typeof NaN === "number"` slipped past `encodeSurfaceRowByColumns`'s
+  existing `typeof value !== "number"` guard (3_runtime.ts) unchanged.
+  `HostRunner.runEffectOnce` (1_hosts.ts:437-525) committed all 3 malformed
+  rows in one batch; `sqlTuple`'s `row.join(",")` (3_runtime.ts) spliced the
+  literal text `NaN` into the INSERT statement, and the tick pipeline died
+  with `SQLITE_ERROR: no such column: NaN` -- fatal by the one-subscribe
+  architecture's own design (main.ts's error handler calls `process.exit(1)`),
+  and the first agent to chase it (ghcacher-findings.md's F7) could not even
+  see the failing statement, since `LibsqlError` carries no SQL text and
+  `execute$` (3_runtime.ts) did not attach any either. Fix: `parseWhitespaceColumns`
+  now reads a line-count-matches-column-count, >1-output-column response as
+  ONE row (line-per-column) instead of one row per line (v6/dl/src/1_hosts.ts);
+  `encodeSurfaceRowByColumns`/`encodeLiteral` (3_runtime.ts) now reject a
+  non-finite number by name (rel + column) before any SQL is built;
+  `execute$` (3_runtime.ts) now attaches the failing statement's own text
+  (truncated) to every thrown error, not just this one.
+- THE LAW: a value that is `typeof "number"` is not thereby safe to splice
+  into SQL text -- `NaN`/`Infinity`/`-Infinity` all pass a bare `typeof` check
+  and all stringify to non-numeric tokens. Any function that ENCODES a value
+  for later string-splice into a SQL statement (not a bound parameter) must
+  reject non-finite numbers explicitly, by name, at the point of encoding --
+  not downstream, where the failure surfaces as an opaque parser error with
+  no trace back to its source. And any generic SQL-execution wrapper shared
+  across a codebase owes its callers the statement text on failure: a driver
+  error with no SQL attached is a self-diagnosis gap by construction
+  (CLAUDE.md's self-diagnosis law), and the first hunt for this exact
+  incident spent a whole session blind because of it.
+- THE RAIL: `encodeSurfaceRowByColumns` and `encodeLiteral` (v6/dl/src/
+  3_runtime.ts) both reject non-finite numbers with a rel+column (or
+  literal-site) named error, before any SQL text exists. `execute$`
+  (v6/dl/src/3_runtime.ts) wraps every statement's failure with the
+  statement's own text (`SQL_ERROR_EXCERPT_LENGTH`-truncated) and the
+  original driver error as `cause`. Fail-pre-fix regression tests in
+  v6/dl/tests/4_hosts.test.ts (the exact ghcacher-shaped multi-line host
+  response -- reproduces the original "3 rows instead of 1, `no such column:
+  NaN`" failure verbatim on the pre-fix parser) and v6/dl/tests/3_runtime.test.ts
+  (the guard's message, and execute$'s SQL-in-error contract).
+- SAY THIS TO AN AGENT: if you are encoding a value for a hand-built SQL
+  string (not a bound parameter), `typeof value === "number"` is not enough
+  -- check `Number.isFinite` too, and name the rel/column in the error. If
+  you own a shared SQL-execution wrapper, attach the failing statement's
+  text to every error it throws; a driver's own error object cannot be
+  trusted to carry it. And if a `sh` host template prints one field per LINE
+  for more than one output column, know that the generic whitespace
+  parser's OTHER convention (one row per line) is not what fires by
+  default -- check which one actually applies before trusting either.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
@@ -1331,6 +1399,7 @@ sites but not against new code. **missing** = nothing.
 | 31 | unbounded daemon logs (launchd redirect + spawn-only cap) | enforced | OS-level `newsyslog.d` complement remains a documented recommendation, not a shipped config |
 | 32 | normalizing a folded composite id onto a lossier decomposition | missing | the sym-dict migration (next chapter) must ship the bijection count-equality gate + per-join parity probe from `plans/2026-07-21-sym-dict-correctness-proof.md`; today only R1 (df in-memory id → `NodeIdx`) landed, mint_sym/lambda_sym still fold `format!` strings |
 | 35 | dev server outlives its spawner | missing | stdin-watch exit in v6 main.ts (parent death closes the pipe) + pid-owns-port assertion in goal-endurance readiness; fail-pre-fix test per the pipeline |
+| 36 | non-finite number spliced unquoted into SQL text | enforced | — (encode-site guard + execute$ SQL-in-error, both v6/dl/src/3_runtime.ts; parseWhitespaceColumns line-per-column fix, v6/dl/src/1_hosts.ts; fail-pre-fix tests in v6/dl/tests/4_hosts.test.ts + tests/3_runtime.test.ts) |
 
 ## How a new rail gets born here
 
