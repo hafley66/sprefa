@@ -15,7 +15,7 @@
 % not a silent guess.
 
 :- module(analyze,
-          [ rel_kind/3, decl_key/3, decl_keep/3,
+          [ rel_kind/3, decl_key/3, decl_keep/3, declared_refs/2,
             program_refs/2, arrival_target_refs/2, derived_refs/2,
             edge_headed_refs/2, level_headed_refs/2,
             rule_head_ref/2, rule_is_edge/1, rule_is_level/1,
@@ -113,6 +113,32 @@ comparison_goal(_ < _). comparison_goal(_ =< _). comparison_goal(_ > _).
 comparison_goal(_ >= _). comparison_goal(_ == _). comparison_goal(_ \== _).
 
 % ═══ program-wide ref inventory ═════════════════════════════════════════════
+% declared_refs/2: every kind(Ref, _) declaration, regardless of whether any
+% rule ever mentions Ref. Sweeping the full fixture corpus (phase C) turned
+% up EDB-only fixtures with an empty Rules list entirely (e.g.
+% engine_core.pl's retention_count_prunes_oldest: `kind(event/1, log),
+% keep(event/1, count(2))`, no rules at all) -- program_refs/2 alone walks
+% only Rules, so a rel that is purely an arrival target with zero readers
+% was silently absent from RelPlans, dropping its DDL/arrival handling from
+% the emitted program entirely (a genuine compiler gap, not a
+% supported-subset refusal: the program "compiled" into something that could
+% never accept its own schedule). compile.pl:program_plan/2 unions this with
+% program_refs/2's rule-derived set.
+
+% A ref can be declared via kind/2, keyed/2, or keep/2 independently -- a
+% fixture may declare ONLY keyed(Ref, Positions) with no kind/2 at all
+% (rel_kind/3's own fallback already handles that: keyed implies Set), and
+% the corpus has a real case with zero rule readers too
+% (scopes.pl:zombie_scope_negative_case_a2b's `keyed(open_pane/2, [1])`,
+% intentionally never read by any rule -- comment: "REJECTED READING
+% dropped on purpose"). Scanning only kind/2 missed it, and its Schedule
+% arrival then hit the emitted program's "arrival for undeclared rel" guard.
+declared_refs(Decls, Refs) :-
+    findall(Ref,
+            ( member(Decl, Decls),
+              ( Decl = kind(Ref, _) ; Decl = keyed(Ref, _) ; Decl = keep(Ref, _) )
+            ), Refs0),
+    sort(Refs0, Refs).
 
 program_refs(Rules, Refs) :-
     findall(Ref,

@@ -1,0 +1,4 @@
+{"tick":1,"deltas":{"demand":{"add":[["src","sha_aaa"]],"del":[]},"watch_request":{"add":[["alice","src","sha_aaa"]],"del":[]}}}
+{"tick":2,"deltas":{"watch_request":{"add":[["bob","src","sha_aaa"]],"del":[]}}}
+{"tick":3,"deltas":{"demand":{"add":[["src","sha_bbb"]],"del":[]},"watch_request":{"add":[["carol","src","sha_bbb"]],"del":[]}}}
+{"tick":4,"deltas":{}}

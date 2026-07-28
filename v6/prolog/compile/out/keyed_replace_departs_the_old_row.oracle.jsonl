@@ -1,0 +1,4 @@
+{"tick":1,"deltas":{"from_poll":{"add":[["cli","v1"]],"del":[]},"latest":{"add":[["cli","v1"]],"del":[]}}}
+{"tick":2,"deltas":{"from_poll":{"add":[["cli","v2"]],"del":[]},"latest":{"add":[["cli","v2"]],"del":[["cli","v1"]]}}}
+{"tick":3,"deltas":{"replaced_value":{"add":[["cli","v1"]],"del":[]}}}
+{"tick":4,"deltas":{}}

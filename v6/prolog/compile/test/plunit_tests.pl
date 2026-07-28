@@ -136,10 +136,14 @@ ddl_for_table(Table, Ddl) :-
     format(atom(Needle), 'CREATE TABLE "~w" (', [Table]),
     sub_atom(Ddl, 0, _, _, Needle).
 
+% InsertSqls is a LIST (one entry per rule clause sharing the head ref --
+% lower.pl:level_statement_group/3, the phase C multi-clause-per-head fix);
+% both fixtures here have exactly one clause per head, so each list is a
+% singleton.
 test(switch_as_keyed_replace_level_sql) :-
     lowered_for(switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    LevelStatements = [levelstmt(demanded/2, DemandedDelete, DemandedInsert), levelstmt(route_view/2, RouteViewDelete, RouteViewInsert)],
+    LevelStatements = [levelstmt(demanded/2, DemandedDelete, [DemandedInsert]), levelstmt(route_view/2, RouteViewDelete, [RouteViewInsert])],
     DemandedDelete == 'DELETE FROM "demanded"',
     DemandedInsert == 'INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_scope" b0',
     RouteViewDelete == 'DELETE FROM "route_view"',
@@ -153,7 +157,7 @@ test(demand_laziness_no_edge_rules) :-
 test(demand_laziness_level_sql) :-
     lowered_for(demand_laziness_effect_rows, Lowered),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    LevelStatements = [levelstmt(demanded/2, _, DemandedInsert), levelstmt(effect_call/1, _, EffectCallInsert)],
+    LevelStatements = [levelstmt(demanded/2, _, [DemandedInsert]), levelstmt(effect_call/1, _, [EffectCallInsert])],
     DemandedInsert == 'INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_feed" b0',
     EffectCallInsert == 'INSERT OR IGNORE INTO "effect_call" ("target") SELECT b0."target" FROM "demanded" b0'.
 

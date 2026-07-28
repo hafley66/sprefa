@@ -1,0 +1,4 @@
+{"tick":1,"deltas":{"kick":{"add":[["go"]],"del":[]},"pulse":{"add":[[1]],"del":[]}}}
+{"tick":2,"deltas":{"pulse":{"add":[[2]],"del":[]}}}
+{"tick":3,"deltas":{"pulse":{"add":[[3]],"del":[]}}}
+{"tick":4,"deltas":{}}

@@ -76,8 +76,15 @@ find_fixture(Stream, Name, Term, Bindings) :-
 program_plan(fixture(Name, Prog, _Initial, _Schedule, _Expectations)-Bindings, Plan) :-
     Prog = prog(Decls, Rules),
     check_supported_subset(Prog),
-    program_refs(Rules, AllRefs),
-    arrival_target_refs(Rules, ArrivalTargets),
+    % Union rule-derived refs with EVERY declared ref (analyze.pl:
+    % declared_refs/2's header comment) -- a kind(Ref, _) decl that no rule
+    % ever mentions is still a real rel a schedule can write, and must still
+    % get a table + arrival handling in the emitted program.
+    program_refs(Rules, RuleRefs),
+    declared_refs(Decls, DeclaredRefs),
+    append(RuleRefs, DeclaredRefs, AllRefs0), sort(AllRefs0, AllRefs),
+    derived_refs(Rules, DerivedRefs),
+    subtract(AllRefs, DerivedRefs, ArrivalTargets),
     findall(relplan(Ref, Kind, Columns, KeyOrNone),
             ( member(Ref, AllRefs),
               rel_kind(Decls, Ref, Kind),

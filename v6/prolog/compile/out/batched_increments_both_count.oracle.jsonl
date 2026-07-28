@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"counter":{"add":[["clicks",2]],"del":[["clicks",0]]},"increment":{"add":[["clicks","ev1"],["clicks","ev2"]],"del":[]}}}
+{"tick":2,"deltas":{}}

@@ -1,0 +1,4 @@
+{"tick":1,"deltas":{"rust_file":{"add":[["src/main.rs"]],"del":[]},"worktree_edit":{"add":[["src/main.rs","sha_a1","rust"]],"del":[]},"worktree_file":{"add":[["src/main.rs","sha_a1","rust"]],"del":[]}}}
+{"tick":2,"deltas":{"worktree_edit":{"add":[["src/main.rs","sha_a2","rust"]],"del":[]},"worktree_file":{"add":[["src/main.rs","sha_a2","rust"]],"del":[["src/main.rs","sha_a1","rust"]]}}}
+{"tick":3,"deltas":{"rust_file":{"add":[],"del":[["src/main.rs"]]},"worktree_edit":{"add":[["src/main.rs","sha_a3","other"]],"del":[]},"worktree_file":{"add":[["src/main.rs","sha_a3","other"]],"del":[["src/main.rs","sha_a2","rust"]]}}}
+{"tick":4,"deltas":{}}

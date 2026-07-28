@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"demand":{"add":[["src","sha_aaa"]],"del":[]},"watch_request":{"add":[["alice","src","sha_aaa"],["bob","src","sha_aaa"]],"del":[]}}}
+{"tick":2,"deltas":{"fill":{"add":[["src","sha_aaa","payload_one"]],"del":[]},"response":{"add":[["src","sha_aaa","payload_one"]],"del":[]}}}
+{"tick":3,"deltas":{}}

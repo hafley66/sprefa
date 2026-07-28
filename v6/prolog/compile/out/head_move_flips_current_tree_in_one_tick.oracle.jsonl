@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"current_tree":{"add":[["src/a.rs","sha_a2"],["src/b.rs","sha_b2"],["src/c.rs","sha_c1"]],"del":[["src/a.rs","sha_a1"],["src/b.rs","sha_b1"]]},"head":{"add":[[1,200]],"del":[[1,100]]},"head_move":{"add":[[1,200]],"del":[]}}}
+{"tick":2,"deltas":{}}

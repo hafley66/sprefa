@@ -1,0 +1,4 @@
+{"tick":1,"deltas":{"mirror":{"add":[["alpha"]],"del":[]},"source_row":{"add":[["alpha"]],"del":[]}}}
+{"tick":2,"deltas":{"mirror":{"add":[],"del":[["alpha"]]},"source_row":{"add":[],"del":[["alpha"]]}}}
+{"tick":3,"deltas":{"closed_at":{"add":[["alpha",3]],"del":[]}}}
+{"tick":4,"deltas":{}}

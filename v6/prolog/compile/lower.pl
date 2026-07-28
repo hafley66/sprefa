@@ -412,10 +412,47 @@ compile_trigger_bound([Arg | Rest], Index, [Arg-Placeholder | MoreBound]) :-
 nth1_list([], _, []).
 nth1_list([Position | Rest], List, [Element | More]) :- nth1(Position, List, Element), nth1_list(Rest, List, More).
 
-% ═══ level rule lowering (unchanged from round 1) ═══════════════════════════
+% ═══ level rule lowering ═════════════════════════════════════════════════════
+% levelstmt(HeadRef, DeleteSql, InsertSqls): InsertSqls is a LIST, one entry
+% per rule clause headed by HeadRef, not one levelstmt per rule -- the phase
+% C sweep found real multi-clause-per-head fixtures (shell_stream.pl's
+% terminal_is_terminal: `stream_status(Args, running) <- ...` and
+% `stream_status(Args, done) <- ...`, two separate clauses unioning into one
+% rel, standard datalog "OR of clauses" semantics engine.pl already
+% implements correctly). The original one-levelstmt-per-RULE shape emitted
+% an unconditional DELETE per clause, so a second clause sharing the same
+% head silently wiped the first clause's just-inserted rows (a genuine
+% lowering bug, not a supported-subset gap -- both clauses individually
+% compile fine, the union was never taken). Grouping ADJACENT same-head
+% rules (strat.pl:sql_rule_order/2 already keeps them adjacent, since a
+% stratum group's topo order is per HEAD REF, and every rule sharing that
+% ref is emitted together) into one DELETE-once-INSERT-per-clause unit fixes
+% it without touching stratification. The common single-clause-per-head case
+% (every fixture before this one) still renders byte-identically: InsertSqls
+% is a singleton list, and emit_ts.pl's recompute_levels_fn_lines/2 flattens
+% [Delete, Insert] the same way whether the list has one entry or several.
 
-level_statement(RelPlans, (Head <- Body), levelstmt(HeadRef, DeleteSql, InsertSql)) :-
-    rel_ref(Head, HeadRef),
+level_statement_groups(RelPlans, RuleOrder, LevelStatements) :-
+    group_adjacent_by_head(RuleOrder, Groups),
+    maplist(level_statement_group(RelPlans), Groups, LevelStatements).
+
+group_adjacent_by_head([], []).
+group_adjacent_by_head([Rule | Rest], [HeadRef-[Rule | SameHeadRest] | MoreGroups]) :-
+    rule_head_ref(Rule, HeadRef),
+    take_same_head(HeadRef, Rest, SameHeadRest, Remaining),
+    group_adjacent_by_head(Remaining, MoreGroups).
+
+take_same_head(HeadRef, [Rule | Rest], [Rule | SameRest], Remaining) :-
+    rule_head_ref(Rule, HeadRef), !,
+    take_same_head(HeadRef, Rest, SameRest, Remaining).
+take_same_head(_, Rules, [], Rules).
+
+level_statement_group(RelPlans, HeadRef-Rules, levelstmt(HeadRef, DeleteSql, InsertSqls)) :-
+    table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
+    format(atom(DeleteSql), 'DELETE FROM ~w', [QuotedHeadTable]),
+    maplist(level_insert_sql(RelPlans, HeadRef), Rules, InsertSqls).
+
+level_insert_sql(RelPlans, HeadRef, (Head <- Body), InsertSql) :-
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     body_ref_uses(Body, Uses),
@@ -435,7 +472,6 @@ level_statement(RelPlans, (Head <- Body), levelstmt(HeadRef, DeleteSql, InsertSq
     ),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
-    format(atom(DeleteSql), 'DELETE FROM ~w', [QuotedHeadTable]),
     format(atom(InsertSql), 'INSERT OR IGNORE INTO ~w (~w) ~w', [QuotedHeadTable, HeadColumnsSql, SelectStatement]).
 
 is_positive_use(use(_, _, pos, _)).
@@ -524,7 +560,7 @@ lower_program(plan(Name, prog(_Decls, _Rules), RelPlans, ArrivalTargets, RuleOrd
     include(arrival_target_relplan(ArrivalTargets), RelPlans, ArrivalRelPlans),
     maplist(arrival_statement, ArrivalRelPlans, ArrivalStatements),
     maplist(edge_statement(RelPlans), EdgeRules, EdgeStatements),
-    maplist(level_statement(RelPlans), RuleOrder, LevelStatements),
+    level_statement_groups(RelPlans, RuleOrder, LevelStatements),
     maplist(delta_statement, RelPlans, DeltaStatements).
 
 arrival_target_relplan(ArrivalTargets, relplan(Ref, _, _, _)) :- memberchk(Ref, ArrivalTargets).

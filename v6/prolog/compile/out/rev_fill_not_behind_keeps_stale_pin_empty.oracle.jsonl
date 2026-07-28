@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"demand_rev":{"add":[[11,"release"]],"del":[]},"pin_want":{"add":[[4,11,"release"]],"del":[]}}}
+{"tick":2,"deltas":{"rev_fill":{"add":[[11,"release",0,2]],"del":[]},"rev_status":{"add":[[11,"release",0,2]],"del":[]}}}
+{"tick":3,"deltas":{}}

@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"doubled":{"add":[["net",60]],"del":[]},"reading":{"add":[["net",30]],"del":[]}}}
+{"tick":2,"deltas":{"doubled":{"add":[],"del":[["cpu",24]]},"reading":{"add":[],"del":[["cpu",12]]}}}

@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"source_ev":{"add":[["alpha"]],"del":[]},"stage_one":{"add":[["alpha"]],"del":[]}}}
+{"tick":2,"deltas":{"stage_two":{"add":[["alpha"]],"del":[]}}}
+{"tick":3,"deltas":{}}

@@ -1,0 +1,5 @@
+{"tick":1,"deltas":{"watch":{"add":[["cli"]],"del":[]}}}
+{"tick":2,"deltas":{"every_300":{"add":[["bucket1"]],"del":[]}}}
+{"tick":3,"deltas":{"demand_row":{"add":[["cli","fresh(tag_w1,body1)"]],"del":[]},"fetch":{"add":[["cli","no_tag","bucket1","fresh(tag_w1,body1)"]],"del":[]}}}
+{"tick":4,"deltas":{"cache":{"add":[["cli","tag_w1"]],"del":[["cli","no_tag"]]}}}
+{"tick":5,"deltas":{}}

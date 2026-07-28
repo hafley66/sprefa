@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"outcome_a":{"add":[["ok(body_one)"]],"del":[]}}}
+{"tick":2,"deltas":{"any_failed":{"add":[[502]],"del":[]},"outcome_b":{"add":[["error(502)"]],"del":[]}}}

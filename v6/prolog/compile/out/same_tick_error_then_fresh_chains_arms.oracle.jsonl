@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"cache":{"add":[["gh_repos","tag_v2","body_two"]],"del":[]},"fetch_result":{"add":[["gh_repos","error(500)"],["gh_repos","fresh(tag_v2,body_two)"]],"del":[]}}}
+{"tick":2,"deltas":{}}

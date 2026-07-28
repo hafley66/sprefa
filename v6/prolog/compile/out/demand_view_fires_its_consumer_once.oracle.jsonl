@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"fetch_call":{"add":[["repos/cli/cli"]],"del":[]},"fetch_demand":{"add":[["repos/cli/cli"]],"del":[]},"stale":{"add":[["repos/cli/cli"]],"del":[]}}}
+{"tick":2,"deltas":{"stale":{"add":[["repos/cli/cli"]],"del":[]}}}

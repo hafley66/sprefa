@@ -21,7 +21,7 @@
 // run-emitted.ts (the reconciliation runner) runs it after DDL and before
 // the tick fold.
 
-import { concatMap, forkJoin, map, type Observable } from "rxjs";
+import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { multisetDiff } from "../runtime/diff.ts";
 import { selectRows } from "../runtime/rows.ts";
@@ -42,6 +42,10 @@ interface IBootStatement {
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+
+function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
+  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
 
 const ddl: readonly string[] = [
   `CREATE TABLE "demanded" ("target" TEXT NOT NULL, "session_id" TEXT NOT NULL, PRIMARY KEY ("target", "session_id")) WITHOUT ROWID`,
@@ -90,9 +94,9 @@ function arrivalStatement(arrival: IArrivalRow): SqlStatement {
     if (template.delSql === null) {
       throw new Error(`demand_laziness_effect_rows: rel '${arrival.rel}' has no delete statement`);
     }
-    return { sql: template.delSql, args: [...arrival.row] };
+    return { sql: template.delSql, args: bindArgs(arrival.row) };
   }
-  return { sql: template.addSql, args: [...arrival.row] };
+  return { sql: template.addSql, args: bindArgs(arrival.row) };
 }
 
 function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {

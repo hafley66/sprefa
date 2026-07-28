@@ -1,0 +1,6 @@
+{"tick":1,"deltas":{}}
+{"tick":2,"deltas":{"end_a_signal":{"add":[["outer_x"],["outer_y"]],"del":[]}}}
+{"tick":3,"deltas":{"closed_inner":{"add":[["outer_x","inner_x"]],"del":[]},"end_c_signal":{"add":[["inner_x"]],"del":[]},"live_inner":{"add":[],"del":[["outer_x","inner_x"]]}}}
+{"tick":4,"deltas":{"closed_outer":{"add":[["outer_x"],["outer_y"]],"del":[]},"end_b_signal":{"add":[["outer_x"],["outer_y"]],"del":[]},"live_inner":{"add":[],"del":[["outer_y","inner_y"]]},"live_outer":{"add":[],"del":[["outer_x"],["outer_y"]]}}}
+{"tick":5,"deltas":{"closed_inner":{"add":[["outer_y","inner_y"]],"del":[]},"end_c_signal":{"add":[["inner_y"]],"del":[]}}}
+{"tick":6,"deltas":{}}

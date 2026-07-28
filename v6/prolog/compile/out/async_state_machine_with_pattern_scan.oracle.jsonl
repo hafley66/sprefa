@@ -1,0 +1,7 @@
+{"tick":1,"deltas":{"fetch_wanted":{"add":[["gh_repos"]],"del":[]},"phase":{"add":[["gh_repos","fetching"]],"del":[["gh_repos","idle"]]},"poll_due":{"add":[["gh_repos"]],"del":[]}}}
+{"tick":2,"deltas":{"cache":{"add":[["gh_repos","tag_v1","body_one"]],"del":[]},"fetch_result":{"add":[["gh_repos","fresh(tag_v1,body_one)"]],"del":[]},"fetch_wanted":{"add":[],"del":[["gh_repos"]]},"phase":{"add":[["gh_repos","idle"]],"del":[["gh_repos","fetching"]]}}}
+{"tick":3,"deltas":{"fetch_wanted":{"add":[["gh_repos"]],"del":[]},"phase":{"add":[["gh_repos","fetching"]],"del":[["gh_repos","idle"]]},"poll_due":{"add":[["gh_repos"]],"del":[]}}}
+{"tick":4,"deltas":{"fetch_result":{"add":[["gh_repos","error(500)"]],"del":[]},"fetch_wanted":{"add":[],"del":[["gh_repos"]]},"phase":{"add":[["gh_repos","idle"]],"del":[["gh_repos","fetching"]]},"retries":{"add":[["gh_repos",1]],"del":[["gh_repos",0]]}}}
+{"tick":5,"deltas":{"fetch_wanted":{"add":[["gh_repos"]],"del":[]},"phase":{"add":[["gh_repos","fetching"]],"del":[["gh_repos","idle"]]},"poll_due":{"add":[["gh_repos"]],"del":[]}}}
+{"tick":6,"deltas":{"fetch_result":{"add":[["gh_repos","error(502)"]],"del":[]},"fetch_wanted":{"add":[],"del":[["gh_repos"]]},"gave_up":{"add":[["gh_repos"]],"del":[]},"phase":{"add":[["gh_repos","idle"]],"del":[["gh_repos","fetching"]]},"retries":{"add":[["gh_repos",2]],"del":[["gh_repos",1]]}}}
+{"tick":7,"deltas":{}}

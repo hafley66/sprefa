@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"dirty":{"add":[["src/lib.rs"]],"del":[]},"worktree_edit":{"add":[["src/lib.rs","sha_v2"]],"del":[]},"worktree_file":{"add":[["src/lib.rs","sha_v2"]],"del":[["src/lib.rs","sha_v1"]]}}}
+{"tick":2,"deltas":{"commit_arrival":{"add":[[101,"src/lib.rs","sha_v2"]],"del":[]},"dirty":{"add":[],"del":[["src/lib.rs"]]},"head":{"add":[[1,101]],"del":[[1,100]]},"head_move":{"add":[[1,101]],"del":[]},"tree_file":{"add":[[101,"src/lib.rs","sha_v2"]],"del":[]}}}
+{"tick":3,"deltas":{}}

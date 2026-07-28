@@ -1,0 +1,5 @@
+{"tick":1,"deltas":{"stars_of":{"add":[["body1",420]],"del":[]},"watch":{"add":[["cli"]],"del":[]}}}
+{"tick":2,"deltas":{"every_300":{"add":[["bucket1"]],"del":[]}}}
+{"tick":3,"deltas":{"demand_row":{"add":[["cli","fresh(tag_w1,body1)"]],"del":[]},"fetch":{"add":[["cli","no_tag","bucket1","fresh(tag_w1,body1)"]],"del":[]}}}
+{"tick":4,"deltas":{"alert":{"add":[["cli",420]],"del":[]}}}
+{"tick":5,"deltas":{}}

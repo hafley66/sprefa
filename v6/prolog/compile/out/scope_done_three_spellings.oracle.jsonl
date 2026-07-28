@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"result_x":{"add":[["fork_one"]],"del":[]}}}
+{"tick":2,"deltas":{"close_signal":{"add":[["panel_one"]],"del":[]},"closed_a":{"add":[["pane_one"]],"del":[]},"closed_b":{"add":[["fork_one"]],"del":[]},"closed_c":{"add":[["panel_one"]],"del":[]},"live_scope_a":{"add":[],"del":[["pane_one","feed_target"]]},"live_scope_b":{"add":[],"del":[["fork_one"]]},"live_scope_c":{"add":[],"del":[["panel_one"]]},"result_y":{"add":[["fork_one"]],"del":[]},"stream_event":{"add":[["feed_target","done"]],"del":[]}}}
+{"tick":3,"deltas":{}}

@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"agent_turn":{"add":[["turn_only",1]],"del":[]},"turn_marker":{"add":[["turn_only"]],"del":[]}}}
+{"tick":2,"deltas":{"change_event":{"add":[["src/new.rs","sha_9",2]],"del":[]},"changed_since":{"add":[["turn_only","src/new.rs"]],"del":[]},"worktree_edit":{"add":[["src/new.rs","sha_9"]],"del":[]}}}
+{"tick":3,"deltas":{}}

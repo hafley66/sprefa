@@ -117,8 +117,8 @@ header_lines(Name, Lines) :-
 
 % ═══ imports ═════════════════════════════════════════════════════════════════
 
-imports_lines(HasEdgeRules,
-    [ RxjsImportLine,
+imports_lines(_HasEdgeRules,
+    [ 'import { concatMap, forkJoin, map, of, type Observable } from "rxjs";',
       '',
       'import { multisetDiff } from "../runtime/diff.ts";',
       'import { selectRows } from "../runtime/rows.ts";',
@@ -132,14 +132,15 @@ imports_lines(HasEdgeRules,
       '  ITickDeltas,',
       '  SqlStatement,',
       '} from "../runtime/types.ts";'
-    ]) :-
-    % `of` is only needed by an edge-rule resolver's forkJoin([]) guard (see
-    % edge_resolver_block/3) -- omitted when the program has none, so
-    % generated code never carries a dead import.
-    ( HasEdgeRules == true
-    -> RxjsImportLine = 'import { concatMap, forkJoin, map, of, type Observable } from "rxjs";'
-    ;  RxjsImportLine = 'import { concatMap, forkJoin, map, type Observable } from "rxjs";'
-    ).
+    ]).
+    % `of` covers two zero-op shapes, not just the edge-rule forkJoin([])
+    % guard it was originally added for: an edge-free tick still needs it for
+    % edge_resolver_block/3's `of([])` when EdgeStatements is nonempty, AND
+    % recompute_levels_fn_lines/2's no-level-rules fallback below needs
+    % `of(undefined)`. Always importing it is simpler than tracking two
+    % independent conditions, and tsconfig.json carries no
+    % noUnusedLocals/noUnusedParameters flag, so an unused import is not a
+    % typecheck error on the (rare) program shape that needs neither.
 
 % ═══ local supporting types ══════════════════════════════════════════════════
 
@@ -150,6 +151,29 @@ local_types_lines(
       '}',
       '',
       'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };'
+    ]).
+
+% ═══ integer bind helper (phase C sweep finding) ═══════════════════════════
+% @libsql/client binds a JS `number` parameter as SQLite REAL, not INTEGER --
+% verified empirically (a bound `1` lands as the TEXT value "1.0" in a
+% TEXT-affinity column, `1n` lands as "1"), a driver behavior, not a bug in
+% any SQL text this compiler emits. Every column here is declared TEXT
+% (lower.pl:column_def/2), so an integer-valued arrival or edge-projected
+% value must cross the driver seam as a bigint to keep its digit-for-digit
+% text form; a genuine fractional number (none in this compiler's corpus
+% today) passes through unchanged. Used everywhere a raw IRow (an arrival's
+% own row, or an edge projection's numbered-placeholder bind) becomes
+% SqlStatement args.
+
+% The return type is NOT `readonly` -- @libsql/client's own `InArgs` is
+% `InValue[]`, a mutable array type, so a `readonly` array here would fail
+% typecheck at every call site despite being correct at runtime (`.map()`
+% already returns a fresh mutable array; the annotation was simply too
+% narrow).
+bind_args_helper_lines(
+    [ 'function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {',
+      '  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));',
+      '}'
     ]).
 
 % ═══ ddl ═════════════════════════════════════════════════════════════════════
@@ -198,7 +222,23 @@ snapshot_field_line(relplan(Ref, _Kind, _Columns, _Key), Line) :-
     ref_name(Ref, Name),
     format(atom(Line), '  readonly ~w: readonly IRow[];', [Name]).
 
+% forkJoin({}) (zero keys) completes WITHOUT emitting, same hazard the
+% edge-resolver's forkJoin([]) guard already documents (verified against
+% rxjs 7.8.2, not assumed) -- a program with zero declared rels (Decls and
+% Rules both empty; every phase-C fixture found so far avoids this via
+% analyze.pl:declared_refs/2, but nothing upstream forbids it structurally)
+% would otherwise stall runTick's very first concatMap forever. `of({})` is
+% the one-value-then-complete fallback, matching recompute_levels_fn_lines/2's
+% [] case just below.
+read_snapshot_fn_lines([], Lines) :- !,
+    Lines =
+    [ 'function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {',
+      '  void seam;',
+      '  return of({} as Snapshot);',
+      '}'
+    ].
 read_snapshot_fn_lines(DeltaStatements, Lines) :-
+    DeltaStatements \== [],
     maplist(snapshot_read_entry_line, DeltaStatements, EntryLines),
     append(
         [ ['function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {', '  return forkJoin({'],
@@ -248,9 +288,9 @@ arrival_statement_fn_lines(Name, Lines) :-
       '    if (template.delSql === null) {',
       NoDeleteError,
       '    }',
-      '    return { sql: template.delSql, args: [...arrival.row] };',
+      '    return { sql: template.delSql, args: bindArgs(arrival.row) };',
       '  }',
-      '  return { sql: template.addSql, args: [...arrival.row] };',
+      '  return { sql: template.addSql, args: bindArgs(arrival.row) };',
       '}',
       '',
       'function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {',
@@ -294,12 +334,18 @@ edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, Proje
     format(atom(SigLine), 'function ~w(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {', [FnName]),
     format(atom(FilterLine), '  const triggerRows = arrivals.filter((arrival) => arrival.rel === "~w" && arrival.sign === "add");', [TriggerName]),
     format(atom(ForkLine),
-           '  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: ~w, args: [...arrival.row] }))).pipe(',
+           '  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: ~w, args: bindArgs(arrival.row) }))).pipe(',
            [ProjectConst]),
     format(atom(RowLine), '        const projectedRow = ~w.map((column) => result.rows[0]![column] as IRowValue) as IRow;', [ColumnsConst]),
     format(atom(KeyLine), '        const key = JSON.stringify(~w.map((index) => projectedRow[index]));', [IndicesConst]),
+    % bindArgs again, not just at the project bind above: the projected
+    % value just read back through result.rows[0] may itself be a plain JS
+    % number (an INTEGER query-result column, not a TEXT one), and this
+    % second bind is the one that actually writes the destination TEXT
+    % column -- the same "number" -> REAL -> "N.0" hazard applies here
+    % independently of the project-side fix.
     format(atom(UpsertMapLine),
-           '      return [...resolved.values()].map((row): SqlStatement => ({ sql: ~w, args: [...row] }));',
+           '      return [...resolved.values()].map((row): SqlStatement => ({ sql: ~w, args: bindArgs(row) }));',
            [UpsertConst]),
     FnLines =
     [ SigLine,
@@ -339,9 +385,29 @@ key_indices(HeadColumns, KeyColumns, Indices) :-
 % matches Phase A's exemplar (`.join(";\n")` in real TS source, same
 % escape). Keeps the emitted const a single source line.
 
+% A program with zero level rules (every fixture whose Rules list is entirely
+% edge rules, or empty outright -- e.g. an EDB-only fixture with no rules at
+% all) still has run_tick_fn_lines call `recomputeLevels(seam)` unconditionally
+% (that call is not itself gated on LevelStatements), so this needs a real
+% zero-op function, not silent failure: `of(undefined)` is the one-void-then-
+% complete shape the async-becomes-rxjs law calls for (EMPTY would complete
+% without emitting, which starves the caller's `.pipe(map(() => before))` of
+% a value and stalls the whole tick chain).
+recompute_levels_fn_lines([], Lines) :- !,
+    Lines =
+    [ 'function recomputeLevels(seam: ISqlSeam): Observable<void> {',
+      '  void seam;',
+      '  return of(undefined);',
+      '}'
+    ].
 recompute_levels_fn_lines(LevelStatements, Lines) :-
     LevelStatements \== [],
-    findall(Sql, ( member(levelstmt(_, DeleteSql, InsertSql), LevelStatements), member(Sql, [DeleteSql, InsertSql]) ), Sqls),
+    % InsertSqls is a LIST (lower.pl:level_statement_group/3 -- one entry per
+    % rule clause sharing this head, so a multi-clause head's rows all
+    % INSERT after exactly one DELETE, never one DELETE per clause); flattens
+    % to the identical [Delete, Insert] sequence as before for the common
+    % single-clause case.
+    findall(Sql, ( member(levelstmt(_, DeleteSql, InsertSqls), LevelStatements), ( Sql = DeleteSql ; member(Sql, InsertSqls) ) ), Sqls),
     atomic_list_concat(Sqls, ';\\n', JoinedSql),
     js_template(JoinedSql, SqlTemplate),
     format(atom(SqlLine), '  const sql = ~w;', [SqlTemplate]),
@@ -459,6 +525,7 @@ emit_program(Name, _Plan, Lowered, BootStatements, Text) :-
     ( EdgeStatements == [] -> HasEdgeRules = false ; HasEdgeRules = true ),
     imports_lines(HasEdgeRules, ImportLines),
     local_types_lines(LocalTypeLines),
+    bind_args_helper_lines(BindArgsHelperLines),
     ddl_lines(Ddl, DdlLines),
     rel_columns_lines(RelPlans, RelColumnsLines),
     arrival_targets_lines(ArrivalTargets, ArrivalTargetsLines),
@@ -476,7 +543,7 @@ emit_program(Name, _Plan, Lowered, BootStatements, Text) :-
     run_tick_fn_lines(Name, EdgeStatements, RunTickFnLines),
     program_export_lines(Name, ProgramExportLines),
     Sections0 =
-    [ HeaderLines, ImportLines, LocalTypeLines, DdlLines, RelColumnsLines, ArrivalTargetsLines,
+    [ HeaderLines, ImportLines, LocalTypeLines, BindArgsHelperLines, DdlLines, RelColumnsLines, ArrivalTargetsLines,
       BootLines, SnapshotTypeLines, ReadSnapshotFnLines,
       ArrivalStatementsLines, ArrivalStatementFnLines,
       EdgeConstLines, EdgeFnLines,

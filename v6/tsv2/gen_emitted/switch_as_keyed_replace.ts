@@ -43,6 +43,10 @@ interface IBootStatement {
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
 
+function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
+  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
+
 const ddl: readonly string[] = [
   `CREATE TABLE "demanded" ("target" TEXT NOT NULL, "session_id" TEXT NOT NULL, PRIMARY KEY ("target", "session_id")) WITHOUT ROWID`,
   `CREATE TABLE "open_scope" ("session_id" TEXT NOT NULL, "target" TEXT NOT NULL, PRIMARY KEY ("session_id")) WITHOUT ROWID`,
@@ -101,9 +105,9 @@ function arrivalStatement(arrival: IArrivalRow): SqlStatement {
     if (template.delSql === null) {
       throw new Error(`switch_as_keyed_replace: rel '${arrival.rel}' has no delete statement`);
     }
-    return { sql: template.delSql, args: [...arrival.row] };
+    return { sql: template.delSql, args: bindArgs(arrival.row) };
   }
-  return { sql: template.addSql, args: [...arrival.row] };
+  return { sql: template.addSql, args: bindArgs(arrival.row) };
 }
 
 function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
@@ -119,7 +123,7 @@ const EDGE_OPEN_SCOPE_KEY_INDICES: readonly number[] = [0];
 function resolveOpenScopeWrites(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
   const triggerRows = arrivals.filter((arrival) => arrival.rel === "route_change" && arrival.sign === "add");
   if (triggerRows.length === 0) return of([]);
-  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_OPEN_SCOPE_PROJECT_SQL, args: [...arrival.row] }))).pipe(
+  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_OPEN_SCOPE_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
     map((results) => {
       const resolved = new Map<string, IRow>();
       for (const result of results) {
@@ -127,7 +131,7 @@ function resolveOpenScopeWrites(seam: ISqlSeam, arrivals: IArrivalBatch): Observ
         const key = JSON.stringify(EDGE_OPEN_SCOPE_KEY_INDICES.map((index) => projectedRow[index]));
         resolved.set(key, projectedRow);
       }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_OPEN_SCOPE_UPSERT_SQL, args: [...row] }));
+      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_OPEN_SCOPE_UPSERT_SQL, args: bindArgs(row) }));
     }),
   );
 }

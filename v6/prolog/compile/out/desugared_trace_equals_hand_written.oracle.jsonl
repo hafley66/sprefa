@@ -1,0 +1,6 @@
+{"tick":1,"deltas":{"cache_tag":{"add":[["cli","no_tag"]],"del":[]},"stars_of":{"add":[["body1",42]],"del":[]},"subscribed_to":{"add":[["alice","cli"],["bob","other"]],"del":[]},"watch":{"add":[["cli"]],"del":[]}}}
+{"tick":2,"deltas":{"every_300":{"add":[["bucket1"]],"del":[]}}}
+{"tick":3,"deltas":{"demand_row":{"add":[["cli","fresh(tag_w1,body1)"]],"del":[]},"fetch":{"add":[["cli","no_tag","bucket1","fresh(tag_w1,body1)"]],"del":[]}}}
+{"tick":4,"deltas":{"folded_row":{"add":[["cli",42]],"del":[]}}}
+{"tick":5,"deltas":{"change_log":{"add":[["cli",42,"alice"]],"del":[]}}}
+{"tick":6,"deltas":{}}

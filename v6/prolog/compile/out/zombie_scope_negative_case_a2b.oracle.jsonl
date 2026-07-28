@@ -1,0 +1,4 @@
+{"tick":1,"deltas":{"demanded":{"add":[["detail(item_a)","pane_one"]],"del":[]},"live_detail":{"add":[["pane_one","detail(item_a)"]],"del":[]},"open_detail":{"add":[["pane_one","item_a"]],"del":[]},"open_pane":{"add":[["pane_one","item_list"]],"del":[]}}}
+{"tick":2,"deltas":{"detail_row":{"add":[["item_a","body_a"]],"del":[]},"detail_view":{"add":[["item_a","body_a"]],"del":[]}}}
+{"tick":3,"deltas":{"open_pane":{"add":[],"del":[["pane_one","item_list"]]}}}
+{"tick":4,"deltas":{"detail_row":{"add":[["item_a","late_body"]],"del":[]},"detail_view":{"add":[["item_a","late_body"]],"del":[]}}}

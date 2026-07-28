@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"ping":{"add":[["alpha"]],"del":[]},"seen_at":{"add":[["alpha",1]],"del":[]}}}
+{"tick":2,"deltas":{"ping":{"add":[["beta"]],"del":[]},"seen_at":{"add":[["beta",2]],"del":[]}}}
+{"tick":3,"deltas":{}}

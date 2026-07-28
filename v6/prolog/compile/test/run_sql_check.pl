@@ -98,7 +98,11 @@ run_ticks(DbFile, ArrivalStatements, EdgeStatements, LevelStatements, DeltaState
     TickDeltaMap = tickdeltas(DeltaResults),
     run_ticks(DbFile, ArrivalStatements, EdgeStatements, LevelStatements, DeltaStatements, RelPlans, RestSchedule, MoreDeltaMaps).
 
-level_sql_pair(levelstmt(_, DeleteSql, InsertSql), [DeleteSql, InsertSql]).
+% InsertSqls is a LIST (lower.pl:level_statement_group/3 -- one entry per
+% rule clause sharing the head ref, the phase C multi-clause-per-head fix);
+% flattens to [Delete, Insert] for the common singleton case, unchanged from
+% before.
+level_sql_pair(levelstmt(_, DeleteSql, InsertSqls), [DeleteSql | InsertSqls]).
 
 % Full-table read per rel, AS RECONSTRUCTED TERMS (not raw rows) -- the
 % multiset diff and the fixture comparison both operate at the term level,

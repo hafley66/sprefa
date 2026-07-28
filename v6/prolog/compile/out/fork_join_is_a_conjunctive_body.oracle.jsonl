@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"result_a":{"add":[["alpha"]],"del":[]}}}
+{"tick":2,"deltas":{}}
+{"tick":3,"deltas":{"combined":{"add":[["alpha","beta"]],"del":[]},"result_b":{"add":[["beta"]],"del":[]}}}

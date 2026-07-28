@@ -1,0 +1,4 @@
+{"tick":1,"deltas":{"demanded":{"add":[["alpha","session_one"]],"del":[]},"open_feed":{"add":[["session_one","alpha"]],"del":[]}}}
+{"tick":2,"deltas":{"demanded":{"add":[],"del":[["alpha","session_one"]]},"open_feed":{"add":[],"del":[["session_one","alpha"]]}}}
+{"tick":3,"deltas":{"cache_row":{"add":[["alpha","orphan_body"]],"del":[]},"fill_arrived":{"add":[["alpha","orphan_body"]],"del":[]}}}
+{"tick":4,"deltas":{"demanded":{"add":[["alpha","session_two"]],"del":[]},"feed_view":{"add":[["alpha","orphan_body"]],"del":[]},"open_feed":{"add":[["session_two","alpha"]],"del":[]}}}

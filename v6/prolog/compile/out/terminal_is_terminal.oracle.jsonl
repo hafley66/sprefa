@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"stream_item":{"add":[["src",1,"alpha"]],"del":[]},"stream_status":{"add":[["src","running"]],"del":[]}}}
+{"tick":2,"deltas":{"stream_item":{"add":[["src",2,"beta"]],"del":[]}}}
+{"tick":3,"deltas":{"stream_end":{"add":[["src","done(0)"]],"del":[]},"stream_status":{"add":[["src","done"]],"del":[["src","running"]]}}}

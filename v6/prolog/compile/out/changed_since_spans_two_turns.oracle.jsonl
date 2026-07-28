@@ -1,0 +1,6 @@
+{"tick":1,"deltas":{"agent_turn":{"add":[["turn_a",1]],"del":[]},"turn_marker":{"add":[["turn_a"]],"del":[]}}}
+{"tick":2,"deltas":{"change_event":{"add":[["src/alpha.rs","sha_1",2]],"del":[]},"changed_since":{"add":[["turn_a","src/alpha.rs"]],"del":[]},"worktree_edit":{"add":[["src/alpha.rs","sha_1"]],"del":[]}}}
+{"tick":3,"deltas":{"change_event":{"add":[["src/beta.rs","sha_2",3]],"del":[]},"changed_since":{"add":[["turn_a","src/beta.rs"]],"del":[]},"worktree_edit":{"add":[["src/beta.rs","sha_2"]],"del":[]}}}
+{"tick":4,"deltas":{"agent_turn":{"add":[["turn_b",4]],"del":[]},"turn_marker":{"add":[["turn_b"]],"del":[]}}}
+{"tick":5,"deltas":{"change_event":{"add":[["src/gamma.rs","sha_3",5]],"del":[]},"changed_since":{"add":[["turn_a","src/gamma.rs"],["turn_b","src/gamma.rs"]],"del":[]},"worktree_edit":{"add":[["src/gamma.rs","sha_3"]],"del":[]}}}
+{"tick":6,"deltas":{}}

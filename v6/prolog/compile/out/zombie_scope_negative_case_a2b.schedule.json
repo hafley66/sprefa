@@ -1,0 +1,1 @@
+[[{"rel":"open_pane","sign":"add","row":["pane_one","item_list"]},{"rel":"open_detail","sign":"add","row":["pane_one","item_a"]}],[{"rel":"detail_row","sign":"add","row":["item_a","body_a"]}],[{"rel":"open_pane","sign":"del","row":["pane_one","item_list"]}],[{"rel":"detail_row","sign":"add","row":["item_a","late_body"]}]]

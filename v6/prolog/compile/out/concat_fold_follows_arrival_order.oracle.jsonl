@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"append_line":{"add":[["main","a"],["main","b"]],"del":[]},"log_text":{"add":[["main","ab"]],"del":[["main",""]]}}}
+{"tick":2,"deltas":{}}

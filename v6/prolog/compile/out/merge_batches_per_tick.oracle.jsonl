@@ -1,0 +1,4 @@
+{"tick":1,"deltas":{"event_a":{"add":[["alpha"]],"del":[]},"out":{"add":[["alpha"]],"del":[]}}}
+{"tick":2,"deltas":{"event_a":{"add":[["gamma"]],"del":[]},"event_b":{"add":[["beta"]],"del":[]},"out":{"add":[["beta"],["gamma"]],"del":[]}}}
+{"tick":3,"deltas":{"event_b":{"add":[["delta"]],"del":[]},"out":{"add":[["delta"]],"del":[]}}}
+{"tick":4,"deltas":{}}

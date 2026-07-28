@@ -1,0 +1,102 @@
+[
+  {
+    "name": "retention_count_prunes_oldest",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "log_without_retention_rejected",
+    "bucket": "no_oracle_log",
+    "detail": "oracle run threw (see oracle_dump.pl ORACLE_THROW output); nothing to diff"
+  },
+  {
+    "name": "log_retraction_rejected",
+    "bucket": "run_error",
+    "detail": "log_retraction_rejected: retract from log rel 'event' (engine.pl retract_from_log)"
+  },
+  {
+    "name": "retraction_only_tick_retracts_level_view",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "head_expression_evaluates_derived_column",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "comparison_filters_rows",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "range_join_over_arithmetic",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "braces_in_head_position",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "log_deltas_follow_arrival_order",
+    "bucket": "wrong",
+    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"line\":{\"add\":[[\"1\",\"a.ts\",\"alpha\"],[\"1\",\"a.ts\",\"beta\"],[\"1\",\"b.ts\",\"gamma\"]],\"del\":[]},\"seen\":{\"add\":[[\"a.ts\"],[\"b.ts\"]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"line\":{\"add\":[[1,\"a.ts\",\"alpha\"],[1,\"a.ts\",\"beta\"],[1,\"b.ts\",\"gamma\"]],\"del\":[]},\"seen\":{\"add\":[[\"a.ts\"],[\"b.ts\"]],\"del\":[]}}}"
+  },
+  {
+    "name": "shuffled_arrival_reorders_log_deltas",
+    "bucket": "wrong",
+    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"line\":{\"add\":[[\"1\",\"a.ts\",\"alpha\"],[\"1\",\"a.ts\",\"beta\"],[\"1\",\"b.ts\",\"gamma\"]],\"del\":[]},\"seen\":{\"add\":[[\"a.ts\"],[\"b.ts\"]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"line\":{\"add\":[[1,\"a.ts\",\"alpha\"],[1,\"a.ts\",\"beta\"],[1,\"b.ts\",\"gamma\"]],\"del\":[]},\"seen\":{\"add\":[[\"a.ts\"],[\"b.ts\"]],\"del\":[]}}}"
+  },
+  {
+    "name": "level_view_reads_set_projection_not_occurrences",
+    "bucket": "wrong",
+    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"line\":{\"add\":[[\"1\",\"a.ts\",\"alpha\"]],\"del\":[]},\"seen\":{\"add\":[[\"a.ts\"]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"line\":{\"add\":[[1,\"a.ts\",\"alpha\"]],\"del\":[]},\"seen\":{\"add\":[[\"a.ts\"]],\"del\":[]}}}"
+  },
+  {
+    "name": "fork_join_is_a_conjunctive_body",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "fork_join_error_arm_is_a_value",
+    "bucket": "run_error",
+    "detail": "SQLITE_ERROR: malformed JSON"
+  },
+  {
+    "name": "switch_as_keyed_replace",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "fill_as_cache_update_swr",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "demand_laziness_effect_rows",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "shared_demand_refcount",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "zombie_scope_negative_case_a2b",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "terminal_is_terminal",
+    "bucket": "wrong",
+    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"stream_item\":{\"add\":[[\"src\",\"1\",\"alpha\"]],\"del\":[]},\"stream_status\":{\"add\":[[\"src\",\"running\"]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"stream_item\":{\"add\":[[\"src\",1,\"alpha\"]],\"del\":[]},\"stream_status\":{\"add\":[[\"src\",\"running\"]],\"del\":[]}}}"
+  },
+  {
+    "name": "live_nonzero_exit_keeps_rows",
+    "bucket": "wrong",
+    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"stream_item\":{\"add\":[[\"src\",\"1\",\"alpha\"]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"stream_item\":{\"add\":[[\"src\",1,\"alpha\"]],\"del\":[]}}}"
+  }
+]

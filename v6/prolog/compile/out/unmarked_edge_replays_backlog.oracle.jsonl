@@ -1,0 +1,4 @@
+{"tick":1,"deltas":{"subscriber":{"add":[["alice"]],"del":[]}}}
+{"tick":2,"deltas":{"change_ev":{"add":[["one"]],"del":[]},"sent":{"add":[["alice","one"]],"del":[]}}}
+{"tick":3,"deltas":{"sent":{"add":[["bob","one"]],"del":[]},"subscriber":{"add":[["bob"]],"del":[]}}}
+{"tick":4,"deltas":{}}

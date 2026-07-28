@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"event_a":{"add":[["alpha"]],"del":[]},"out":{"add":[["alpha"]],"del":[]}}}
+{"tick":2,"deltas":{"event_b":{"add":[["beta"]],"del":[]},"out":{"add":[["beta"]],"del":[]}}}
+{"tick":3,"deltas":{}}

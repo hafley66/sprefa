@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"dirty":{"add":[["src/lib.rs"]],"del":[]},"worktree_edit":{"add":[["src/lib.rs","sha_dirty"]],"del":[]},"worktree_file":{"add":[["src/lib.rs","sha_dirty"]],"del":[["src/lib.rs","sha_clean"]]}}}
+{"tick":2,"deltas":{}}

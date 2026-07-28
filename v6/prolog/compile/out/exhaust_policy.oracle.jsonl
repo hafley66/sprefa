@@ -1,0 +1,5 @@
+{"tick":1,"deltas":{"demanded":{"add":[["tab(tab_a)","session_one"]],"del":[]},"live_tab":{"add":[["session_one","tab_a"]],"del":[]},"open_request":{"add":[["session_one","tab_a"]],"del":[]},"open_tab":{"add":[["session_one","tab_a"]],"del":[]},"tab_view":{"add":[["tab_a","body_a"]],"del":[]}}}
+{"tick":2,"deltas":{"open_request":{"add":[["session_one","tab_b"]],"del":[]}}}
+{"tick":3,"deltas":{"close_request":{"add":[["session_one","tab_a"]],"del":[]},"closed":{"add":[["session_one","tab_a"]],"del":[]},"demanded":{"add":[],"del":[["tab(tab_a)","session_one"]]},"live_tab":{"add":[],"del":[["session_one","tab_a"]]},"tab_view":{"add":[],"del":[["tab_a","body_a"]]}}}
+{"tick":4,"deltas":{"demanded":{"add":[["tab(tab_c)","session_one"]],"del":[]},"live_tab":{"add":[["session_one","tab_c"]],"del":[]},"open_request":{"add":[["session_one","tab_c"]],"del":[]},"open_tab":{"add":[["session_one","tab_c"]],"del":[["session_one","tab_a"]]},"tab_view":{"add":[["tab_c","body_c"]],"del":[]}}}
+{"tick":5,"deltas":{}}
