@@ -100,8 +100,18 @@ the prolog oracle incl a perturbed schedule, import gate green, 6/6 tests,
 conformance 109; emitter-spec margins recorded in the agent report: keyed()
 inert on raw arrivals vs live on edge heads, TEXT-collapse + LIKE compound
 matching, one multiset-diff covers log+set, carryPending simplification
-FINDING 3 in switch gen file). Agents running: tsv2 phase B (prolog
-compiler), F7 NaN-commit crash hunt.
+FINDING 3 in switch gen file). F7 CLOSED (merged, dl 83/83): root cause = multi-line sh output parsed
+row-per-line instead of line-per-column, tag text through Number() = NaN,
+typeof-guard passed NaN, bare NaN spliced into VALUES = "no such column:
+NaN". Fixed: line-per-column parse when line count matches output-column
+count, Number.isFinite rejection naming rel+column pre-SQL, execute$ errors
+now carry the statement text (self-diagnosis gap closed), 4 fail-pre-fix
+regression tests, failure-modes class 36 filed. Post-fix ghcacher marble:
+resp/stars/full_name/change_log all land, stream alive. Agents running:
+tsv2 phase B (prolog compiler), ingest perf attribution (owns 4_ingest +
+trace ingest fields; sub-spans read/extract_wall/fact/diff/commit, then fix
+what the numbers convict; release extract built at extract-golden-plan
+sprefa-extract/target/release/extract for the bin A/B).
 
 **v5 BACKGROUND OPS (overnight 2026-07-27, user asleep)**: daemon swapped to
 current binary (~/.cargo/bin/dl restored from target/release, was missing —
