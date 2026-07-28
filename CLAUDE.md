@@ -655,6 +655,38 @@ conformance 115/0, sweep 34/31/0, roundtrip ALL PASS, plunit 28/28,
 tsv2 6/6 + gate, dl 96/96, store 74/74, ratchet 1/1, endurance END
 GOAL HOLDS. NEXT (user-agreed order): edge-off-derived carry seam,
 then match block sugar.
+HOSTS+EXTRACTION LAB LANDED (merge d7ac6926, lab-death 39f0733d, last
+copy 2199456d, verdict plans/2026-07-29-hosts-extraction-verdict.md;
+coordinator re-ran 41 PASS x2 + conformance 115/0 + roundtrip): term
+inventory for the follow-up wiring arc = sh_decl/4 (EXPLICIT
+input/output split, template edit never silently flips mode),
+probe/4 (salt = plain column, identity vs witness digests split),
+bind_decl/2 (decl authorizes, name links; zero-decl rel-name
+activation REFUSED as the magic-rel hazard; `bind interval(...)`
+selected, `clock` refused by the rx-name law), query/1 (whole rel
+atom retained), ts_query/1 (12/12 tree-sitter query features mapped,
+compiles to exact query text, unknown forms = named refusal),
+sg_pattern/3 (own family; ts_query coercion refused,
+slot_sg_metavariable_semantics). EXTRACTION FORK VERDICT: sg/ast/
+tree-sitter/span take the HOST shape (EDB arrivals content-addressed
+on (file_digest, query_digest), 1 invocation across N rules, feeds
+edge rules as ordinary deltas); decode/json_each stay the
+term-extract precedent. Ambiguities: A12 + A1 RESOLVED (push bind is
+distinct from demand host; glob = host demand column), A4 + A14 stay
+open with named slots. 5 fixture/5 candidates distilled for wiring.
+DL6 DOOR LANDED (merge 9d096dd6, codex luna no-commit flow,
+coordinator re-ran EVERYTHING in the worktree AND
+conformance+roundtrip+text-door on merged main): compile_dl6/2 text
+entry in compile.pl + compile_dl6.sh runner; text_door_receipt.sh =
+34/34 byte-identical term-door vs text-door over the sweep's
+compiled set; hand-written door-handwritten.dl6 (colon types + enum
++ latest + log) tick log byte-identical to the oracle; dl_view +
+v6/dl/fixtures renamed to .dl6 (v5 .dl untouched); vscode grammar
+dl6.tmLanguage.json GENERATED from registry.pl (emit_dl6_grammar/0),
+dl6 language id contributed, extension compiles. Grades: conformance
+115/0, roundtrip ALL PASS, sweep 34/31/0, plunit 28/28, tsv2 6/6 +
+gate. Receipt scratch out/text-door gitignored, stripped from the
+landing.
 
 ### Hands-on findings 2026-07-29 (coordinator wrote+ran a cold program; scratch fixture, receipts in chat)
 - **keyed() on a level-rule head is SILENTLY INERT** (F8/retention-inert
