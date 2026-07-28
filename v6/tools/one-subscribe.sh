@@ -2,22 +2,30 @@
 # Ratchet: exactly one manual rxjs .subscribe() in the app, ever. Target reached
 # 2026-07-27 (standing plan item 3): the one site is dl/src/main.ts.
 #
-# dl/src/0_trace.ts's `sqlChannel.subscribe(...)` / `effectChannel.subscribe(...)` /
-# `ingestChannel.subscribe(...)` (perf-tracing arc, 2026-07-27) are node:diagnostics_channel
-# subscriptions, not rxjs Observable subscriptions -- a different API that happens to
-# share the method name. Excluded by call shape (<name>Channel.subscribe(), the
-# naming convention 0_trace.ts pins for diagnostics_channel handles), so an rxjs
-# .subscribe() added anywhere -- including 0_trace.ts -- still trips the ratchet.
+# dl/src/0_trace.ts's four node:diagnostics_channel handles are subscribed by a
+# different API that happens to share the method name, so they are excluded BY NAME --
+# the four literal handle identifiers, never a `*Channel` wildcard. A wildcard let any
+# rxjs `.subscribe()` on a variable whose name merely ended in "Channel" walk straight
+# through the ratchet (audit 2026-07-28, probe 2). Adding a fifth diagnostics_channel
+# handle means adding its name here, on purpose.
+#
+# The count is also floored at 1: a zero means the scanned path stopped matching any
+# source (a rename, a moved package), which used to read as a silent pass (probe 3).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 BASELINE=1
-sites=$(grep -rn '\.subscribe(' dl/src --include='*.ts' | grep -v 'Channel\.subscribe(' || true)
+TRACE_CHANNEL_HANDLES='(sqlChannel|effectChannel|bindChannel|ingestChannel)\.subscribe\('
+sites=$(grep -rn '\.subscribe(' dl/src --include='*.ts' | grep -Ev "$TRACE_CHANNEL_HANDLES" || true)
 count=$(printf '%s' "$sites" | grep -c . || true)
 printf 'subscribe sites: %s (baseline %s, target 1)\n' "$count" "$BASELINE"
 printf '%s\n' "$sites"
+if [ "$count" -lt 1 ]; then
+  printf 'FAIL: zero subscribe sites found -- main.ts should hold exactly one. The scan\n' >&2
+  printf '      path (dl/src) most likely stopped matching any source.\n' >&2
+  exit 2
+fi
 if [ "$count" -gt "$BASELINE" ]; then
   printf 'FAIL: a new manual subscription landed. Compose it into main.ts instead.\n' >&2
   exit 2
 fi
-[ "$count" -eq 1 ] && printf 'target reached; lower BASELINE to 1 in this script.\n'
 exit 0

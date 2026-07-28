@@ -4,8 +4,10 @@
  * gen/*.ts program over an arrival schedule, prints the shared tick-log
  * envelope to stdout, one line per tick.
  *
- * The one manual `.subscribe()` in this app (repo law: exactly one per app;
- * tsv2 is its own small app here, not a second subscribe inside v6/dl).
+ * The one manual `.subscribe()` in THIS script. Each tsv2 script (run-fixture,
+ * run-emitted, sweep) is its own one-shot CLI entry point with its own single
+ * terminal subscription; none of them is a second subscribe inside v6/dl, whose
+ * ratchet (v6/tools/one-subscribe.sh) scans dl/src only.
  *
  * Usage: node --experimental-transform-types scripts/run-fixture.ts <name>
  * where <name> is a key of REGISTRY below.

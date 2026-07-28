@@ -198,7 +198,7 @@ interface TickBuffer {
 }
 
 const buffers = new Map<number, TickBuffer>();
-/** First wall-clock touch of each tick, across all three seams, independent of
+/** First wall-clock touch of each tick, across all four seams, independent of
  *  whether that seam's event ever gets folded (so wall_ms reflects real elapsed
  *  time even for a tick a subscriber only starts seeing partway through). */
 const tickFirstSeenAt = new Map<number, number>();
