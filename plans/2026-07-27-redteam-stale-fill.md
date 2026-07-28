@@ -4,6 +4,13 @@ Target: `plans/2026-07-27-switch-flow.md` section 8 + ambiguity 4, whose positio
 is "admit the row, scope the view". Feeds `rulings.pl`'s PROVISIONAL
 `stale_fill_policy` row.
 
+Probes: `v6/prolog/labs/redteam_stale.pl` (21 checks), DELETED per lab protocol;
+last copy at commit 559702fc, recover via
+`git show 559702fc:v6/prolog/labs/redteam_stale.pl`.
+Both hot code claims re-verified against the merged tree 2026-07-27 late PM:
+1_hosts.ts:387 (inserts-only filter, no abort path) and :497 vs :502 (commit and
+cache-done UPDATE are two unlinked awaits; kill between = store-once, world-twice).
+
 Probes: `v6/prolog/labs/redteam_stale.pl`, **21 checks, all PASS**, swipl 10.0.2.
 Run `swipl -q -l v6/prolog/labs/redteam_stale.pl -g go -g halt`; `-g report`
 prints every scenario's store and world ledger under all 3 policies x 2 salt modes.
