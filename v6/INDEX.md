@@ -49,7 +49,7 @@
 | [plans/2026-07-25-sql-builder-build-vs-buy.md](plans/2026-07-25-sql-builder-build-vs-buy.md) | 322 | SQL query-builder / templating: build-vs-buy for `lowerSql.ts` |
 | [prolog/LANG.md](prolog/LANG.md) | 95 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
 | [prolog/compile/PIPELINE.md](prolog/compile/PIPELINE.md) | 153 | The tsv2 compiler pipeline, stage by stage |
-| [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 580 | TSV2 Phase C scoreboard |
+| [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 592 | TSV2 Phase C scoreboard |
 | [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 130 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
@@ -730,10 +730,10 @@
 ```
 1:# TSV2 Phase C scoreboard
 15:## Totals (current)
-46:## Per-fixture table: compiled (30)
-91:## Per-construct blocked tally (UNSUPPORTED, ranked) — post PHASE C2 RULING 2
-122:## Widening / fix history (chronological, each transition measured)
-339:## Findings
+57:## Per-fixture table: compiled (31)
+103:## Per-construct blocked tally (UNSUPPORTED, ranked) — post PHASE C2 RULING 2
+134:## Widening / fix history (chronological, each transition measured)
+351:## Findings
 ```
 
 ### prolog/compile/SYNTAX.md

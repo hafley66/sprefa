@@ -234,3 +234,37 @@ fixture(demand_view_fires_its_consumer_once,
     final(fetch_call/1, [ fetch_call('repos/cli/cli') ]),
     final(stale/1, [ stale('repos/cli/cli'), stale('repos/cli/cli') ]),
     ticks(2) ]).
+
+% ═══ the same row value stacks WITHIN one tick AND ACROSS ticks ═════════════
+% Not a lab promotion (owner: 2026-07-28 cleanup audit, finding F8): the tsv2
+% Phase A hand-carved oracle corpus (tickLoop.test.ts's two hand-carved
+% programs, demand_laziness_effect_rows/switch_as_keyed_replace, both from
+% scopes.pl) never puts a byte-identical row on a Log rel twice, so a
+% multiset-diff regression there (the multiplicity loop collapsing to a
+% single push, turning Log-append into Set-dedup) leaves every one of those
+% oracle tests green; only tsv2/tests/diff.test.ts's one unit case on
+% runtime/diff.ts's multisetDiff caught it directly.
+%
+% This fixture combines the two occurrence shapes this file otherwise grades
+% separately: identical_increments_stack_as_log_deltas covers WITHIN one tick
+% (3 identical rows, one batch); level_view_reads_set_projection_not_occurrences
+% covers ACROSS ticks (1 identical row, 2 ticks). Here `heard/1` gets the SAME
+% row twice in tick 1's own batch AND a third time in tick 2 -- both shapes at
+% once, on a rel a downstream unmarked single-atom edge trigger also reads
+% (`heard_count/1`, the set_dedups_log_stacks idiom from engine_core.pl), so
+% two independently-diffed Log rels carry the occurrence count across the
+% tsv2 sweep's byte-for-byte tick-log grade, not just one.
+
+fixture(log_stacks_within_tick_and_across_ticks,
+  prog([ kind(heard/1, log), keep(heard/1, all),
+         kind(heard_count/1, log), keep(heard_count/1, all) ],
+       [ (heard_count(Item) <+ heard(Item)) ]),
+  [],
+  [ [ +heard(alpha), +heard(alpha) ],
+    [ +heard(alpha) ] ],
+  [ deltas(heard/1, [ [ +heard(alpha), +heard(alpha) ], [ +heard(alpha) ], [] ]),
+    deltas(heard_count/1, [ [ +heard_count(alpha), +heard_count(alpha) ],
+                            [ +heard_count(alpha) ], [] ]),
+    final(heard/1, [ heard(alpha), heard(alpha), heard(alpha) ]),
+    final(heard_count/1, [ heard_count(alpha), heard_count(alpha), heard_count(alpha) ]),
+    ticks(3) ]).

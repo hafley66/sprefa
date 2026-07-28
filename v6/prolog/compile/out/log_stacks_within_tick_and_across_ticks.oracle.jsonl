@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"heard":{"add":[["alpha"],["alpha"]],"del":[]},"heard_count":{"add":[["alpha"],["alpha"]],"del":[]}}}
+{"tick":2,"deltas":{"heard":{"add":[["alpha"]],"del":[]},"heard_count":{"add":[["alpha"]],"del":[]}}}
+{"tick":3,"deltas":{}}

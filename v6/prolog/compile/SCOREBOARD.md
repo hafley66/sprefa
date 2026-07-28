@@ -16,17 +16,28 @@ excerpt per compiled fixture).
 
 | bucket | count |
 |---|---|
-| fixtures swept | 109 |
+| fixtures swept | 110 |
 | UNSUPPORTED (compiler refuses, named construct) | 79 |
-| compiled (lowering + emission succeeded) | 30 |
-| — of which IDENTICAL (tick log byte-identical to oracle) | 27 |
+| compiled (lowering + emission succeeded) | 31 |
+| — of which IDENTICAL (tick log byte-identical to oracle) | 28 |
 | — of which WRONG (diff, crash, or silent gap vs oracle) | 3 |
 
-IDENTICAL + WRONG + UNSUPPORTED = 27 + 3 + 79 = 109.
+IDENTICAL + WRONG + UNSUPPORTED = 28 + 3 + 79 = 110.
 
-Two of the 27 IDENTICAL rows are **vacuous passes**, not verified correctness
-— see Findings 1 and 2. Read as "27 nominal, 25 genuinely exercised and
+Two of the 28 IDENTICAL rows are **vacuous passes**, not verified correctness
+— see Findings 1 and 2. Read as "28 nominal, 26 genuinely exercised and
 correct."
+
+**F8 fixture added (2026-07-28 cleanup audit, not a ruling)**:
+`log_stacks_within_tick_and_across_ticks` (`occurrence_identity.pl`) — the
+tsv2 Phase A hand-carved oracle corpus (tickLoop.test.ts) never put a
+byte-identical row on a Log rel twice, so a multiset-diff regression
+(`runtime/diff.ts`'s multiplicity loop collapsing to a single push) was
+invisible to that corpus end to end; only `tsv2/tests/diff.test.ts`'s unit
+case caught it. This fixture compiles clean and lands IDENTICAL, exercising
+the same regression through the sweep's byte-for-byte grade on TWO Log rels
+(a direct one and an edge-triggered derived one) at once: `fixtures swept`
+109 -> 110, `compiled` 30 -> 31, `IDENTICAL` 27 -> 28.
 
 **PHASE C2 RULING 1 (typed columns) landed** (commit `tsv2 C2a`): the 5
 int-vs-string WRONGs Finding 3 documented are now IDENTICAL — see the
@@ -43,7 +54,7 @@ fixtures now REACH those checks since their earlier-in-program unmarked
 edge rule no longer blocks them first — not new gaps, existing ones now
 visible under a precise name instead of a blanket `edge_body_shape`).
 
-## Per-fixture table: compiled (30)
+## Per-fixture table: compiled (31)
 
 | fixture | file | run bucket | cause |
 |---|---|---|---|
@@ -59,6 +70,7 @@ visible under a precise name instead of a blanket `edge_body_shape`).
 | log_deltas_follow_arrival_order | occurrence_identity.pl | IDENTICAL | PHASE C2 RULING 1 (typed columns) — `line/3`'s `stream_id`-equivalent column is now INTEGER; was WRONG (`"1"` vs `1`), see Finding 3 |
 | shuffled_arrival_reorders_log_deltas | occurrence_identity.pl | IDENTICAL | same fix as above |
 | level_view_reads_set_projection_not_occurrences | occurrence_identity.pl | IDENTICAL | same fix as above |
+| log_stacks_within_tick_and_across_ticks | occurrence_identity.pl | IDENTICAL | F8 (2026-07-28 cleanup audit): a Log rel's SAME row value stacking both within one tick's batch (2x) and again across a later tick (1x more), on a direct Log rel AND an edge-triggered derived Log rel at once — the first fixture in the corpus to put a byte-identical row on a Log rel twice inside the sweep's own byte-for-byte grade |
 | terminal_is_terminal | shell_stream.pl | IDENTICAL | same fix as above (multi-clause-per-head union already correct — Finding 4b — the residual diff was purely the integer-representation gap, now closed) |
 | live_nonzero_exit_keeps_rows | shell_stream.pl | IDENTICAL | same fix as above |
 | unmarked_edge_replays_backlog | engine_core.pl | IDENTICAL | PHASE C2 RULING 2 flagship case: 2-atom unmarked body (`change_ev(Item), subscriber(Client)`), each atom its own trigger arm joined against the other's current table — see Finding 7's resolution and the widening history entry 5 |
