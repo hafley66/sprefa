@@ -89,8 +89,8 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    head: selectRows(seam, `SELECT CASE WHEN json_valid("repo_id") AND json_type("repo_id") = 'object' THEN json_extract("repo_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("repo_id", '$.args')) || ')' ELSE "repo_id" END AS "repo_id", CASE WHEN json_valid("rev_id") AND json_type("rev_id") = 'object' THEN json_extract("rev_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("rev_id", '$.args')) || ')' ELSE "rev_id" END AS "rev_id" FROM "head"`, relColumns.head!),
-    head_move: selectRows(seam, `SELECT CASE WHEN json_valid("repo_id") AND json_type("repo_id") = 'object' THEN json_extract("repo_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("repo_id", '$.args')) || ')' ELSE "repo_id" END AS "repo_id", CASE WHEN json_valid("rev_id") AND json_type("rev_id") = 'object' THEN json_extract("rev_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("rev_id", '$.args')) || ')' ELSE "rev_id" END AS "rev_id" FROM "head_move"`, relColumns.head_move!),
+    head: selectRows(seam, `SELECT "repo_id", "rev_id" FROM "head"`, relColumns.head!),
+    head_move: selectRows(seam, `SELECT "repo_id", "rev_id" FROM "head_move"`, relColumns.head_move!),
   });
 }
 
