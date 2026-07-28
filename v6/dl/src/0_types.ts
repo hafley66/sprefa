@@ -482,6 +482,18 @@ export interface IPerfTrace {
   /** Closes out `tick`'s last open statement (the one with no "next" trace() call to
    *  diff against). Call once, after the traced evaluation settles. */
   finishSqlTrace(tick: number): void;
+  /** Publishes the exact SQL text a statement is about to run onto the SAME
+   *  `sprefa:sql` channel as `sqlTraceFor` above, but untethered from any tick (no
+   *  `ms`, no open/close bookkeeping, never folded into a `PerfTickLine` -- the
+   *  tick-keyed aggregator ignores any message with no numeric `tick`, so this never
+   *  pollutes a real DL_PERF_LOG JSONL line). Test-only observability seam (F1): the
+   *  ONE place in 3_runtime.ts every SQL statement passes through (`execute$`) calls
+   *  this unconditionally, so a test subscribing to `PERF_CHANNEL_NAMES.sql` directly
+   *  (0_trace.ts's file header: diagnostics_channel is a process-global registry, no
+   *  DL_PERF_LOG/installFromEnv needed) sees the exact statement text ANY 3_runtime.ts
+   *  read or write ran -- e.g. proving `rowsForPath` compiles a WHERE-scoped SELECT
+   *  against `relbase_<rel>`, never an unscoped `SELECT * FROM rel_<rel>`. */
+  rawSql(sql: string): void;
   /** One finished host effect (1_hosts.ts, HostRunner.runEffectOnce). */
   effectDone(tick: number, host: string, effectId: number, ms: number, status: "done" | "cache_hit" | "error"): void;
   /** One finished bind commit (1_binds.ts, BindRunner.commitOnce) -- the input-side

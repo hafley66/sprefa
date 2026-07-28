@@ -182,6 +182,15 @@ function finishSqlTrace(tick: number): void {
   closeOpenStatement(tick, performance.now());
 }
 
+/** Untethered from any tick: no `ms`, no open/close bookkeeping, and (see
+ *  onSqlMessage above) invisible to the tick-keyed aggregator. See IPerfTrace's
+ *  doc comment (0_types.ts) for why this exists and why it is safe to call from
+ *  every statement 3_runtime.ts runs, unconditionally. */
+function rawSql(sql: string): void {
+  if (!sqlChannel.hasSubscribers) return;
+  sqlChannel.publish({ sql } satisfies Pick<SqlEvent, "sql">);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-tick aggregation buffer. Populated ONLY by the subscriber functions below,
 // which are attached to the channels only while DL_PERF_LOG is set — so this map
@@ -217,6 +226,10 @@ function bufferFor(tick: number): TickBuffer {
 
 function onSqlMessage(message: unknown): void {
   const event = message as SqlEvent;
+  // rawSql (F1's test-observability seam, below) publishes on this SAME channel with
+  // no `tick` at all -- ignore anything that isn't a real tick-keyed SqlEvent so a raw
+  // publish never mints a phantom buffer entry that no real tick ever flushes.
+  if (typeof event.tick !== "number") return;
   const buffer = bufferFor(event.tick);
   buffer.stmtCount += 1;
   buffer.stmtMsTotal += event.ms;
@@ -387,6 +400,7 @@ export const PerfTrace: IPerfTrace = {
   uninstall,
   sqlTraceFor,
   finishSqlTrace,
+  rawSql,
   effectDone,
   bindDone,
   ingestDone,

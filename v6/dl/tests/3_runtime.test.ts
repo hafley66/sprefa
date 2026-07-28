@@ -9,8 +9,28 @@
  * tests could not have been written before the swap — boot() threw on a recursive
  * stratum — and the literal test is the rail for `internProgramForStorage` (bypass it
  * and that test alone goes red, verified 2026-07-25).
+ *
+ * F1 SABOTAGE RECEIPT (2026-07-28 cleanup audit): the pre-existing "rowsForPath ==
+ * rows().filter(path)" test asserts a SET-EQUALITY property that the O(n^2) shape the
+ * ingest-perf arc removed (selectAll + a JS .filter) ALSO satisfies -- the audit's own
+ * probe reverted rowsForPath$ to exactly that shape and every 3_runtime/4_ingest test
+ * stayed green. The new "F1: rowsForPath compiles a WHERE-scoped SELECT..." test
+ * instead watches the SQL TEXT over the sql trace seam (0_trace.ts's `rawSql`,
+ * PERF_CHANNEL_NAMES.sql — a channel a test may subscribe to directly, independent of
+ * DL_PERF_LOG/installFromEnv, per diagnostics_channel's process-global-registry
+ * design). Probe run in this worktree: swapped rowsForPath$'s body for
+ * `selectAll(...).pipe(map(rows => rows.filter(row => row.path === path)))` (the exact
+ * shape the audit used) -- the F1 test went RED, captured statement
+ * `SELECT path,kind FROM rel_node` (no WHERE, the unscoped decode view). Restored the
+ * real `selectByColumn` body -- F1 test green again, statement
+ * `SELECT path,kind FROM relbase_node WHERE path = <id>`. rawSql is a NEW seam (F1's
+ * own addition, 0_trace.ts + 0_types.ts's IPerfTrace): every SQL statement
+ * 3_runtime.ts's `execute$` runs now also publishes its raw text on `sprefa:sql` with
+ * no `tick`, which `onSqlMessage`'s tick-keyed aggregator explicitly ignores (hardened
+ * in the same change) so this can never pollute a real DL_PERF_LOG JSONL line.
  */
 import assert from "node:assert/strict";
+import diagnostics_channel from "node:diagnostics_channel";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -21,6 +41,7 @@ import { firstValueFrom } from "rxjs";
 import { open_db } from "sprefa-store-engine/src/engine/lib.ts";
 
 import { diffDerivedRel, DlRuntime, execute$ } from "../src/3_runtime.ts";
+import { PERF_CHANNEL_NAMES } from "../src/0_trace.ts";
 import type { DeltaEvent } from "../tasks.d.ts";
 import {
   bootFixture,
@@ -248,6 +269,50 @@ test("rowsForPath throws when the rel has no `path` column", async () => {
   const { rt, dbPath } = await bootParentFixture();
   try {
     await assert.rejects(() => rt.rowsForPath("parent", "a.ts"), /no column 'path'/);
+  } finally {
+    await rt.dispose();
+    cleanupDbFile(dbPath);
+  }
+});
+
+// F1 (audit finding): the previous test proves a SET-EQUALITY property that the exact
+// O(n^2) shape the perf arc removed (selectAll + a JS filter) also has -- reverting
+// rowsForPath$ to that shape left every 3_runtime/4_ingest test green (the audit's own
+// probe). This test instead watches the SQL TEXT rowsForPath actually runs, over the
+// sql trace seam (0_trace.ts's rawSql, PERF_CHANNEL_NAMES.sql): a WHERE-scoped read
+// against relbase_<rel> is a different, discriminating string from an unscoped
+// `rel_<rel>` decode-view scan. Sabotage receipt in this file's header docblock.
+test("F1: rowsForPath compiles a WHERE-scoped SELECT against relbase_<rel>, never an unscoped whole-table scan", async () => {
+  const { rt, dbPath } = await bootFixture(singleEdbRelProgram("node", ["path", "kind"]));
+  const sqlChannel = diagnostics_channel.channel(PERF_CHANNEL_NAMES.sql);
+  try {
+    await rt.commit(
+      edbBatch({
+        node: [
+          { path: "a.ts", kind: "call" },
+          { path: "b.ts", kind: "call" },
+        ],
+      }),
+    );
+
+    const statements: string[] = [];
+    const listener = (message: unknown): void => {
+      const { sql } = message as { sql?: unknown };
+      if (typeof sql === "string") statements.push(sql);
+    };
+    sqlChannel.subscribe(listener);
+    try {
+      await rt.rowsForPath("node", "a.ts");
+    } finally {
+      sqlChannel.unsubscribe(listener);
+    }
+
+    assert.equal(statements.length, 1, `expected exactly one SQL statement, saw ${statements.length}: ${statements.join(" | ")}`);
+    assert.match(statements[0]!, /FROM relbase_node WHERE path = \d+/);
+    assert.ok(
+      !/FROM rel_node\b/.test(statements[0]!),
+      `rowsForPath must not read through the unscoped rel_<rel> decode view; saw: ${statements[0]}`,
+    );
   } finally {
     await rt.dispose();
     cleanupDbFile(dbPath);

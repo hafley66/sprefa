@@ -313,7 +313,14 @@ const SQL_ERROR_EXCERPT_LENGTH = 800;
  *  original failure chained as `cause` so nothing about the underlying driver error is
  *  lost. */
 export const execute$ = (db: Db, sql: string): Observable<QueryResult> =>
-  defer(() => from(db.execute(sql))).pipe(
+  defer(() => {
+    // Test-observability seam (F1, 0_trace.ts's rawSql doc comment): every SQL
+    // statement 3_runtime.ts runs passes through here, so this is the one place that
+    // can make the executed text visible to a test subscribing to the sql channel --
+    // near-free when nothing subscribes (diagnostics_channel's hasSubscribers guard).
+    PerfTrace.rawSql(sql);
+    return from(db.execute(sql));
+  }).pipe(
     catchError((failure: unknown) => {
       const excerpt = sql.length > SQL_ERROR_EXCERPT_LENGTH ? `${sql.slice(0, SQL_ERROR_EXCERPT_LENGTH)}…` : sql;
       const detail = failure instanceof Error ? failure.message : String(failure);
