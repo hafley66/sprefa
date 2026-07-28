@@ -85,7 +85,16 @@ rolled execute$). FIRST PARITY NUMBER, ugly and now visible: ingest_corpus
 over 251 rxjs .ts files = ~103s (~2.4 files/s) vs v5's 7,244 files/s; the
 harness's per-file rt.rows() full-table read is superlinear and suspect, but
 extract_ms is only ~21ms/file so engine-side cost dominates — the perf JSONL
-now exists to decompose this. TSV2 PHASE A LANDED (v6/tsv2: IGenProgram seam,
+now exists to decompose this. DECOMPOSED (overnight, 60-file pinned corpus,
+DL_PERF_LOG): wall 4977ms = engine ticks 366ms (~6ms/file, 19 stmts/tick,
+growing 4.4 -> 9.4ms as tables fill) + extract stream 438ms + subprocess
+spawn ~0.6-1s + ~3s UNATTRIBUTED inside ingestFile (toFactLines, span_line
+byte scan, diff reads — needs finer spans, wait for F7 merge since that
+agent owns 4_ingest.ts). ALSO: DL_EXTRACT_BIN default is a DEBUG build in
+the stale extract-golden-plan worktree (4_ingest.ts:93) — the banked
+hardcoded-path soft spot is now a measured perf item; a release build +
+in-tree path is the obvious first win. Endurance re-proven 3/3 on the
+merged main tree (PORT=17311). TSV2 PHASE A LANDED (v6/tsv2: IGenProgram seam,
 generic tickLoop via rxjs expand, 2 hand-carved gen files BYTE-IDENTICAL to
 the prolog oracle incl a perturbed schedule, import gate green, 6/6 tests,
 conformance 109; emitter-spec margins recorded in the agent report: keyed()
