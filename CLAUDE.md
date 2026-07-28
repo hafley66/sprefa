@@ -85,9 +85,31 @@ rolled execute$). FIRST PARITY NUMBER, ugly and now visible: ingest_corpus
 over 251 rxjs .ts files = ~103s (~2.4 files/s) vs v5's 7,244 files/s; the
 harness's per-file rt.rows() full-table read is superlinear and suspect, but
 extract_ms is only ~21ms/file so engine-side cost dominates — the perf JSONL
-now exists to decompose this. Agents running: tsv2 phase A (runtime + hand
-exemplar), tsv2 phase B (prolog compiler), F7 NaN-commit crash hunt
-(fail-pre-fix test + execute$ error must carry SQL text + class 36 entry).
+now exists to decompose this. TSV2 PHASE A LANDED (v6/tsv2: IGenProgram seam,
+generic tickLoop via rxjs expand, 2 hand-carved gen files BYTE-IDENTICAL to
+the prolog oracle incl a perturbed schedule, import gate green, 6/6 tests,
+conformance 109; emitter-spec margins recorded in the agent report: keyed()
+inert on raw arrivals vs live on edge heads, TEXT-collapse + LIKE compound
+matching, one multiset-diff covers log+set, carryPending simplification
+FINDING 3 in switch gen file). Agents running: tsv2 phase B (prolog
+compiler), F7 NaN-commit crash hunt.
+
+**v5 BACKGROUND OPS (overnight 2026-07-27, user asleep)**: daemon swapped to
+current binary (~/.cargo/bin/dl restored from target/release, was missing —
+plist pointed at nothing while dl.old-1301 held the socket since Sunday);
+launchd plist gained EnvironmentVariables PATH (homebrew+cargo) because every
+sh effect exit-127'd under launchd's bare PATH — the doc-gen trigger then
+fired and its output is committed (f76b7c10). Roots watched: sprefa (.dl/*.dl
+rails + flow-interproc loaded), smashy, instant. CROSS-REPO IS LIVE:
+~/orgs/.dl/{go-deps,xrepo-rev}.dl run against SPREFA_CONFIG=~/orgs/
+all.config.toml (800 repos) settles in 3 ticks with real fan-in/rev-fan rows
+(79 hubs). MORNING DECISION: the daemon runs the safe selfv5-only global
+config; watching the orgs root persistently needs either a daemon-level
+SPREFA_CONFIG (puts 800 repos under EVERY wildcard rail — the safe-default
+comment warns against exactly this), a per-root config feature, or a cron
+one-shot. Health also showed: sprefa root db regrew to 4.3GB (lazy-rel-tier
+decision pending), 4 orphan roots incl one minted TODAY (class-14 rail may
+have a gap — worth a look).
 gen-index.sh now excludes node_modules (INDEX.md was flip-flopping 1714 lines).
 ARCH covers/2 rows for scopes.pl landed (departure_form fixture-covered,
 uncovered 10 -> 9, map re-emitted). failure-modes class 35 filed (dangling dev
