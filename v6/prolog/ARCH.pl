@@ -153,7 +153,15 @@ algorithm(mode_analysis,   static_subs, monotone_fixpoint, 'plans/2026-07-27-mod
 % ^ was fold: the mode lattice lab found the graph cyclic (poll -> fetch ->
 %   cache -> cache_tag -> poll), so the fold iterates to a least fixpoint.
 algorithm(sql_emit,        ast,         rewrite,           'books/v6/algos/lower_sql.pl').
-algorithm(ts_emit,         ast,         rewrite,           'src/emit_ts.pl (literal TS onto the engine-v1 seam)').
+algorithm(ts_emit,         ast,         rewrite,           'src/emit_ts.pl (engine-v1 seam experiment; superseded by the tsv2 rows below)').
+
+% tsv2 (2026-07-27 reorientation): prolog owns the WHOLE compiler front;
+% stages documented with worked example in compile/PIPELINE.md.
+algorithm(tsv2_analyze,    ast,         fold,              'compile/analyze.pl (column mining from variable identity, supported-subset gate)').
+algorithm(tsv2_strata,     strata,      monotone_fixpoint, 'compile/strat.pl (mirrors engine relax_strata; Kahn once-per-tick order)').
+algorithm(tsv2_lower,      ast,         rewrite,           'compile/lower.pl (lowered/8 target-neutral plan: SQL text + structure, zero TS idiom)').
+algorithm(tsv2_ts_emit,    ast,         rewrite,           'compile/emit_ts.pl (backend #1 over lowered/8; emit_rust.pl plugs the same plan via compile_fixture/4)').
+algorithm(tsv2_surface_dcg, ast,        rewrite,           'compile/parse_dl.pl + print_dl.pl (phase D, in flight: DCG is the CANONICAL parser; langium was stopgap)').
 
 % ── prior art: the user's own tools and what each feeds v6 ──────────────────
 % prior_art(Name, Path, Feeds, Gift). The anti-forgetting ledger (user
@@ -193,7 +201,7 @@ capability(codegen_typegen,    'hafley-tsp + json-rx lineage',                  
 % ── tech roles: who is allowed to do what ───────────────────────────────────
 
 tech(prolog, compiler_tier, [parse_via_ops, desugar, check, weave, emit],
-     'never runs fixpoints at scale; bundled with the eventual rust binary').
+     'never runs fixpoints at scale; bundled with the eventual rust binary. CANONICAL parser (user 2026-07-28: langium/0_generated in v6/dl was a stopgap; the phase D DCG supersedes it, dl.langium stays a spelling reference only)').
 tech(sqlite, fact_tier, [facts, fixpoints, registers, history, sub_graph, pending_delays],
      'everything diskable; the only tier allowed to hold a full relation').
 tech(rxjs, temporal_tier, [yield_points, alignment_ops, spawn, one_subscribe],
@@ -470,7 +478,7 @@ task(causality_check,     labbed,  []).
 task(envelope_types,      labbed,  []).                  % enum_match
 task(demand_clocking,     labbed,  [kernel_sql_lowering]).
 task(clock_inference,     parked,  [clock_check]).       % swap ground clocks for holes; user-parked 2026-07-27
-task(surface_dcg,         unbuilt, [desugar_machinery]). % rust-ish grammar -> kernel facts (sample approved)
+task(surface_dcg,         in_flight, [desugar_machinery, tsv2_pipeline]). % phase D parser agent (contract: plans/2026-07-28-tsv2-phase-d-parser-header.md): parse_dl.pl DCG + print_dl.pl + dl_view/ renderings; DCG becomes the CANONICAL parser, round-trip variant grade over the full fixture corpus
 task(mode_lab,            labbed,  []).                  % plans/2026-07-27-mode-lattice.md: lifetime = free distributive lattice over end-signals; scope_min=OR join_max=AND; 80/80 at 2fff3f61
 task(sub_forest,          closed,  []).                  % RULED minimal kernel (rulings.pl subscription_kernel): zero stored rels; forest superseded by coverage check + ghost view. History: plans/2026-07-27-{sub-forest,switch-flow,redteam-minimal-kernel}.md
 task(scope_cover_check,   unbuilt, [mode_lab]).          % obligation 1 of subscription_kernel ruling: scope-key column-flow check (mode-lattice machinery); refuses zombie-scope rules (redteam A2b)
@@ -483,8 +491,12 @@ task(island_partition,    unbuilt, [purity_split, clock_check]).
 task(rw_sets,             unbuilt, [purity_split]).
 task(pushdown_optimizer,  unbuilt, [island_partition, rw_sets]).
 task(thread_schedule,     unbuilt, [rw_sets]).
-task(emit_ts_direct,      done,    [kernel_sql_lowering]). % src/emit_ts.pl -> ast.ts helpers, swi-emit bench row
-task(js_conformance_leg,  unbuilt, [emit_ts_direct]).      % run the conformance fixture corpus against the js engine + rxjs residue; per-tick deltas as the marble oracle; RXJS FIRST law
+task(emit_ts_direct,      done,    [kernel_sql_lowering]). % src/emit_ts.pl -> ast.ts helpers, swi-emit bench row (experiment; superseded by tsv2_pipeline)
+task(tsv2_pipeline,       done,    [emit_ts_direct, desugar_machinery]). % compile/{compile,analyze,strat,lower,emit_ts}.pl: phases A+B reconciled 3/3 byte-identical to the oracle on the A runtime; stages doc = compile/PIPELINE.md
+task(js_conformance_leg,  done,    [tsv2_pipeline]).       % LANDED as the phase C sweep: 109 fixtures graded by tick-log byte diff vs ticklog.pl oracle; compile/SCOREBOARD.md 9 identical / 8 wrong / 92 unsupported at sweep time; the marble-oracle idea made real
+task(tsv2_typed_columns,  in_flight, [tsv2_pipeline]).     % C2 agent, ruling 2026-07-28: int decls -> INTEGER storage, compounds stay inline-flat (nested/reference model BANKED as future header); flips the 5 typing WRONGs
+task(tsv2_unmarked_trigger, in_flight, [tsv2_pipeline]).   % C2 agent, ruling 2026-07-28: any-body-atom occurrence model (NOT whole-world), only() = opt-in restriction; unblocks up to 48 fixtures
+task(clock_bind,          in_flight, []).                  % binds agent, ruling clock_residency = world_fed_bind_not_construct: IBindDef registry (input twin of HostDef) + clock_period rows -> interval per period in the cold app graph; dissolves ghcacher F2 at zero construct cost
 task(sub_graph_disk,      unbuilt, [emit_ts_direct]).
 task(count_ivm_port,      unbuilt, [kernel_sql_lowering]).
 task(cost_model,          unbuilt, [pushdown_optimizer]). % perf rows feed plan choice
