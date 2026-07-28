@@ -107,11 +107,23 @@ NaN". Fixed: line-per-column parse when line count matches output-column
 count, Number.isFinite rejection naming rel+column pre-SQL, execute$ errors
 now carry the statement text (self-diagnosis gap closed), 4 fail-pre-fix
 regression tests, failure-modes class 36 filed. Post-fix ghcacher marble:
-resp/stars/full_name/change_log all land, stream alive. Agents running:
-tsv2 phase B (prolog compiler), ingest perf attribution (owns 4_ingest +
-trace ingest fields; sub-spans read/extract_wall/fact/diff/commit, then fix
-what the numbers convict; release extract built at extract-golden-plan
-sprefa-extract/target/release/extract for the bin A/B).
+resp/stars/full_name/change_log all land, stream alive.
+PERF ARC RESULTS (overnight): attribution sub-spans landed
+(read/extract_wall/fact/diff/commit); diff_ms was 77-81% of wall and O(n^2)
+(unscoped SELECT through the correlated-subquery decode view, JS path
+filter); FIXED via rowsForPath (WHERE on the interned path id against the
+UNIQUE(path,...) index; promoted onto IDlRuntime by the coordinator, no
+instanceof fallback). Receipts: diff_ms 3676 -> 16ms flat, 13.3 -> 74.2
+files/s with the release extract bin (overall 2.4 -> 74.2 across the arc).
+NEXT DOMINANT COST: commit_ms ~10.8ms/file (the store commit path), next
+perf target, unassigned. v5 yardstick 7,244 files/s, distance now ~98x.
+TSV2 RECONCILIATION: phase B merged (target-neutral plan term per the rust
+directive, SQL-check 8/8 vs fixture expectations, 15/15 plunit); first
+cross-run caught 4 emitted seam-shape misses (the clean typecheck was
+vacuous until run-emitted.ts imported the drafts; gen_emitted/ now
+quarantined from the type graph, drafts load via computed dynamic import,
+package green). Emitter ROUND 2 in flight (backend-only fix expected; a
+forced plan-term change would be a finding against the split).
 
 **v5 BACKGROUND OPS (overnight 2026-07-27, user asleep)**: daemon swapped to
 current binary (~/.cargo/bin/dl restored from target/release, was missing —
