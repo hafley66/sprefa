@@ -201,9 +201,30 @@ positive), sabotage receipts red->green recorded in test headers; ~14s of
 real test sleep removed. Two tests deliberately stay real-time (bucketFor
 reads Date.now for VALUES; virtual firings inside one wall second would
 collapse buckets). Endurance-as-gate still
-ungated (open). MATCH LIFECYCLE ARMS: MVP semantics presented (materialize
-framing, next/finalize arms, drain-tick timing, transition rule win);
-awaiting user read before header lands.
+ungated (open). MATCH FRONTIER LAB LANDED 2026-07-28 PM (merge aeba1b72, 63 PASS, lab
+deleted per protocol, last copy 5ba7b0c5, verdict =
+plans/2026-07-28-match-frontier-lab-verdict.md): event axis HOLDS, four
+cracks: Ta (DISSOLVES into pending rel, confirmed by tick-log diff both
+ways — primitive Ta's log depends on an engine delivery choice, encoding
+has no knob; rides the any-body-atom ruling), flagship transition rule
+(C2 crack: loses N-1 of N intra-tick transitions, count depends on
+scheduler batching), not() in +> arms (unstratified + arrival-order
+dependent, silently), lifecycle arms over Log rels (statically dead,
+retention prunes with no delta). C7 = REAL ENGINE DEFECT beyond design:
+the Ti carry set is not durable in either implementation, crash loses
+pending firings (endurance-law violation, unassigned). Slots: SPILL =
+error-at-cap never spill; TA-MARK = no marker; NEST = not forced;
+LEVEL-ARMS refuted-as-posed (engine already refuses; real restriction is
+one-rel-one-rule-kind on heads); COMPLETE candidate = finalize(scope_row)
+w/ groupBy duration selector; new open: SUGAR-SCOPE, UPDATE-ARM. Syntax
+rec ordering: (1) Ta spells nothing; (2) SQL trigger family
+inserted/deleted + OLD/NEW beats next/finalize (AFTER UPDATE gives both
+in one body, kills the two-arm cut question); (3) drop mirrored -> (taken
+twice, silent term-form absorption, conflicts q8 ruling), keep <-;
+(4) +> optional sugar; (5) block word partition/groupBy over match;
+(6) never => or | in term form. Rx directness 24 DIRECT / 1 vacuous /
+7 ENCODED / 2 IMPOSSIBLE (Tn occurrences; incremental min/max over
+retractable set). ALL AWAITING USER RULINGS.
 gen-index.sh now excludes node_modules (INDEX.md was flip-flopping 1714 lines).
 ARCH covers/2 rows for scopes.pl landed (departure_form fixture-covered,
 uncovered 10 -> 9, map re-emitted). failure-modes class 35 filed (dangling dev
