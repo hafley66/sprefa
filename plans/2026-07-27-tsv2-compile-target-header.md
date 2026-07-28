@@ -77,6 +77,34 @@ the compiler's ready-made test suite.
   writes through its own committed SQL); real programs from the stopping
   point.
 
+## ADDENDUM (user, same night: "get the prolog compiler compilering") — A and B run CONCURRENTLY
+
+Phase B starts now, not after A. To keep the two agents' shapes compatible the
+coordinator pins the seam both code against:
+
+```ts
+// runtime/types.ts — the generated-program seam (coordinator-pinned; extend by
+// adding fields, never by renaming these)
+interface IGenProgram {
+  name: string;
+  ddl: string[];                          // CREATE TABLE ..., run once at boot
+  relColumns: Record<string, string[]>;   // declared column order, drives log rows
+  arrivalTargets: string[];               // EDB rels a schedule may write
+  tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas>;
+  // tick's BODY lives in the generated file: visible SQL strings + visible rx.
+}
+```
+
+- Phase A's runtime folds a schedule over IGenProgram and emits the envelope;
+  its hand-written gen/*.ts conform to this seam.
+- Phase B (v6/prolog/compile/) emits modules conforming to the same seam into
+  its OWN draft dir (compile/out/), never phase A's gen/.
+- Grade relaxed for B v0: oracle-LOG identity when its output runs on phase A's
+  runtime at reconciliation (coordinator merges both, runs the cross product).
+  BYTE-identity between emitter output and the hand exemplar moves to the
+  phase C entry bar; whichever side reads better wins the formatting argument,
+  user taste decides ties.
+
 ## Named slots
 
 - SLOT-TERMFORM: phase A-C consume the fixture term form (prog(Decls, Rules))
