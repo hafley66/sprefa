@@ -27,6 +27,10 @@
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
 :- use_module('../conformance/body', [rel_ref/2]).
+:- use_module(registry,
+              [ surface_for_term/6,
+                body_surface_for_term/6
+              ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -85,29 +89,24 @@ derived_refs(Rules, Refs) :-
 body_ref_uses((Left, Right), Uses) :- !,
     body_ref_uses(Left, LeftUses), body_ref_uses(Right, RightUses),
     append(LeftUses, RightUses, Uses).
-body_ref_uses(finalize(Atom), [use(Ref, Args, pos, trigger)]) :- !,
-    atom_ref_args(Atom, Ref, Args).
-body_ref_uses(latest(Atom), [use(Ref, Args, pos, sampled)]) :- !,
-    atom_ref_args(Atom, Ref, Args).
-body_ref_uses(next(Atom), Uses) :- !,
-    body_ref_uses(Atom, Uses).
 body_ref_uses(Term, Uses) :-
-    compound(Term), Term =.. [combine | [First | Rest]], !,
-    body_ref_uses_list([First | Rest], Uses).
-body_ref_uses(pre(Atom), [use(Ref, Args, pos, sampled)]) :- !,
-    atom_ref_args(Atom, Ref, Args).
-body_ref_uses(not(Goal), Uses) :- !,
-    body_ref_uses(Goal, InnerUses),
-    maplist(flip_to_neg, InnerUses, Uses).
-body_ref_uses(true, []) :- !.
-body_ref_uses(now(_), []) :- !.
-body_ref_uses(_ := _, []) :- !.
-body_ref_uses(_ is _, []) :- !.
-body_ref_uses(decode(_, _), []) :- !.
-body_ref_uses(json_each(_, _), []) :- !.
-body_ref_uses(Goal, []) :- comparison_goal(Goal), !.
+    body_surface_for_term(Term, _, _, AnalyzeRole, _, _), !,
+    analyze_role_uses(AnalyzeRole, Term, Uses).
 body_ref_uses(Atom, [use(Ref, Args, pos, trigger)]) :-
     atom_ref_args(Atom, Ref, Args).
+
+analyze_role_uses(refs_of_arg(Index, Sign, Marking), Term,
+                  [use(Ref, Args, Sign, Marking)]) :-
+    arg(Index, Term, Atom),
+    atom_ref_args(Atom, Ref, Args).
+analyze_role_uses(splice_bare, Term, Uses) :-
+    Term =.. [_ | Bodies],
+    body_ref_uses_list(Bodies, Uses).
+analyze_role_uses(arm(neg), Term, Uses) :-
+    arg(1, Term, Goal),
+    body_ref_uses(Goal, InnerUses),
+    maplist(flip_to_neg, InnerUses, Uses).
+analyze_role_uses(no_refs, _, []).
 
 flip_to_neg(use(Ref, Args, _, Marked), use(Ref, Args, neg, Marked)).
 
@@ -118,8 +117,9 @@ body_ref_uses_list([Body | Rest], Uses) :-
 
 atom_ref_args(Atom, Ref, Args) :- rel_ref(Atom, Ref), Atom =.. [_ | Args].
 
-comparison_goal(_ < _). comparison_goal(_ =< _). comparison_goal(_ > _).
-comparison_goal(_ >= _). comparison_goal(_ == _). comparison_goal(_ \== _).
+comparison_goal(Goal) :-
+    body_surface_for_term(Goal, _, guard, no_refs,
+                          infix(refuse(comparison)), refused).
 
 % ═══ program-wide ref inventory ═════════════════════════════════════════════
 % declared_refs/2: every kind(Ref, _) declaration, regardless of whether any
@@ -277,26 +277,46 @@ column_source_args(_Rules, _Initial, Schedule, Ref, Args) :-
 % Everything else names the SPECIFIC blocking construct instead of a
 % blanket edge_body_shape reason, so the scoreboard's per-construct tally
 % stays precise as this widens further.
-edge_trigger_shape(Body, unsupported(edge_body_with_latest(Body))) :-
-    conjunction_goals(Body, Goals), member(latest(_), Goals), !.
-edge_trigger_shape(finalize(Atom), unsupported(edge_body_needs_finalize(finalize(Atom)))) :- !.
-edge_trigger_shape(Body, unmarked_conjunction(Atoms)) :-
-    conjunction_goals(Body, Goals),
-    \+ member(latest(_), Goals),
-    maplist(plain_positive_atom, Goals),
-    !, Atoms = Goals.
 edge_trigger_shape(Body, unsupported(Reason)) :-
     conjunction_goals(Body, Goals),
-    ( member(latest(_), Goals) -> Reason = edge_body_with_latest(Body)
-    ; member(G1, Goals), G1 = finalize(_) -> Reason = edge_body_needs_finalize(Body)
-    ; member(G2, Goals), G2 = pre(_) -> Reason = edge_body_needs_pre(Body)
-    ; member(G3, Goals), G3 = now(_) -> Reason = edge_body_needs_now(Body)
-    ; member(G4, Goals), G4 = not(_) -> Reason = edge_body_needs_negation(Body)
-    ; member(G5, Goals), ( G5 = (_ := _) ; G5 = (_ is _) ) -> Reason = edge_body_needs_bind(Body)
-    ; member(G6, Goals), comparison_goal(G6) -> Reason = edge_body_needs_comparison(Body)
-    ; member(G7, Goals), ( G7 = decode(_, _) ; G7 = json_each(_, _) ) -> Reason = edge_body_needs_json_destructure(Body)
-    ; Reason = edge_body_shape(Body)
-    ).
+    edge_registered_refusal(Body, Goals, Reason), !.
+edge_trigger_shape(Body, unmarked_conjunction(Atoms)) :-
+    conjunction_goals(Body, Goals),
+    maplist(plain_positive_atom, Goals),
+    !, Atoms = Goals.
+edge_trigger_shape(Body, unsupported(edge_body_shape(Body))).
+
+edge_registered_refusal(Body, Goals, Reason) :-
+    findall(Priority-Candidate,
+            ( member(Goal, Goals),
+              edge_goal_refusal(Goal, Body, Priority, Candidate)
+            ),
+            Candidates),
+    keysort(Candidates, [_-Reason | _]).
+
+edge_goal_refusal(Goal, Body, 1, edge_body_with_latest(Body)) :-
+    body_surface_for_term(Goal, _, sample, refs_of_arg(_, pos, sampled),
+                          wrapper(rel_atom, lower), live).
+edge_goal_refusal(Goal, Body, 2, edge_body_needs_finalize(Body)) :-
+    body_surface_for_term(Goal, _, time, refs_of_arg(_, pos, trigger),
+                          wrapper(rel_atom, refuse(goal)), refused).
+edge_goal_refusal(Goal, Body, 3, edge_body_needs_pre(Body)) :-
+    body_surface_for_term(Goal, _, sample, refs_of_arg(_, pos, sampled),
+                          wrapper(rel_atom, refuse(goal)), refused).
+edge_goal_refusal(Goal, Body, 4, edge_body_needs_now(Body)) :-
+    body_surface_for_term(Goal, _, time, no_refs,
+                          wrapper(expr, refuse(goal)), refused).
+edge_goal_refusal(Goal, Body, 5, edge_body_needs_negation(Body)) :-
+    body_surface_for_term(Goal, _, sign, arm(neg),
+                          wrapper(body_item, lower), live).
+edge_goal_refusal(Goal, Body, 6, edge_body_needs_bind(Body)) :-
+    body_surface_for_term(Goal, _, bind, no_refs, infix(refuse(goal)), refused).
+edge_goal_refusal(Goal, Body, 7, edge_body_needs_comparison(Body)) :-
+    body_surface_for_term(Goal, _, guard, no_refs,
+                          infix(refuse(comparison)), refused).
+edge_goal_refusal(Goal, Body, 8, edge_body_needs_json_destructure(Body)) :-
+    body_surface_for_term(Goal, _, guard, no_refs,
+                          wrapper(expr_pair, refuse(goal)), refused).
 
 conjunction_goals((Left, Right), Goals) :- !,
     conjunction_goals(Left, LeftGoals), conjunction_goals(Right, RightGoals),
@@ -309,11 +329,7 @@ conjunction_goals(Goal, [Goal]).
 
 plain_positive_atom(Goal) :-
     compound(Goal),
-    Goal \= latest(_), Goal \= finalize(_), Goal \= zip(_, _),
-    Goal \= unsubscribe(_), Goal \= complete(_), Goal \= subscribe(_), Goal \= error(_),
-    Goal \= pre(_), Goal \= now(_), Goal \= not(_),
-    Goal \= (_ := _), Goal \= (_ is _), Goal \= decode(_, _), Goal \= json_each(_, _),
-    \+ comparison_goal(Goal).
+    \+ body_surface_for_term(Goal, _, _, _, _, _).
 
 % Trigger refs a shape can fire from -- used by the same-key conflict-risk
 % check below. marked_single fires from exactly one ref; unmarked_conjunction
@@ -374,7 +390,7 @@ check_edge_head_column_types_for_rule(RelPlans, (Head <+ Body)) :-
 % target fixtures need them; lower.pl has no SQL shape for them yet).
 
 check_supported_subset(prog(Decls, Rules)) :-
-    forall(( member(Rule, Rules), rule_is_edge(Rule), edge_reserved_construct(Rule, Construct) ),
+    forall(( member(Rule, Rules), rule_reserved_construct(Rule, Construct) ),
            throw(unsupported_construct(Construct))),
     forall(( member(Rule, Rules), rule_is_edge(Rule) ), check_edge_rule_shape(Rule)),
     forall(( member(Rule, Rules), rule_is_level(Rule) ), check_level_rule_shape(Rule)),
@@ -395,21 +411,21 @@ check_edge_rule_shape((Head <+ Body)) :-
     -> throw(unsupported_construct(head_arithmetic(Head, ArithExpr)))
     ; true ).
 
-edge_reserved_construct((_Head <+ Body), Construct) :-
+rule_reserved_construct(Rule, Construct) :-
+    rule_body(Rule, Body),
     reserved_construct_in_body(Body, Construct).
 
 reserved_construct_in_body((Left, Right), Construct) :- !,
     ( reserved_construct_in_body(Left, Construct)
     ; reserved_construct_in_body(Right, Construct)
     ).
-reserved_construct_in_body(zip(_, _), zip) :- !.
-reserved_construct_in_body(Term, lifecycle_arm(Name)) :-
-    Term =.. [Name, _], lifecycle_arm_name(Name), !.
+reserved_construct_in_body(Term, Construct) :-
+    body_surface_for_term(Term, Functor/_, _, _, LowerRole, reserved),
+    reserved_construct_name(LowerRole, Functor, Construct).
 
-lifecycle_arm_name(unsubscribe).
-lifecycle_arm_name(complete).
-lifecycle_arm_name(subscribe).
-lifecycle_arm_name(error).
+reserved_construct_name(wrapper(_, refuse(lifecycle)), Functor,
+                        lifecycle_arm(Functor)) :- !.
+reserved_construct_name(_, Functor, Functor).
 
 % A trigger firing off a DERIVED ref (edge-headed OR level-headed --
 % analyze.pl:derived_refs/2 unions both) is a genuine gap in BOTH shapes,
@@ -493,8 +509,9 @@ check_level_rule_shape((Head <- Body)) :-
 
 aggregate_head_shape(Head) :-
     Head =.. [_ | Args],
-    member(Arg, Args), nonvar(Arg), Arg =.. [Kind | _],
-    memberchk(Kind, [count, sum, min, max, json_array, json_object]).
+    member(Arg, Args),
+    surface_for_term(Arg, _, aggregate, no_refs,
+                     head(refuse(aggregate)), refused).
 
 % compile_head_expr (lower.pl) renders EVERY compound head argument as a
 % json1 "construct a tagged term" expression (json_object('fn', Functor,
@@ -523,11 +540,6 @@ contains_arithmetic_functor(Arg, Found) :-
 
 body_forbidden_goal((Left, Right), Forbidden) :- !,
     ( body_forbidden_goal(Left, Forbidden) ; body_forbidden_goal(Right, Forbidden) ).
-body_forbidden_goal(pre(Atom), pre(Atom)) :- !.
-body_forbidden_goal(now(Tick), now(Tick)) :- !.
-body_forbidden_goal(decode(Expr, Pattern), decode(Expr, Pattern)) :- !.
-body_forbidden_goal(json_each(Expr, Elem), json_each(Expr, Elem)) :- !.
-body_forbidden_goal(finalize(Atom), finalize(Atom)) :- !.
 % Comparison operators (body_ref_uses/2 already returns zero Uses for these
 % -- comparison_goal/1 -- meaning nothing downstream ever compiled them into
 % a WHERE clause; a level rule that filters on one silently lost the filter)
@@ -540,11 +552,10 @@ body_forbidden_goal(finalize(Atom), finalize(Atom)) :- !.
 % range_join_over_arithmetic, bind_computes_derived_value_then_comparison_filters);
 % refusing them cleanly until real lowering lands, rather than leaving the
 % silent-drop behavior.
-body_forbidden_goal(Left < Right, comparison(Left < Right)) :- !.
-body_forbidden_goal(Left =< Right, comparison(Left =< Right)) :- !.
-body_forbidden_goal(Left > Right, comparison(Left > Right)) :- !.
-body_forbidden_goal(Left >= Right, comparison(Left >= Right)) :- !.
-body_forbidden_goal(Left == Right, comparison(Left == Right)) :- !.
-body_forbidden_goal(Left \== Right, comparison(Left \== Right)) :- !.
-body_forbidden_goal(Var := Expr, bind(Var := Expr)) :- !.
-body_forbidden_goal(Var is Expr, bind(Var is Expr)) :- !.
+body_forbidden_goal(Term, Forbidden) :-
+    body_surface_for_term(Term, _, _, _, LowerRole, refused),
+    refused_goal_term(LowerRole, Term, Forbidden).
+
+refused_goal_term(infix(refuse(comparison)), Term, comparison(Term)) :- !.
+refused_goal_term(infix(refuse(goal)), Term, bind(Term)) :- !.
+refused_goal_term(wrapper(_, refuse(goal)), Term, Term).
