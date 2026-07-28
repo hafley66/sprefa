@@ -59,7 +59,18 @@ file keeps only the standing laws + currently-open work.
 ## v5 Work — open items only (landed detail: .agent/memories/sprefa-task-ledger.md)
 
 ### In flight
-(none. The 2026-07-19 AM wave is CONFIRMED LANDED on main, verified 2026-07-27:
+**v5-port + perf-tracing arc** (2026-07-27 late, plans/2026-07-27-v5-port-perf-header.md):
+scopes fixtures LANDED (conformance 97 -> 109, merged d481159e); opus diff review
+LANDED (plans/2026-07-27-diff-review-findings.md — finding 1 double-fire = USER
+ACCEPTED no-fix, 2+3 http fixes dispatched, rest banked); SLOT-LIB filled
+(tracingChannel + pino, user approved the pino dep,
+plans/2026-07-27-perf-tracing-buy-verdict.md). Agents running: ghcacher v6
+expression (worktree sonnet), P0 tracing spine (worktree sonnet), http fixes
+2+3 (worktree sonnet). gen-index.sh now excludes node_modules (INDEX.md was
+flip-flopping 1714 lines). Queued coordinator edits: ARCH covers/2 rows for
+scopes.pl (departure_form now fixture-covered, 10 uncovered -> 9) + map re-emit.
+
+(v5 side: none. The 2026-07-19 AM wave is CONFIRMED LANDED on main, verified 2026-07-27:
 src/eventlog.rs event trail + `dl daemon events`; `dl daemon health`
 (src/cli/health.rs); class-14 rail (`hook::refuse_worktree_cold_check` +
 tests/it/worktree_cold_check.rs); storage diet (a). `next` is 0 ahead / 244
@@ -67,7 +78,7 @@ behind main — nothing lives there. The 2026-07-18 wave landed in full earlier.
 Detail for both: .agent/memories/sprefa-task-ledger.md. Receipts still live
 from that wave: named_call_site is 61MB serving one join each,
 inline-vs-keep = user call; .dl/rails.dl:62-64 still uses `p`/`l` and owes the
-descriptive-name rename.)
+descriptive-name rename.))
 
 ### Blocked on user word
 - [ ] **drop the orphaned `rel_port_of_reach` table + VACUUM** (one rewrite, not two): daemon stopped, `DROP VIEW IF EXISTS rel_port_of_reach_txt; DROP TABLE IF EXISTS rel_port_of_reach; VACUUM;` against `~/.local/state/sprefa/roots/fbabddda40d22347/db.sqlite`. Table 7.6MB + its PK autoindex 8.6MB = 15.5MB reclaimed; the deleted rule leaves the table behind.
