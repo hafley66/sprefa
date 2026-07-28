@@ -231,6 +231,22 @@ collapse-logged per ruling) vs queue (per-occurrence via compiler-
 generated durable pending rel + min-ordinal consume -- sidesteps shelved
 C7); spelling family + queue pacing sub-choice await user word; goes in
 the arms arc header when cut.
+TYPES ROUND 2 LANDED (merge b47d3c00, codex SOL, lab deleted, last copy
+20520177; verdict + plans/2026-07-28-types-as-rels-iteration-journal.md
+are the record): fixpoint in 4 rounds (36->46->56->66 PASS + zero-finding
+replay, re-run by coordinator). ENTITY and VALUE both first-class, NO
+implicit default (missing policy = named failure -- user's not-sold
+instinct upheld): value = content hash identity + dense-int mate +
+immutable + support GC + set merge; entity = extrinsic id + mutable row
+w/ immutable history + explicit checked retirement + keyed merge +
+CYCLES PERMITTED (amends the round-1 cycle crack). Surrogate mate
+VALIDATED: semantic hash and dense storage key are separate columns,
+parent hashes consume child SEMANTIC hashes; resolves the dense-ints-vs-
+content-ids ruling collision. Coexistence ranked hybrid > decl-word >
+use-site (worked example in all three in the verdict). Support GC
+complete ONLY on the value DAG; entity plane pays explicit retirement.
+AWAITING USER: coexistence pick (hybrid recommended), decl spelling
+(b/c/a from round 1), then the types arc can leave design.
 TYPES-AS-RELS LAB LANDED (merge 7a416fac, 36 PASS, lab deleted, last copy
 b58d1ece, verdict = plans/2026-07-28-types-as-rels-verdict.md): hypothesis
 HOLDS on the value plane -- one construct (rel), struct = rel+set with
