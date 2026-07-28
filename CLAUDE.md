@@ -247,6 +247,18 @@ use-site (worked example in all three in the verdict). Support GC
 complete ONLY on the value DAG; entity plane pays explicit retirement.
 AWAITING USER: coexistence pick (hybrid recommended), decl spelling
 (b/c/a from round 1), then the types arc can leave design.
+RULED same night: rel_default_policy = value_unkeyed (bare rel = table =
+replay subject); enum_variant_separator = prolog semicolon; enum storage
+= N variant rels + derived tag view (lab (b), user walked through the
+rust-single-table rejection). NAMED GAP from the channel thread:
+retention driven by a derived rel (keep-until min(consumed.ordinal), the
+Kafka low-watermark) is the ONE missing construct between log and
+channel-with-N-readers; log+min-ordinal+consumed rows otherwise compose
+it today. Deletes lab OFFERED (support-zero vs fixpoint equivalence,
+cycle counterexample, retirement-as-history-move, C4 silent-prune),
+awaiting go. Scale bench brief DISPATCHED to luna
+(plans/2026-07-28-codex-scale-bench-brief.md): first tsv2 scale data,
+12-cell matrix, oracle cross-check rail.
 TYPES-AS-RELS LAB LANDED (merge 7a416fac, 36 PASS, lab deleted, last copy
 b58d1ece, verdict = plans/2026-07-28-types-as-rels-verdict.md): hypothesis
 HOLDS on the value plane -- one construct (rel), struct = rel+set with
