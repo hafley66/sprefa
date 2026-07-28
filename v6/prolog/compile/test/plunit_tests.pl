@@ -161,17 +161,37 @@ test(demand_laziness_level_sql) :-
 % no __prev shadow table, no EXCEPT, no tick filter. The runtime (or, for
 % this harness, test/run_sql_check.pl's own Prolog-side multiset_diff/4)
 % diffs the before/after row lists.
+% Round 3 (reconciliation): the delta-snapshot SELECT renders canonical
+% Prolog term text for the tick-log envelope (json1 stays the storage
+% encoding; only the log-facing read converts), via
+% lower:canonical_column_expr/2, applied per column. Pinned exactly here
+% (a small, stable unit) since the full per-rel SelectSql built from it is
+% long enough that pinning it verbatim would be a brittle, unreadable test
+% -- those two tests below check the STRUCTURAL pieces (FROM table, the
+% json_valid/json_type guard, the AS alias) instead.
+
+test(canonical_column_expr_shape) :-
+    lower:canonical_column_expr(target, Expr),
+    Expr ==
+      'CASE WHEN json_valid("target") AND json_type("target") = \'object\' THEN json_extract("target", \'$.fn\') || \'(\' || (SELECT group_concat(value, \',\') FROM json_each("target", \'$.args\')) || \')\' ELSE "target" END AS "target"'.
+
 test(switch_as_keyed_replace_delta_sql_open_scope) :-
     lowered_for(switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, _, _, _, _, DeltaStatements, _, _),
     memberchk(deltastmt(open_scope/2, SelectSql), DeltaStatements),
-    SelectSql == 'SELECT "session_id", "target" FROM "open_scope"'.
+    once(sub_atom(SelectSql, _, _, _, 'FROM "open_scope"')),
+    once(sub_atom(SelectSql, _, _, _, 'json_valid("target")')),
+    once(sub_atom(SelectSql, _, _, _, 'json_valid("session_id")')),
+    once(sub_atom(SelectSql, _, _, _, 'AS "session_id"')),
+    once(sub_atom(SelectSql, _, _, _, 'AS "target"')).
 
 test(switch_as_keyed_replace_delta_sql_route_change_log) :-
     lowered_for(switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, _, _, _, _, DeltaStatements, _, _),
     memberchk(deltastmt(route_change/2, SelectSql), DeltaStatements),
-    SelectSql == 'SELECT "session_id", "route_id" FROM "route_change"'.
+    once(sub_atom(SelectSql, _, _, _, 'FROM "route_change"')),
+    once(sub_atom(SelectSql, _, _, _, 'json_valid("route_id")')),
+    once(sub_atom(SelectSql, _, _, _, 'AS "route_id"')).
 
 :- end_tests(sql_text_snapshots).
 

@@ -443,12 +443,44 @@ is_negative_use(use(_, _, neg, _)).
 
 % ═══ delta statements (round 2: one plain "read every row" query per rel;
 % the runtime diffs before/after via multisetDiff, reused not reinvented) ══
+%
+% ROUND 3 (reconciliation): the tick-log envelope pins compound-term
+% serialization to CANONICAL PROLOG TEXT ("route_data(settings)"), not this
+% compiler's storage encoding. Storage stays json1 (this compiler's own
+% business, chosen over phase A's LIKE/substr for handling arbitrary arity
+% with no baked-in functor-length constant) -- only the delta-snapshot READ
+% renders canonical text, via canonical_column_expr/2 below. This is a SQL-
+% TEXT change inside deltastmt/2, not a plan-term SHAPE change (still
+% deltastmt(Ref, SelectSql)); it lives here rather than in emit_ts.pl
+% because it is a SQL-generation decision a future emit_rust.pl would want
+% identically, not a TypeScript-specific rendering choice.
 
 delta_statement(relplan(Ref, _Kind, Columns, _), deltastmt(Ref, SelectSql)) :-
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
-    maplist(quote_ident, Columns, QuotedColumns),
-    atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
+    maplist(canonical_column_expr, Columns, ColumnExprs),
+    atomic_list_concat(ColumnExprs, ', ', ColumnsSql),
     format(atom(SelectSql), 'SELECT ~w FROM ~w', [ColumnsSql, QuotedTable]).
+
+% Renders a column's stored value as canonical Prolog term text: a json1-
+% encoded compound (json_object('fn', F, 'args', json_array(A1, A2, ...)))
+% becomes "F(A1,A2,...)"; anything else (a plain atom, a number, a numeric-
+% looking atom) passes through unchanged. Applied UNIFORMLY to every column
+% rather than tracking per-column "is this compound" at compile time --
+% json_valid/1 plus json_type/1 = 'object' gate the compound branch, and
+% SQL's CASE short-circuits (verified against sqlite3 3.43.2: json_extract
+% and json_type both THROW "malformed JSON" on non-JSON input, so the guard
+% is required, not decorative -- json_valid/1 alone is insufficient too,
+% since a bare numeric-looking atom like '123' is itself valid JSON, a
+% false-positive risk the json_type = 'object' check closes). Arity-
+% agnostic: group_concat over json_each's '$.args' array renders any number
+% of arguments in original order, so this needs no per-column arity
+% constant, unlike phase A's exemplar (which bakes in ROUTE_DATA_PREFIX_LEN
+% for one specific functor).
+canonical_column_expr(Column, Expr) :-
+    quote_ident(Column, QuotedColumn),
+    format(atom(Expr),
+           'CASE WHEN json_valid(~w) AND json_type(~w) = \'object\' THEN json_extract(~w, \'$.fn\') || \'(\' || (SELECT group_concat(value, \',\') FROM json_each(~w, \'$.args\')) || \')\' ELSE ~w END AS ~w',
+           [QuotedColumn, QuotedColumn, QuotedColumn, QuotedColumn, QuotedColumn, QuotedColumn]).
 
 % ═══ boot (initial seed only; round 2 drops __prev priming entirely, since
 % there is no __prev table anymore) ══════════════════════════════════════

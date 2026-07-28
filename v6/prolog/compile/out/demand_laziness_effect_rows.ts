@@ -68,9 +68,9 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    demanded: selectRows(seam, `SELECT "target", "session_id" FROM "demanded"`, relColumns.demanded!),
-    effect_call: selectRows(seam, `SELECT "target" FROM "effect_call"`, relColumns.effect_call!),
-    open_feed: selectRows(seam, `SELECT "session_id", "target" FROM "open_feed"`, relColumns.open_feed!),
+    demanded: selectRows(seam, `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id" FROM "demanded"`, relColumns.demanded!),
+    effect_call: selectRows(seam, `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target" FROM "effect_call"`, relColumns.effect_call!),
+    open_feed: selectRows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target" FROM "open_feed"`, relColumns.open_feed!),
   });
 }
 
