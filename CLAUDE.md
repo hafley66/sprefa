@@ -271,6 +271,15 @@ descriptive-name rename.))
 - self-diags on our own .pl files (pick up by pattern/extension/marker word).
 - generic `--changed` concept (biome-style recent-change-lines gating) directable
   from dl; the old pre-commit hooks did this.
+- graph-algo library in sprefa-store (user 2026-07-28: "very high source of
+  non squared algos ... for complex graph algos either sqlite or ts if
+  needed at runtime"): recursive-CTE and/or ts homes, build-vs-buy research
+  first per standing law.
+- lifecycle match arms (user 2026-07-28 design thread): every atom is a
+  delta envelope (sign + = next, - = finalize, scope close = complete);
+  bare atom = sugar for the + arm (the Result ?-unbox analogy); `match`
+  reserved for subscription-time arms + envelope enums. Unruled, needs
+  spelling + fixture work.
 - `input/distinctUntil(shallowEquals|deepEquals)` on rels — mostly already physics
   here (R7 boundary diffing = distinctUntilChanged at every rel edge; set/keyed
   identical writes are zero-delta); the real residue is WHICH columns count as
