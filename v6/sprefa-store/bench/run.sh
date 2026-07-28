@@ -55,6 +55,7 @@ for spec in "${ENGINES[@]}"; do
     env $env DL_MEMCAP_MB="$CAP" "$binpath" "$layers" "$width" >/dev/null 2>"$cell_log"
     status=$?
     line=$(grep '^CSV,' "$cell_log" | head -1 | cut -d, -f2-)
+    na_count=$(grep -c '^V1_NA' "$cell_log" || true)
     if [[ "$label" == "tsv2-gen" && "$status" -ne 0 && \
           "$(grep -c '^TSV2_ORACLE_DIFF' "$cell_log")" -gt 0 ]]; then
       cat "$cell_log"
@@ -62,11 +63,10 @@ for spec in "${ENGINES[@]}"; do
       exit 1
     fi
     cat "$cell_log"
-    rm -f "$cell_log"
     if [[ -n "$line" ]]; then
       echo "$line" >> "$CSV"
       echo "OK   $label $s -> $line"
-    elif [[ "$label" == "v1-gen" && "$(grep -c '^V1_NA' "$cell_log")" -gt 0 ]]; then
+    elif [[ "$label" == "v1-gen" && "$na_count" -gt 0 ]]; then
       echo "N/A  $label $s"
     else
       # non-empty means it aborted/OOM'd at the cap: record as a wall hit.
@@ -74,6 +74,7 @@ for spec in "${ENGINES[@]}"; do
       echo "$label,$nodes,,,,,WALL," >> "$CSV"
       echo "WALL $label $s (hit the ${CAP}MB budget or failed)"
     fi
+    rm -f "$cell_log"
   done
 done
 

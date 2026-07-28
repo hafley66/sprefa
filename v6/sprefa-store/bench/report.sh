@@ -62,8 +62,8 @@ if [[ -s "$OUT/tsv2-results.jsonl" || -s "$OUT/v1-results.jsonl" ]]; then
   echo
   echo "Each row is a fresh in-memory SQLite cell. Both engines recompute the Datalog result per tick; one warmup is discarded."
   echo
-  echo "| engine | shape | rows per EDB rel | status | reason | total wall ms | mean tick ms | p95 tick ms | max tick ms | final table rows | ms per 1k arrivals |"
-  echo "|---|---|---:|---|---|---:|---:|---:|---:|---|---:|"
+  echo "| engine | shape | rows per EDB rel | status | reason | total wall ms | mean tick ms | p95 tick ms | max tick ms | final table rows | ms per 1k arrivals | RSS MB |"
+  echo "|---|---|---:|---|---|---:|---:|---:|---:|---|---:|---:|"
   node -e '
     const fs = require("fs");
     const rows = process.argv.slice(1).flatMap((path) => {
@@ -75,7 +75,7 @@ if [[ -s "$OUT/tsv2-results.jsonl" || -s "$OUT/v1-results.jsonl" ]]; then
     for (const r of rows) {
       const sizes = r.final_table_sizes ? Object.entries(r.final_table_sizes).map(([k,v]) => `${k}=${v}`).join("; ") : "-";
       const reason = r.reason ?? r.observed_failure ?? "-";
-      console.log(`| ${r.engine} | ${r.shape} | ${r.rows} | ${r.status} | ${reason} | ${r.total_wall_ms ?? "-"} | ${r.mean_tick_ms ?? "-"} | ${r.p95_tick_ms ?? "-"} | ${r.max_tick_ms ?? "-"} | ${sizes} | ${r.ms_per_1k_arrivals ?? "-"} |`);
+      console.log(`| ${r.engine} | ${r.shape} | ${r.rows} | ${r.status} | ${reason} | ${r.total_wall_ms ?? "-"} | ${r.mean_tick_ms ?? "-"} | ${r.p95_tick_ms ?? "-"} | ${r.max_tick_ms ?? "-"} | ${sizes} | ${r.ms_per_1k_arrivals ?? "-"} | ${r.worker_rss_mb ?? "-"} |`);
     }
   ' "$OUT/tsv2-results.jsonl" "$OUT/v1-results.jsonl"
 fi
