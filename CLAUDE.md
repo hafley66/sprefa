@@ -145,14 +145,18 @@ refuse instead). Open: retention keep(count) not lowered AND invisible to
 tick-log-only grading (needs final-state in the grade); 4 empty-schedule
 fixtures pass vacuously. MORNING DESIGN CALLS: column typing (int columns
 in storage vs TEXT-only), unmarked-trigger semantics, final-state grading
-leg. PHASE D PARSER IN FLIGHT (2026-07-28, sonnet worktree, contract
-plans/2026-07-28-tsv2-phase-d-parser-header.md): parse_dl.pl DCG +
-print_dl.pl + dl_view/ fixture renderings + SYNTAX.md; grade = round-trip
-variant over all fixtures + real-file parse of ghcacher.dl/conformance.dl.
-USER RULING riding it: langium was ALWAYS a stopgap — the prolog DCG is
-the CANONICAL parser after merge; dl.langium demoted to spelling
-reference (relayed to the agent mid-flight). Hosts half of D still
-queued. ARCH.pl made current same morning (a6c1225a: tsv2 algorithm rows,
+leg. PHASE D PARSER LANDED (2026-07-28, merge 10053236, coordinator re-ran
+roundtrip.sh + conformance in worktree AND on merged tree): parse_dl.pl
+DCG + print_dl.pl + dl_view/ (all 109 fixtures rendered as .dl text) +
+SYNTAX.md + roundtrip.sh. G1 109/109 variant round-trip; G2 ghcacher.dl
+7 decls/9 rules with 8 named gaps (host_decl/probe/query have no term-form
+shape), conformance.dl 23/28 zero findings; G3 conformance untouched.
+Central spelling call recorded in SYNTAX.md: bare identifier = variable,
+atom constants single-quoted (supersedes dl.langium per the stopgap
+ruling). Decl spelling: `rel name(cols) [log|set] [keep(..)] [key(..)]`.
+NOT wired into compile_fixture yet — held behind the pending
+latest/combine/zip + Key-decomposition words since they change spellings.
+Hosts half of D still queued. ARCH.pl made current same morning (a6c1225a: tsv2 algorithm rows,
 js_conformance_leg flipped done via the sweep, in-flight task rows;
 go 7/7, atlas re-emitted).
 

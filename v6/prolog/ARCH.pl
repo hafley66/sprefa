@@ -478,7 +478,7 @@ task(causality_check,     labbed,  []).
 task(envelope_types,      labbed,  []).                  % enum_match
 task(demand_clocking,     labbed,  [kernel_sql_lowering]).
 task(clock_inference,     parked,  [clock_check]).       % swap ground clocks for holes; user-parked 2026-07-27
-task(surface_dcg,         in_flight, [desugar_machinery, tsv2_pipeline]). % phase D parser agent (contract: plans/2026-07-28-tsv2-phase-d-parser-header.md): parse_dl.pl DCG + print_dl.pl + dl_view/ renderings; DCG becomes the CANONICAL parser, round-trip variant grade over the full fixture corpus
+task(surface_dcg,         done,    [desugar_machinery, tsv2_pipeline]). % LANDED 2026-07-28 (merge 10053236): parse_dl.pl DCG + print_dl.pl + dl_view/ (109 fixtures as .dl text) + SYNTAX.md; round-trip 109/109, ghcacher.dl/conformance.dl parse with named gaps only. DCG is the CANONICAL parser (langium demoted). NOT yet wired into compile_fixture (term form still the compiler entry; wiring queued behind the latest/combine/zip spelling words). Hosts half of phase D still unbuilt.
 task(mode_lab,            labbed,  []).                  % plans/2026-07-27-mode-lattice.md: lifetime = free distributive lattice over end-signals; scope_min=OR join_max=AND; 80/80 at 2fff3f61
 task(sub_forest,          closed,  []).                  % RULED minimal kernel (rulings.pl subscription_kernel): zero stored rels; forest superseded by coverage check + ghost view. History: plans/2026-07-27-{sub-forest,switch-flow,redteam-minimal-kernel}.md
 task(scope_cover_check,   unbuilt, [mode_lab]).          % obligation 1 of subscription_kernel ruling: scope-key column-flow check (mode-lattice machinery); refuses zombie-scope rules (redteam A2b)
