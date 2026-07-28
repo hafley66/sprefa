@@ -38,6 +38,12 @@ import {
 
 const GOLDEN_PATH = path.join(import.meta.dirname, "..", "fixtures", "golden", "runtime.add-noop-remove.json");
 
+function byJson(a: unknown, b: unknown): number {
+  const left = JSON.stringify(a);
+  const right = JSON.stringify(b);
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 // The three parent rows every M2 test scenario re-uses (chain: alice -> bob -> carol -> dana).
 const PARENT_ROWS = [
   { child_name: "alice", parent_name: "bob" },
@@ -184,6 +190,64 @@ test("sync-settle: commit resolves with derived rows already queryable", async (
     // stage (applyDerivedTxn) before reportsSubject emits the report commit() waits on.
     const grandparentRows = await rt.rows("grandparent");
     assert.deepEqual(grandparentRows, [{ grandchild_name: "alice", grandparent_name: "carol" }]);
+  } finally {
+    await rt.dispose();
+    cleanupDbFile(dbPath);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// rowsForPath (ingest-perf arc): the WHERE-scoped read 4_ingest.ts's per-file diff
+// uses instead of `rows()` + a JS filter. Proof: for a rel with several distinct
+// `path` values committed in one db, `rowsForPath(rel, path)` returns exactly the
+// same row set as `(await rows(rel)).filter(row => row.path === path)`, for every
+// path, and refuses cleanly outside its contract (unknown rel, no `path` column).
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("rowsForPath == rows().filter(path) for every distinct path in a multi-file db", async () => {
+  const { rt, dbPath } = await bootFixture(singleEdbRelProgram("node", ["path", "kind"]));
+  try {
+    const paths = ["a.ts", "b.ts", "c.ts"];
+    await rt.commit(
+      edbBatch({
+        node: [
+          { path: "a.ts", kind: "call" },
+          { path: "a.ts", kind: "ident" },
+          { path: "b.ts", kind: "call" },
+          { path: "c.ts", kind: "string" },
+        ],
+      }),
+    );
+
+    const allRows = await rt.rows("node");
+    for (const path of paths) {
+      const scoped = (await rt.rowsForPath("node", path)).sort(byJson);
+      const unscoped = allRows.filter((row) => row.path === path).sort(byJson);
+      assert.deepEqual(scoped, unscoped, `mismatch for path '${path}'`);
+    }
+
+    // A path with zero committed rows: both reads agree on empty.
+    assert.deepEqual(await rt.rowsForPath("node", "never-ingested.ts"), []);
+  } finally {
+    await rt.dispose();
+    cleanupDbFile(dbPath);
+  }
+});
+
+test("rowsForPath throws on an unknown rel", async () => {
+  const { rt, dbPath } = await bootFixture(singleEdbRelProgram("node", ["path", "kind"]));
+  try {
+    await assert.rejects(() => rt.rowsForPath("no_such_rel", "a.ts"), /unknown rel/);
+  } finally {
+    await rt.dispose();
+    cleanupDbFile(dbPath);
+  }
+});
+
+test("rowsForPath throws when the rel has no `path` column", async () => {
+  const { rt, dbPath } = await bootParentFixture();
+  try {
+    await assert.rejects(() => rt.rowsForPath("parent", "a.ts"), /no column 'path'/);
   } finally {
     await rt.dispose();
     cleanupDbFile(dbPath);
