@@ -19,7 +19,7 @@ out="INDEX.md"
     echo
     echo "| file | lines | title |"
     echo "|---|--:|---|"
-    find . -name '*.md' ! -name 'INDEX.md' | grep -v target | sort | while read -r f; do
+    find . -name '*.md' ! -name 'INDEX.md' | grep -v target | grep -v node_modules | sort | while read -r f; do
         rel=${f#./}
         lines=$(wc -l < "$f" | tr -d ' ')
         h1=$(grep -m1 -E '^# ' "$f" 2>/dev/null | sed 's/^# //' | sed 's/|/\\|/g')
@@ -28,7 +28,7 @@ out="INDEX.md"
     echo
     echo "## Full header index"
     echo
-    find . -name '*.md' ! -name 'INDEX.md' | grep -v target | sort | while read -r f; do
+    find . -name '*.md' ! -name 'INDEX.md' | grep -v target | grep -v node_modules | sort | while read -r f; do
         rel=${f#./}
         echo "### $rel"
         echo '```'
