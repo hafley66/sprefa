@@ -1,25 +1,31 @@
 % emit_ts.pl : prints a lowered/8 term as a literal TypeScript module
 % conforming to IGenProgram (plans/2026-07-27-tsv2-compile-target-header.md,
-% ADDENDUM). Table-driven, not hand-unrolled: every rel's mutation/delta/
-% refresh statement is one row in a compile-time array or record literal,
-% which is the more "generated code" shape for a compiler meant to scale
-% past two or three rels (regular row shape beats N differently-named
-% variables). The one genuinely dynamic-length piece is the arrivals fold
-% (`arrivals.rows`, a runtime value), which is the one real `from(...).pipe(
-% concatMap(...))` loop in the file; everything else is a fixed-length
-% concat/toArray sequence over compile-time-known statements, matching
-% "Async becomes rxjs; sync stays sync": the final envelope assembly
-% (`buildTickDeltas`) is a plain synchronous `forEach` over a compile-time
-% array, never further Observable machinery.
+% ADDENDUM). ROUND 2 (reconciliation): renders against the REAL
+% v6/tsv2/runtime/types.ts (merged, no longer an assumption) and reuses the
+% REAL runtime helpers per the reuse law -- `multisetDiff` (runtime/diff.ts)
+% for before/after boundary deltas, `selectRows` (runtime/rows.ts) for
+% shaping a SELECT's result into `IRow[]`. Matches Phase A's hand-carved
+% exemplar (v6/tsv2/gen/*.ts) architecture: read every rel's rows before a
+% tick's writes and again after, diff with multisetDiff; edge-rule keyed
+% writes are resolved in JS from the raw `arrivals` array (a Map keyed by
+% the head row's key-column values, natural last-write-wins via `.set()`),
+% never via a SQL self-join on a tick number the seam does not provide.
 %
-% SEAM NAMES: only the four the header pins (IGenProgram, ISqlSeam,
-% IArrivalBatch, ITickDeltas) are imported from "../runtime/types.ts", which
-% does not exist in this worktree (Phase A owns it, landing separately).
-% Every OTHER supporting type (IArrivalRow, ISqlQueryResult, SqlParam,
-% ITickDeltaSet, IBootStatement, ISqlStatement, IDeltaQuery) is a LOCAL
-% assumption this file declares itself, flagged in a header comment as an
-% assumption rather than folded into the pinned import -- real seam friction,
-% not resolved unilaterally here (see the arc report).
+% Table-driven, not hand-unrolled: every rel's snapshot read / arrival
+% statement / delta entry is one row in a compile-time array or record
+% literal, the more "generated code" shape for a compiler meant to scale
+% past two or three rels. The one genuinely dynamic-length pieces are
+% `arrivals` itself (a runtime value: `.map()`/`.filter()` over it is plain
+% array code, "sync stays sync") and the edge-write resolution's `forkJoin`
+% over one query per matching arrival row (a real sequential IO fan-out,
+% legitimately rx-shaped).
+%
+% SEAM NAMES: IGenProgram, ISqlSeam, IArrivalBatch, IArrivalRow, IRow,
+% IRowValue, ITickDeltas, SqlStatement all imported from
+% "../runtime/types.ts" (real file, merged). `IBootStatement` is a LOCAL
+% type (the header's IGenProgram has no boot slot; "extend by adding
+% fields, never renaming" -- v6/tsv2/scripts/run-emitted.ts confirms who
+% runs it and when: after DDL, before the tick fold).
 
 :- module(emit_ts, [ emit_program/5 ]).
 
@@ -30,20 +36,6 @@
 
 lines_block(Lines, Text) :- atomic_list_concat(Lines, '\n', Text).
 
-indent(Level, Lines, Indented) :-
-    tab_atom(Level, Tab),
-    maplist(prefix_line(Tab), Lines, Indented).
-
-prefix_line(_, '', '') :- !.
-prefix_line(Tab, Line, Indented) :- format(atom(Indented), '~w~w', [Tab, Line]).
-
-tab_atom(0, '') :- !.
-tab_atom(Level, Tab) :- Level > 0, N is Level * 2, length(Spaces, N), maplist(=(' '), Spaces), atomic_list_concat(Spaces, Tab).
-
-% Backtick template literal, defensively escaping the two characters that
-% would break out of one (neither appears in any SQL this compiler emits,
-% since identifiers are quote_ident'd with double quotes and text literals
-% use sql_literal's single quotes, but the escape costs nothing).
 js_template(SqlText, JsLiteral) :-
     atom_string(SqlText, SqlString0),
     re_replace("`"/g, "\\`", SqlString0, SqlString1),
@@ -52,94 +44,112 @@ js_template(SqlText, JsLiteral) :-
 
 js_string(Atom, JsLiteral) :- format(atom(JsLiteral), '"~w"', [Atom]).
 
+ref_name(Name/_Arity, Name).
+
 upper_snake(Name/_Arity, Upper) :- upcase_atom(Name, Upper).
 
-ref_name(Name/_Arity, Name).
+% snake_case -> PascalCase, for JS function/type names built by combining a
+% rel name with a fixed prefix/suffix (e.g. "resolve" + "OpenScope" +
+% "Writes") -- SCREAMING_SNAKE (upper_snake/2) is for SQL CONSTANT names,
+% where it is idiomatic; mixing it into a camelCase function name
+% (`resolveOPEN_SCOPEWrites`) is not.
+pascal_case(Name/_Arity, Pascal) :- !, pascal_case(Name, Pascal).
+pascal_case(Name, Pascal) :-
+    atomic_list_concat(Parts, '_', Name),
+    maplist(capitalize_atom, Parts, CapitalizedParts),
+    atomic_list_concat(CapitalizedParts, Pascal).
+
+capitalize_atom(Atom, Capitalized) :-
+    atom_codes(Atom, [First | Rest]),
+    code_type(UpperFirst, to_upper(First)),
+    atom_codes(Capitalized, [UpperFirst | Rest]).
+
+param_text(Param, Text) :- number(Param), !, format(atom(Text), '~w', [Param]).
+param_text(Param, Text) :- js_string(Param, Text).
+
+params_array_text(Params, Text) :-
+    maplist(param_text, Params, ParamTexts),
+    atomic_list_concat(ParamTexts, ', ', Joined),
+    format(atom(Text), '[~w]', [Joined]).
+
+quoted_string_array_text(Atoms, Text) :-
+    maplist(js_string, Atoms, Quoted),
+    atomic_list_concat(Quoted, ', ', Joined),
+    format(atom(Text), '[~w]', [Joined]).
+
+% Flattens a list of line-groups into one line list, one blank line between
+% groups (never trailing).
+flatten_with_blank_separators([], []).
+flatten_with_blank_separators([Group], Group) :- !.
+flatten_with_blank_separators([Group | Rest], Lines) :-
+    flatten_with_blank_separators(Rest, RestLines),
+    append(Group, [''], WithBlank),
+    append(WithBlank, RestLines, Lines).
 
 % ═══ header comment ══════════════════════════════════════════════════════════
 
 header_lines(Name, Lines) :-
-    format(atom(TitleLine), '// GENERATED by v6/prolog/compile (tsv2 Phase B). Do not hand-edit; recompile', []),
-    format(atom(FromLine), '// from v6/prolog/conformance/fixtures/scopes.pl via compile.pl. Program:', []),
-    format(atom(NameLine), '// ~w. Compiles the reference engine\'s occurrence / keyed-replace /', [Name]),
+    format(atom(TitleLine), '// GENERATED by v6/prolog/compile (tsv2 Phase B, round 2). Do not', []),
+    format(atom(NameLine), '// hand-edit; recompile. Program: ~w.', [Name]),
     Lines =
-    [ TitleLine, FromLine, NameLine,
-      '// boundary-diff semantics (engine.pl) to SQLite, not lower/lowerSql.ts\'s.',
+    [ TitleLine, NameLine,
+      '// Compiles the reference engine\'s occurrence / keyed-replace / boundary-diff',
+      '// semantics (engine.pl) to SQLite + the real v6/tsv2 runtime seam, not',
+      '// lower/lowerSql.ts\'s.',
       '//',
-      '// ASSUMED seam shapes beyond the four the header pins (ISqlSeam,',
-      '// IArrivalBatch, ITickDeltas, IGenProgram, imported below from',
-      '// "../runtime/types.ts", which does not exist in this worktree yet):',
-      '// IArrivalRow { rel: string; sign: "add" | "del"; values: readonly string[] }',
-      '// on IArrivalBatch.rows, and ISqlQueryResult { rows: readonly',
-      '// Record<string, SqlParam>[]; rowsAffected: number } as ISqlSeam.run\'s',
-      '// resolved value. If Phase A\'s real runtime/types.ts shapes these',
-      '// differently, only this file\'s local type declarations and tick() body',
-      '// need to change, not the exported program\'s IGenProgram surface.',
+      '// Strategy matches Phase A\'s hand-carved exemplar (gen/*.ts): read every',
+      '// rel\'s rows before a tick\'s writes and again after, diff with the',
+      '// runtime\'s multisetDiff (reused, never reimplemented -- one algorithm',
+      '// covers Set/level rels via plain set diff and Log rels via occurrence-count',
+      '// diff, since engine.pl r7\'s "one +Row per new stamp" for an append-only',
+      '// Log rel is exactly "count in next minus count in prev"). Edge-rule keyed',
+      '// writes are resolved in JS directly from the `arrivals` array (no tick',
+      '// number reaches tick() in the real seam -- the runtime owns tick',
+      '// numbering, ../runtime/tickLoop.ts -- so "this tick\'s fresh trigger rows"',
+      '// has no SQL-side answer; they ARE the arrivals argument already).',
       '//',
-      '// IGenProgram has no slot for boot-time work (seeding Initial rows, then',
-      '// priming the boundary-diff snapshot tables so tick 1\'s delta does not',
-      '// show the seed as a "+" addition -- engine.pl:run_program does this',
-      '// before state(1, ...) exists, a non-tick step). `boot` is an extra field',
-      '// added beyond the five pinned names ("extend by adding fields, never',
-      '// renaming"); who calls it and when is unresolved -- flagged, not decided.'
+      '// IGenProgram has no slot for boot-time work (seeding Initial rows before',
+      '// tick 1). `boot` is an extra field added beyond the five pinned names',
+      '// ("extend by adding fields, never renaming"); v6/tsv2/scripts/',
+      '// run-emitted.ts (the reconciliation runner) runs it after DDL and before',
+      '// the tick fold.'
     ].
 
 % ═══ imports ═════════════════════════════════════════════════════════════════
 
-imports_lines(
-    [ 'import type { Observable } from "rxjs";',
-      'import { concat, from } from "rxjs";',
-      'import { concatMap, map, toArray } from "rxjs";',
-      'import type { IGenProgram, ISqlSeam, IArrivalBatch, ITickDeltas } from "../runtime/types.ts";'
-    ]).
+imports_lines(HasEdgeRules,
+    [ RxjsImportLine,
+      '',
+      'import { multisetDiff } from "../runtime/diff.ts";',
+      'import { selectRows } from "../runtime/rows.ts";',
+      'import type {',
+      '  IArrivalBatch,',
+      '  IArrivalRow,',
+      '  IGenProgram,',
+      '  IRow,',
+      '  IRowValue,',
+      '  ISqlSeam,',
+      '  ITickDeltas,',
+      '  SqlStatement,',
+      '} from "../runtime/types.ts";'
+    ]) :-
+    % `of` is only needed by an edge-rule resolver's forkJoin([]) guard (see
+    % edge_resolver_block/3) -- omitted when the program has none, so
+    % generated code never carries a dead import.
+    ( HasEdgeRules == true
+    -> RxjsImportLine = 'import { concatMap, forkJoin, map, of, type Observable } from "rxjs";'
+    ;  RxjsImportLine = 'import { concatMap, forkJoin, map, type Observable } from "rxjs";'
+    ).
 
 % ═══ local supporting types ══════════════════════════════════════════════════
 
 local_types_lines(
-    [ 'type SqlParam = string | number;',
-      '',
-      'interface ISqlQueryResult {',
-      '  rows: readonly Record<string, SqlParam>[];',
-      '  rowsAffected: number;',
-      '}',
-      '',
-      'interface IArrivalRow {',
-      '  rel: string;',
-      '  sign: "add" | "del";',
-      '  values: readonly string[];',
-      '}',
-      '',
-      'interface ITickDeltaSet {',
-      '  add: readonly Record<string, SqlParam>[];',
-      '  del: readonly Record<string, SqlParam>[];',
-      '}',
-      '',
-      'interface IBootStatement {',
+    [ 'interface IBootStatement {',
       '  sql: string;',
-      '  params: readonly SqlParam[];',
+      '  params: readonly (string | number)[];',
       '}',
       '',
-      'interface ISqlStatement {',
-      '  sql: string;',
-      '  params: readonly SqlParam[];',
-      '}',
-      '',
-      'interface IArrivalTemplate {',
-      '  kind: "log" | "set";',
-      '  addSql: string;',
-      '  delSql: string | null;',
-      '}',
-      '',
-      'interface IDeltaQuery {',
-      '  rel: string;',
-      '  sign: "add" | "del";',
-      '  sql: string;',
-      '  params: readonly SqlParam[];',
-      '}',
-      '',
-      'interface IGenProgramWithBoot extends IGenProgram {',
-      '  boot: readonly IBootStatement[];',
-      '}'
+      'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };'
     ]).
 
 % ═══ ddl ═════════════════════════════════════════════════════════════════════
@@ -158,15 +168,13 @@ rel_columns_lines(RelPlans, Lines) :-
 
 rel_columns_entry_line(relplan(Ref, _Kind, Columns, _Key), Line) :-
     ref_name(Ref, Name),
-    maplist(js_string, Columns, QuotedColumns),
-    atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
-    format(atom(Line), '  ~w: [~w],', [Name, ColumnsSql]).
+    quoted_string_array_text(Columns, ColumnsSql),
+    format(atom(Line), '  ~w: ~w,', [Name, ColumnsSql]).
 
 arrival_targets_lines(ArrivalTargets, Lines) :-
     maplist(ref_name, ArrivalTargets, Names),
-    maplist(js_string, Names, Quoted),
-    atomic_list_concat(Quoted, ', ', Sql),
-    format(atom(Line), 'const arrivalTargets: readonly string[] = [~w];', [Sql]),
+    quoted_string_array_text(Names, Sql),
+    format(atom(Line), 'const arrivalTargets: readonly string[] = ~w;', [Sql]),
     Lines = [Line].
 
 % ═══ boot ════════════════════════════════════════════════════════════════════
@@ -180,20 +188,35 @@ boot_entry_line(bootstmt(Sql, Params), Line) :-
     params_array_text(Params, ParamsText),
     format(atom(Line), '  { sql: ~w, params: ~w },', [Template, ParamsText]).
 
-params_array_text(Params, Text) :-
-    maplist(param_text, Params, ParamTexts),
-    atomic_list_concat(ParamTexts, ', ', Joined),
-    format(atom(Text), '[~w]', [Joined]).
+% ═══ snapshot type + reader (forkJoin over selectRows, one entry per rel) ════
 
-param_text(Param, Text) :- number(Param), !, format(atom(Text), '~w', [Param]).
-param_text(Param, Text) :- js_string(Param, Text).
+snapshot_type_lines(RelPlans, Lines) :-
+    maplist(snapshot_field_line, RelPlans, FieldLines),
+    append([ ['type Snapshot = {'], FieldLines, ['};'] ], Lines).
 
-% ═══ arrival statement templates ═════════════════════════════════════════════
+snapshot_field_line(relplan(Ref, _Kind, _Columns, _Key), Line) :-
+    ref_name(Ref, Name),
+    format(atom(Line), '  readonly ~w: readonly IRow[];', [Name]).
+
+read_snapshot_fn_lines(DeltaStatements, Lines) :-
+    maplist(snapshot_read_entry_line, DeltaStatements, EntryLines),
+    append(
+        [ ['function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {', '  return forkJoin({'],
+          EntryLines,
+          ['  });', '}']
+        ], Lines).
+
+snapshot_read_entry_line(deltastmt(Ref, SelectSql), Line) :-
+    ref_name(Ref, Name),
+    js_template(SelectSql, Template),
+    format(atom(Line), '    ~w: selectRows(seam, ~w, relColumns.~w!),', [Name, Template, Name]).
+
+% ═══ arrivals ════════════════════════════════════════════════════════════════
 
 arrival_statements_lines(ArrivalStatements, Lines) :-
     maplist(arrival_statement_entry_line, ArrivalStatements, EntryLines),
     append(
-        [ ['const ARRIVAL_STATEMENTS: Record<string, IArrivalTemplate> = {'],
+        [ ['const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {'],
           EntryLines,
           ['};']
         ], Lines).
@@ -208,171 +231,213 @@ arrival_statement_entry_line(arrivalstmt(Ref, set, AddSql, DelSql), Line) :-
     js_template(DelSql, DelTemplate),
     format(atom(Line), '  ~w: { kind: "set", addSql: ~w, delSql: ~w },', [Name, AddTemplate, DelTemplate]).
 
-apply_arrival_row_fn_lines(Name, Lines) :-
-    format(atom(UndeclaredError),
-           '    throw new Error(`~w: tick received an arrival for undeclared rel \'${row.rel}\'`);', [Name]),
-    format(atom(RetractLogError),
-           '      throw new Error(`~w: retract from log rel \'${row.rel}\' (engine.pl retract_from_log)`);', [Name]),
-    format(atom(NoDeleteError),
-           '      throw new Error(`~w: rel \'${row.rel}\' has no delete statement`);', [Name]),
+arrival_statement_fn_lines(Name, Lines) :-
+    format(atom(UndeclaredError), '    throw new Error(`~w: tick received an arrival for undeclared rel \'${arrival.rel}\'`);', [Name]),
+    format(atom(RetractLogError), '      throw new Error(`~w: retract from log rel \'${arrival.rel}\' (engine.pl retract_from_log)`);', [Name]),
+    format(atom(NoDeleteError), '      throw new Error(`~w: rel \'${arrival.rel}\' has no delete statement`);', [Name]),
     Lines =
-    [ 'function applyArrivalRow(seam: ISqlSeam, tick: number, seq: number, row: IArrivalRow): Observable<ISqlQueryResult> {',
-      '  const statement = ARRIVAL_STATEMENTS[row.rel];',
-      '  if (statement === undefined) {',
+    [ 'function arrivalStatement(arrival: IArrivalRow): SqlStatement {',
+      '  const template = ARRIVAL_STATEMENTS[arrival.rel];',
+      '  if (template === undefined) {',
       UndeclaredError,
       '  }',
-      '  if (row.sign === "del") {',
-      '    if (statement.kind === "log") {',
+      '  if (arrival.sign === "del") {',
+      '    if (template.kind === "log") {',
       RetractLogError,
       '    }',
-      '    if (statement.delSql === null) {',
+      '    if (template.delSql === null) {',
       NoDeleteError,
       '    }',
-      '    return seam.run(statement.delSql, row.values);',
+      '    return { sql: template.delSql, args: [...arrival.row] };',
       '  }',
-      '  const params = statement.kind === "log" ? [tick, seq, ...row.values] : row.values;',
-      '  return seam.run(statement.addSql, params);',
+      '  return { sql: template.addSql, args: [...arrival.row] };',
+      '}',
+      '',
+      'function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {',
+      '  const statements: SqlStatement[] = arrivals.map(arrivalStatement);',
+      '  return seam.runner.batch(seam.db, statements);',
       '}'
     ].
 
-% ═══ edge / level SQL consts + mutationStatements ════════════════════════════
+% ═══ edge rule resolution (one resolver function per edge rule) ═════════════
+% ProjectSql (from lower.pl) is already aliased AS HeadColumns
+% (lower.pl:edge_statement/3 passes HeadColumns, not `none`, to
+% head_select_list/4 for exactly this reason), so the resolver reads
+% `result.rows[0][columnName]` the same way runtime/rows.ts's selectRows
+% does -- no string surgery on the SQL text happens in this file.
 
-edge_const_lines(EdgeStatements, ConstLines, EntryLines) :-
-    maplist(edge_const_pair, EdgeStatements, ConstLinePairs, EntryLinePairs),
-    append(ConstLinePairs, ConstLines),
-    append(EntryLinePairs, EntryLines).
+edge_resolver_blocks(EdgeStatements, ConstLines, FnLines) :-
+    maplist(edge_resolver_block, EdgeStatements, ConstLineGroups, FnLineGroups),
+    flatten_with_blank_separators(ConstLineGroups, ConstLines),
+    flatten_with_blank_separators(FnLineGroups, FnLines).
 
-edge_const_pair(edgestmt(Ref, DeleteSql, InsertSql), [DeleteLine, InsertLine], [DeleteEntry, InsertEntry]) :-
-    upper_snake(Ref, Upper),
-    format(atom(DeleteConst), 'EDGE_~w_DELETE_SQL', [Upper]),
-    format(atom(InsertConst), 'EDGE_~w_INSERT_SQL', [Upper]),
-    js_template(DeleteSql, DeleteTemplate),
-    js_template(InsertSql, InsertTemplate),
-    format(atom(DeleteLine), 'const ~w = ~w;', [DeleteConst, DeleteTemplate]),
-    format(atom(InsertLine), 'const ~w = ~w;', [InsertConst, InsertTemplate]),
-    format(atom(DeleteEntry), '  { sql: ~w, params: [tick] },', [DeleteConst]),
-    format(atom(InsertEntry), '  { sql: ~w, params: [tick] },', [InsertConst]).
-
-level_const_lines(LevelStatements, ConstLines, EntryLines) :-
-    maplist(level_const_pair, LevelStatements, ConstLinePairs, EntryLinePairs),
-    append(ConstLinePairs, ConstLines),
-    append(EntryLinePairs, EntryLines).
-
-level_const_pair(levelstmt(Ref, DeleteSql, InsertSql), [DeleteLine, InsertLine], [DeleteEntry, InsertEntry]) :-
-    upper_snake(Ref, Upper),
-    format(atom(DeleteConst), 'LEVEL_~w_DELETE_SQL', [Upper]),
-    format(atom(InsertConst), 'LEVEL_~w_INSERT_SQL', [Upper]),
-    js_template(DeleteSql, DeleteTemplate),
-    js_template(InsertSql, InsertTemplate),
-    format(atom(DeleteLine), 'const ~w = ~w;', [DeleteConst, DeleteTemplate]),
-    format(atom(InsertLine), 'const ~w = ~w;', [InsertConst, InsertTemplate]),
-    format(atom(DeleteEntry), '  { sql: ~w, params: [] },', [DeleteConst]),
-    format(atom(InsertEntry), '  { sql: ~w, params: [] },', [InsertConst]).
-
-mutation_statements_fn_lines(EdgeEntryLines, LevelEntryLines, Lines) :-
-    append(EdgeEntryLines, LevelEntryLines, AllEntryLines),
-    append(
-        [ ['function mutationStatements(tick: number): readonly ISqlStatement[] {', '  return ['],
-          AllEntryLines,
-          ['  ];', '}']
-        ], Lines).
-
-% ═══ delta SQL consts + deltaQueries + refreshSnapshotStatements ════════════
-
-delta_const_lines(DeltaStatements, ConstLines, QueryEntryLines, RefreshEntryLines) :-
-    maplist(delta_const_group, DeltaStatements, ConstLinePairs, QueryEntryLinePairs, RefreshEntryLinePairs),
-    append(ConstLinePairs, ConstLines),
-    append(QueryEntryLinePairs, QueryEntryLines),
-    append(RefreshEntryLinePairs, RefreshEntryLines).
-
-delta_const_group(deltastmt(Ref, log, AddsSql, none, []), ConstLines, QueryEntries, []) :- !,
-    upper_snake(Ref, Upper),
-    ref_name(Ref, Name),
-    format(atom(AddsConst), 'DELTA_~w_ADDS_SQL', [Upper]),
-    js_template(AddsSql, AddsTemplate),
-    format(atom(AddsLine), 'const ~w = ~w;', [AddsConst, AddsTemplate]),
-    ConstLines = [AddsLine],
-    format(atom(QueryEntry), '  { rel: "~w", sign: "add", sql: ~w, params: [tick] },', [Name, AddsConst]),
-    QueryEntries = [QueryEntry].
-delta_const_group(deltastmt(Ref, set, AddsSql, DelsSql, [RefreshDeleteSql, RefreshInsertSql]), ConstLines, QueryEntries, RefreshEntries) :-
-    upper_snake(Ref, Upper),
-    ref_name(Ref, Name),
-    format(atom(AddsConst), 'DELTA_~w_ADDS_SQL', [Upper]),
-    format(atom(DelsConst), 'DELTA_~w_DELS_SQL', [Upper]),
-    js_template(AddsSql, AddsTemplate),
-    js_template(DelsSql, DelsTemplate),
-    format(atom(AddsLine), 'const ~w = ~w;', [AddsConst, AddsTemplate]),
-    format(atom(DelsLine), 'const ~w = ~w;', [DelsConst, DelsTemplate]),
-    ConstLines = [AddsLine, DelsLine],
-    format(atom(AddEntry), '  { rel: "~w", sign: "add", sql: ~w, params: [] },', [Name, AddsConst]),
-    format(atom(DelEntry), '  { rel: "~w", sign: "del", sql: ~w, params: [] },', [Name, DelsConst]),
-    QueryEntries = [AddEntry, DelEntry],
-    js_template(RefreshDeleteSql, RefreshDeleteTemplate),
-    js_template(RefreshInsertSql, RefreshInsertTemplate),
-    format(atom(RefreshDeleteEntry), '  { sql: ~w, params: [] },', [RefreshDeleteTemplate]),
-    format(atom(RefreshInsertEntry), '  { sql: ~w, params: [] },', [RefreshInsertTemplate]),
-    RefreshEntries = [RefreshDeleteEntry, RefreshInsertEntry].
-
-delta_queries_fn_lines(QueryEntryLines, Lines) :-
-    append(
-        [ ['function deltaQueries(tick: number): readonly IDeltaQuery[] {', '  return ['],
-          QueryEntryLines,
-          ['  ];', '}']
-        ], Lines).
-
-refresh_snapshot_fn_lines(RefreshEntryLines, Lines) :-
-    append(
-        [ ['function refreshSnapshotStatements(): readonly ISqlStatement[] {', '  return ['],
-          RefreshEntryLines,
-          ['  ];', '}']
-        ], Lines).
-
-% ═══ runAllStatements / buildTickDeltas / runTick ═══════════════════════════
-
-run_all_fn_lines(
-    [ 'function runAllStatements(seam: ISqlSeam, statements: readonly ISqlStatement[]): Observable<readonly ISqlQueryResult[]> {',
-      '  return concat(...statements.map((statement) => seam.run(statement.sql, statement.params))).pipe(toArray());',
-      '}'
-    ]).
-
-build_tick_deltas_fn_lines(RelPlans, Lines) :-
-    maplist(rel_deltas_init_line, RelPlans, InitLines),
-    append(
-        [ ['function buildTickDeltas(tick: number, queries: readonly IDeltaQuery[], results: readonly ISqlQueryResult[]): ITickDeltas {',
-           '  const deltas: Record<string, ITickDeltaSet> = {'],
-          InitLines,
-          [ '  };',
-            '  queries.forEach((query, index) => {',
-            '    const rows = results[index]!.rows;',
-            '    if (query.sign === "add") deltas[query.rel]!.add = rows;',
-            '    else deltas[query.rel]!.del = rows;',
-            '  });',
-            '  return { tick, deltas };',
-            '}'
-          ]
-        ], Lines).
-
-rel_deltas_init_line(relplan(Ref, _Kind, _Columns, _Key), Line) :-
-    ref_name(Ref, Name),
-    format(atom(Line), '    ~w: { add: [], del: [] },', [Name]).
-
-run_tick_fn_lines(Name,
-    [ 'function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
-      '  const tick = arrivals.tick;',
-      '  return from(arrivals.rows).pipe(',
-      '    concatMap((row, index) => applyArrivalRow(seam, tick, index + 1, row)),',
-      '    toArray(),',
-      '    concatMap(() => runAllStatements(seam, mutationStatements(tick))),',
-      '    concatMap(() => {',
-      '      const queries = deltaQueries(tick);',
-      '      return runAllStatements(seam, queries).pipe(map((results) => buildTickDeltas(tick, queries, results)));',
+edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, UpsertSql), ConstLines, FnLines) :-
+    ref_name(TriggerRef, TriggerName),
+    upper_snake(HeadRef, Upper),
+    format(atom(ProjectConst), 'EDGE_~w_PROJECT_SQL', [Upper]),
+    format(atom(UpsertConst), 'EDGE_~w_UPSERT_SQL', [Upper]),
+    format(atom(ColumnsConst), 'EDGE_~w_HEAD_COLUMNS', [Upper]),
+    format(atom(IndicesConst), 'EDGE_~w_KEY_INDICES', [Upper]),
+    js_template(ProjectSql, ProjectTemplate),
+    js_template(UpsertSql, UpsertTemplate),
+    quoted_string_array_text(HeadColumns, ColumnsArrayText),
+    key_indices(HeadColumns, KeyColumns, Indices),
+    atomic_list_concat(Indices, ', ', IndicesJoined),
+    format(atom(IndicesArrayText), '[~w]', [IndicesJoined]),
+    format(atom(ProjectLine), 'const ~w = ~w;', [ProjectConst, ProjectTemplate]),
+    format(atom(UpsertLine), 'const ~w = ~w;', [UpsertConst, UpsertTemplate]),
+    format(atom(ColumnsLine), 'const ~w: readonly string[] = ~w;', [ColumnsConst, ColumnsArrayText]),
+    format(atom(IndicesLine), 'const ~w: readonly number[] = ~w;', [IndicesConst, IndicesArrayText]),
+    ConstLines = [ProjectLine, UpsertLine, ColumnsLine, IndicesLine],
+    pascal_case(HeadRef, Pascal),
+    format(atom(FnName), 'resolve~wWrites', [Pascal]),
+    format(atom(SigLine), 'function ~w(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {', [FnName]),
+    format(atom(FilterLine), '  const triggerRows = arrivals.filter((arrival) => arrival.rel === "~w" && arrival.sign === "add");', [TriggerName]),
+    format(atom(ForkLine),
+           '  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: ~w, args: [...arrival.row] }))).pipe(',
+           [ProjectConst]),
+    format(atom(RowLine), '        const projectedRow = ~w.map((column) => result.rows[0]![column] as IRowValue) as IRow;', [ColumnsConst]),
+    format(atom(KeyLine), '        const key = JSON.stringify(~w.map((index) => projectedRow[index]));', [IndicesConst]),
+    format(atom(UpsertMapLine),
+           '      return [...resolved.values()].map((row): SqlStatement => ({ sql: ~w, args: [...row] }));',
+           [UpsertConst]),
+    FnLines =
+    [ SigLine,
+      FilterLine,
+      % forkJoin([]) COMPLETES WITHOUT EMITTING (verified against rxjs
+      % 7.8.2, not assumed) -- a drain tick, or any tick where no arrival
+      % matches this trigger, has an empty triggerRows, and without this
+      % guard the WHOLE tick() chain silently completes with no ITickDeltas
+      % at all for that tick (a real bug caught running the emitted program
+      % against the real seam, not by typecheck -- tsgo has no way to know
+      % forkJoin([]) is empty-completing rather than []-emitting).
+      '  if (triggerRows.length === 0) return of([]);',
+      ForkLine,
+      '    map((results) => {',
+      '      const resolved = new Map<string, IRow>();',
+      '      for (const result of results) {',
+      RowLine,
+      KeyLine,
+      '        resolved.set(key, projectedRow);',
+      '      }',
+      UpsertMapLine,
       '    }),',
-      '    concatMap((deltas) => runAllStatements(seam, refreshSnapshotStatements()).pipe(map(() => deltas))),',
+      '  );',
+      '}'
+    ].
+
+key_indices(HeadColumns, KeyColumns, Indices) :-
+    findall(Index0,
+            ( member(Column, KeyColumns), nth0(Index0, HeadColumns, Column) ),
+            Indices).
+
+% ═══ level recompute ═════════════════════════════════════════════════════════
+% Statements joined with the literal two-character escape sequence `\n`
+% (NOT an actual newline byte in this Prolog source): embedded inside the
+% backtick template literal, that text is what the JS engine itself
+% interprets as a newline when the template is evaluated at runtime --
+% matches Phase A's exemplar (`.join(";\n")` in real TS source, same
+% escape). Keeps the emitted const a single source line.
+
+recompute_levels_fn_lines(LevelStatements, Lines) :-
+    LevelStatements \== [],
+    findall(Sql, ( member(levelstmt(_, DeleteSql, InsertSql), LevelStatements), member(Sql, [DeleteSql, InsertSql]) ), Sqls),
+    atomic_list_concat(Sqls, ';\\n', JoinedSql),
+    js_template(JoinedSql, SqlTemplate),
+    format(atom(SqlLine), '  const sql = ~w;', [SqlTemplate]),
+    Lines =
+    [ 'function recomputeLevels(seam: ISqlSeam): Observable<void> {',
+      SqlLine,
+      '  return seam.runner.executeMultiple(seam.db, sql);',
+      '}'
+    ].
+
+% ═══ buildDeltas ═════════════════════════════════════════════════════════════
+
+build_deltas_fn_lines(RelPlans, EdgeStatements, Lines) :-
+    maplist(diff_local_line, RelPlans, DiffLines),
+    maplist(rel_entry_line, RelPlans, RelEntryLines),
+    carry_pending_expr(EdgeStatements, CarryExpr),
+    format(atom(CarryLine), '    carryPending: ~w,', [CarryExpr]),
+    append(
+        [ ['function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {'],
+          DiffLines,
+          ['  return {', '    rels: ['],
+          RelEntryLines,
+          ['    ],', CarryLine, '  };', '}']
+        ], Lines).
+
+diff_local_line(relplan(Ref, _Kind, _Columns, _Key), Line) :-
+    ref_name(Ref, Name),
+    format(atom(Line), '  const ~w = multisetDiff(before.~w, after.~w);', [Name, Name, Name]).
+
+rel_entry_line(relplan(Ref, _Kind, _Columns, _Key), Line) :-
+    ref_name(Ref, Name),
+    format(atom(Line), '      { rel: "~w", add: ~w.add, del: ~w.del },', [Name, Name, Name]).
+
+% carryPending (engine.pl q4/R2): true when a row this tick's edge rule(s)
+% wrote SHOWS AS A DELTA (an equal-row rewrite is invisible to multisetDiff,
+% so no separate no-op check is needed here -- the diff already absorbs it).
+% Simplification, matching Phase A's exemplar finding 3: this ignores the
+% general "post-write level growth with no edge write" carry source, safe
+% for both target fixtures because neither has a level rule reading an
+% arrival-driven rel directly without an edge rule in between. A program
+% with zero edge rules (demand_laziness_effect_rows) has carryPending fixed
+% at `false` -- not a per-tick computation, a structural fact about that
+% program shape (no rule ever writes mid-tick).
+carry_pending_expr([], 'false') :- !.
+carry_pending_expr(EdgeStatements, Expr) :-
+    findall(Cond,
+            ( member(edgestmt(HeadRef, _, _, _, _, _), EdgeStatements),
+              ref_name(HeadRef, Name),
+              format(atom(Cond), '~w.add.length > 0 || ~w.del.length > 0', [Name, Name]) ),
+            Conds),
+    atomic_list_concat(Conds, ' || ', Expr).
+
+% ═══ tick() + program export ════════════════════════════════════════════════
+
+run_tick_fn_lines(Name, [], Lines) :- !,
+    format(atom(NameCommentLine), '  // ~w: no edge rules -- absorb arrivals, recompute levels, diff.', [Name]),
+    Lines =
+    [ 'function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
+      '  return readSnapshot(seam).pipe(',
+      '    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),',
+      '    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),',
+      '    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),',
       '  );',
       NameCommentLine,
       '}'
-    ]) :-
-    format(atom(NameCommentLine), '  // ~w: engine.pl process_occurrences -> level_closure -> boundary_deltas, one tick.', [Name]).
+    ].
+run_tick_fn_lines(Name, EdgeStatements, Lines) :-
+    EdgeStatements \== [],
+    maplist(edge_resolve_call_expr, EdgeStatements, ResolveCallExprs),
+    ( ResolveCallExprs = [SingleCall]
+    -> format(atom(EdgeWritesExpr), '~w', [SingleCall])
+    ; atomic_list_concat(ResolveCallExprs, ', ', JoinedCalls),
+      format(atom(EdgeWritesExpr), 'forkJoin([~w]).pipe(map((groups) => groups.flat()))', [JoinedCalls])
+    ),
+    format(atom(EdgeWritesLine), '      ~w.pipe(', [EdgeWritesExpr]),
+    format(atom(NameCommentLine), '  // ~w: engine.pl process_occurrences -> level_closure -> boundary_deltas.', [Name]),
+    Lines =
+    [ 'function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
+      '  return readSnapshot(seam).pipe(',
+      '    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),',
+      '    concatMap((before) =>',
+      EdgeWritesLine,
+      '        concatMap((statements) => seam.runner.batch(seam.db, statements)),',
+      '        map(() => before),',
+      '      ),',
+      '    ),',
+      '    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),',
+      '    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),',
+      '  );',
+      NameCommentLine,
+      '}'
+    ].
+
+edge_resolve_call_expr(edgestmt(HeadRef, _, _, _, _, _), Expr) :-
+    pascal_case(HeadRef, Pascal),
+    format(atom(Expr), 'resolve~wWrites(seam, arrivals)', [Pascal]).
 
 program_export_lines(Name,
     [ 'export const program: IGenProgramWithBoot = {',
@@ -391,31 +456,33 @@ program_export_lines(Name,
 emit_program(Name, _Plan, Lowered, BootStatements, Text) :-
     Lowered = lowered(Name, Ddl, ArrivalStatements, EdgeStatements, LevelStatements, DeltaStatements, RelPlans, ArrivalTargets),
     header_lines(Name, HeaderLines),
-    imports_lines(ImportLines),
+    ( EdgeStatements == [] -> HasEdgeRules = false ; HasEdgeRules = true ),
+    imports_lines(HasEdgeRules, ImportLines),
     local_types_lines(LocalTypeLines),
     ddl_lines(Ddl, DdlLines),
     rel_columns_lines(RelPlans, RelColumnsLines),
     arrival_targets_lines(ArrivalTargets, ArrivalTargetsLines),
     boot_lines(BootStatements, BootLines),
+    snapshot_type_lines(RelPlans, SnapshotTypeLines),
+    read_snapshot_fn_lines(DeltaStatements, ReadSnapshotFnLines),
     arrival_statements_lines(ArrivalStatements, ArrivalStatementsLines),
-    apply_arrival_row_fn_lines(Name, ApplyArrivalRowLines),
-    edge_const_lines(EdgeStatements, EdgeConstLines, EdgeEntryLines),
-    level_const_lines(LevelStatements, LevelConstLines, LevelEntryLines),
-    mutation_statements_fn_lines(EdgeEntryLines, LevelEntryLines, MutationFnLines),
-    delta_const_lines(DeltaStatements, DeltaConstLines, DeltaQueryEntryLines, RefreshEntryLines),
-    delta_queries_fn_lines(DeltaQueryEntryLines, DeltaQueriesFnLines),
-    refresh_snapshot_fn_lines(RefreshEntryLines, RefreshFnLines),
-    run_all_fn_lines(RunAllFnLines),
-    build_tick_deltas_fn_lines(RelPlans, BuildTickDeltasFnLines),
-    run_tick_fn_lines(Name, RunTickFnLines),
+    arrival_statement_fn_lines(Name, ArrivalStatementFnLines),
+    ( EdgeStatements == []
+    -> EdgeConstLines = [], EdgeFnLines = []
+    ; edge_resolver_blocks(EdgeStatements, EdgeConstLines, EdgeFnLines)
+    ),
+    recompute_levels_fn_lines(LevelStatements, RecomputeLevelsFnLines),
+    build_deltas_fn_lines(RelPlans, EdgeStatements, BuildDeltasFnLines),
+    run_tick_fn_lines(Name, EdgeStatements, RunTickFnLines),
     program_export_lines(Name, ProgramExportLines),
-    Sections =
+    Sections0 =
     [ HeaderLines, ImportLines, LocalTypeLines, DdlLines, RelColumnsLines, ArrivalTargetsLines,
-      BootLines, ArrivalStatementsLines, ApplyArrivalRowLines,
-      EdgeConstLines, LevelConstLines, MutationFnLines,
-      DeltaConstLines, DeltaQueriesFnLines, RefreshFnLines,
-      RunAllFnLines, BuildTickDeltasFnLines, RunTickFnLines, ProgramExportLines
+      BootLines, SnapshotTypeLines, ReadSnapshotFnLines,
+      ArrivalStatementsLines, ArrivalStatementFnLines,
+      EdgeConstLines, EdgeFnLines,
+      RecomputeLevelsFnLines, BuildDeltasFnLines, RunTickFnLines, ProgramExportLines
     ],
+    exclude(==([]), Sections0, Sections),
     maplist(lines_block, Sections, SectionTexts),
     atomic_list_concat(SectionTexts, '\n\n', Body),
     format(atom(Text), '~w\n', [Body]).

@@ -12,6 +12,7 @@
 :- op(700,  xfx, :=).
 
 :- use_module(library(plunit)).
+:- use_module(library(apply)).
 :- use_module('../compile', [ read_fixture_term/4, program_plan/2 ]).
 :- use_module('../strat', [ stratum_groups/2 ]).
 :- use_module('../lower', [ lower_program/2 ]).
@@ -101,13 +102,39 @@ test(demand_laziness_columns) :-
 % respell (update the snapshot in the same commit as the reason) or a
 % regression (the test is the reason it got caught).
 
+% Round 2: no tick number reaches tick(), so edge writes lower to a
+% parameterless-FROM projection (numbered placeholders ?1/?2 bound directly
+% to the trigger arrival row's own values) plus a static UPSERT, not a
+% self-join filtered by a stamp column.
 test(switch_as_keyed_replace_edge_sql) :-
     lowered_for(switch_as_keyed_replace, Lowered),
-    Lowered = lowered(_, _, _, [edgestmt(open_scope/2, DeleteSql, InsertSql)], _, _, _, _),
-    DeleteSql ==
-      'DELETE FROM "open_scope" WHERE ("session_id") IN (SELECT t1."session_id" FROM "route_change" t1 WHERE t1.tick = ?)',
-    InsertSql ==
-      'INSERT INTO "open_scope" ("session_id", "target") SELECT b0."session_id", json_object(\'fn\', \'route_data\', \'args\', json_array(b0."route_id")) FROM "route_change" b0 WHERE b0.tick = ? AND b0.seq = (SELECT MAX(b0_dup.seq) FROM "route_change" b0_dup WHERE b0_dup.tick = b0.tick AND b0."session_id" = b0_dup."session_id")'.
+    Lowered = lowered(_, _, _, [edgestmt(open_scope/2, route_change/2, HeadColumns, KeyColumns, ProjectSql, UpsertSql)], _, _, _, _),
+    HeadColumns == [session_id, target],
+    KeyColumns == [session_id],
+    ProjectSql ==
+      'SELECT ?1 AS "session_id", json_object(\'fn\', \'route_data\', \'args\', json_array(?2)) AS "target"',
+    UpsertSql ==
+      'INSERT INTO "open_scope" ("session_id", "target") VALUES (?, ?) ON CONFLICT("session_id") DO UPDATE SET "target" = excluded."target"'.
+
+% An edge-headed keyed rel's table must carry PRIMARY KEY on the KEY
+% COLUMNS ALONE, matching the UPSERT's ON CONFLICT target -- SQLite
+% requires an EXACT constraint match ("ON CONFLICT clause does not match
+% any PRIMARY KEY or UNIQUE constraint" otherwise), a real error only the
+% real sqlite3 CLI / real seam surfaced, never a Prolog-level check. A
+% non-edge-headed Set rel (route_row, arrival-target only) still gets PK on
+% ALL columns (exact-row dedup, matching absorb_arrivals/8).
+test(switch_as_keyed_replace_ddl_pk_shape) :-
+    lowered_for(switch_as_keyed_replace, Lowered),
+    Lowered = lowered(_, Ddl, _, _, _, _, _, _),
+    include(ddl_for_table(open_scope), Ddl, [OpenScopeDdl]),
+    once(sub_atom(OpenScopeDdl, _, _, _, 'PRIMARY KEY ("session_id")')),
+    \+ sub_atom(OpenScopeDdl, _, _, _, 'PRIMARY KEY ("session_id", "target")'),
+    include(ddl_for_table(route_row), Ddl, [RouteRowDdl]),
+    once(sub_atom(RouteRowDdl, _, _, _, 'PRIMARY KEY ("route_id", "body")')).
+
+ddl_for_table(Table, Ddl) :-
+    format(atom(Needle), 'CREATE TABLE "~w" (', [Table]),
+    sub_atom(Ddl, 0, _, _, Needle).
 
 test(switch_as_keyed_replace_level_sql) :-
     lowered_for(switch_as_keyed_replace, Lowered),
@@ -130,19 +157,21 @@ test(demand_laziness_level_sql) :-
     DemandedInsert == 'INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_feed" b0',
     EffectCallInsert == 'INSERT OR IGNORE INTO "effect_call" ("target") SELECT b0."target" FROM "demanded" b0'.
 
+% Round 2: one plain "read every row" query per rel (log and set alike) --
+% no __prev shadow table, no EXCEPT, no tick filter. The runtime (or, for
+% this harness, test/run_sql_check.pl's own Prolog-side multiset_diff/4)
+% diffs the before/after row lists.
 test(switch_as_keyed_replace_delta_sql_open_scope) :-
     lowered_for(switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, _, _, _, _, DeltaStatements, _, _),
-    memberchk(deltastmt(open_scope/2, set, AddsSql, DelsSql, RefreshSqls), DeltaStatements),
-    AddsSql == 'SELECT "session_id", "target" FROM "open_scope" EXCEPT SELECT "session_id", "target" FROM "open_scope__prev" ORDER BY "session_id", "target"',
-    DelsSql == 'SELECT "session_id", "target" FROM "open_scope__prev" EXCEPT SELECT "session_id", "target" FROM "open_scope" ORDER BY "session_id", "target"',
-    RefreshSqls == ['DELETE FROM "open_scope__prev"', 'INSERT INTO "open_scope__prev" SELECT "session_id", "target" FROM "open_scope"'].
+    memberchk(deltastmt(open_scope/2, SelectSql), DeltaStatements),
+    SelectSql == 'SELECT "session_id", "target" FROM "open_scope"'.
 
 test(switch_as_keyed_replace_delta_sql_route_change_log) :-
     lowered_for(switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, _, _, _, _, DeltaStatements, _, _),
-    memberchk(deltastmt(route_change/2, log, AddsSql, none, []), DeltaStatements),
-    AddsSql == 'SELECT "session_id", "route_id" FROM "route_change" WHERE tick = ? ORDER BY seq'.
+    memberchk(deltastmt(route_change/2, SelectSql), DeltaStatements),
+    SelectSql == 'SELECT "session_id", "route_id" FROM "route_change"'.
 
 :- end_tests(sql_text_snapshots).
 

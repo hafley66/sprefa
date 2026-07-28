@@ -6,11 +6,14 @@
 %     Ddl              : list of CREATE TABLE SQL strings.
 %     RelPlans         : list of relplan(Ref, log|set, Columns, key(Ps)|none).
 %     ArrivalStatements: list of arrivalstmt(Ref, Kind, AddSql, DelSqlOrNone).
-%     EdgeStatements   : list of edgestmt(HeadRef, DeleteSql, InsertSql).
+%     EdgeStatements   : list of edgestmt(HeadRef, TriggerRef, HeadColumns,
+%                        KeyColumns, ProjectSql, UpsertSql).
 %     LevelStatements  : list of levelstmt(HeadRef, DeleteSql, InsertSql),
 %                        already in execution order (strat.pl:sql_rule_order/2).
-%     DeltaStatements  : list of deltastmt(Ref, Kind, AddsSql, DelsSqlOrNone,
-%                        RefreshSqlList).
+%     DeltaStatements  : list of deltastmt(Ref, SelectAllSql) -- ONE plain
+%                        "read every row" query per rel, run before AND after
+%                        a tick's mutations; the runtime diffs the two row
+%                        lists (see ROUND 2 note below).
 %
 % plus boot_statements/3, a SEPARATE list of bootstmt(Sql, Params) (needs
 % Initial, which plan/6 does not carry).
@@ -19,17 +22,66 @@
 % backend must consume this unchanged): every field above is SQL text plus
 % plain Prolog structure -- no TypeScript syntax, no rxjs, no host-language
 % idiom anywhere in this file. `emit_ts.pl` is the ONE backend that renders
-% this term; it is the only module in v6/prolog/compile/ that imports or
-% mentions rxjs/TypeScript syntax (verified: grep -niE "rxjs|Observable|
-% interface |import \{" over analyze.pl/strat.pl/lower.pl/compile.pl finds
-% zero code hits, only doc-comment mentions of the TARGET name). A future
-% emit_rust.pl reads the identical lowered/8 + boot_statements/3 + RelPlans
-% and renders sqlx/rusqlite calls (or whatever the Rust seam turns out to
-% be) around the SAME SQL strings -- SQLite is the shared middle language
-% both backends speak; nothing here decides how a HOST assembles statements
-% into a program.
+% this term. A future emit_rust.pl reads the identical lowered/8 +
+% boot_statements/3 + RelPlans and renders sqlx/rusqlite calls around the
+% SAME SQL strings -- SQLite is the shared middle language both backends
+% speak; nothing here decides how a HOST assembles statements into a program.
 %
-% ── representation of a structured column value ─────────────────────────────
+% ── ROUND 2 (reconciliation, tsgo error list): no tick number reaches
+% tick() ───────────────────────────────────────────────────────────────────
+% The real runtime/types.ts (Phase A, merged) hands `tick(seam, arrivals)`
+% ONLY the arrival batch -- tick NUMBERING is owned entirely by the runtime's
+% fold (tickLoop.ts), never passed in. Round 1 of this compiler threaded a
+% tick number through every statement (Log rels stamped with (tick, seq)
+% columns; delta queries filtered `WHERE tick = ?`; edge writes resolved
+% "latest occurrence this tick" via a self-join on that stamp) -- ALL of
+% that depended on a value the seam does not provide. This is a genuine
+% PLAN-TERM change, not a backend rendering fix: DeltaStatements' shape
+% changed from a 5-field EXCEPT-query/refresh-table design to a 2-field
+% "just read every row" design, EdgeStatements changed from a SQL self-join
+% design to a "project one arrival row, resolve keys, upsert" design, and
+% Log-rel DDL/arrivals dropped their stamp columns entirely. Reported as a
+% finding, not silently absorbed.
+%
+% The replacement strategy matches Phase A's own hand-carved exemplar
+% (v6/tsv2/gen/*.ts) exactly, rather than inventing an untested alternative
+% under time pressure: read every rel's full row list before a tick's
+% writes and again after; the runtime's `multisetDiff` (runtime/diff.ts,
+% REUSED per the reuse law, never reimplemented here) computes the add/del
+% multiset difference -- ONE algorithm that is a plain set diff for Set/level
+% rels and an occurrence-count diff for Log rels (duplicates handled
+% correctly, no stamp column needed: engine.pl r7 "Log rels: one +Row per
+% new stamp" is exactly "count in next minus count in prev" per distinct row
+% value, since Log arrivals are append-only). This eliminates the `__prev`
+% shadow tables and their refresh statements too -- DDL is simpler than
+% round 1's, not just different.
+%
+% Edge-rule keyed replace is resolved the same way Phase A's exemplar
+% resolves it: in JS, from the raw `arrivals` array directly (the trigger
+% rel's fresh rows for this tick ARE the array elements tagged with that
+% rel name -- no SQL-side "which rows are this tick's" question to answer at
+% all once tick numbering is gone). lower.pl's job for an edge rule shrinks
+% to two SQL fragments: ProjectSql (a parameterless-FROM `SELECT
+% <head-expr-list>` that turns one arrival row's values, bound to numbered
+% placeholders ?1..?N in trigger-argument order, into the head row shape --
+% reuses compile_head_expr/head_select_list UNCHANGED, only the Bound source
+% differs from round 1) and UpsertSql (`INSERT ... ON CONFLICT(<key cols>)
+% DO UPDATE SET <non-key col> = excluded.<non-key col>`, matching the
+% reference exemplar's ON CONFLICT idiom exactly). The emitter resolves
+% last-write-wins and equal-row no-op in JS (a Map keyed by the head row's
+% key-column values, natural overwrite-on-set semantics), matching
+% apply_edge_writes/6's "across occurrences the later write wins" rule.
+%
+% Round 1 also had a LATENT bug `keyed(Ref, Positions)` positions are
+% declared against Ref's OWN columns (the keyed rel's own arity), never the
+% trigger atom's. Round 1's DELETE/INSERT self-join happened to index into
+% TriggerColumns instead of HeadColumns for KeyColumns, which was silently
+% correct only because switch_as_keyed_replace's trigger and head both have
+% session_id at position 1 by coincidence. Round 2's KeyColumns is indexed
+% off HeadColumns, the conceptually right list, fixed while rewriting this
+% predicate anyway.
+%
+% ── representation of a structured column value (UNCHANGED from round 1) ──
 % A term column (route_data(RouteId), obj(...), any compound) has no scalar
 % SQL type, so it is stored as the SQLite json1 encoding
 %   json_object('fn', <functor atom>, 'args', json_array(<arg exprs>))
@@ -37,36 +89,32 @@
 % `demanded(route_data(RouteId), _)`) compiles to a functor-tag equality
 % (json_extract(col,'$.fn') = 'route_data') plus one json_extract(col,
 % '$.args[N]') expression PER sub-argument position, which then binds like
-% any other column expression. This is a compiler decision engine.pl does not
-% make (it just unifies Prolog terms); SQLite's json1 extension is the
-% concrete choice, verified working with sqlite3 3.43.2 (json_extract, exact
-% json_object() text equality across two calls with identical arguments) --
-% see the compile arc's SQL-check harness for the receipt.
+% any other column expression. Phase A's hand-carved exemplar instead
+% stores compound values as raw concatenated text (`route_data(settings)`)
+% matched back via LIKE + substr with a compile-time functor-length offset
+% -- both choices are valid IRow-value TEXT, and the seam does not prefer
+% either; this compiler keeps json1 (more general: no per-functor constant
+% baked into the matching SQL, verified working with sqlite3 3.43.2).
 %
 % ── keyed replace only binds edge writes, never arrivals ────────────────────
-% engine.pl absorb_arrivals/8 (line 182) never consults decl_key/1: an
-% OUTSIDE arrival into a keyed Set rel is plain exact-row add/remove, same
-% as an unkeyed Set rel. Only apply_edge_writes/6 (line 237) does
-% delete-old-then-insert-new BY KEY. So a table backing a keyed rel gets
-% PRIMARY KEY over ALL declared columns (WITHOUT ROWID, exact-row identity,
-% matching srow(Row) membership) -- never PRIMARY KEY(key columns), which
-% would conflate the two write paths onto one schema-level constraint. Key
-% uniqueness for an edge-headed rel is enforced procedurally by the edge
-% statement's DELETE-by-key that runs before its INSERT, never by the table
-% schema. This is a compiler decision the header's IGenProgram sketch does
-% not anticipate.
+% engine.pl absorb_arrivals/8 never consults decl_key/1: an OUTSIDE arrival
+% into a keyed Set rel is plain exact-row add/remove, same as an unkeyed Set
+% rel. Only apply_edge_writes/6 does delete-old-then-insert-new BY KEY. So a
+% table backing a keyed rel gets PRIMARY KEY over ALL declared columns
+% (WITHOUT ROWID, exact-row identity, matching srow(Row) membership) --
+% never PRIMARY KEY(key columns), which would conflate the two write paths
+% onto one schema-level constraint. Key uniqueness for an edge-headed rel is
+% enforced procedurally by the UPSERT's ON CONFLICT clause, never by the
+% table schema.
 %
-% ── acyclic-by-construction level recompute ──────────────────────────────────
-% engine.pl re-derives a whole stratum GROUP to a joint fixpoint
-% (level_eval.pl:plain_fixpoint) because relax_strata's Gap=0 rule lets two
-% positively-dependent rules land in the SAME stratum number. strat.pl
-% verified (against level_eval.pl itself, not reimplemented blind) that both
-% target fixtures collapse to exactly one such group; sql_rule_order/2 then
-% topo-sorts within it. A single DELETE-then-INSERT-SELECT pass per rule in
-% that order computes the SAME rows a joint fixpoint would for an ACYCLIC
-% chain (a second pass would add nothing new); a genuine positive cycle
-% inside one group is refused at strat.pl:topo_order_group/2, not silently
-% single-passed.
+% ── acyclic-by-construction level recompute (UNCHANGED from round 1) ───────
+% engine.pl re-derives a whole stratum GROUP to a joint fixpoint because
+% relax_strata's Gap=0 rule lets two positively-dependent rules land in the
+% SAME stratum number. strat.pl verified both target fixtures collapse to
+% exactly one such group; sql_rule_order/2 topo-sorts within it. A single
+% DELETE-then-INSERT-SELECT pass per rule in that order computes the SAME
+% rows a joint fixpoint would for an ACYCLIC chain; a genuine positive cycle
+% inside one group is refused at strat.pl:topo_order_group/2.
 
 :- module(lower, [ lower_program/2, boot_statements/3 ]).
 
@@ -82,7 +130,6 @@
 % ═══ identifiers ═════════════════════════════════════════════════════════════
 
 table_name(Name/_Arity, Name).
-prev_table_name(Name/_Arity, PrevName) :- format(atom(PrevName), '~w__prev', [Name]).
 
 quote_ident(Name, Quoted) :- format(atom(Quoted), '"~w"', [Name]).
 
@@ -100,9 +147,9 @@ sql_literal(Atom, Literal) :-
 relplan_columns(RelPlans, Ref, Columns) :- memberchk(relplan(Ref, _, Columns, _), RelPlans).
 relplan_kind(RelPlans, Ref, Kind) :- memberchk(relplan(Ref, Kind, _, _), RelPlans).
 
-% ═══ pattern-argument compiler ═══════════════════════════════════════════════
+% ═══ pattern-argument compiler (level-rule bodies; unchanged from round 1) ══
 % compile_pattern_arg(Arg, ColumnExpr, Bound0, Bound, WhereParts, Mode)
-% Mode = bind (level/edge positive atom, may introduce new bindings) | check
+% Mode = bind (level positive atom, may introduce new bindings) | check
 % (negated atom, read-only: never introduces a binding, an unbound var there
 % imposes no condition -- negation-as-failure over an unconstrained position).
 
@@ -134,10 +181,10 @@ compile_sub_args([SubArg | Rest], ParentExpr, Index, Bound0, Bound, WhereParts, 
 
 % NOTE the two distinct names: the head pattern's pair value (PairExpr) must
 % stay separate from the output parameter (Expr) -- reusing one name for both
-% (an earlier version of this predicate did) unifies the output with the
-% FIRST pair's value at head-unification time regardless of which branch
-% fires, so every lookup past the first list element fails outright. This is
-% exactly the bug class the descriptive-names style law exists to prevent.
+% (round 1's first draft did) unifies the output with the FIRST pair's value
+% at head-unification time regardless of which branch fires, so every lookup
+% past the first list element fails outright. This is exactly the bug class
+% the descriptive-names style law exists to prevent.
 bound_lookup([Var-PairExpr | Rest], Target, Expr) :-
     ( Var == Target -> Expr = PairExpr ; bound_lookup(Rest, Target, Expr) ).
 
@@ -147,7 +194,8 @@ where_text(pair_lit(Left, Functor), Text) :-
     format(atom(Text), 'json_extract(~w, \'$.fn\') = ~w', [Left, Quoted]).
 where_text(lit(Left, Value), Text) :- sql_literal(Value, Quoted), format(atom(Text), '~w = ~w', [Left, Quoted]).
 
-% ═══ positive body-atom compilation (level rules + edge trigger) ═══════════
+% ═══ positive body-atom compilation (level rules only, round 2: edge rules
+% no longer use this -- see compile_trigger_bound/2 below) ═══════════════
 
 compile_positive_uses(RelPlans, Uses, Bound0, Bound, FromParts, WhereTexts) :-
     compile_positive_uses(RelPlans, Uses, 0, Bound0, Bound, FromParts, WhereParts),
@@ -171,7 +219,7 @@ compile_atom_args([Arg | RestArgs], [Column | RestColumns], Alias, Bound0, Bound
     compile_atom_args(RestArgs, RestColumns, Alias, Bound1, Bound, MoreWhere),
     append(HereWhere, MoreWhere, WhereParts).
 
-% ═══ negative body-atom compilation (NOT EXISTS) ════════════════════════════
+% ═══ negative body-atom compilation (NOT EXISTS; unchanged from round 1) ════
 
 compile_negative_uses(RelPlans, Uses, Bound, NegTexts) :-
     compile_negative_uses(RelPlans, Uses, 0, Bound, NegTexts).
@@ -198,7 +246,10 @@ compile_negative_atom_args([Arg | RestArgs], [Column | RestColumns], Alias, Boun
     compile_negative_atom_args(RestArgs, RestColumns, Alias, Bound, MoreWhere),
     append(HereWhere, MoreWhere, WhereParts).
 
-% ═══ head expression compilation ════════════════════════════════════════════
+% ═══ head expression compilation (unchanged from round 1; reused for BOTH
+% level rules, via table-alias Bound, and edge rules, via numbered-
+% placeholder Bound -- compile_head_expr/3 does not care where a bound
+% variable's SQL text came from) ═════════════════════════════════════════
 
 compile_head_expr(Arg, Bound, Sql) :-
     ( var(Arg)
@@ -228,29 +279,45 @@ head_select_list(Head, Bound, ColumnAliases, SelectExprs) :-
 
 alias_select_expr(Expr, Alias, AliasedExpr) :- format(atom(AliasedExpr), '~w AS "~w"', [Expr, Alias]).
 
-% ═══ DDL ═════════════════════════════════════════════════════════════════════
+% ═══ DDL (round 2: no stamp columns, no __prev tables) ══════════════════════
+%
+% rel_ddl/3's third argument is the set of edge-headed refs. An edge-headed
+% keyed rel's UPSERT (edge_statement/3's UpsertSql) targets `ON
+% CONFLICT(<key columns>)`, and SQLite requires that clause to name a REAL
+% constraint on EXACTLY that column set -- "ON CONFLICT clause does not
+% match any PRIMARY KEY or UNIQUE constraint" is a genuine runtime error,
+% caught running the emitted program against the real seam (reconciliation
+% round 2), not a static analysis finding. A non-edge-headed Set rel (an
+% arrival-target only, keyed or not) still gets PK = ALL columns: outside
+% arrivals never consult decl_key/1 (absorb_arrivals/8 treats every Set rel
+% as exact-row membership, matching srow(Row)), so an all-column PK is the
+% right invariant there, and no ON CONFLICT clause ever targets it.
 
-rel_ddl(relplan(Ref, log, Columns, _), [Ddl]) :- !,
+rel_ddl(_, relplan(Ref, log, Columns, _), [Ddl]) :- !,
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     maplist(column_def, QuotedColumns, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
-    format(atom(Ddl),
-           'CREATE TABLE ~w (tick INTEGER NOT NULL, seq INTEGER NOT NULL, ~w, PRIMARY KEY (tick, seq)) WITHOUT ROWID',
-           [QuotedTable, ColumnsSql]).
-rel_ddl(relplan(Ref, set, Columns, _), [MainDdl, PrevDdl]) :-
+    % Plain rowid table (no PK, no WITHOUT ROWID): a Log rel's duplicate rows
+    % are distinct occurrences (engine.pl q1) and must physically coexist as
+    % separate rows for multisetDiff to count them correctly.
+    format(atom(Ddl), 'CREATE TABLE ~w (~w)', [QuotedTable, ColumnsSql]).
+rel_ddl(EdgeHeadedRefs, relplan(Ref, set, Columns, KeyOrNone), [Ddl]) :-
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
-    prev_table_name(Ref, PrevTable), quote_ident(PrevTable, QuotedPrevTable),
     maplist(quote_ident, Columns, QuotedColumns),
     maplist(column_def, QuotedColumns, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
-    atomic_list_concat(QuotedColumns, ', ', PkSql),
-    format(atom(MainDdl), 'CREATE TABLE ~w (~w, PRIMARY KEY (~w)) WITHOUT ROWID', [QuotedTable, ColumnsSql, PkSql]),
-    format(atom(PrevDdl), 'CREATE TABLE ~w (~w, PRIMARY KEY (~w)) WITHOUT ROWID', [QuotedPrevTable, ColumnsSql, PkSql]).
+    ( memberchk(Ref, EdgeHeadedRefs), KeyOrNone = key(KeyPositions)
+    -> nth1_list(KeyPositions, Columns, KeyColumns),
+       maplist(quote_ident, KeyColumns, QuotedKeyColumns),
+       atomic_list_concat(QuotedKeyColumns, ', ', PkSql)
+    ;  atomic_list_concat(QuotedColumns, ', ', PkSql)
+    ),
+    format(atom(Ddl), 'CREATE TABLE ~w (~w, PRIMARY KEY (~w)) WITHOUT ROWID', [QuotedTable, ColumnsSql, PkSql]).
 
 column_def(QuotedColumn, Def) :- format(atom(Def), '~w TEXT NOT NULL', [QuotedColumn]).
 
-% ═══ arrival statement templates ═════════════════════════════════════════════
+% ═══ arrival statement templates (round 2: Log rel drops tick/seq params) ═══
 
 arrival_statement(relplan(Ref, log, Columns, _), arrivalstmt(Ref, log, AddSql, none)) :- !,
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
@@ -258,7 +325,7 @@ arrival_statement(relplan(Ref, log, Columns, _), arrivalstmt(Ref, log, AddSql, n
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
     length(Columns, N), placeholders(N, Placeholders),
     atomic_list_concat(Placeholders, ', ', PlaceholdersSql),
-    format(atom(AddSql), 'INSERT INTO ~w (tick, seq, ~w) VALUES (?, ?, ~w)', [QuotedTable, ColumnsSql, PlaceholdersSql]).
+    format(atom(AddSql), 'INSERT INTO ~w (~w) VALUES (~w)', [QuotedTable, ColumnsSql, PlaceholdersSql]).
 arrival_statement(relplan(Ref, set, Columns, _), arrivalstmt(Ref, set, AddSql, DelSql)) :-
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
@@ -275,14 +342,13 @@ eq_placeholder(QuotedColumn, Text) :- format(atom(Text), '~w = ?', [QuotedColumn
 placeholders(0, []) :- !.
 placeholders(N, ['?' | Rest]) :- N > 0, N1 is N - 1, placeholders(N1, Rest).
 
-% ═══ edge rule lowering ══════════════════════════════════════════════════════
+% ═══ edge rule lowering (round 2: project one arrival row + upsert, no
+% self-join, no tick) ═════════════════════════════════════════════════════
 % Supported shape only (analyze.pl:check_edge_rule_shape already refused
 % anything wider): `Head <+ only(TriggerAtom)`, TriggerAtom a Log-kind EDB
-% ref, Head a keyed Set ref (edge_into_unkeyed_set / edge_write_log_head are
-% both refused here -- neither target fixture writes an edge head that is a
-% Log rel or an unkeyed Set rel, so this compiler does not lower them yet).
+% ref with plain-variable arguments, Head a keyed Set ref.
 
-edge_statement(RelPlans, (Head <+ only(TriggerAtom)), edgestmt(HeadRef, DeleteSql, InsertSql)) :-
+edge_statement(RelPlans, (Head <+ only(TriggerAtom)), edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, UpsertSql)) :-
     rel_ref(TriggerAtom, TriggerRef),
     ( relplan_kind(RelPlans, TriggerRef, log) -> true
     ; throw(unsupported_construct(edge_trigger_not_log(TriggerRef))) ),
@@ -291,58 +357,62 @@ edge_statement(RelPlans, (Head <+ only(TriggerAtom)), edgestmt(HeadRef, DeleteSq
     ; throw(unsupported_construct(edge_write_log_head(HeadRef))) ),
     ( memberchk(relplan(HeadRef, set, _, key(KeyPositions)), RelPlans) -> true
     ; throw(unsupported_construct(edge_into_unkeyed_set(HeadRef))) ),
-    table_name(TriggerRef, TriggerTable), quote_ident(TriggerTable, QuotedTriggerTable),
-    relplan_columns(RelPlans, TriggerRef, TriggerColumns),
     TriggerAtom =.. [_ | TriggerArgs],
-    compile_positive_uses(RelPlans, [use(TriggerRef, TriggerArgs, pos, marked)], [], Bound, [_From], _WhereTexts),
-    table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
+    compile_trigger_bound(TriggerArgs, Bound),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
-    nth1_list(KeyPositions, TriggerColumns, KeyColumns),
-    maplist(quote_ident, KeyColumns, QuotedKeyColumns),
-    % Outer DELETE reads the HEAD table's own key columns (unaliased); its
-    % subquery is independent of Bound, so it is free to pick any alias ("t1")
-    % for the trigger table it scans. The INSERT's SELECT list, in contrast,
-    % is built from Bound, which compile_positive_uses/6 already aliased
-    % "b0" for the (only) positive body atom -- the INSERT's own FROM/subquery
-    % aliases MUST match "b0", or the SELECT list references a table alias
-    % the FROM clause never introduces (a real bug an earlier draft of this
-    % predicate had: it hardcoded "t1" here while Bound said "b0").
-    atomic_list_concat(QuotedKeyColumns, ', ', HeadKeySql),
-    key_in_subquery(QuotedKeyColumns, 't1', TriggerKeySql),
-    format(atom(DeleteSql),
-           'DELETE FROM ~w WHERE (~w) IN (SELECT ~w FROM ~w t1 WHERE t1.tick = ?)',
-           [QuotedHeadTable, HeadKeySql, TriggerKeySql, QuotedTriggerTable]),
-    head_select_list(Head, Bound, none, SelectExprs),
+    % Aliased AS HeadColumns (not `none`, unlike a level rule's SELECT,
+    % which has an explicit INSERT column list and does not need aliases):
+    % the emitter reads one projected row back via named column access
+    % (runtime/rows.ts's own `row[column]` idiom), and reconstructing
+    % aliases by string surgery on an alias-free SELECT would be unsafe --
+    % a json_object(...) expression's OWN internal commas would look
+    % identical to expression-list separators to any naive re-splitter.
+    head_select_list(Head, Bound, HeadColumns, SelectExprs),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
+    format(atom(ProjectSql), 'SELECT ~w', [SelectSql]),
+    % KeyColumns indexes HeadColumns (the keyed rel's OWN columns), not
+    % TriggerColumns -- round 1 indexed the wrong list here (silently
+    % correct only by fixture coincidence: open_scope and route_change both
+    % have session_id at position 1). Fixed in this rewrite.
+    nth1_list(KeyPositions, HeadColumns, KeyColumns),
+    table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
-    key_equal_conditions('b0', 'b0_dup', KeyColumns, KeyJoinConditions),
-    atomic_list_concat(KeyJoinConditions, ' AND ', KeyJoinSql),
-    format(atom(LatestSeqSubquery),
-           '(SELECT MAX(b0_dup.seq) FROM ~w b0_dup WHERE b0_dup.tick = b0.tick AND ~w)',
-           [QuotedTriggerTable, KeyJoinSql]),
-    format(atom(InsertSql),
-           'INSERT INTO ~w (~w) SELECT ~w FROM ~w b0 WHERE b0.tick = ? AND b0.seq = ~w',
-           [QuotedHeadTable, HeadColumnsSql, SelectSql, QuotedTriggerTable, LatestSeqSubquery]).
+    length(HeadColumns, ColumnCount), placeholders(ColumnCount, ValuePlaceholders),
+    atomic_list_concat(ValuePlaceholders, ', ', ValuePlaceholdersSql),
+    maplist(quote_ident, KeyColumns, QuotedKeyColumns),
+    atomic_list_concat(QuotedKeyColumns, ', ', KeyColumnsSql),
+    subtract(HeadColumns, KeyColumns, NonKeyColumns),
+    ( NonKeyColumns == []
+    -> format(atom(ConflictClause), 'ON CONFLICT(~w) DO NOTHING', [KeyColumnsSql])
+    ;  maplist(quote_ident, NonKeyColumns, QuotedNonKeyColumns),
+       maplist(excluded_assignment, QuotedNonKeyColumns, SetParts),
+       atomic_list_concat(SetParts, ', ', SetSql),
+       format(atom(ConflictClause), 'ON CONFLICT(~w) DO UPDATE SET ~w', [KeyColumnsSql, SetSql])
+    ),
+    format(atom(UpsertSql), 'INSERT INTO ~w (~w) VALUES (~w) ~w',
+           [QuotedHeadTable, HeadColumnsSql, ValuePlaceholdersSql, ConflictClause]).
+
+excluded_assignment(QuotedColumn, Text) :- format(atom(Text), '~w = excluded.~w', [QuotedColumn, QuotedColumn]).
+
+% Numbered placeholders (?1, ?2, ...), one per trigger argument position, in
+% TRIGGER-argument order -- the emitter passes `arrival.row` (already in
+% that exact order, since a rel's stored row IS its declared column order)
+% as the bind args UNCHANGED, so a head expression can reference the same
+% trigger argument more than once (?1 reused) without the emitter needing
+% to reorder or duplicate anything.
+compile_trigger_bound(TriggerArgs, Bound) :- compile_trigger_bound(TriggerArgs, 1, Bound).
+compile_trigger_bound([], _, []).
+compile_trigger_bound([Arg | Rest], Index, [Arg-Placeholder | MoreBound]) :-
+    ( var(Arg) -> true ; throw(unsupported_construct(trigger_arg_not_var(Arg))) ),
+    format(atom(Placeholder), '?~w', [Index]),
+    NextIndex is Index + 1,
+    compile_trigger_bound(Rest, NextIndex, MoreBound).
 
 nth1_list([], _, []).
 nth1_list([Position | Rest], List, [Element | More]) :- nth1(Position, List, Element), nth1_list(Rest, List, More).
 
-% Column names here are RAW (unquoted) -- the format template supplies the
-% quotes itself. Passing already-quote_ident'd atoms here double-quotes them
-% (`t1.""session_id""`, invalid SQL) -- an earlier draft had exactly that bug.
-key_equal_conditions(_, _, [], []).
-key_equal_conditions(AliasLeft, AliasRight, [Column | Rest], [Condition | More]) :-
-    format(atom(Condition), '~w."~w" = ~w."~w"', [AliasLeft, Column, AliasRight, Column]),
-    key_equal_conditions(AliasLeft, AliasRight, Rest, More).
-
-key_in_subquery(QuotedKeyColumns, Alias, Sql) :-
-    maplist(alias_column(Alias), QuotedKeyColumns, Refs),
-    atomic_list_concat(Refs, ', ', Sql).
-
-alias_column(Alias, QuotedColumn, Ref) :- format(atom(Ref), '~w.~w', [Alias, QuotedColumn]).
-
-% ═══ level rule lowering ═════════════════════════════════════════════════════
+% ═══ level rule lowering (unchanged from round 1) ═══════════════════════════
 
 level_statement(RelPlans, (Head <- Body), levelstmt(HeadRef, DeleteSql, InsertSql)) :-
     rel_ref(Head, HeadRef),
@@ -371,48 +441,36 @@ level_statement(RelPlans, (Head <- Body), levelstmt(HeadRef, DeleteSql, InsertSq
 is_positive_use(use(_, _, pos, _)).
 is_negative_use(use(_, _, neg, _)).
 
-% ═══ delta / snapshot statements ═════════════════════════════════════════════
+% ═══ delta statements (round 2: one plain "read every row" query per rel;
+% the runtime diffs before/after via multisetDiff, reused not reinvented) ══
 
-delta_statement(relplan(Ref, log, Columns, _), deltastmt(Ref, log, AddsSql, none, [])) :- !,
+delta_statement(relplan(Ref, _Kind, Columns, _), deltastmt(Ref, SelectSql)) :-
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
-    format(atom(AddsSql), 'SELECT ~w FROM ~w WHERE tick = ? ORDER BY seq', [ColumnsSql, QuotedTable]).
-delta_statement(relplan(Ref, set, Columns, _), deltastmt(Ref, set, AddsSql, DelsSql, [RefreshDeleteSql, RefreshInsertSql])) :-
-    table_name(Ref, Table), quote_ident(Table, QuotedTable),
-    prev_table_name(Ref, PrevTable), quote_ident(PrevTable, QuotedPrevTable),
-    maplist(quote_ident, Columns, QuotedColumns),
-    atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
-    format(atom(AddsSql),
-           'SELECT ~w FROM ~w EXCEPT SELECT ~w FROM ~w ORDER BY ~w',
-           [ColumnsSql, QuotedTable, ColumnsSql, QuotedPrevTable, ColumnsSql]),
-    format(atom(DelsSql),
-           'SELECT ~w FROM ~w EXCEPT SELECT ~w FROM ~w ORDER BY ~w',
-           [ColumnsSql, QuotedPrevTable, ColumnsSql, QuotedTable, ColumnsSql]),
-    format(atom(RefreshDeleteSql), 'DELETE FROM ~w', [QuotedPrevTable]),
-    format(atom(RefreshInsertSql), 'INSERT INTO ~w SELECT ~w FROM ~w', [QuotedPrevTable, ColumnsSql, QuotedTable]).
+    format(atom(SelectSql), 'SELECT ~w FROM ~w', [ColumnsSql, QuotedTable]).
 
-% ═══ boot (initial seed + baseline snapshot priming) ════════════════════════
+% ═══ boot (initial seed only; round 2 drops __prev priming entirely, since
+% there is no __prev table anymore) ══════════════════════════════════════
 % engine.pl:run_program seeds Initial rows and computes the t=0 level closure
-% BEFORE tick 1's state(...) even exists (run_ticks starts at state(1, ...)
-% with PrevAll already the closed, seeded baseline) -- a non-tick step with no
-% slot in IGenProgram (tick/2 only takes an arrivals batch, no "this is boot"
-% flag). This compiler emits it as an EXTRA `boot: IBootStatement[]` field
-% beyond the five IGenProgram names, which is allowed ("extend by adding
-% fields, never renaming") but is real seam friction: nothing in the header
-% says who runs it or when relative to the first tick() call. Flagged in the
-% arc report, not resolved unilaterally here.
+% BEFORE tick 1's state(...) even exists -- a non-tick step with no slot in
+% IGenProgram (tick/2 only takes an arrivals batch, no "this is boot" flag).
+% This compiler emits it as an EXTRA `boot: IBootStatement[]` field beyond
+% the five IGenProgram names ("extend by adding fields, never renaming");
+% who calls it and when is real seam friction -- v6/tsv2/scripts/
+% run-emitted.ts (the reconciliation runner) now answers this concretely:
+% it runs `boot` after DDL and before the tick fold, confirmed by that
+% script's own header comment.
 
 boot_seed_statement(relplan(Ref, log, Columns, _), Initial, Statements) :- !,
     findall(bootstmt(Sql, Values),
-            ( nth0(Index, Initial, Row), rel_ref(Row, Ref), Row =.. [_ | Values],
+            ( member(Row, Initial), rel_ref(Row, Ref), Row =.. [_ | Values],
               table_name(Ref, Table), quote_ident(Table, QuotedTable),
               maplist(quote_ident, Columns, QuotedColumns),
               atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
               length(Columns, N), placeholders(N, Placeholders),
               atomic_list_concat(Placeholders, ', ', PlaceholdersSql),
-              format(atom(Sql), 'INSERT INTO ~w (tick, seq, ~w) VALUES (0, ~w, ~w)',
-                     [QuotedTable, ColumnsSql, Index, PlaceholdersSql]) ),
+              format(atom(Sql), 'INSERT INTO ~w (~w) VALUES (~w)', [QuotedTable, ColumnsSql, PlaceholdersSql]) ),
             Statements).
 boot_seed_statement(relplan(Ref, set, Columns, _), Initial, Statements) :-
     findall(bootstmt(Sql, Values),
@@ -425,18 +483,12 @@ boot_seed_statement(relplan(Ref, set, Columns, _), Initial, Statements) :-
               format(atom(Sql), 'INSERT OR IGNORE INTO ~w (~w) VALUES (~w)', [QuotedTable, ColumnsSql, PlaceholdersSql]) ),
             Statements).
 
-prime_snapshot_statement(relplan(Ref, set, Columns, _), bootstmt(Sql, [])) :-
-    table_name(Ref, Table), quote_ident(Table, QuotedTable),
-    prev_table_name(Ref, PrevTable), quote_ident(PrevTable, QuotedPrevTable),
-    maplist(quote_ident, Columns, QuotedColumns),
-    atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
-    format(atom(Sql), 'INSERT INTO ~w SELECT ~w FROM ~w', [QuotedPrevTable, ColumnsSql, QuotedTable]).
-
 % ═══ top level ═══════════════════════════════════════════════════════════════
 
 lower_program(plan(Name, prog(_Decls, _Rules), RelPlans, ArrivalTargets, RuleOrder, EdgeRules),
               lowered(Name, Ddl, ArrivalStatements, EdgeStatements, LevelStatements, DeltaStatements, RelPlans, ArrivalTargets)) :-
-    maplist(rel_ddl, RelPlans, DdlGroups), append(DdlGroups, Ddl),
+    findall(EdgeHeadedRef, ( member(EdgeRule, EdgeRules), rule_head_ref(EdgeRule, EdgeHeadedRef) ), EdgeHeadedRefs),
+    maplist(rel_ddl(EdgeHeadedRefs), RelPlans, DdlGroups), append(DdlGroups, Ddl),
     include(arrival_target_relplan(ArrivalTargets), RelPlans, ArrivalRelPlans),
     maplist(arrival_statement, ArrivalRelPlans, ArrivalStatements),
     maplist(edge_statement(RelPlans), EdgeRules, EdgeStatements),
@@ -448,10 +500,6 @@ arrival_target_relplan(ArrivalTargets, relplan(Ref, _, _, _)) :- memberchk(Ref, 
 % Boot statements, computed on demand (needs Initial, which plan/6 does not
 % carry -- compile.pl calls this directly with the fixture's Initial list).
 boot_statements(RelPlans, Initial, BootStatements) :-
-    maplist(boot_seed_statement_for(Initial), RelPlans, SeedGroups), append(SeedGroups, SeedStatements),
-    include(is_set_relplan, RelPlans, SetRelPlans),
-    maplist(prime_snapshot_statement, SetRelPlans, PrimeStatements),
-    append(SeedStatements, PrimeStatements, BootStatements).
+    maplist(boot_seed_statement_for(Initial), RelPlans, SeedGroups), append(SeedGroups, BootStatements).
 
 boot_seed_statement_for(Initial, RelPlan, Statements) :- boot_seed_statement(RelPlan, Initial, Statements).
-is_set_relplan(relplan(_, set, _, _)).

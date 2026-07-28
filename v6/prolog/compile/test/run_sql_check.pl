@@ -1,18 +1,31 @@
 % run_sql_check.pl : self-grading harness (TASK item 2). Drives the SAME
-% lowered/8 term compile.pl builds through the REAL sqlite3 CLI (never
-% through the emitted .ts, which has no runtime to execute it against yet --
-% Phase A's runtime lands in a separate worktree) and compares the resulting
-% per-tick deltas + final rows against the fixture's OWN expected values
-% (fixtures/scopes.pl's deltas/final/ticks terms), which is the same
-% oracle every other conformance fixture is graded against. This proves the
-% COMPILED SQL computes the right answer before any generated TypeScript
-% runs anywhere.
+% lowered/8 term compile.pl builds through the REAL sqlite3 CLI (a stand-in
+% for the real seam this harness cannot call directly -- Phase A's runtime
+% lives in v6/tsv2, TypeScript, and this is a Prolog process) and compares
+% the resulting per-tick deltas + final rows against the fixture's OWN
+% expected values (fixtures/scopes.pl's deltas/final/ticks terms), the same
+% oracle every other conformance fixture is graded against.
 %
-% The harness, not the emitted program, decides how many DRAIN ticks to run
-% (reads ticks(N) straight off the fixture and pads with empty-arrival ticks
-% past the schedule's own length) -- the real answer ("does a tick's own
-% output carry into a T+1 occurrence") is IGenProgram seam friction flagged
-% in the arc report, not resolved here.
+% ROUND 2 (reconciliation): rewritten end to end to match lower.pl's round-2
+% architecture -- no tick number anywhere (arrival statements, edge
+% projection, delta queries are all tick-number-free now), before/after
+% full-table snapshots per rel with a Prolog-side multiset diff (mirrors
+% runtime/diff.ts's multisetDiff, reimplemented here since this harness has
+% no TypeScript to call), and edge-rule keyed writes resolved by replaying
+% engine.pl's OWN rule ("across occurrences the later write wins") over the
+% raw arrival list in Prolog, then executing one UPSERT per resolved row --
+% the same two-step (project, then upsert) the emitted TypeScript performs,
+% just driven by swipl + the sqlite3 CLI instead of rxjs + libsql.
+%
+% Independent confirmation this harness's answer is trustworthy: the SAME
+% fixtures, run through the REAL emitted program on the REAL v6/tsv2 runtime
+% (`cd v6/tsv2 && node --experimental-transform-types scripts/run-emitted.ts
+% <name>`) and diffed against v6/prolog/conformance/ticklog.pl's oracle
+% output, produce IDENTICAL tick counts and IDENTICAL added/removed KEYS at
+% IDENTICAL ticks (compound-term TEXT differs by design -- json1 encoding
+% here vs the oracle's raw Prolog-term text -- a known, documented
+% representation choice, not a correctness gap). This harness and that
+% real-runtime run are two independent proofs of the same compiled SQL.
 %
 % Run: swipl -q -l v6/prolog/compile/test/run_sql_check.pl -g "check(switch_as_keyed_replace)" -g halt
 
@@ -52,14 +65,13 @@ check(Name) :-
     run_batch(DbFile, Ddl),
     maplist(boot_stmt_sql, BootStatements, BootSqls),
     run_batch(DbFile, BootSqls),
-    mutation_template_list(EdgeStatements, LevelStatements, MutationTemplates),
     length(Schedule, ScheduleLength),
     memberchk(ticks(TotalTicks), Expectations),
     DrainCount is TotalTicks - ScheduleLength,
     ( DrainCount >= 0 -> true ; throw(schedule_longer_than_ticks(Name, ScheduleLength, TotalTicks)) ),
     length(Drains, DrainCount), maplist(=([]), Drains),
     append(Schedule, Drains, FullSchedule),
-    run_ticks(DbFile, ArrivalStatements, MutationTemplates, DeltaStatements, RelPlans, FullSchedule, 1, ActualDeltaTicks),
+    run_ticks(DbFile, ArrivalStatements, EdgeStatements, LevelStatements, DeltaStatements, RelPlans, FullSchedule, ActualDeltaTicks),
     query_final_rows(DbFile, RelPlans, FinalRows),
     report(Name, Expectations, ActualDeltaTicks, FinalRows).
 
@@ -68,78 +80,161 @@ tmp_db_file(Name, DbFile) :-
 
 boot_stmt_sql(bootstmt(Sql, Params), ExecutableSql) :- substitute_params(Sql, Params, ExecutableSql).
 
-% ═══ mutation statement flattening (edge deletes/inserts, then level) ══════
+% ═══ per-tick driving (round 2: before-snapshot, absorb, resolve edge
+% writes, recompute levels, after-snapshot, multiset diff) ═════════════════
 
-mutation_template_list(EdgeStatements, LevelStatements, Templates) :-
-    findall(mutstmt(Sql, tick), ( member(edgestmt(_, DeleteSql, InsertSql), EdgeStatements), member(Sql, [DeleteSql, InsertSql]) ), EdgeTemplates),
-    findall(mutstmt(Sql, none), ( member(levelstmt(_, DeleteSql, InsertSql), LevelStatements), member(Sql, [DeleteSql, InsertSql]) ), LevelTemplates),
-    append(EdgeTemplates, LevelTemplates, Templates).
+run_ticks(_, _, _, _, _, _, [], []).
+run_ticks(DbFile, ArrivalStatements, EdgeStatements, LevelStatements, DeltaStatements, RelPlans, [Arrivals | RestSchedule], [TickDeltaMap | MoreDeltaMaps]) :-
+    snapshot_all(DbFile, DeltaStatements, RelPlans, BeforeByRef),
+    absorb_arrivals(DbFile, ArrivalStatements, Arrivals),
+    forall(member(EdgeStmt, EdgeStatements), resolve_and_apply_edge_writes(DbFile, RelPlans, EdgeStmt, Arrivals)),
+    maplist(level_sql_pair, LevelStatements, LevelSqls0), append(LevelSqls0, LevelSqls),
+    run_batch(DbFile, LevelSqls),
+    snapshot_all(DbFile, DeltaStatements, RelPlans, AfterByRef),
+    findall(delta(Ref, DelTerms, AddTerms),
+            ( member(Ref-BeforeTerms, BeforeByRef), memberchk(Ref-AfterTerms, AfterByRef),
+              multiset_diff(BeforeTerms, AfterTerms, AddTerms, DelTerms) ),
+            DeltaResults),
+    TickDeltaMap = tickdeltas(DeltaResults),
+    run_ticks(DbFile, ArrivalStatements, EdgeStatements, LevelStatements, DeltaStatements, RelPlans, RestSchedule, MoreDeltaMaps).
 
-% ═══ per-tick driving ════════════════════════════════════════════════════════
+level_sql_pair(levelstmt(_, DeleteSql, InsertSql), [DeleteSql, InsertSql]).
 
-run_ticks(_, _, _, _, _, [], _, []).
-run_ticks(DbFile, ArrivalStatements, MutationTemplates, DeltaStatements, RelPlans, [Arrivals | RestSchedule], Tick, [TickDeltaMap | MoreDeltaMaps]) :-
-    absorb_arrivals(DbFile, ArrivalStatements, Tick, Arrivals),
-    maplist(mutation_sql(Tick), MutationTemplates, MutationSqls),
-    run_batch(DbFile, MutationSqls),
-    maplist(delta_result(DbFile, Tick, RelPlans), DeltaStatements, DeltaResults),
-    TickDeltaMap = tickdeltas(Tick, DeltaResults),
-    refresh_snapshots(DbFile, DeltaStatements),
-    NextTick is Tick + 1,
-    run_ticks(DbFile, ArrivalStatements, MutationTemplates, DeltaStatements, RelPlans, RestSchedule, NextTick, MoreDeltaMaps).
+% Full-table read per rel, AS RECONSTRUCTED TERMS (not raw rows) -- the
+% multiset diff and the fixture comparison both operate at the term level,
+% matching engine.pl's own boundary_deltas (which diffs Row TERMS, sorted
+% via Prolog standard order of terms; this harness's multiset_diff/4 sorts
+% the same way, so ordering matches the oracle by construction, not luck).
+snapshot_all(DbFile, DeltaStatements, RelPlans, ByRef) :-
+    findall(Ref-Terms,
+            ( member(deltastmt(Ref, SelectSql), DeltaStatements),
+              query_json(DbFile, SelectSql, Rows),
+              memberchk(relplan(Ref, _, Columns, _), RelPlans),
+              ref_table_name(Ref, Name),
+              maplist(row_to_term(Name, Columns), Rows, Terms)
+            ), ByRef).
 
-mutation_sql(Tick, mutstmt(Sql, tick), Executable) :- !, substitute_params(Sql, [Tick], Executable).
-mutation_sql(_, mutstmt(Sql, none), Executable) :- substitute_params(Sql, [], Executable).
+% ═══ arrivals (round 2: no tick/seq anywhere -- arrivalstmt/4's AddSql now
+% just takes the declared columns, matching absorb_arrivals/8's own
+% simplicity for a Log rel: an unconditional append) ═══════════════════════
 
-absorb_arrivals(_, _, _, []) :- !.
-absorb_arrivals(DbFile, ArrivalStatements, Tick, [Signed | Rest]) :-
+absorb_arrivals(_, _, []) :- !.
+absorb_arrivals(DbFile, ArrivalStatements, [Signed | Rest]) :-
     ( Signed = +Row -> Sign = add ; Signed = -Row, Sign = del ),
     rel_ref(Row, Ref),
     memberchk(arrivalstmt(Ref, Kind, AddSql, DelSql), ArrivalStatements),
     Row =.. [_ | Values],
-    ( Sign == add, Kind == log
-    -> next_seq_for_tick(DbFile, Ref, Tick, Seq), Params = [Tick, Seq | Values], SqlTemplate = AddSql
-    ;  Sign == add
+    ( Sign == add
     -> Params = Values, SqlTemplate = AddSql
+    ;  Kind == log
+    -> throw(retract_from_log(Ref))
     ;  DelSql == none
     -> throw(retract_from_log(Ref))
     ;  Params = Values, SqlTemplate = DelSql
     ),
     substitute_params(SqlTemplate, Params, Executable),
     run_batch(DbFile, [Executable]),
-    absorb_arrivals(DbFile, ArrivalStatements, Tick, Rest).
-
-% Mirrors engine.pl's next_seq/3: 1 + the highest seq already stamped this
-% tick (or 1 if none yet). The harness assigns this per row exactly like the
-% generated program's applyArrivalRow does with its running `index + 1`,
-% just computed by re-querying the table instead of a JS closure variable
-% (the harness has no in-memory loop state; SQL is the state here).
-next_seq_for_tick(DbFile, Ref, Tick, Seq) :-
-    ref_table_name(Ref, Table),
-    format(atom(Sql), 'SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM "~w" WHERE tick = ~w', [Table, Tick]),
-    query_json(DbFile, Sql, [json([next_seq=Seq])]).
+    absorb_arrivals(DbFile, ArrivalStatements, Rest).
 
 ref_table_name(Name/_Arity, Name).
 
-% ═══ delta collection ════════════════════════════════════════════════════════
+% ═══ edge rule resolution (round 2: replays "later write wins" over the raw
+% arrival list, projects each candidate row via ProjectSql, then upserts) ═══
+% Mirrors what the emitted TypeScript's resolve<Head>Writes does: filter
+% `arrivals` for this trigger + sign=add, project each row (a real SQL
+% query per candidate -- the projection needs json1, not worth
+% reimplementing in Prolog), fold with LATER OVERWRITES EARLIER for the same
+% key (a plain foldl replacing any prior entry for that key), then upsert
+% each surviving resolved row once.
 
-delta_result(DbFile, Tick, RelPlans, deltastmt(Ref, log, AddsSql, none, []), delta(Ref, [], AddTerms)) :- !,
-    substitute_params(AddsSql, [Tick], Executable),
-    query_json(DbFile, Executable, Rows),
-    memberchk(relplan(Ref, _, Columns, _), RelPlans),
-    ref_table_name(Ref, Name),
-    maplist(row_to_term(Name, Columns), Rows, AddTerms).
-delta_result(DbFile, _Tick, RelPlans, deltastmt(Ref, set, AddsSql, DelsSql, _Refresh), delta(Ref, DelTerms, AddTerms)) :-
-    query_json(DbFile, DelsSql, DelRows),
-    query_json(DbFile, AddsSql, AddRows),
-    memberchk(relplan(Ref, _, Columns, _), RelPlans),
-    ref_table_name(Ref, Name),
-    maplist(row_to_term(Name, Columns), DelRows, DelTerms),
-    maplist(row_to_term(Name, Columns), AddRows, AddTerms).
+% Each candidate keeps TWO representations of the SAME projected row:
+% RawValues (the literal TEXT SQL produced -- already correctly json1-
+% encoded for a compound column) for the UPSERT params, and Term (RawValues
+% run through decode_cell/row_to_term, a genuine Prolog compound) for key
+% extraction and equality. An earlier version of this predicate decoded
+% ONCE and reused the DECODED term's compound value as an UPSERT param --
+% `sql_param_literal`'s default `~w` printing of a Prolog compound term
+% produces PROLOG term syntax (`route_data(settings)`), not the json1 text
+% SQLite actually returned (`{"fn":"route_data","args":["settings"]}`),
+% silently corrupting the stored value. Caught by cross-checking this
+% harness's own `open_scope` table content directly, not by any expectation
+% comparison (both fixtures' `deltas/final` checks happened to still read
+% back correctly since the DECODE side is symmetric -- decode_cell's `{"fn":`
+% sniff never matched the corrupted text either, so it round-tripped as an
+% atom and still equality-compared correctly against the fixture's OWN term;
+% only inspecting the raw table caught the real stored value was wrong).
+resolve_and_apply_edge_writes(DbFile, RelPlans, edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, UpsertSql), Arrivals) :-
+    findall(Values,
+            ( member(+Row, Arrivals), rel_ref(Row, TriggerRef), Row =.. [_ | Values] ),
+            TriggerRowsValues),
+    findall(candidate(RawValues, Term),
+            ( member(Values, TriggerRowsValues),
+              substitute_params(ProjectSql, Values, Executable),
+              query_json(DbFile, Executable, [json(Pairs)]),
+              maplist(column_value(Pairs), HeadColumns, RawValues),
+              memberchk(relplan(HeadRef, _, _, _), RelPlans),
+              ref_table_name(HeadRef, Name),
+              maplist(decode_cell, RawValues, DecodedValues),
+              Term =.. [Name | DecodedValues]
+            ), Candidates),
+    resolve_last_write_wins(Candidates, KeyColumns, HeadColumns, ResolvedCandidates),
+    forall(member(candidate(RawValues2, _), ResolvedCandidates),
+           ( substitute_params(UpsertSql, RawValues2, Executable2),
+             run_batch(DbFile, [Executable2]) )).
 
-refresh_snapshots(DbFile, DeltaStatements) :-
-    findall(Sql, ( member(deltastmt(_, set, _, _, RefreshSqls), DeltaStatements), member(Sql, RefreshSqls) ), Sqls),
-    run_batch(DbFile, Sqls).
+% Folds LEFT TO RIGHT (arrival/schedule order), replacing any earlier entry
+% sharing the same key -- the same "later write wins" rule
+% apply_edge_writes/6 implements, and the same Map.set() overwrite order the
+% emitted TypeScript relies on.
+resolve_last_write_wins(Candidates, KeyColumns, HeadColumns, ResolvedCandidates) :-
+    foldl(resolve_step(KeyColumns, HeadColumns), Candidates, [], ResolvedPairs),
+    pairs_values_ordered(ResolvedPairs, ResolvedCandidates).
+
+resolve_step(KeyColumns, HeadColumns, candidate(RawValues, Term), Acc0, Acc) :-
+    term_key(Term, KeyColumns, HeadColumns, Key),
+    ( selectchk(Key-_, Acc0, Acc1) -> true ; Acc1 = Acc0 ),
+    append(Acc1, [Key-candidate(RawValues, Term)], Acc).
+
+term_key(Term, KeyColumns, HeadColumns, Key) :-
+    Term =.. [_ | Values],
+    findall(Value,
+            ( member(Column, KeyColumns), nth0(Index, HeadColumns, Column), nth0(Index, Values, Value) ),
+            Key).
+
+pairs_values_ordered([], []).
+pairs_values_ordered([_-Value | Rest], [Value | More]) :- pairs_values_ordered(Rest, More).
+
+% ═══ multiset diff (mirrors runtime/diff.ts's multisetDiff -- count-based,
+% so a Log rel's genuine duplicate rows are handled correctly, not just
+% Set/level rels' always-0-or-1 case) ════════════════════════════════════
+
+multiset_diff(Before, After, Add, Del) :-
+    append(Before, After, All), sort(All, Distinct),
+    findall(Extra,
+            ( member(Row, Distinct),
+              count_occurrences(Row, After, AfterCount),
+              count_occurrences(Row, Before, BeforeCount),
+              AfterCount > BeforeCount,
+              ExtraCount is AfterCount - BeforeCount,
+              repeat_n_times(Row, ExtraCount, Repeated),
+              member(Extra, Repeated) ),
+            Add),
+    findall(Missing,
+            ( member(Row, Distinct),
+              count_occurrences(Row, After, AfterCount),
+              count_occurrences(Row, Before, BeforeCount),
+              BeforeCount > AfterCount,
+              MissingCount is BeforeCount - AfterCount,
+              repeat_n_times(Row, MissingCount, Repeated),
+              member(Missing, Repeated) ),
+            Del).
+
+count_occurrences(Item, List, Count) :- include(==(Item), List, Matches), length(Matches, Count).
+
+repeat_n_times(_, 0, []) :- !.
+repeat_n_times(Item, N, [Item | Rest]) :- N > 0, N1 is N - 1, repeat_n_times(Item, N1, Rest).
+
+% ═══ row/term decoding (unchanged from round 1) ═════════════════════════════
 
 row_to_term(Name, Columns, json(Pairs), Term) :-
     maplist(column_value(Pairs), Columns, RawValues),
@@ -179,7 +274,7 @@ query_final_rows(DbFile, RelPlans, FinalByRef) :-
 
 quoted_ident_test(Name, Quoted) :- format(atom(Quoted), '"~w"', [Name]).
 
-% ═══ sqlite3 process plumbing ════════════════════════════════════════════════
+% ═══ sqlite3 process plumbing (unchanged from round 1) ══════════════════════
 
 run_batch(_, []) :- !.
 run_batch(DbFile, Statements) :-
@@ -210,8 +305,18 @@ query_json(DbFile, Sql, Rows) :-
 
 % ═══ SQL literal substitution (test harness's own copy; independent of
 % lower.pl's sql_literal, which is compile-time-only) ════════════════════════
+% Handles BOTH plain `?` placeholders (arrival/level/boot statements) and
+% SQLite's numbered `?1`/`?2` placeholders (edge ProjectSql) -- a numbered
+% placeholder may repeat (the same trigger argument referenced twice in a
+% head expression), so substitution indexes into Params by the NUMBER, not
+% by occurrence order.
 
 substitute_params(Sql, Params, Executable) :-
+    ( sub_atom(Sql, _, _, _, '?1') ; sub_atom(Sql, _, _, _, '?2') ; sub_atom(Sql, _, _, _, '?3') )
+    -> substitute_numbered_params(Sql, Params, Executable)
+    ; substitute_plain_params(Sql, Params, Executable).
+
+substitute_plain_params(Sql, Params, Executable) :-
     atomic_list_concat(Parts, '?', Sql),
     length(Parts, PartCount), length(Params, ParamCount),
     ( PartCount =:= ParamCount + 1 -> true
@@ -223,6 +328,21 @@ substitute_params(Sql, Params, Executable) :-
 interleave_parts([Part], [], [Part]) :- !.
 interleave_parts([Part | Parts], [Literal | Literals], [Part, Literal | Rest]) :-
     interleave_parts(Parts, Literals, Rest).
+
+substitute_numbered_params(Sql, Params, Executable) :-
+    numbervars_replace(Sql, Params, 1, Executable).
+
+numbervars_replace(Sql, Params, Index, Executable) :-
+    length(Params, N),
+    ( Index > N -> Executable = Sql
+    ; nth1(Index, Params, Param),
+      sql_param_literal(Param, Literal),
+      format(atom(Placeholder), '?~w', [Index]),
+      atomic_list_concat(Parts, Placeholder, Sql),
+      atomic_list_concat(Parts, Literal, Sql1),
+      NextIndex is Index + 1,
+      numbervars_replace(Sql1, Params, NextIndex, Executable)
+    ).
 
 sql_param_literal(Param, Literal) :- number(Param), !, format(atom(Literal), '~w', [Param]).
 sql_param_literal(Param, Literal) :- format(atom(Literal), '\'~w\'', [Param]).
@@ -256,7 +376,7 @@ check_expectation(final(Ref, Expected), _, FinalRows, Result) :-
     ( Actual == Expected -> Result = pass(final(Ref)) ; Result = fail(final(Ref), Actual, Expected) ).
 check_expectation(deltas(Ref, ExpectedPerTick), ActualDeltaTicks, _, Result) :-
     findall(TickDeltaForRef,
-            ( member(tickdeltas(_, DeltaResults), ActualDeltaTicks),
+            ( member(tickdeltas(DeltaResults), ActualDeltaTicks),
               ( memberchk(delta(Ref, DelTerms, AddTerms), DeltaResults)
               -> maplist(as_minus, DelTerms, DelSigned), maplist(as_plus, AddTerms, AddSigned),
                  append(DelSigned, AddSigned, TickDeltaForRef)
