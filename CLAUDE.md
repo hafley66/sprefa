@@ -220,6 +220,17 @@ drop the json CASE wrapper via canonical_column_expr/3 int/text split;
 generated SELECTs simplify to plain columns. Codex worktree removed,
 branch deleted. Luna-ready brief queue: endurance-as-gate, lower/types.ts
 I-prefix renames, v5 rails.dl descriptive names.
+SPELLING MIGRATION WAVE 1 LANDED (merge f96c6229, codex luna, review-
+gated: conformance 110, roundtrip ALL PASS, sweep 31/28 unchanged, grep
+zero only(/departed( -- all re-run by coordinator): only() INVERTED into
+bare-trigger + latest() sampling, departed -> finalize, combine/next
+sugar, zip + unsubscribe/complete/subscribe/error reserved with named
+refusals. 49 files. Key decomposition still split out (semantics arc).
+CONSUMPTION-AXIS DESIGN OPEN (user thread): switch (cut, boundary,
+collapse-logged per ruling) vs queue (per-occurrence via compiler-
+generated durable pending rel + min-ordinal consume -- sidesteps shelved
+C7); spelling family + queue pacing sub-choice await user word; goes in
+the arms arc header when cut.
 TYPES-AS-RELS LAB LANDED (merge 7a416fac, 36 PASS, lab deleted, last copy
 b58d1ece, verdict = plans/2026-07-28-types-as-rels-verdict.md): hypothesis
 HOLDS on the value plane -- one construct (rel), struct = rel+set with
