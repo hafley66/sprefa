@@ -3,28 +3,15 @@
  * exactly (same numbering reasoning: imports tests/1_helpers_db.ts + src/1_binds.ts,
  * sits below tests/4_binds.test.ts which also exercises the runtime).
  *
- * Exports: bridgeBindsFixture (bridge() a fixture .dl against the standard test
- * builtins), bootBindRunnerFixture/disposeBindFixture (boot a DlRuntime + a BindRunner
+ * Exports: bootBindRunnerFixture/disposeBindFixture (boot a DlRuntime + a BindRunner
  * over it, subscribed the same way main.ts composes the real app graph).
  */
 import { merge, type Subscription } from "rxjs";
 
-import { bridge } from "../src/0_ast_bridge.ts";
 import { BindRunner, type BindDef } from "../src/1_binds.ts";
 import { DlRuntime } from "../src/3_runtime.ts";
 import type { BridgeOk } from "../tasks.d.ts";
-import { builtinRelsForTests, readFixture } from "./0_helpers.ts";
 import { cleanupDbFile, freshDbPath } from "./1_helpers_db.ts";
-
-/** bridge() a fixture .dl file against the standard test builtins; throws with the
- *  joined diag messages on a load error, same convention as bridgeHostsFixture. */
-export function bridgeBindsFixture(name: string): BridgeOk {
-  const result = bridge(readFixture(name), builtinRelsForTests());
-  if (result.kind === "err") {
-    throw new Error(`bridgeBindsFixture(${name}): ${result.diags.map((diag) => diag.message).join("; ")}`);
-  }
-  return result;
-}
 
 export interface BindFixture {
   readonly rt: DlRuntime;

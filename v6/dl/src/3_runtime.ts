@@ -1049,11 +1049,10 @@ export class DlRuntime implements IDlRuntime {
   }
 
   /** Path-scoped read (see `selectByColumn` above): WHERE-pushed on the interned
-   *  `path` column instead of a whole-table scan through `rows$`'s decode view.
-   *  NOT part of IDlRuntime (0_types.ts) -- it is additive on the concrete class, so a
-   *  caller typed only against IDlRuntime cannot see it and keeps using `rows()`.
-   *  4_ingest.ts's ingestFile detects this method with `instanceof DlRuntime` and uses
-   *  it when available. Throws if `rel` has no `path` column. */
+   *  `path` column instead of a whole-table scan through the `rel_*` decode view.
+   *  Declared on IDlRuntime (0_types.ts), so 4_ingest.ts's ingestFile calls it
+   *  straight -- no `instanceof DlRuntime` probe and no `rows()` fallback path.
+   *  Throws if `rel` is unknown, or has no `path` column, or that column is not text. */
   rowsForPath$(rel: string, path: string): Observable<Row[]> {
     const decl = this.state.relDecls.get(rel);
     if (!decl) throw new Error(`DlRuntime.rowsForPath: unknown rel '${rel}'`);

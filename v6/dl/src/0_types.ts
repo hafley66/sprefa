@@ -390,9 +390,9 @@ export type DlAppEvent =
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Perf trace (Phase 0 · src/0_trace.ts, plans/2026-07-27-v5-port-perf-header.md,
-// SLOT-LIB filled by plans/2026-07-27-perf-tracing-buy-verdict.md). Three seams
-// (SqlRunner's existing trace hook, host effects, per-file ingest) fold into ONE
-// JSONL line per tick. Field names are pinned by the header verbatim: a later
+// SLOT-LIB filled by plans/2026-07-27-perf-tracing-buy-verdict.md). Four seams
+// (SqlRunner's existing trace hook, host effects, bind commits, per-file ingest) fold
+// into ONE JSONL line per tick. Field names are pinned by the header verbatim: a later
 // SLOT-ENVELOPE wraps this object without renaming anything inside it.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -466,7 +466,7 @@ export interface PerfTickLine {
  *  attached (diagnostics_channel's documented unsubscribed-publish cost), and
  *  `installFromEnv`/`uninstall` are the only state transitions. */
 export interface IPerfTrace {
-  /** True when any of the three channels currently has a subscriber. */
+  /** True when any of the four channels currently has a subscriber. */
   readonly enabled: boolean;
   /** Re-reads process.env.DL_PERF_LOG and installs or removes the pino subscriber
    *  accordingly. Idempotent (calling it twice with the same env is a no-op). Called
