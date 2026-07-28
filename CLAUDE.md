@@ -104,15 +104,21 @@ descriptive-name rename.)
    code. Legitimate voids kept with reasons: `executeMultiple` (driver resolves
    nothing), rollback-path `catchError` swallows. Receipts: store 89/89, dl 74/74,
    both typechecks, ratchet 3, goal-endurance 3/3, statement counts unchanged.
-3. **Single subscribe point.** Collapse the 3 manual `.subscribe()` sites
-   (`dl/src/3_runtime.ts:782` keepAlive, `dl/src/1_hosts.ts:383` host effects,
-   `dl/src/6_http.ts:281` SSE) into the one terminal subscription in `main.ts`
-   (`v6/tools/one-subscribe.sh` ratchet 3 -> 1). This is the next milestone.
-   Blockers refreshed 2026-07-27 PM: 7 `new Promise` wrappers untouched;
-   `commits$`/`reportsSubject` pair now `3_runtime.ts:764`/`:96`; NEW seam from the
-   item-2 arc: `insertRows`/`deleteRows`/`insertDeltaRows`/`refreshFactPlane` all emit
-   `QueryResult[]` via one `executeAll$` helper, so the tick chain has one uniform
-   seam instead of four ad-hoc void shapes.
+3. ~~Single subscribe point~~ DONE 2026-07-27 late PM (agent arc, merged): ratchet
+   reads 1, baseline lowered to 1. `serveDl(cfg): Observable<DlAppEvent>` in 6_http.ts
+   IS the app, cold; main.ts's one `.subscribe` starts it. Program swap =
+   `switchMap` on accepted loads only (bad program -> 400, running program survives);
+   SSE clients are inners with `takeUntil(socket close)`; HostRunner lost
+   start/dispose/Subscription for one cold `effects$` (boot replay under `defer`,
+   semantics unchanged); `DlRuntime.commit()` now throws instead of hanging when the
+   loop isn't running. Receipts: store 89/89, dl 74/74, ratchet 1, endurance 3/3,
+   golden curl-session PASS, no Subscription fields. Honest residue: the
+   `commits$`/`reportsSubject` Subject pair remains (not a collapse blocker, still
+   the open item against the no-Subject-bridge corollary); `server.close`/`readBody`
+   Promise wrappers remain (the Promise-above-the-seam arc); `tasks.d.ts:128` names
+   `StartServer` in a past-tense M10 record (renamed to `ServeDl` in 0_types.ts).
+   One golden flake in 1/10 runs under heavy parallel load, not reproducible,
+   recorded in the agent report.
 4. **Rxjs rule of engagement**: before writing ANY new rxjs, stop and ask the user
    first: is this making sense, is there a shorter/more direct way, fewer variables,
    fewer methods. No new operator chains land without that check.
@@ -220,11 +226,10 @@ full text: plans/2026-07-27-switch-flow.md ambiguities, plans/2026-07-27-sub-for
   Corollary: no `Subscription` field held on a class, and no `Subject` used as a request/response
   bridge (a method that pushes into one Subject and awaits a matching id on another is RPC wearing
   a stream costume, and it forces every caller back into `await`).
-  Ratchet, 2026-07-25 baseline = 3, target 1, never rises:
-  `1_hosts.ts:402` (host effects), `6_http.ts:281` (per-client SSE), `3_runtime.ts:793`
-  (`keepAlive`). Blockers to collapsing them: 7 `new Promise` wrappers around Node callbacks
-  (`server.listen`/`server.close`/`readBody`, 3 `spawn` sites, `extractFile`'s exit code) and the
-  `commits$`/`reportsSubject` Subject pair at `3_runtime.ts:768`/`:95`.
+  Ratchet: TARGET REACHED 2026-07-27 (baseline = 1, never rises): the one site is
+  `dl/src/main.ts` subscribing `serveDl(...)`. Remaining law debt, not ratchet debt:
+  the `commits$`/`reportsSubject` Subject pair (3_runtime.ts) vs the no-Subject-bridge
+  corollary, and the `server.close`/`readBody` Promise wrappers above the seam.
 - **A type name must say what the thing is on first reading** (user-set 2026-07-25): no
   library-flavoured or abbreviation names that carry no content. `Rx` is the rejected example.
   If one interface needs a vague name it is usually two interfaces glued together; split it and
