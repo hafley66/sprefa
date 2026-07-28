@@ -308,3 +308,14 @@ ruling(edb_definition, never_headed_rel_is_pure_subject, user,
 % is an acceptance criterion for the emitter arc, not an optimization.
 ruling(host_residency, rows_stay_in_sqlite_host_sees_deltas, user,
        'user 2026-07-29: "entire purpose of that ts engine was keeping rows out of residency in the host"').
+
+% 2026-07-29. Expression lowering law: comparisons, arithmetic, and
+% string expressions FUSE into the emitted SQL delta statements
+% (sqlite's expression engine is the target; it has the coverage).
+% Deopt to TypeScript ONLY where sqlite genuinely lacks the function,
+% never as a default path -- "we fuse it to sql deltas in rx". The
+% phase-C refusals (comparison/bind/head-arith) were guards against
+% miscompiles whose causes typed columns removed; lifting them into
+% the incremental emitter is now an arc, not a hazard.
+ruling(expression_residency, fuse_to_sql_deltas_ts_deopt_last, user,
+       'user 2026-07-29: "we can deopt into typescript but only if we have to otherwise we fuse it to sql deltas in rx"').
