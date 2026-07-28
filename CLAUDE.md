@@ -64,11 +64,24 @@ scopes fixtures LANDED (conformance 97 -> 109, merged d481159e); opus diff revie
 LANDED (plans/2026-07-27-diff-review-findings.md — finding 1 double-fire = USER
 ACCEPTED no-fix, 2+3 http fixes dispatched, rest banked); SLOT-LIB filled
 (tracingChannel + pino, user approved the pino dep,
-plans/2026-07-27-perf-tracing-buy-verdict.md). Agents running: ghcacher v6
-expression (worktree sonnet), P0 tracing spine (worktree sonnet), http fixes
-2+3 (worktree sonnet). gen-index.sh now excludes node_modules (INDEX.md was
-flip-flopping 1714 lines). Queued coordinator edits: ARCH covers/2 rows for
-scopes.pl (departure_form now fixture-covered, 10 uncovered -> 9) + map re-emit.
+plans/2026-07-27-perf-tracing-buy-verdict.md). http fixes 2+3 LANDED (mergeMap
+body read + SSE response.end, 2 regression tests, dl 76/76). ghcacher phase 1
+LANDED (v6/dl/fixtures/ghcacher.dl ACCEPTED by the server + ghcacher-findings.md,
+9 findings F1-F9): HEADLINE = F7 engine crash, first real host response commit
+dies `SQLITE_ERROR: no such column: NaN` (1_hosts.ts:491 commit path, statement
+text not surfaced by LibsqlError; root cause OPEN, fix agent queued BEHIND the
+P0 tracing merge since per-statement tracing surfaces the failing SQL).
+PROVEN GAPS awaiting user word (the zero-new-constructs exception clause):
+F2 no clock/cadence = the SLOT-SWR-defining gap (spelling A in-language chosen,
+B external-cron documented); F3 no json term-extract, array-explode
+inexpressible; F8 rel(1) is whole-table sweep + silently inert on rule-headed
+rels, Key(text) unimplemented (feeds the Q8/Key ruling); F9 no effect_log rel
+(self-diagnosis law gap). F4 confirmed the not_stratified guard fires correctly
+on the v5 etag idiom. Still running: P0 tracing spine (worktree sonnet).
+gen-index.sh now excludes node_modules (INDEX.md was flip-flopping 1714 lines).
+ARCH covers/2 rows for scopes.pl landed (departure_form fixture-covered,
+uncovered 10 -> 9, map re-emitted). failure-modes class 35 filed (dangling dev
+servers; stdin-watch rail proposed, awaiting word).
 
 (v5 side: none. The 2026-07-19 AM wave is CONFIRMED LANDED on main, verified 2026-07-27:
 src/eventlog.rs event trail + `dl daemon events`; `dl daemon health`
