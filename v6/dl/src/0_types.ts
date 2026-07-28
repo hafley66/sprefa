@@ -325,6 +325,82 @@ export type DlAppEvent =
   | { readonly kind: "effect"; readonly done: HostEffectDone };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Perf trace (Phase 0 · src/0_trace.ts, plans/2026-07-27-v5-port-perf-header.md,
+// SLOT-LIB filled by plans/2026-07-27-perf-tracing-buy-verdict.md). Three seams
+// (SqlRunner's existing trace hook, host effects, per-file ingest) fold into ONE
+// JSONL line per tick. Field names are pinned by the header verbatim: a later
+// SLOT-ENVELOPE wraps this object without renaming anything inside it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One finished host effect folded into a tick's perf line. `effect_id` is the
+ *  effect_cache full_digest (1_hosts.ts); `cache_hit` never reaches a commit, so it
+ *  is tagged with the DEMAND tick (`pending.tick`) rather than a response tick — see
+ *  0_trace.ts's file header for the full seam-gap note. */
+export interface PerfEffectEntry {
+  readonly host: string;
+  readonly effect_id: number;
+  readonly ms: number;
+  readonly status: "done" | "cache_hit" | "error";
+}
+
+/** One file's extract phase (extractFile + toFactLines only, NOT the commit that
+ *  follows — 4_ingest.ts). `diff_size` is toInsert.length + toRetract.length summed
+ *  across every spine rel. */
+export interface PerfIngestEntry {
+  readonly path: string;
+  readonly extract_ms: number;
+  readonly fact_lines: number;
+  readonly diff_size: number;
+}
+
+/** One emitted JSONL line, one per tick. Shape pinned by the header:
+ *  `{tick, wall_ms, stmt_count, stmt_ms_total, stmt_ms_max, effects, ingest, rss_kb}`.
+ *  `rss_kb` comes from sprefa-store-engine's existing `memcap` sampler — no second
+ *  RSS reader. `ingest` is null on a tick no file was ingested into. */
+export interface PerfTickLine {
+  readonly tick: number;
+  readonly wall_ms: number;
+  readonly stmt_count: number;
+  readonly stmt_ms_total: number;
+  readonly stmt_ms_max: number;
+  readonly effects: readonly PerfEffectEntry[];
+  readonly ingest: PerfIngestEntry | null;
+  readonly rss_kb: number;
+}
+
+/** The perf trace module's whole surface (0_trace.ts exports `PerfTrace: IPerfTrace`).
+ *  Off by default: every method below is near-free when no DL_PERF_LOG subscriber is
+ *  attached (diagnostics_channel's documented unsubscribed-publish cost), and
+ *  `installFromEnv`/`uninstall` are the only state transitions. */
+export interface IPerfTrace {
+  /** True when any of the three channels currently has a subscriber. */
+  readonly enabled: boolean;
+  /** Re-reads process.env.DL_PERF_LOG and installs or removes the pino subscriber
+   *  accordingly. Idempotent (calling it twice with the same env is a no-op). Called
+   *  once at module load for the real app; tests call it again after mutating env. */
+  installFromEnv(): void;
+  /** Removes the subscriber and drops every open per-tick buffer. Test cleanup. */
+  uninstall(): void;
+  /** A SqlRunner `TraceStatement` closure scoped to one tick. See 0_trace.ts's file
+   *  header for why consecutive calls' timestamp gap IS the previous statement's
+   *  wall time, with no change to TraceStatement's existing `(sql: string) => void`
+   *  shape (engine/types.ts:50, pinned by tests/lower/stmtBudget.test.ts). */
+  sqlTraceFor(tick: number): (sql: string) => void;
+  /** Closes out `tick`'s last open statement (the one with no "next" trace() call to
+   *  diff against). Call once, after the traced evaluation settles. */
+  finishSqlTrace(tick: number): void;
+  /** One finished host effect (1_hosts.ts, HostRunner.runEffectOnce). */
+  effectDone(tick: number, host: string, effectId: number, ms: number, status: "done" | "cache_hit" | "error"): void;
+  /** One finished file's extract phase (4_ingest.ts, ingestFile). */
+  ingestDone(tick: number, path: string, extractMs: number, factLines: number, diffSize: number): void;
+  /** The tick-boundary hook (3_runtime.ts, clearScratchRels): schedules this tick's
+   *  JSONL line for emission once the current tick's caller-side continuation (the
+   *  effectDone/ingestDone call right after `await rt.commit(...)`) has had a chance
+   *  to run — see 0_trace.ts's FLUSH TIMING note. */
+  tickSettled(tick: number): void;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Class contracts — I-prefixed, one per class in this package. src/3_runtime.ts
 // and src/1_hosts.ts hold the concrete classes; every other file depends on the
 // interface only, never the class, so nothing imports upward past the numbering

@@ -46,6 +46,7 @@ import { rels as rel_tables } from "sprefa-store-engine/src/engine/spine.ts";
 import { RelStore, Store, open_db } from "sprefa-store-engine/src/engine/lib.ts";
 import { evalProgramSql } from "sprefa-store-engine/src/lower/lowerSql.ts";
 import { RowCodec } from "./0_row.ts";
+import { PerfTrace } from "./0_trace.ts";
 import type { RelTable, RelTables, SupportEdges } from "sprefa-store-engine/src/lower/types.ts";
 import type { Arg, BodyPred, LitValue, Program, RelDecl, Rule } from "sprefa-store-engine/src/lower/ast.ts";
 
@@ -544,7 +545,14 @@ export function applyEdbTxn(state: RuntimeState, request: CommitRequest): Observ
 }
 
 /** Synchronous tap. The retention-0 DELETE already ran inside applyDerivedTxn; this only
- *  resets the mirror for the rels it emptied, then unblocks commit()'s promise. */
+ *  resets the mirror for the rels it emptied, then unblocks commit()'s promise.
+ *
+ *  Also the perf trace tick-boundary hook (0_trace.ts): `tickSettled` closes out this
+ *  tick's SQL trace and schedules its JSONL line, a setImmediate AFTER
+ *  `reportsSubject.next` below so the commit() caller's own synchronous
+ *  effectDone/ingestDone publish (which cannot run until commit()'s promise resolves,
+ *  which THIS next() call is what causes) still lands in the same tick's line — see
+ *  0_trace.ts's FLUSH TIMING note. */
 export function clearScratchRels(state: RuntimeState, outcome: SettledOutcome): void {
   for (const relName of outcome.scratchRelNames) {
     const decl = state.relDecls.get(relName);
@@ -552,6 +560,7 @@ export function clearScratchRels(state: RuntimeState, outcome: SettledOutcome): 
     state.derivedTableMirror.set(relName, []);
   }
   state.reportsSubject.next({ id: outcome.id, report: outcome.report });
+  PerfTrace.tickSettled(outcome.report.tick);
 }
 
 const deltaRowOf = (relTag: number, row: Row, columns: readonly string[], tick: number, weight: 1 | -1): DeltaRow => ({
@@ -679,9 +688,13 @@ export function applyDerivedTxn(state: RuntimeState, outcome: EdbTickOutcome): O
   return inTransaction(db, () => {
     const fixpoint: Observable<QueryResult[]> =
       edbMoved && state.derivedRelNames.length > 0
-        ? evalProgramSql(db, state.storageProgram, state.relTables, state.supportEdges).pipe(
-            concatMap(() => refreshFactPlane(state)),
-          )
+        ? evalProgramSql(
+            db,
+            state.storageProgram,
+            state.relTables,
+            state.supportEdges,
+            PerfTrace.sqlTraceFor(outcome.tick),
+          ).pipe(concatMap(() => refreshFactPlane(state)))
         : of([]);
 
     return fixpoint.pipe(
