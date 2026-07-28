@@ -27,8 +27,9 @@
  *             , of(listening)                                   the DlServer handle ))
  *
  * `switchMap` is what makes a program swap work under one subscription: a new accepted
- * program unsubscribes the previous program's branch (its tick stream and its host
- * effects) and subscribes the new one. The bridge runs BEFORE that switch, so a
+ * program unsubscribes the previous program's branch (its tick stream, its host
+ * effects, and its bind commits -- 1_binds.ts's clock timers included) and subscribes
+ * the new one. The bridge runs BEFORE that switch, so a
  * rejected program (400) leaves the running one untouched. Requests are `fromEvent` on
  * the server, so nothing pushes into a Subject to get into the graph, and every branch
  * emits a DlAppEvent rather than throwing its values away.
@@ -77,6 +78,7 @@ import {
 import { open_db, type SqliteDb } from "sprefa-store-engine/src/engine/lib.ts";
 
 import { bridge } from "./0_ast_bridge.ts";
+import { builtinBinds, BindRunner } from "./1_binds.ts";
 import { builtinExtract, builtinSg, HostRunner, shHost, type CacheDb, type HostDef } from "./1_hosts.ts";
 import { DlRuntime } from "./3_runtime.ts";
 import { DL_ROOT, ingestFile } from "./4_ingest.ts";
@@ -233,7 +235,7 @@ async function bootProgram(
   state: ServerState,
   config: { readonly dbPath: string },
   load: ProgramLoad,
-): Promise<{ readonly runtime: DlRuntime; readonly hostRunner: HostRunner }> {
+): Promise<{ readonly runtime: DlRuntime; readonly hostRunner: HostRunner; readonly bindRunner: BindRunner }> {
   await disposeCurrentProgram(state);
 
   const result = load.bridgeOk;
@@ -251,27 +253,34 @@ async function bootProgram(
   // (identical name, no reshape) doesn't silently shadow the working implementation.
   const hosts: HostDef[] = [...result.hosts.map(shHost), builtinSg, builtinExtract];
   const hostRunner = new HostRunner(runtime, hosts, sideDb as unknown as CacheDb);
+  // BindRunner (1_binds.ts): the input-side twin of HostRunner, sibling
+  // construction. Its own constructor decides which builtin binds (clockBind
+  // today) actually activate, by checking the loaded program's declared EDB rel
+  // names -- no decl surface exists in the .dl grammar for a program to name its
+  // OWN bind, so `result.program` (not `result.hosts`) is what BindRunner reads.
+  const bindRunner = new BindRunner(runtime, builtinBinds, result.program);
 
   state.bridgeOk = result;
   state.runtime = runtime;
   state.sideDb = sideDb;
 
-  return { runtime, hostRunner };
+  return { runtime, hostRunner, bindRunner };
 }
 
 /** The loaded program's whole life as one observable: the tick stream (subscribing it
- *  is what makes the tick loop turn) and the host effects, both live until the next
- *  accepted program swaps them out. The 200 is written LAST, from a `defer` merged
- *  after those two, so a client that reads `loaded:true` and immediately POSTs a row
- *  cannot beat the tick loop into existence. */
+ *  is what makes the tick loop turn), the host effects, and the bind commits (1_binds.ts,
+ *  the input-side twin of host effects -- e.g. the clock bind's interval timers), all
+ *  live until the next accepted program swaps them out. The 200 is written LAST, from
+ *  a `defer` merged after those three, so a client that reads `loaded:true` and
+ *  immediately POSTs a row cannot beat the tick loop into existence. */
 function runProgram$(
   state: ServerState,
   config: { readonly dbPath: string },
   load: ProgramLoad,
 ): Observable<DlAppEvent> {
   // Only a BOOT failure is caught here (answer 500, no program runs). A fault raised
-  // later by the tick loop or by a host effect stays on the stream and reaches main.ts,
-  // which is fatal — the same loudness the old keepAlive's rethrow had.
+  // later by the tick loop, a host effect, or a bind commit stays on the stream and
+  // reaches main.ts, which is fatal -- the same loudness the old keepAlive's rethrow had.
   const booted$ = from(bootProgram(state, config, load)).pipe(
     catchError((failure: unknown) => {
       serveFailure(load.response, "POST", "/edb/program", failure);
@@ -280,10 +289,11 @@ function runProgram$(
   );
 
   return booted$.pipe(
-    concatMap(({ runtime, hostRunner }) =>
+    concatMap(({ runtime, hostRunner, bindRunner }) =>
       merge(
         runtime.deltas$.pipe(map((delta): DlAppEvent => ({ kind: "delta", delta }))),
         hostRunner.effects$.pipe(map((done): DlAppEvent => ({ kind: "effect", done }))),
+        bindRunner.commits$.pipe(map((done): DlAppEvent => ({ kind: "bind", done }))),
         defer(() => {
           writeJson(load.response, 200, {
             loaded: true,
