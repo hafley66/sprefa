@@ -172,6 +172,19 @@ comment warns against exactly this), a per-root config feature, or a cron
 one-shot. Health also showed: sprefa root db regrew to 4.3GB (lazy-rel-tier
 decision pending), 4 orphan roots incl one minted TODAY (class-14 rail may
 have a gap — worth a look).
+CLEANUP AUDIT LANDED (2026-07-28, opus, plans/2026-07-28-cleanup-audit-
+findings.md): 24 tests audited, 11 sabotage probes, 0 removed; 7 mechanical
+fixes merged (one-subscribe wildcard + zero-floor, import gate comment-blind
++ gen_emitted + direct-@libsql refusal, dead helper, 5 stale comments).
+OPEN DEFECTS from it, unfixed by contract: F1 rowsForPath O(n^2) regression
+undetectable by tests (sabotage stayed green); F2 tick-pipeline exception
+hangs commit() forever (3_runtime.ts:969 reportsSubject never sees deltas$
+faults — proven 600s hang); F3 both bind-teardown tests false-positive
+(need SchedulerLike injection, same seam as the pending virtual-time
+proposal); F4 bind trace channel unasserted; F8 conformance corpus has no
+duplicate-row fixture so multiset diff is ungraded. Also flagged: endurance
+script gated by nothing; 6 subscribe sites in sprefa-store/js/src/labs/**
+vs labs-die-on-landing.
 gen-index.sh now excludes node_modules (INDEX.md was flip-flopping 1714 lines).
 ARCH covers/2 rows for scopes.pl landed (departure_form fixture-covered,
 uncovered 10 -> 9, map re-emitted). failure-modes class 35 filed (dangling dev
