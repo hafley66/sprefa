@@ -159,6 +159,33 @@ descriptive-name rename.)
   cones = f(depth) statements vs n1_statement_budget) filed separately, owner
   unassigned.
 
+### v6 STOPPING POINT (user-set 2026-07-27 late PM): express the real programs
+The milestone that ends this arc: the real programs written in the v6 surface and
+graded, zero new constructs unless a program PROVES a gap (extraction-lab discipline):
+1. **ghcacher** (poll -> fetch -> cache -> change_log carry; mode-lattice prog facts
+   are the draft; content-addressed salts now ruled, so SWR spelling is open).
+2. **diags for LSP** (diag rels -> diag_v5 view; the lsp-v5-bridge receipt is live).
+3. **git pre-commit --changed** (biome-style recent-change-lines gating, generic and
+   directable from dl).
+4. **sprefa-extract run**: scan/scanwork, repo/rev extraction, lazy finding, lazy
+   heads.
+5. **auto-synced repo list**: HEAD the repo list itself (repo rows the system keeps
+   synced; v5 repo-rev-scanning receipts research in flight).
+6. **v5 bench parity target**: the v5 multirepo crawl benchmarks (grafana-class
+   corpora) are the perf yardstick the v6 expressions must eventually meet.
+7. **rtkq examples through sprefa-extract**: the redux-toolkit-query example corpus
+   as an extraction+analysis target program.
+8. **file watcher scaling, cross-platform preferably** (i:file-watching skill is the
+   reference; watcher is a BIND per spine_residency, never kernel).
+9. **standardized tick-log format**: the per-tick delta log serialized in ONE stable
+   format (the marble record) so later runners (rust, python, ts) are graded by
+   diffing logs against the oracle's log, never by embedding in the language. This
+   is the json-rx cross-target agreement record made concrete.
+Directive riding the milestone (rulings.pl spine_residency): the git/fs spine is
+HOSTED IN THE LANGUAGE (stdlib rels + binds + salts over generic effect machinery),
+never kernel; where the native concepts fail to host it intuitively, that is a
+language finding, not a reason to special-case the spine.
+
 ### v6 still awaiting user word (small, none blocking the absorption arc)
 - **Q8 residual**: confirm left-of-arrow = demand key on effect rels, `Key()` never
   appears there (the shipped TS reading; extraction lab's preference).

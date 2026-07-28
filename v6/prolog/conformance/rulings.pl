@@ -184,3 +184,14 @@ ruling(effect_abort, best_effort_cancel_on_support_zero, user,
 % n1_statement_budget, owner unassigned.
 ruling(subscription_kernel, minimal_with_coverage_check_and_ghost_view, user,
        'user 2026-07-27 late PM grunt 3; plans/2026-07-27-redteam-minimal-kernel.md verdicts').
+
+% Spine residency: the git/fs spine (GitRepo, GitRev, File enumeration,
+% watching, auto-synced repo lists) is HOSTED IN THE LANGUAGE -- stdlib
+% rels + binds + salts over the generic effect machinery -- never kernel.
+% They are not native language concepts; the native concepts (rels, keys,
+% salts, demand, arrows) must accommodate their interactions intuitively,
+% and every place they fail to is a language finding, not a reason to
+% special-case the spine. Value types (File, GitRev as interned ints)
+% stay types; the RELS over them are library.
+ruling(spine_residency, stdlib_rels_and_binds_not_kernel, user,
+       'user 2026-07-27 late PM: spine hostable in the language instead of being core').
