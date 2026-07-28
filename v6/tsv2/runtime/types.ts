@@ -108,6 +108,65 @@ export interface ITickDeltas {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Incremental generated-program execution.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface IIncrementalRelationPlan {
+  readonly rel: string;
+  readonly kind: "log" | "set";
+  readonly tableName: string;
+  readonly deltaTableName: string;
+  readonly columns: readonly string[];
+  readonly arrivalAddSql: string | null;
+  readonly boundarySql: string;
+}
+
+export interface IIncrementalEdgeStatement {
+  readonly headRel: string;
+  readonly headKind: "log" | "set";
+  readonly headTableName: string;
+  readonly headDeltaTableName: string;
+  readonly headColumns: readonly string[];
+  readonly keyIndices: readonly number[];
+  readonly projectSql: string;
+}
+
+export interface IIncrementalLevelStatement {
+  readonly headRel: string;
+  readonly headDeltaTableName: string;
+  readonly headColumns: readonly string[];
+  readonly insertSql: string;
+}
+
+export interface IIncrementalProgramPlan {
+  readonly safe: boolean;
+  readonly relations: readonly IIncrementalRelationPlan[];
+  readonly edges: readonly IIncrementalEdgeStatement[];
+  readonly levels: readonly IIncrementalLevelStatement[];
+}
+
+export interface IIncrementalRuntime {
+  clearDeltas(seam: ISqlSeam, relations: readonly IIncrementalRelationPlan[]): Observable<void>;
+  applyArrivals(
+    seam: ISqlSeam,
+    arrivals: IArrivalBatch,
+    relations: readonly IIncrementalRelationPlan[],
+  ): Observable<void>;
+  applyEdges(
+    seam: ISqlSeam,
+    statements: readonly IIncrementalEdgeStatement[],
+  ): Observable<void>;
+  applyLevels(
+    seam: ISqlSeam,
+    statements: readonly IIncrementalLevelStatement[],
+  ): Observable<void>;
+  readBoundary(
+    seam: ISqlSeam,
+    relations: readonly IIncrementalRelationPlan[],
+  ): Observable<readonly IRelDelta[]>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PINNED: the generated-program contract (do not rename these five fields).
 // ─────────────────────────────────────────────────────────────────────────────
 

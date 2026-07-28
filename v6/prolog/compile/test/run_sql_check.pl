@@ -114,7 +114,7 @@ run_ticks(DbFile, ArrivalStatements, EdgeStatements, LevelStatements, DeltaState
 % rule clause sharing the head ref, the phase C multi-clause-per-head fix);
 % flattens to [Delete, Insert] for the common singleton case, unchanged from
 % before.
-level_sql_pair(levelstmt(_, DeleteSql, InsertSqls), [DeleteSql | InsertSqls]).
+level_sql_pair(levelstmt(_, DeleteSql, InsertSqls, _), [DeleteSql | InsertSqls]).
 
 % Full-table read per rel, AS RECONSTRUCTED TERMS (not raw rows) -- the
 % multiset diff and the fixture comparison both operate at the term level,
@@ -123,7 +123,7 @@ level_sql_pair(levelstmt(_, DeleteSql, InsertSqls), [DeleteSql | InsertSqls]).
 % the same way, so ordering matches the oracle by construction, not luck).
 snapshot_all(DbFile, DeltaStatements, RelPlans, ByRef) :-
     findall(Ref-Terms,
-            ( member(deltastmt(Ref, SelectSql), DeltaStatements),
+            ( member(deltastmt(Ref, SelectSql, _, _), DeltaStatements),
               query_json(DbFile, SelectSql, Rows),
               memberchk(relplan(Ref, _, Columns, _, _), RelPlans),
               ref_table_name(Ref, Name),
@@ -138,7 +138,7 @@ absorb_arrivals(_, _, []) :- !.
 absorb_arrivals(DbFile, ArrivalStatements, [Signed | Rest]) :-
     ( Signed = +Row -> Sign = add ; Signed = -Row, Sign = del ),
     rel_ref(Row, Ref),
-    memberchk(arrivalstmt(Ref, Kind, AddSql, DelSql), ArrivalStatements),
+    memberchk(arrivalstmt(Ref, Kind, AddSql, DelSql, _, _), ArrivalStatements),
     Row =.. [_ | Values],
     ( Sign == add
     -> Params = Values, SqlTemplate = AddSql
@@ -179,7 +179,7 @@ ref_table_name(Name/_Arity, Name).
 % sniff never matched the corrupted text either, so it round-tripped as an
 % atom and still equality-compared correctly against the fixture's OWN term;
 % only inspecting the raw table caught the real stored value was wrong).
-resolve_and_apply_edge_writes(DbFile, RelPlans, edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, UpsertSql), Arrivals) :-
+resolve_and_apply_edge_writes(DbFile, RelPlans, edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, UpsertSql, _), Arrivals) :-
     findall(Values,
             ( member(+Row, Arrivals), rel_ref(Row, TriggerRef), Row =.. [_ | Values] ),
             TriggerRowsValues),

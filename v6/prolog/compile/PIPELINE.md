@@ -99,28 +99,28 @@ plain structure, zero host-language idiom (the rust directive lives here).
   everything; the real runtime seam provides none (the runtime owns tick
   numbering), which forced this whole shape -- recorded in the file header as
   the round-2 finding.
-- Level rules, `lower.pl:level_statement_groups/3`: per head, DELETE once
-  then one INSERT-SELECT per clause; adjacent same-head clauses grouped so a
-  second clause does not wipe the first (sweep-found bug).
-- Deltas, `lower.pl:delta_statement/2`: one read-every-row SELECT per rel;
-  the runtime diffs before/after snapshots with its own multisetDiff (reused,
-  never reimplemented) -- one algorithm covers set diff and log
-  occurrence-count diff. `lower.pl:canonical_column_expr/2` renders a stored
-  json1 compound back to canonical term text (`route_data(settings)`) at read
-  time, per the tick-log envelope pin; storage encoding stays the compiler's
-  own business.
+- Level rules, `lower.pl:level_statement_groups/3`: each group retains the
+  DELETE-once plus one INSERT-SELECT per clause recompute statements and also
+  carries one P1 INSERT-SELECT over the indexed delta table for every positive
+  body position. Each specialized arm contains `SELECT DISTINCT`; execution
+  and delta staging use the shared runtime helper.
+- Deltas, `lower.pl:delta_statement/2`: each relation retains its full-table
+  snapshot SELECT for the naive referee and gains an indexed TEMP change
+  table plus a boundary query over that table. The boundary query renders
+  stored json1 compounds back to canonical term text and groups signed
+  occurrences without reading the full relation.
 - Boot, `lower.pl:boot_statements/3`: parameterized INSERTs for Initial rows,
   emitted as the `boot` field beyond the five pinned IGenProgram names; the
   reconciliation runner executes it after DDL, before tick 1.
 
 ## Stage 5 -- emission (emit_ts.pl)
 
-The one backend. Walks `lowered/8` and prints a flat, machine-regular module:
-DDL strings, arrival templates, the level SQL in execution order, the
-snapshot SELECTs, a four-step rx tick (snapshot -> arrivals -> levels ->
-snapshot+diff), and `export const program: IGenProgramWithBoot` conforming to
-the coordinator-pinned seam (v6/tsv2/runtime/types.ts). A future emit_rust.pl
-plugs in via `compile.pl:compile_fixture/4`'s explicit emitter argument.
+The one backend. Walks `lowered/8` and prints both tick families. Incremental
+is the default for P1-safe programs and addition-only ticks. The environment
+flag `SPREFA_TSV2_EMITTER_MODE=naive`, negative level bodies, edge-to-level
+programs, and ticks containing a retraction select snapshot recompute. Both
+families conform to the coordinator-pinned seam in
+`v6/tsv2/runtime/types.ts`.
 
 ## Stage 6 -- grading
 
