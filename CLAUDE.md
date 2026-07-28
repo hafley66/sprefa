@@ -183,6 +183,22 @@ descriptive-name rename.))
   cones = f(depth) statements vs n1_statement_budget) filed separately, owner
   unassigned.
 
+### v6 REORIENTATION (user-set 2026-07-27 night): TSV2, prolog compiles TO TypeScript
+NEW PRIMARY EFFORT (plans/2026-07-27-tsv2-compile-target-header.md): prolog owns
+the whole compiler front (parse/AST/typecheck/lowering); it EMITS literal
+TypeScript program files with the real SQLite statements and real rxjs chains
+visible in the generated file. TypeScript keeps only (a) a hand-written static
+runtime reusing the NAMED v6 symbols (SqlRunner, spine.ts fact plane, IVM
+machinery, HostRunner lift, P0 tracing channels — class-34 law, import-gate
+checked) and (b) the generated gen/*.ts programs. No AST/parser/lowering in TS
+on this path. v6/dl stays untouched and running as the sibling; langium/
+ast_bridge/lower are dead weight for tsv2 only. Grading = the item-9 tick-log
+JSONL diffed byte-for-byte against the prolog oracle (the 109-fixture corpus is
+the compiler test suite). Phases: A hand-carved target exemplar (2 scopes
+fixtures) -> B prolog emitter matches it byte-identically -> C fixture sweep ->
+D .dl DCG surface + hosts (ghcacher rides D). The stopping-point program list
+below still defines DONE; programs land against the tsv2 target as it matures.
+
 ### v6 STOPPING POINT (user-set 2026-07-27 late PM): express the real programs
 The milestone that ends this arc: the real programs written in the v6 surface and
 graded, zero new constructs unless a program PROVES a gap (extraction-lab discipline):
