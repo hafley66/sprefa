@@ -125,6 +125,11 @@ naming-alone resemblance ("no vibes edges").
 
 ### Uncovered (10)
 
+> CORRECTED 2026-07-27 late: fixtures/scopes.pl landed after this doc
+> (conformance 97 -> 109) and exercises `departed()` at scopes.pl:148, so
+> `departure_form` moved to covered and the uncovered count is now 9. The
+> live record is `covers/2` in ARCH.pl; this table is the state at writing.
+
 | construct | why uncovered, cited |
 |---|---|
 | `rel_decl` | expressions.pl:13-14, verbatim: "nowhere here needs a `rel_decl`/column type, so every `Decls` list is `[]`" — the reference engine has no HM/enum type checker and never exercises required-column-type declarations |

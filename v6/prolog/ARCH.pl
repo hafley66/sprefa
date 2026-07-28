@@ -409,6 +409,22 @@ covers(state_machine,        bind_goal).
 covers(state_machine,        enum_decl).
 covers(state_machine,        struct_decl).
 
+covers(scopes,               key_type).           % keyed(open_scope/2, [1]), scopes.pl:34
+covers(scopes,               rel_kind_decl).      % kind(route_change/2, log), scopes.pl:32
+covers(scopes,               retention_clause).   % keep(route_change/2, all), scopes.pl:32
+covers(scopes,               edge_rule).          % <+ scopes.pl:35
+covers(scopes,               level_rule).         % <- scopes.pl:36
+covers(scopes,               trigger_marker).     % only(route_change(...)), scopes.pl:35
+covers(scopes,               pre_read).           % pre(queue_next(...)), scopes.pl:141
+covers(scopes,               negation).           % not(closed(...)), scopes.pl:66
+covers(scopes,               aggregate_head_forms). % queue_head(_, min(Ordinal)), scopes.pl:146
+covers(scopes,               bind_goal).          % Next := SoFar + 1, scopes.pl:141
+covers(scopes,               arithmetic_ops).     % SoFar + 1, scopes.pl:141
+covers(scopes,               fact).               % non-empty InitialRows, scopes.pl:38
+covers(scopes,               departure_form).     % only(departed(live_tab(...))), scopes.pl:148
+                                                  % ^ first FIXTURE coverage of departure_form
+                                                  %   (was ruling-only; uncovered count 10 -> 9)
+
 covers(temporal_pipe,        edge_rule).
 covers(temporal_pipe,        trigger_marker).
 covers(temporal_pipe,        retention_clause).
