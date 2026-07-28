@@ -151,6 +151,32 @@ question. Entry bar for calling phase C DONE (later, not this sweep):
 byte-identity emitter-output vs the hand exemplars (formatting argument;
 user taste decides ties).
 
+## PHASE C2 CONTRACT (user rulings 2026-07-28 AM)
+
+**Ruling 1 — typed columns, flat compounds** ("please typed yes... but we stay
+flat for now to punt"): the compiler reads the fixture Decls' column types and
+emits INTEGER columns for int, TEXT for text. The 5 WRONGs caused by "1" vs 1
+must flip to IDENTICAL. Compound-term columns STAY inline-flat (canonical text
++ json1 matching as today) — the nested/reference storage model (struct type
+as its own rel, parent holds a surrogate id, the v5 intern-dictionary pattern
+one level up) is BANKED as its own future design header, never improvised.
+Watch the @libsql number->REAL trap (bigint binds, already fixed once).
+
+**Ruling 2 — unmarked edge triggers** ("yes go get this done", after the
+model was confirmed NOT whole-world): default edge-rule semantics = an
+arrival of ANY rel in the rule's own body is a trigger occurrence, joined
+against current state of the other body atoms (the rendezvous/forkJoin case:
+the LAST-arriving input completes the join). only(Atom) = the opt-in
+restriction (already lowered). Ground every semantics claim in engine.pl /
+level_eval.pl line citations and rulings.pl q4/q6/q7 before lowering;
+multiplicity (one firing per occurrence vs per matched row) must match the
+oracle exactly — the corpus byte-diff is the referee. Target: a large
+fraction of the 48 blocked fixtures go IDENTICAL; any fixture this lowering
+turns WRONG is a stop-and-report, not a hack site.
+
+Grading note (A3 final-state leg): NOT yet ruled; retention stays invisible
+to tick-log grading for now. Do not add a final-state line without user word.
+
 ## Sequencing with running work
 
 P0 tracing agent (v6/dl + sqlRunner seams) merges independently; tsv2 consumes
