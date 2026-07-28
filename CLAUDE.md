@@ -180,15 +180,23 @@ CLEANUP AUDIT LANDED (2026-07-28, opus, plans/2026-07-28-cleanup-audit-
 findings.md): 24 tests audited, 11 sabotage probes, 0 removed; 7 mechanical
 fixes merged (one-subscribe wildcard + zero-floor, import gate comment-blind
 + gen_emitted + direct-@libsql refusal, dead helper, 5 stale comments).
-OPEN DEFECTS from it, unfixed by contract: F1 rowsForPath O(n^2) regression
-undetectable by tests (sabotage stayed green); F2 tick-pipeline exception
-hangs commit() forever (3_runtime.ts:969 reportsSubject never sees deltas$
-faults — proven 600s hang); F3 both bind-teardown tests false-positive
-(need SchedulerLike injection, same seam as the pending virtual-time
-proposal); F4 bind trace channel unasserted; F8 conformance corpus has no
-duplicate-row fixture so multiset diff is ungraded. Also flagged: endurance
-script gated by nothing; 6 subscribe sites in sprefa-store/js/src/labs/**
-vs labs-die-on-landing.
+DEFECT WAVE FIXED 2026-07-28 PM (sonnet agent, 5 commits, coordinator
+re-verified all suites + endurance): F2 commit() now REJECTS on tick-
+pipeline fault (CommitSettlement union on reportsSubject, fail-pre-fix
+5s-timeout test red->green ~2ms); F1 rowsForPath guarded by a rawSql
+trace-seam test (sabotage receipt in test header: unscoped SELECT caught);
+F4 bind channel + PerfTickLine.binds asserted; F8 fixture
+log_stacks_within_tick_and_across_ticks added (corpus now 110; oracle-
+verified; multisetDiff sabotage flips 2 fixtures red; sweep 31 compiled /
+28 identical; roundtrip 110/110); labs/ DELETED from store (nothing
+imported it; prolog_emit_bench.ts moved to src/bench/, swi_emit.sh
+repointed; store 89->74 tests, last copy at 5d6f8fc5). dl now 92/92.
+STILL OPEN from audit: F3 teardown tests false-positive — SchedulerLike
+agent DISPATCHED (user approved virtual-time seam): BindConfig.scheduler,
+TestScheduler rewrites with sabotage receipts. Endurance-as-gate still
+ungated (open). MATCH LIFECYCLE ARMS: MVP semantics presented (materialize
+framing, next/finalize arms, drain-tick timing, transition rule win);
+awaiting user read before header lands.
 gen-index.sh now excludes node_modules (INDEX.md was flip-flopping 1714 lines).
 ARCH covers/2 rows for scopes.pl landed (departure_form fixture-covered,
 uncovered 10 -> 9, map re-emitted). failure-modes class 35 filed (dangling dev
