@@ -136,7 +136,7 @@ test(switch_as_keyed_replace_edge_sql) :-
     UpsertSql ==
       'INSERT INTO "open_scope" ("session_id", "target") VALUES (?, ?) ON CONFLICT("session_id") DO UPDATE SET "target" = excluded."target"',
     DeltaProjectSql ==
-      'SELECT d0."session_id" AS "session_id", json_object(\'fn\', \'route_data\', \'args\', json_array(d0."route_id")) AS "target" FROM "__delta_route_change" d0 WHERE d0."_sign" = 1 ORDER BY d0."_sequence"'.
+      'SELECT d0."session_id" AS "session_id", json_object(\'fn\', \'route_data\', \'args\', json_array(d0."route_id")) AS "target" FROM "__frontier_route_change" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"'.
 
 % An edge-headed keyed rel's table must carry PRIMARY KEY on the KEY
 % COLUMNS ALONE, matching the UPSERT's ON CONFLICT target -- SQLite
@@ -153,6 +153,13 @@ test(switch_as_keyed_replace_ddl_pk_shape) :-
     \+ sub_atom(OpenScopeDdl, _, _, _, 'PRIMARY KEY ("session_id", "target")'),
     include(ddl_for_table(route_row), Ddl, [RouteRowDdl]),
     once(sub_atom(RouteRowDdl, _, _, _, 'PRIMARY KEY ("route_id", "body")')).
+
+test(switch_as_keyed_replace_frontier_ddl) :-
+    lowered_for(switch_as_keyed_replace, Lowered),
+    Lowered = lowered(_, Ddl, _, _, _, _, _, _),
+    memberchk('CREATE TEMP TABLE "__frontier_route_change" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "route_id" TEXT NOT NULL)', Ddl),
+    memberchk('CREATE INDEX "__frontier_route_change_phase" ON "__frontier_route_change" ("_phase")', Ddl),
+    memberchk('CREATE TEMP TABLE "__next_frontier_open_scope" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "target" TEXT NOT NULL)', Ddl).
 
 ddl_for_table(Table, Ddl) :-
     format(atom(Needle), 'CREATE TABLE "~w" (', [Table]),
@@ -191,9 +198,9 @@ test(demand_laziness_level_sql) :-
     DemandedInsert == 'INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_feed" b0',
     EffectCallInsert == 'INSERT OR IGNORE INTO "effect_call" ("target") SELECT b0."target" FROM "demanded" b0',
     DemandedDeltaInsert ==
-      'INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT DISTINCT d0."target", d0."session_id" FROM "__delta_open_feed" d0 WHERE d0."_sign" = 1 RETURNING "target", "session_id"',
+      'INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT DISTINCT d0."target", d0."session_id" FROM "__frontier_open_feed" d0 WHERE d0."_phase" >= 0 RETURNING "target", "session_id"',
     EffectCallDeltaInsert ==
-      'INSERT OR IGNORE INTO "effect_call" ("target") SELECT DISTINCT d0."target" FROM "__delta_demanded" d0 WHERE d0."_sign" = 1 RETURNING "target"'.
+      'INSERT OR IGNORE INTO "effect_call" ("target") SELECT DISTINCT d0."target" FROM "__frontier_demanded" d0 WHERE d0."_phase" >= 0 RETURNING "target"'.
 
 % Round 2: one plain "read every row" query per rel (log and set alike) --
 % no __prev shadow table, no EXCEPT, no tick filter. The runtime (or, for
@@ -234,6 +241,22 @@ test(switch_as_keyed_replace_delta_sql_route_change_log) :-
     once(sub_atom(SelectSql, _, _, _, 'AS "route_id"')).
 
 :- end_tests(sql_text_snapshots).
+
+:- begin_tests(incremental_mode).
+
+test(positive_edge_level_program_is_incremental) :-
+    load_plan(switch_as_keyed_replace, Plan),
+    lower_program(Plan, Lowered),
+    Lowered = lowered(_, _, _, EdgeStatements, LevelStatements, _, _, _),
+    emit_ts:incremental_program_safe(Plan, EdgeStatements, LevelStatements, true).
+
+test(negative_level_body_remains_naive) :-
+    load_plan(merge_policy, Plan),
+    lower_program(Plan, Lowered),
+    Lowered = lowered(_, _, _, EdgeStatements, LevelStatements, _, _, _),
+    emit_ts:incremental_program_safe(Plan, EdgeStatements, LevelStatements, false).
+
+:- end_tests(incremental_mode).
 
 :- begin_tests(supported_subset_gate).
 

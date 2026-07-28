@@ -40,7 +40,7 @@ function valuesSql(rowCount: number, columnCount: number): string {
   return Array.from({ length: rowCount }, () => row).join(", ");
 }
 
-function stageStatement(
+function boundaryStageStatement(
   relation: IIncrementalRelationPlan,
   events: readonly DeltaEvent[],
 ): SqlStatement {
@@ -59,10 +59,31 @@ function stageStatement(
   };
 }
 
+function frontierStageStatement(
+  relation: IIncrementalRelationPlan,
+  tableName: string,
+  phase: number,
+  events: readonly DeltaEvent[],
+): SqlStatement {
+  const columns = ["_phase", "_sequence", ...relation.columns].map(quoteIdentifier);
+  const valueExpressions = columns.map(
+    (_column, index) => `json_extract(value, '$[${index}]')`,
+  );
+  const encodedEvents = events.map((event) => [phase, event.sequence, ...event.row]);
+  return {
+    sql: `INSERT INTO ${quoteIdentifier(tableName)} (${columns.join(", ")}) SELECT ${valueExpressions.join(", ")} FROM json_each(?)`,
+    args: [JSON.stringify(encodedEvents)],
+  };
+}
+
 function stageEvents(
   seam: ISqlSeam,
   relations: readonly IIncrementalRelationPlan[],
   events: readonly DeltaEvent[],
+  frontierCopies: readonly {
+    readonly tableName: (relation: IIncrementalRelationPlan) => string;
+    readonly phase: number;
+  }[],
 ): Observable<void> {
   const relationByName = new Map(relations.map((relation) => [relation.rel, relation]));
   const eventsByRel = new Map<string, DeltaEvent[]>();
@@ -71,11 +92,25 @@ function stageEvents(
     if (grouped === undefined) eventsByRel.set(event.rel, [event]);
     else grouped.push(event);
   }
-  const statements = [...eventsByRel].map(([rel, grouped]) => {
+  const statements = [...eventsByRel].flatMap(([rel, grouped]) => {
     const relation = relationByName.get(rel);
     if (relation === undefined) throw new Error(`incremental delta relation missing: ${rel}`);
-    return stageStatement(relation, grouped);
+    const boundary = boundaryStageStatement(relation, grouped);
+    const additions = grouped.filter((event) => event.sign === 1);
+    if (additions.length === 0) return [boundary];
+    return [
+      boundary,
+      ...frontierCopies.map((copy) =>
+        frontierStageStatement(
+          relation,
+          copy.tableName(relation),
+          copy.phase,
+          additions,
+        )
+      ),
+    ];
   });
+  if (statements.length === 0) return of(undefined);
   return seam.runner.batch(seam.db, statements).pipe(map(() => undefined));
 }
 
@@ -129,29 +164,26 @@ function logWriteStatement(
 function applyLogEdge(
   seam: ISqlSeam,
   statement: IIncrementalEdgeStatement,
+  relation: IIncrementalRelationPlan,
   rows: readonly IRow[],
 ): Observable<void> {
   if (rows.length === 0) return of(undefined);
-  const relation: IIncrementalRelationPlan = {
-    rel: statement.headRel,
-    kind: "log",
-    tableName: statement.headTableName,
-    deltaTableName: statement.headDeltaTableName,
-    columns: statement.headColumns,
-    arrivalAddSql: null,
-    boundarySql: "",
-  };
   const events = rows.map(
     (row, sequence): DeltaEvent => ({ rel: statement.headRel, sign: 1, sequence, row }),
   );
   return seam.runner.execute(seam.db, logWriteStatement(statement, rows)).pipe(
-    concatMap(() => stageEvents(seam, [relation], events)),
+    concatMap(() =>
+      stageEvents(seam, [relation], events, [
+        { tableName: (plan) => plan.nextFrontierTableName, phase: 0 },
+      ])
+    ),
   );
 }
 
 function applyKeyedEdge(
   seam: ISqlSeam,
   statement: IIncrementalEdgeStatement,
+  relation: IIncrementalRelationPlan,
   projectedRows: readonly IRow[],
 ): Observable<void> {
   const resolved = new Map<string, IRow>();
@@ -182,17 +214,12 @@ function applyKeyedEdge(
           }
           events.push({ rel: statement.headRel, sign: 1, sequence: sequence * 2 + 1, row });
         }
-        const relation: IIncrementalRelationPlan = {
-          rel: statement.headRel,
-          kind: "set",
-          tableName: statement.headTableName,
-          deltaTableName: statement.headDeltaTableName,
-          columns: statement.headColumns,
-          arrivalAddSql: null,
-          boundarySql: "",
-        };
         return seam.runner.execute(seam.db, keyedWriteStatement(statement, changedRows)).pipe(
-          concatMap(() => stageEvents(seam, [relation], events)),
+          concatMap(() =>
+            stageEvents(seam, [relation], events, [
+              { tableName: (plan) => plan.nextFrontierTableName, phase: 0 },
+            ])
+          ),
         );
       }),
     );
@@ -201,13 +228,18 @@ function applyKeyedEdge(
 function applyEdgeStatement(
   seam: ISqlSeam,
   statement: IIncrementalEdgeStatement,
+  relationByName: ReadonlyMap<string, IIncrementalRelationPlan>,
 ): Observable<void> {
+  const relation = relationByName.get(statement.headRel);
+  if (relation === undefined) {
+    throw new Error(`incremental edge head relation missing: ${statement.headRel}`);
+  }
   return seam.runner.execute(seam.db, statement.projectSql).pipe(
     concatMap((result) => {
       const rows = resultRows(result, statement.headColumns);
       return statement.headKind === "log"
-        ? applyLogEdge(seam, statement, rows)
-        : applyKeyedEdge(seam, statement, rows);
+        ? applyLogEdge(seam, statement, relation, rows)
+        : applyKeyedEdge(seam, statement, relation, rows);
     }),
   );
 }
@@ -215,25 +247,77 @@ function applyEdgeStatement(
 function applyLevelStatement(
   seam: ISqlSeam,
   statement: IIncrementalLevelStatement,
+  relationByName: ReadonlyMap<string, IIncrementalRelationPlan>,
+  afterEdges: boolean,
 ): Observable<void> {
+  const relation = relationByName.get(statement.headRel);
+  if (relation === undefined) {
+    throw new Error(`incremental level head relation missing: ${statement.headRel}`);
+  }
   return seam.runner.execute(seam.db, statement.insertSql).pipe(
     concatMap((result) => {
       const rows = resultRows(result, statement.headColumns);
       if (rows.length === 0) return of(undefined);
-      const relation: IIncrementalRelationPlan = {
-        rel: statement.headRel,
-        kind: "set",
-        tableName: "",
-        deltaTableName: statement.headDeltaTableName,
-        columns: statement.headColumns,
-        arrivalAddSql: null,
-        boundarySql: "",
-      };
       const events = rows.map(
         (row, sequence): DeltaEvent => ({ rel: statement.headRel, sign: 1, sequence, row }),
       );
-      return stageEvents(seam, [relation], events);
+      const frontierCopies = afterEdges
+        ? [
+            { tableName: (plan: IIncrementalRelationPlan) => plan.frontierTableName, phase: 2 },
+            {
+              tableName: (plan: IIncrementalRelationPlan) => plan.nextFrontierTableName,
+              phase: 1,
+            },
+          ]
+        : [
+            { tableName: (plan: IIncrementalRelationPlan) => plan.frontierTableName, phase: 2 },
+          ];
+      return stageEvents(seam, [relation], events, frontierCopies);
     }),
+  );
+}
+
+function recomputeLevelStatement(
+  seam: ISqlSeam,
+  statement: IIncrementalLevelStatement,
+  relationByName: ReadonlyMap<string, IIncrementalRelationPlan>,
+): Observable<void> {
+  const relation = relationByName.get(statement.headRel);
+  if (relation === undefined) {
+    throw new Error(`incremental level head relation missing: ${statement.headRel}`);
+  }
+  return seam.runner.execute(seam.db, statement.selectSql).pipe(
+    concatMap((beforeResult) =>
+      seam.runner.executeMultiple(seam.db, statement.recomputeSql).pipe(
+        concatMap(() => seam.runner.execute(seam.db, statement.selectSql)),
+        concatMap((afterResult) => {
+          const beforeRows = resultRows(beforeResult, statement.headColumns);
+          const afterRows = resultRows(afterResult, statement.headColumns);
+          const beforeByKey = new Map(beforeRows.map((row) => [JSON.stringify(row), row]));
+          const afterByKey = new Map(afterRows.map((row) => [JSON.stringify(row), row]));
+          const events: DeltaEvent[] = [];
+          let sequence = 0;
+          for (const [key, row] of beforeByKey) {
+            if (!afterByKey.has(key)) {
+              events.push({ rel: statement.headRel, sign: -1, sequence, row });
+              sequence += 1;
+            }
+          }
+          for (const [key, row] of afterByKey) {
+            if (!beforeByKey.has(key)) {
+              events.push({ rel: statement.headRel, sign: 1, sequence, row });
+              sequence += 1;
+            }
+          }
+          return stageEvents(
+            seam,
+            [relation],
+            events,
+            [{ tableName: (plan) => plan.nextFrontierTableName, phase: 1 }],
+          );
+        }),
+      )
+    ),
   );
 }
 
@@ -269,13 +353,16 @@ function boundaryDelta(
 }
 
 export const IncrementalRuntime: IIncrementalRuntime = {
-  clearDeltas(
+  prepareTick(
     seam: ISqlSeam,
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<void> {
     if (relations.length === 0) return of(undefined);
     const sql = relations
-      .map((relation) => `DELETE FROM ${quoteIdentifier(relation.deltaTableName)}`)
+      .flatMap((relation) => [
+        `DELETE FROM ${quoteIdentifier(relation.deltaTableName)}`,
+        `DELETE FROM ${quoteIdentifier(relation.nextFrontierTableName)}`,
+      ])
       .join(";\n");
     return seam.runner.executeMultiple(seam.db, sql);
   },
@@ -337,7 +424,12 @@ export const IncrementalRuntime: IIncrementalRuntime = {
             });
           }
         }
-        return stageEvents(seam, relations, events);
+        return stageEvents(
+          seam,
+          relations,
+          events,
+          [{ tableName: (relation) => relation.frontierTableName, phase: 1 }],
+        );
       }),
     );
   },
@@ -345,15 +437,78 @@ export const IncrementalRuntime: IIncrementalRuntime = {
   applyEdges(
     seam: ISqlSeam,
     statements: readonly IIncrementalEdgeStatement[],
+    relations: readonly IIncrementalRelationPlan[],
   ): Observable<void> {
-    return sequenceWork(statements, (statement) => applyEdgeStatement(seam, statement));
+    const relationByName = new Map(relations.map((relation) => [relation.rel, relation]));
+    return sequenceWork(
+      statements,
+      (statement) => applyEdgeStatement(seam, statement, relationByName),
+    );
   },
 
-  applyLevels(
+  applyLevelsBeforeEdges(
     seam: ISqlSeam,
     statements: readonly IIncrementalLevelStatement[],
+    relations: readonly IIncrementalRelationPlan[],
   ): Observable<void> {
-    return sequenceWork(statements, (statement) => applyLevelStatement(seam, statement));
+    const relationByName = new Map(relations.map((relation) => [relation.rel, relation]));
+    return sequenceWork(
+      statements,
+      (statement) => applyLevelStatement(seam, statement, relationByName, false),
+    );
+  },
+
+  mergeNextIntoCurrent(
+    seam: ISqlSeam,
+    relations: readonly IIncrementalRelationPlan[],
+  ): Observable<void> {
+    if (relations.length === 0) return of(undefined);
+    const sql = relations
+      .map((relation) => {
+        const columns = ["_phase", "_sequence", ...relation.columns]
+          .map(quoteIdentifier)
+          .join(", ");
+        return `INSERT INTO ${quoteIdentifier(relation.frontierTableName)} (${columns}) SELECT ${columns} FROM ${quoteIdentifier(relation.nextFrontierTableName)}`;
+      })
+      .join(";\n");
+    return seam.runner.executeMultiple(seam.db, sql);
+  },
+
+  applyLevelsAfterEdges(
+    seam: ISqlSeam,
+    statements: readonly IIncrementalLevelStatement[],
+    relations: readonly IIncrementalRelationPlan[],
+  ): Observable<void> {
+    const relationByName = new Map(relations.map((relation) => [relation.rel, relation]));
+    return sequenceWork(
+      statements,
+      (statement) => applyLevelStatement(seam, statement, relationByName, true),
+    );
+  },
+
+  recomputeLevelsAfterEdges(
+    seam: ISqlSeam,
+    statements: readonly IIncrementalLevelStatement[],
+    relations: readonly IIncrementalRelationPlan[],
+  ): Observable<void> {
+    const relationByName = new Map(relations.map((relation) => [relation.rel, relation]));
+    const retractionTerms = relations.map(
+      (relation) =>
+        `EXISTS (SELECT 1 FROM ${quoteIdentifier(relation.deltaTableName)} WHERE "_sign" = -1 LIMIT 1)`,
+    );
+    if (retractionTerms.length === 0) return of(undefined);
+    const retractionSql =
+      `SELECT CASE WHEN ${retractionTerms.join(" OR ")} THEN 1 ELSE 0 END AS has_retraction`;
+    return seam.runner.execute(seam.db, retractionSql).pipe(
+      concatMap((result) =>
+        Number(result.rows[0]?.has_retraction ?? 0) === 0
+          ? of(undefined)
+          : sequenceWork(
+              statements,
+              (statement) => recomputeLevelStatement(seam, statement, relationByName),
+            )
+      ),
+    );
   },
 
   readBoundary(
@@ -367,6 +522,36 @@ export const IncrementalRuntime: IIncrementalRuntime = {
           map((result) => boundaryDelta(relation, result)),
         ),
       ),
+    );
+  },
+
+  promoteFrontiers(
+    seam: ISqlSeam,
+    relations: readonly IIncrementalRelationPlan[],
+  ): Observable<boolean> {
+    if (relations.length === 0) return of(false);
+    const carryTerms = relations.map(
+      (relation) =>
+        `EXISTS (SELECT 1 FROM ${quoteIdentifier(relation.nextFrontierTableName)} LIMIT 1)`,
+    );
+    const carrySql = `SELECT CASE WHEN ${carryTerms.join(" OR ")} THEN 1 ELSE 0 END AS carry_pending`;
+    const promoteSql = relations
+      .flatMap((relation) => {
+        const columns = ["_phase", "_sequence", ...relation.columns]
+          .map(quoteIdentifier)
+          .join(", ");
+        return [
+          `DELETE FROM ${quoteIdentifier(relation.frontierTableName)}`,
+          `INSERT INTO ${quoteIdentifier(relation.frontierTableName)} (${columns}) SELECT ${columns} FROM ${quoteIdentifier(relation.nextFrontierTableName)}`,
+          `DELETE FROM ${quoteIdentifier(relation.nextFrontierTableName)}`,
+        ];
+      })
+      .join(";\n");
+    return seam.runner.execute(seam.db, carrySql).pipe(
+      concatMap((result) => {
+        const carryPending = Number(result.rows[0]?.carry_pending ?? 0) === 1;
+        return seam.runner.executeMultiple(seam.db, promoteSql).pipe(map(() => carryPending));
+      }),
     );
   },
 };

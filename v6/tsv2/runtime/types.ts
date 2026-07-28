@@ -116,6 +116,8 @@ export interface IIncrementalRelationPlan {
   readonly kind: "log" | "set";
   readonly tableName: string;
   readonly deltaTableName: string;
+  readonly frontierTableName: string;
+  readonly nextFrontierTableName: string;
   readonly columns: readonly string[];
   readonly arrivalAddSql: string | null;
   readonly boundarySql: string;
@@ -136,6 +138,8 @@ export interface IIncrementalLevelStatement {
   readonly headDeltaTableName: string;
   readonly headColumns: readonly string[];
   readonly insertSql: string;
+  readonly selectSql: string;
+  readonly recomputeSql: string;
 }
 
 export interface IIncrementalProgramPlan {
@@ -146,7 +150,7 @@ export interface IIncrementalProgramPlan {
 }
 
 export interface IIncrementalRuntime {
-  clearDeltas(seam: ISqlSeam, relations: readonly IIncrementalRelationPlan[]): Observable<void>;
+  prepareTick(seam: ISqlSeam, relations: readonly IIncrementalRelationPlan[]): Observable<void>;
   applyArrivals(
     seam: ISqlSeam,
     arrivals: IArrivalBatch,
@@ -155,15 +159,35 @@ export interface IIncrementalRuntime {
   applyEdges(
     seam: ISqlSeam,
     statements: readonly IIncrementalEdgeStatement[],
+    relations: readonly IIncrementalRelationPlan[],
   ): Observable<void>;
-  applyLevels(
+  applyLevelsBeforeEdges(
     seam: ISqlSeam,
     statements: readonly IIncrementalLevelStatement[],
+    relations: readonly IIncrementalRelationPlan[],
+  ): Observable<void>;
+  mergeNextIntoCurrent(
+    seam: ISqlSeam,
+    relations: readonly IIncrementalRelationPlan[],
+  ): Observable<void>;
+  applyLevelsAfterEdges(
+    seam: ISqlSeam,
+    statements: readonly IIncrementalLevelStatement[],
+    relations: readonly IIncrementalRelationPlan[],
+  ): Observable<void>;
+  recomputeLevelsAfterEdges(
+    seam: ISqlSeam,
+    statements: readonly IIncrementalLevelStatement[],
+    relations: readonly IIncrementalRelationPlan[],
   ): Observable<void>;
   readBoundary(
     seam: ISqlSeam,
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<readonly IRelDelta[]>;
+  promoteFrontiers(
+    seam: ISqlSeam,
+    relations: readonly IIncrementalRelationPlan[],
+  ): Observable<boolean>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

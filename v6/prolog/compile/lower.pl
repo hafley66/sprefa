@@ -143,6 +143,12 @@ table_name(Name/_Arity, Name).
 delta_table_name(Name/_Arity, DeltaTable) :-
     format(atom(DeltaTable), '__delta_~w', [Name]).
 
+frontier_table_name(Name/_Arity, FrontierTable) :-
+    format(atom(FrontierTable), '__frontier_~w', [Name]).
+
+next_frontier_table_name(Name/_Arity, NextFrontierTable) :-
+    format(atom(NextFrontierTable), '__next_frontier_~w', [Name]).
+
 quote_ident(Name, Quoted) :- format(atom(Quoted), '"~w"', [Name]).
 
 sql_literal(Atom, Literal) :-
@@ -509,8 +515,8 @@ edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms,
 edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, HeadColumns, DeltaProjectSql) :-
     rel_ref(TriggerAtom, TriggerRef),
     TriggerAtom =.. [_ | TriggerArgs],
-    delta_table_name(TriggerRef, DeltaTable),
-    quote_ident(DeltaTable, QuotedDeltaTable),
+    frontier_table_name(TriggerRef, FrontierTable),
+    quote_ident(FrontierTable, QuotedFrontierTable),
     DeltaAlias = d0,
     relplan_columns(RelPlans, TriggerRef, TriggerColumns),
     compile_atom_args(TriggerArgs, TriggerColumns, DeltaAlias, [], TriggerBound, TriggerWhereParts),
@@ -519,13 +525,13 @@ edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, HeadColumns, Del
     compile_positive_uses(RelPlans, OtherUses, TriggerBound, Bound, OtherFromParts, OtherWhereTexts),
     head_select_list(Head, Bound, HeadColumns, SelectExprs),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
-    format(atom(DeltaFrom), '~w ~w', [QuotedDeltaTable, DeltaAlias]),
+    format(atom(DeltaFrom), '~w ~w', [QuotedFrontierTable, DeltaAlias]),
     append([DeltaFrom], OtherFromParts, FromParts),
     atomic_list_concat(FromParts, ', ', FromSql),
-    append(['d0."_sign" = 1' | TriggerWhereTexts], OtherWhereTexts, WhereTexts),
+    append(['d0."_phase" >= 0' | TriggerWhereTexts], OtherWhereTexts, WhereTexts),
     atomic_list_concat(WhereTexts, ' AND ', WhereSql),
     format(atom(DeltaProjectSql),
-           'SELECT ~w FROM ~w WHERE ~w ORDER BY d0."_sequence"',
+           'SELECT ~w FROM ~w WHERE ~w ORDER BY d0."_phase", d0."_sequence"',
            [SelectSql, FromSql, WhereSql]).
 
 excluded_assignment(QuotedColumn, Text) :- format(atom(Text), '~w = excluded.~w', [QuotedColumn, QuotedColumn]).
@@ -656,8 +662,8 @@ nth0_select(Index, [Item | Rest], Selected, [Item | More]) :-
 
 level_delta_select_arm(RelPlans, Head, use(DeltaRef, DeltaArgs, pos, _),
                        OtherPosUses, NegUses, DeltaArm) :-
-    delta_table_name(DeltaRef, DeltaTable),
-    quote_ident(DeltaTable, QuotedDeltaTable),
+    frontier_table_name(DeltaRef, FrontierTable),
+    quote_ident(FrontierTable, QuotedFrontierTable),
     relplan_columns(RelPlans, DeltaRef, DeltaColumns),
     compile_atom_args(DeltaArgs, DeltaColumns, d0, [], DeltaBound, DeltaWhereParts),
     maplist(where_text, DeltaWhereParts, DeltaWhereTexts),
@@ -666,10 +672,10 @@ level_delta_select_arm(RelPlans, Head, use(DeltaRef, DeltaArgs, pos, _),
     compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
     head_select_list(Head, Bound, none, SelectExprs),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
-    format(atom(DeltaFrom), '~w d0', [QuotedDeltaTable]),
+    format(atom(DeltaFrom), '~w d0', [QuotedFrontierTable]),
     append([DeltaFrom], OtherFromParts, FromParts),
     atomic_list_concat(FromParts, ', ', FromSql),
-    append(['d0."_sign" = 1' | DeltaWhereTexts], OtherWhereTexts, PositiveWhereTexts),
+    append(['d0."_phase" >= 0' | DeltaWhereTexts], OtherWhereTexts, PositiveWhereTexts),
     append(PositiveWhereTexts, NegWhereTexts, WhereTexts),
     atomic_list_concat(WhereTexts, ' AND ', WhereSql),
     format(atom(DeltaArm), 'SELECT DISTINCT ~w FROM ~w WHERE ~w',
@@ -707,7 +713,9 @@ delta_statement(relplan(Ref, _Kind, Columns, _, ColumnTypes),
            'SELECT ~w, "_sign" AS "__sign", count(*) AS "__count" FROM ~w WHERE "_sign" IN (-1, 1) GROUP BY ~w, "_sign"',
            [ColumnsSql, QuotedDeltaTable, GroupColumnsSql]).
 
-delta_ddl(relplan(Ref, _Kind, Columns, _, ColumnTypes), [TableDdl, IndexDdl]) :-
+delta_ddl(relplan(Ref, _Kind, Columns, _, ColumnTypes),
+          [TableDdl, IndexDdl, FrontierDdl, FrontierIndexDdl,
+           NextFrontierDdl, NextFrontierIndexDdl]) :-
     delta_table_name(Ref, DeltaTable),
     quote_ident(DeltaTable, QuotedDeltaTable),
     maplist(quote_ident, Columns, QuotedColumns),
@@ -720,7 +728,27 @@ delta_ddl(relplan(Ref, _Kind, Columns, _, ColumnTypes), [TableDdl, IndexDdl]) :-
     quote_ident(IndexName, QuotedIndexName),
     format(atom(IndexDdl),
            'CREATE INDEX ~w ON ~w ("_sign")',
-           [QuotedIndexName, QuotedDeltaTable]).
+           [QuotedIndexName, QuotedDeltaTable]),
+    frontier_table_name(Ref, FrontierTable),
+    quote_ident(FrontierTable, QuotedFrontierTable),
+    format(atom(FrontierDdl),
+           'CREATE TEMP TABLE ~w ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ~w)',
+           [QuotedFrontierTable, ColumnsSql]),
+    format(atom(FrontierIndexName), '~w_phase', [FrontierTable]),
+    quote_ident(FrontierIndexName, QuotedFrontierIndexName),
+    format(atom(FrontierIndexDdl),
+           'CREATE INDEX ~w ON ~w ("_phase")',
+           [QuotedFrontierIndexName, QuotedFrontierTable]),
+    next_frontier_table_name(Ref, NextFrontierTable),
+    quote_ident(NextFrontierTable, QuotedNextFrontierTable),
+    format(atom(NextFrontierDdl),
+           'CREATE TEMP TABLE ~w ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ~w)',
+           [QuotedNextFrontierTable, ColumnsSql]),
+    format(atom(NextFrontierIndexName), '~w_phase', [NextFrontierTable]),
+    quote_ident(NextFrontierIndexName, QuotedNextFrontierIndexName),
+    format(atom(NextFrontierIndexDdl),
+           'CREATE INDEX ~w ON ~w ("_phase")',
+           [QuotedNextFrontierIndexName, QuotedNextFrontierTable]).
 
 % INTEGER columns cannot hold a json1 compound under the inferred storage
 % contract, so their delta reads use the quoted column directly. TEXT columns
