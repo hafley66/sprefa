@@ -319,9 +319,23 @@ significant, Key(text) wrappers dead); enum_decl_in_rel = semicolon
 variants in-decl; no_policy_suffix_words (set REMOVED, bare rel = set
 table per engine.pl fallback, log = the only kind word, plane carried
 by key(...) + id binds per the verdict's own optional-sugar note;
-entity extras still need a future non-suffix spelling). Types arc has
-left design; spelling migration wave 2 (drop set, land : types +
-semicolon enums in parse_dl/print_dl/registry) is dispatchable.
+entity extras still need a future non-suffix spelling). Types arc has left design.
+SPELLING WAVE 2 LANDED (merge aadede88, codex luna no-commit flow,
+coordinator verified: conformance 112 (+2 fixtures), roundtrip G1
+112/112, sweep 32/29/0 existing movement zero, plunit 18/18, tsv2
+6/6, gate): 53 kind(Ref,set) entries deleted, `set` = named refusal
+removed_word(set), colon types live (col_type(Ref, Column, Type)
+term form, decl type is authority over C2a inference, contradiction
+= decl_type_conflicts_witness), 2 new fixtures. ENUM ARC IN FLIGHT
+(codex sol, brief plans/2026-07-29-codex-enum-brief.md, worktree
+../sprefa-codex-enum base 61817999): semicolon variants desugar to
+plain variant rels + derived tag view via ONE shared expansion, term
+form keeps the sugar for G1. P2+P3 HEADER SEEDED
+(plans/2026-07-29-emitter-p2-p3-header.md): the 1M-competition entry
+-- recursive strata across ticks, retraction as emitted support-count
+SQL with the MANDATORY cycle guard, graded through the EXISTING
+bench/engines rig against the PERF-REPORT.md standings (sqlite-count
+class 443ms @960k is the target). Sequenced behind the enum arc.
 RULED same night: rel_default_policy = value_unkeyed (bare rel = table =
 replay subject); enum_variant_separator = prolog semicolon; enum storage
 = N variant rels + derived tag view (lab (b), user walked through the
