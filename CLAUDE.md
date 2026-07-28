@@ -226,11 +226,38 @@ zero only(/departed( -- all re-run by coordinator): only() INVERTED into
 bare-trigger + latest() sampling, departed -> finalize, combine/next
 sugar, zip + unsubscribe/complete/subscribe/error reserved with named
 refusals. 49 files. Key decomposition still split out (semantics arc).
-CONSUMPTION-AXIS DESIGN OPEN (user thread): switch (cut, boundary,
-collapse-logged per ruling) vs queue (per-occurrence via compiler-
-generated durable pending rel + min-ordinal consume -- sidesteps shelved
-C7); spelling family + queue pacing sub-choice await user word; goes in
-the arms arc header when cut.
+CONSUMPTION+ARMS LAB LANDED (merge 445c345d, lab-death ee6bc71e, lab
+commit 82bd12a8, verdict plans/2026-07-28-consumption-arms-verdict.md;
+90 PASS re-run by coordinator, 7 rounds to fixpoint, 28 assertions):
+consumption needs NO construct -- switch and queue are the SAME rel
+under two key decls; all six observer words ground to shipped kernel
+forms (subscribe/unsubscribe = next/finalize on the demand rel,
+complete = finalize on the scope rel); every arm is row granularity.
+Pacing: (b) one-per-drain-tick is the only spelling that implements a
+queue -- (a) N-same-tick loses N-1 items at any keyed consumer and the
+survivor is picked by term order of the ready view; (b)'s cost is the
+drain cap becoming a queue-length cap (hard-fail at exactly 99/100
+under error-at-cap). Crash-restart from the durable pending rel alone
+yields ZERO ticks (durable rows do not make a firing durable --
+SLOT-BOOT-OCCURRENCE, collides with the no-boot-replay endurance
+goal). Error arm: reading (A) only (enum-variant destructure over a
+Log envelope; second-channel refused on three grounds); on a KEYED
+envelope an error arriving with a later ok row same-tick is replaced
+before any arm sees it -- scheduler-batching-dependent observability,
+the ruled collapse trace is the only record of the drop. Channel:
+log + keyed cursor + min composes N-readers; keep(count(N)) is
+tick-log BYTE-IDENTICAL to keep(all) while permanently stalling a
+lagging reader (invisible to tick-log-only grading, same class as the
+retention-grading gap). Desugar of signed edges: exact on plus,
+inexpressible on minus (no retracting edge head). Retention slot
+priced 4 ways, smallest honest = retention as an ordinary retracting
+rule over the log (SLOT-RETENTION-SPELLING s1; cost = lifting
+retract_from_log; rxjs has the same gap). 3 prospective fixture/5
+terms graded by the real harness, recoverable at
+82bd12a8:v6/prolog/labs/consumption_arms/fixtures.pl. AWAITING USER:
+SLOT-QUEUE-PACING, SLOT-ARM-ARGUMENT, SLOT-ERROR-VARIANT-NAME,
+SLOT-ERROR-TERMINALITY, SLOT-RETENTION-SPELLING, SLOT-COLLAPSE-CHANNEL,
+SLOT-BOOT-OCCURRENCE.
 TYPES ROUND 2 LANDED (merge b47d3c00, codex SOL, lab deleted, last copy
 20520177; verdict + plans/2026-07-28-types-as-rels-iteration-journal.md
 are the record): fixpoint in 4 rounds (36->46->56->66 PASS + zero-finding
