@@ -3,9 +3,9 @@
 # parser-header.md). Three grades:
 #   G1 (binding) - for every fixture in v6/prolog/conformance/fixtures/*.pl,
 #     parse_dl(print_dl(Term)) is a variant (=@=) of Term. Also regenerates
-#     every v6/prolog/compile/dl_view/<fixture>.dl rendering as a side effect
+#     every v6/prolog/compile/dl_view/<fixture>.dl6 rendering as a side effect
 #     (the "language you can see" deliverable).
-#   G2 (real-file) - v6/dl/fixtures/ghcacher.dl and conformance.dl parse
+#   G2 (real-file) - v6/dl/fixtures/ghcacher.dl6 and conformance.dl6 parse
 #     without error; unsupported_surface(...) findings are collected and
 #     printed, never silently dropped. Reports Decls/Rules counts per file.
 #   G3 (no-regression sanity) - the existing conformance suite
@@ -27,8 +27,8 @@ REPO_ROOT="$(cd "$PROLOG_DIR/../.." && pwd)"
 
 FIXTURES_DIR="$PROLOG_DIR/conformance/fixtures"
 DL_VIEW_DIR="$COMPILE_DIR/dl_view"
-GHCACHER_FILE="$REPO_ROOT/v6/dl/fixtures/ghcacher.dl"
-CONFORMANCE_DL_FILE="$REPO_ROOT/v6/dl/fixtures/conformance.dl"
+GHCACHER_FILE="$REPO_ROOT/v6/dl/fixtures/ghcacher.dl6"
+CONFORMANCE_DL_FILE="$REPO_ROOT/v6/dl/fixtures/conformance.dl6"
 CONFORMANCE_GO="$PROLOG_DIR/conformance/go.pl"
 
 GRADER="$(mktemp /tmp/roundtrip-grader-XXXXXX.pl)"
@@ -82,7 +82,7 @@ scan_fixtures(Stream, Entries) :-
     ; scan_fixtures(Stream, Entries)
     ).
 
-% ═══ G1 : round-trip every fixture, and regenerate dl_view/*.dl ════════════
+% ═══ G1 : round-trip every fixture, and regenerate dl_view/*.dl6 ═══════════
 
 g1 :-
     fixture_files(Files),
@@ -127,19 +127,19 @@ write_dl_views(Pairs) :-
 write_one_view(ViewDir, Name, Prog, Bindings) :-
     catch(
         ( print_dl_program(Prog, Bindings, Text),
-          atomic_list_concat([ViewDir, '/', Name, '.dl'], OutPath),
+          atomic_list_concat([ViewDir, '/', Name, '.dl6'], OutPath),
           setup_call_cleanup(open(OutPath, write, S), format(S, "~w", [Text]), close(S))
         ),
         _,
         true
     ).
 
-% ═══ G2 : real-file parse (ghcacher.dl, conformance.dl) ════════════════════
+% ═══ G2 : real-file parse (ghcacher.dl6, conformance.dl6) ══════════════════
 
 g2 :-
     ghcacher_file(GhFile), conformance_dl_file(ConfFile),
-    g2_one('ghcacher.dl', GhFile),
-    g2_one('conformance.dl', ConfFile).
+    g2_one('ghcacher.dl6', GhFile),
+    g2_one('conformance.dl6', ConfFile).
 
 g2_one(Label, Path) :-
     format("~n--- G2 ~w ---~n", [Label]),

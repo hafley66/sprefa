@@ -62,3 +62,5 @@ vendor/heptagon/
 # heptagon reference clone (lustre-family compiler, lab reading material)
 vendor/heptagon/
 vendor/trealla/
+v6/prolog/compile/out/text-door/
+v6/prolog/compile/scripts/out/text-door/

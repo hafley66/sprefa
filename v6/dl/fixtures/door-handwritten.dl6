@@ -1,0 +1,7 @@
+# door-handwritten.dl6 -- text-door receipt program.
+
+rel result(ok(value: text) ; error(message: text)).
+rel event(id: int, kind: text) log keep(all).
+rel current(id: int, kind: text).
+
+current(Id, Kind) <- latest(event(Id, Kind)).

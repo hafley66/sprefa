@@ -1,6 +1,6 @@
 # ghcacher expression in v6 dl — findings + grading receipts
 
-Phase 1 of plans/2026-07-27-v5-port-perf-header.md. Program: `v6/dl/fixtures/ghcacher.dl`.
+Phase 1 of plans/2026-07-27-v5-port-perf-header.md. Program: `v6/dl/fixtures/ghcacher.dl6`.
 Twin: `examples/gh-cache.dl` (v5, 141 lines). Extraction-lab discipline held: zero
 changes to `v6/dl/src/`, `v6/dl/grammar/`, or `package.json` — verified at the bottom
 of this file (`git status` diff scope).
@@ -21,7 +21,7 @@ working invocation pattern):
 ```
 cd v6/dl
 DL_DB_PATH=<scratch>/mvp.sqlite DL_PORT=17174 node --experimental-transform-types src/main.ts
-curl -s -X POST http://127.0.0.1:17174/edb/program --data-binary @fixtures/ghcacher.dl
+curl -s -X POST http://127.0.0.1:17174/edb/program --data-binary @fixtures/ghcacher.dl6
 ```
 
 Result: **HTTP 200, accepted.**
@@ -89,7 +89,7 @@ Each finding cites file:line for every grammar/runtime claim, per the style law.
 
 ### F1 — no `@async`/`@next` in the grammar at all — verdict: inexpressible as v5 spells it, but subsumed differently
 
-`grep -n "@" v6/dl/grammar/dl.langium` and every `.dl` fixture under `v6/dl/fixtures/`
+`grep -n "@" v6/dl/grammar/dl.langium` and every `.dl6` fixture under `v6/dl/fixtures/`
 returns zero matches. `BodyItem` (`grammar/dl.langium:93-94`) has exactly five
 alternatives (`NegItem | ProbeItem | MutationItem | CompareItem | RelRefItem`) — no
 annotation production exists anywhere in the grammar.
@@ -127,7 +127,7 @@ possible v6 analog without adding something outside the language to drive it.
 **This is SLOT-SWR's answer.** Two candidate spellings, both genuinely available in
 the current surface:
 
-- **Spelling A — in-language, demand-driven, chosen for the .dl file.** A consumer rule
+- **Spelling A -- in-language, demand-driven, chosen for the .dl6 file.** A consumer rule
   reads `resp`/`stars`/`etag` unconditionally (whatever is cached now, however stale)
   while a probe demanding a fresh fetch sits in the SAME rule body. Content-addressed
   dedup caps actual subprocess/network calls to once per distinct identity, so this
@@ -146,7 +146,7 @@ the current surface:
   what "the git/fs spine is HOSTED IN THE LANGUAGE" (CLAUDE.md, `spine_residency`)
   asks for.
 
-I used spelling A in `ghcacher.dl` because it is the only one that stays entirely
+I used spelling A in `ghcacher.dl6` because it is the only one that stays entirely
 inside the grammar with no external actor; spelling B is a legitimate answer but is
 closer to "workaround via ops tooling" than "the language expresses it," which the lab
 protocol asks me to call out rather than silently pick.
@@ -162,10 +162,10 @@ correlated nested fields) have no v6 equivalent whatsoever.
 
 The only substitute the surface offers is another `sh` host chained by a second probe
 off the already-bound `body` value (`extract_stars`/`extract_full_name` in
-`ghcacher.dl`), which works for a scalar field (verdict: **expressible, at a real
+`ghcacher.dl6`), which works for a scalar field (verdict: **expressible, at a real
 cost** — a subprocess per distinct body instead of an in-process parse) but has no
 analog for the array-explode case at all (verdict: **inexpressible** — `pull_request`
-from `examples/gh-cache.dl:120-124` is not attempted in `ghcacher.dl` for this reason).
+from `examples/gh-cache.dl:120-124` is not attempted in `ghcacher.dl6` for this reason).
 
 ### F4 — v5's negation-based etag bootstrap is a stratification violation in v6, reproduced
 
@@ -197,12 +197,12 @@ Response: `HTTP 400`,
 negated inside a recursive cycle with \`poll\`","line":0,"col":0}]}`.
 
 This is a genuinely useful, correctly-firing rail (CLAUDE.md's tabling ruling: "the
-not_stratified guard IS semantics" — confirmed, not just asserted). `ghcacher.dl` works
+not_stratified guard IS semantics" — confirmed, not just asserted). `ghcacher.dl6` works
 around it the way described in the file's own header comment: `etag` is the union of
 an always-true bootstrap fact and the resp-derived value (ordinary positive recursion,
-stratifiable — the same shape as `conformance.dl`'s `proves_recursion`). Verdict:
+stratifiable — the same shape as `conformance.dl6`'s `proves_recursion`). Verdict:
 **the v5 idiom is inexpressible as-is; a semantically different (weaker — see the
-`poll(ep,"")` note in the .dl header) workaround is expressible.**
+`poll(ep,"")` note in the .dl6 header) workaround is expressible.**
 
 ### F5 — `sh` declarations split input/output columns differently than v5
 
@@ -215,7 +215,7 @@ a probe passes no extra (salt) args, the probe's positional args are matched aga
 `host.columns` in DECLARED order verbatim (`0_ast_bridge.ts:547-548`, the zero-salt
 branch uses `hostColumnNames` unfiltered) — so inputs must be declared textually before
 outputs, or a zero-salt probe call silently binds the wrong columns. This is a real,
-non-obvious authoring constraint with no diagnostic pointing at it; `ghcacher.dl`'s
+non-obvious authoring constraint with no diagnostic pointing at it; `ghcacher.dl6`'s
 header comment calls it out. Verdict: **expressible, different shape, one undocumented
 footgun.**
 
@@ -223,7 +223,7 @@ footgun.**
 
 v5 needs `@next` for `change_log` because a plain derived rule recomputes from current
 support every tick, and an entity that stops being currently derivable would vanish
-(examples/gh-cache.dl:126-137). v6 has no `@next`, so `change_log` in `ghcacher.dl` is
+(examples/gh-cache.dl:126-137). v6 has no `@next`, so `change_log` in `ghcacher.dl6` is
 a plain derived rule instead — and it works, for a specific reason: `fetch`'s probe
 uses zero salts, so `1_hosts.ts:86`'s "absent any salt_N key... no supersession ever
 fires" applies — a landed `__resp_fetch` row is NEVER retracted once inserted, because
@@ -242,7 +242,7 @@ diff-against-mirror recompute) and reasoned through, not observed running for mo
 one tick. Flagging per the "doubt yourself" law: **this is my best-supported reading of
 the source, not a confirmed empirical result**, and it is narrow — it only holds
 because nothing in this chain uses a salt or `rel(1)`. A salted probe (the natural
-spelling for adding a witness column, e.g. `content_hash` in `sg-rail.dl`) or a
+spelling for adding a witness column, e.g. `content_hash` in `sg-rail.dl6`) or a
 `rel(1)` anywhere in the chain would break it immediately (see F8). Verdict:
 **expressible, but by a coincidence of this program's specific shape, not a general
 substitute for `@next`.**
@@ -300,13 +300,13 @@ of scope for this lab (extraction-lab discipline: no engine changes).
 `commit()` writes (`applyRelWrite`, `3_runtime.ts:420-490`); a rule-headed (derived)
 rel is recomputed and diffed every tick via `diffAgainstTables`
 (`3_runtime.ts:574-589`), which reads no retention at all. Declaring `rel(1) etag(...)`
-and then heading `etag` with a rule (as `ghcacher.dl` does) would make the `(1)` marker
+and then heading `etag` with a rule (as `ghcacher.dl6` does) would make the `(1)` marker
 a silent no-op — no diagnostic, no warning. Separately, even where retention-1 DOES
 apply (a plain EDB commit), its "keep newest only" sweep (`3_runtime.ts:457-469`)
 retracts every row of the WHOLE TABLE not in the current insert batch — a global sweep,
 not a per-key upsert. For a single-endpoint program like this one that distinction is
 invisible; for a real multi-endpoint `watch` list it would be actively wrong (watching
-endpoint B would evict endpoint A's cached etag). `ghcacher.dl` deliberately avoids
+endpoint B would evict endpoint A's cached etag). `ghcacher.dl6` deliberately avoids
 `rel(1)` for this reason. `grammar/dl.langium:38` ("Key(text): parses, accepted,
 semantically inert this slice") independently confirms the finer-grained per-key
 primitive v5 uses is not implemented at all yet. Verdict: **the v5 `Key(text)`
@@ -366,7 +366,7 @@ stratification-reject test). No process was left running at the end of this sess
 ## Diff scope
 
 `git status --short` from `v6/dl/` at the end of this work shows exactly two files:
-`v6/dl/fixtures/ghcacher.dl` and `v6/dl/fixtures/ghcacher-findings.md` (this file). No
+`v6/dl/fixtures/ghcacher.dl6` and `v6/dl/fixtures/ghcacher-findings.md` (this file). No
 `src/`, `grammar/`, or `package.json` changes. `pnpm run typecheck` (`tsgo --noEmit`)
 is clean (no TypeScript was touched, so this is expected, and confirmed rather than
 assumed).

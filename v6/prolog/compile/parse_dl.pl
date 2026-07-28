@@ -1,5 +1,5 @@
 % parse_dl.pl : phase D parser. Plain SWI-Prolog DCG-and-recursive-descent
-% over codes, .dl TEXT in, the fixture term form out: prog(Decls, Rules) with
+% over codes, .dl6 TEXT in, the fixture term form out: prog(Decls, Rules) with
 % the SAME operators the conformance fixtures use (<-, <+, :=) and the same
 % wrappers (latest/1, not/1, kind/2, keyed/2, keep/2, pre/1, finalize/1, now/1,
 % decode/2, json_each/2). No consult of generated text, no new deps.
@@ -16,12 +16,12 @@
 %
 % TWO SURFACE DIALECTS accepted by ONE grammar (no separate code paths):
 %   (a) the tsv2 "term form made visible" spelling this file's own printer
-%       (print_dl.pl) emits into dl_view/*.dl -- <-/<+ arrows, latest/pre/
+%       (print_dl.pl) emits into dl_view/*.dl6 -- <-/<+ arrows, latest/pre/
 %       departed/now/decode/json_each/:= as function-call-shaped body items,
 %       arithmetic infix, `rel Name(cols) log [keep(...)] [key(...)].`
 %       decls.
 %   (b) the existing v6/dl surface (v6/dl/grammar/dl.langium), read here so
-%       v6/dl/fixtures/ghcacher.dl and conformance.dl keep parsing: `rel
+%       v6/dl/fixtures/ghcacher.dl6 and conformance.dl6 keep parsing: `rel
 %       Name(col: type, ...).` decls, `?`/`!` postfix probe/mutation atoms,
 %       `!rel(args)` prefix negation, named args `col: val`, comparisons
 %       spelled `=`/`!=`/`<=` (accepted as aliases of ==/\==/=<).
@@ -418,9 +418,9 @@ decl_b_stmt(DeclList, S0, S) :-
 % dl.langium's own comment (grammar lines 38-39) already calls Key() semantically
 % inert and Min()/Max() a load error ("frontier") in the real bridge -- this
 % just makes the same gap visible on the tsv2 side instead of swallowing it.
-% Neither ghcacher.dl nor conformance.dl actually uses any of the three
+% Neither ghcacher.dl6 nor conformance.dl6 actually uses any of the three
 % (grepped), so this path is UNTESTED by G2's real files; kept here anyway
-% since a future .dl file using them must not be silently mis-lowered.
+% since a future .dl6 file using them must not be silently mis-lowered.
 
 decl_b_columns(_, [], S0, S) :- ws0(S0, S1), peek(0'), S1, S), !.
 decl_b_columns(RelName, [column(ColName, Type) | Rest], S0, S) :-
@@ -537,7 +537,7 @@ atom_arg(pos(Value), Vars0, Vars, S0, S) :-
 % Named args are pure surface sugar over the term form's plain positional
 % compound -- resolvable whenever the rel's column order is known, whether
 % the call is ALL named, ALL positional, or a genuine MIX of both (real
-% corpus case: v6/dl/fixtures/conformance.dl's
+% corpus case: v6/dl/fixtures/conformance.dl6's
 % `proves_group_count(source, fanout: count(target))`). A mix is not a
 % term-form gap (no new construct is needed to hold the result), so it
 % resolves silently here rather than filing a finding: named args fill their

@@ -1,4 +1,4 @@
-# ghcacher.dl — v5 gh-cache.dl (examples/gh-cache.dl:1-141) re-expressed in the v6 dl
+# ghcacher.dl6 — v5 gh-cache.dl (examples/gh-cache.dl:1-141) re-expressed in the v6 dl
 # surface. Extraction-lab discipline: zero engine/grammar changes. Every point where
 # the v6 surface cannot say what v5 said is called out inline AND recorded, with
 # file:line evidence, in ghcacher-findings.md (read that file for the full grading).
@@ -20,7 +20,7 @@
 #      (0_ast_bridge.ts:948-951, diag code "non-stratifiable" — reproduced empirically,
 #      see findings.md). Worked around here by dropping the negation entirely: `etag`
 #      is the UNION of an always-true bootstrap fact and the resp-derived value, which
-#      is ordinary positive recursion (stratifiable, ships in conformance.dl as
+#      is ordinary positive recursion (stratifiable, ships in conformance.dl6 as
 #      proves_recursion). Net effect: `poll(ep, "")` never goes away, so the empty-etag
 #      identity keeps getting demanded every tick — harmless (content-addressed cache
 #      hit, no-op) but not what v5's negation intended, and NOT a general substitute for

@@ -38,12 +38,19 @@ const MODULE_OF: Readonly<Record<string, string>> = {
   demand_laziness_effect_rows: "demand_laziness_effect_rows",
   demand_laziness_effect_rows_perturbed: "demand_laziness_effect_rows",
   switch_as_keyed_replace: "switch_as_keyed_replace",
+  door_handwritten: "door-handwritten",
 };
+
+const DOOR_HANDWRITTEN_SCHEDULE: readonly IArrivalBatch[] = [
+  [{ rel: "event", sign: "add", row: [1, "boot"] }],
+  [{ rel: "event", sign: "add", row: [1, "ready"] }],
+];
 
 const SCHEDULE_OF: Readonly<Record<string, readonly IArrivalBatch[]>> = {
   demand_laziness_effect_rows: DEMAND_LAZINESS_SCHEDULE,
   demand_laziness_effect_rows_perturbed: DEMAND_LAZINESS_SCHEDULE_PERTURBED,
   switch_as_keyed_replace: SWITCH_AS_KEYED_REPLACE_SCHEDULE,
+  door_handwritten: DOOR_HANDWRITTEN_SCHEDULE,
 };
 
 function loadEmitted(moduleName: string): Promise<EmittedProgram> {
