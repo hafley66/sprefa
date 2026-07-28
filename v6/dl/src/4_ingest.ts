@@ -41,7 +41,7 @@ import { differenceWith, isEqual } from "lodash-es";
 import { edbRel, type RelDecl } from "sprefa-store-engine/src/lower/ast.ts";
 import type { FactLine } from "sprefa-store-engine/src/engine/ingest.ts";
 
-
+import { PerfTrace } from "./0_trace.ts";
 import type {
   AssertTrue,
   ExtractRecord,
@@ -269,16 +269,25 @@ export async function ingestFile(rt: IDlRuntime, filePath: string): Promise<Tick
   const absPath = path.resolve(DL_ROOT, filePath);
   const relPath = rootRelativePath(absPath);
 
+  // Perf trace (0_trace.ts, seam 3): "extract wall" per the header, deliberately
+  // scoped to extractFile + toFactLines only, NOT the commit below.
+  const extractStartedAt = performance.now();
+  let factLineCount = 0;
+
   if (fileExistsOnDisk(absPath)) {
     const records: ExtractRecord[] = [];
     for await (const record of extractFile(absPath)) records.push(record);
-    newRowsByRel = groupFactLinesByRel(toFactLines(records, absPath));
+    const factLines = toFactLines(records, absPath);
+    factLineCount = factLines.length;
+    newRowsByRel = groupFactLinesByRel(factLines);
   }
   // else: DELETE-FILE case (task 3.3) — newRowsByRel stays empty, so every current row
   // scoped to this path retracts below (empty newSet, non-empty oldSet -> full retract).
+  const extractMs = performance.now() - extractStartedAt;
 
   const insert = new Map<string, readonly Row[]>();
   const retract = new Map<string, readonly Row[]>();
+  let diffSize = 0;
 
   for (const { name: relName } of SPINE_REL_SCHEMA) {
     const newRows = (newRowsByRel.get(relName) ?? []) as Row[];
@@ -288,9 +297,15 @@ export async function ingestFile(rt: IDlRuntime, filePath: string): Promise<Tick
     const toRetract = differenceWith(oldRows, newRows, isEqual);
     if (toInsert.length > 0) insert.set(relName, toInsert);
     if (toRetract.length > 0) retract.set(relName, toRetract);
+    diffSize += toInsert.length + toRetract.length;
   }
 
-  return rt.commit({ insert, retract });
+  const report = await rt.commit({ insert, retract });
+  // No further `await` between commit() resolving and this publish, per 0_trace.ts's
+  // FLUSH TIMING note -- see 1_hosts.ts's runEffectOnce for the same rule applied to
+  // the effect seam.
+  PerfTrace.ingestDone(report.tick, relPath, extractMs, factLineCount, diffSize);
+  return report;
 }
 
 // ---- dataflow proof (src/0_types.ts) -----------------------------------------

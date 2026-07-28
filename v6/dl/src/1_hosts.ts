@@ -36,6 +36,7 @@ import { EMPTY, Observable, concatMap, defer, filter, firstValueFrom, from, merg
 
 import { foldRowDigest } from "./0_digest.ts";
 import { RowCodec } from "./0_row.ts";
+import { PerfTrace } from "./0_trace.ts";
 import type {
   AssertTrue,
   CacheDb,
@@ -438,6 +439,11 @@ export class HostRunner implements IHostRunner {
     const saltCols = saltColumnsOf(pending.requestRow);
     const fullDigest = effectDigest(pending.host.name, pending.requestRow, [...identityCols, ...saltCols]);
     const identityDigest = effectDigest(pending.host.name, pending.requestRow, identityCols);
+    // Perf trace (0_trace.ts, seam 2): "cache_hit" and "error" below never reach a
+    // commit, so they carry no response tick to tag -- the demand tick (pending.tick)
+    // is the only one available for those two. "done" is retagged with the RESPONSE
+    // commit's own tick further down, once that tick is known.
+    const startedAt = performance.now();
     try {
       const existing = await this.cacheDb.execute({
         sql: "SELECT full_digest FROM effect_cache WHERE full_digest = ?",
@@ -445,7 +451,10 @@ export class HostRunner implements IHostRunner {
       });
       // Cache hit: fire-once per WITNESS, not per address. Reported as zero response
       // rows -- this demand was already answered by the run that minted the row.
-      if (existing.rows.length > 0) return { host: pending.host.name, responseRows: 0 };
+      if (existing.rows.length > 0) {
+        PerfTrace.effectDone(pending.tick, pending.host.name, fullDigest, performance.now() - startedAt, "cache_hit");
+        return { host: pending.host.name, responseRows: 0 };
+      }
 
       await this.cacheDb.execute({
         sql:
@@ -488,10 +497,15 @@ export class HostRunner implements IHostRunner {
       // ONE commit: new witness's rows insert, the prior witness's rows retract, in
       // the same tick -- riding the ordinary weights plane, zero special code
       // downstream (curl-session.sh's console_hit finding, now fixed honestly).
-      await this.runtime.commit({
+      const commitReport = await this.runtime.commit({
         insert: new Map([[respRelName, responseRows]]),
         retract: supersededRows.length > 0 ? new Map([[respRelName, supersededRows]]) : new Map(),
       });
+      // Perf trace: no further `await` between here and the publish, per 0_trace.ts's
+      // FLUSH TIMING note -- the tick-boundary hook that this same commit() call just
+      // caused (3_runtime.ts's clearScratchRels) schedules its flush on setImmediate
+      // specifically so this synchronous continuation lands in the same tick's line.
+      PerfTrace.effectDone(commitReport.tick, pending.host.name, fullDigest, performance.now() - startedAt, "done");
       await this.cacheDb.execute({
         sql: "UPDATE effect_cache SET state = ? WHERE full_digest = ?",
         args: ["done", fullDigest],
@@ -514,6 +528,7 @@ export class HostRunner implements IHostRunner {
       // the state column's 'error' value is all effect_cache records today. The
       // outer .catch keeps this defensive even if the UPDATE itself fails --
       // the stream must never die.
+      PerfTrace.effectDone(pending.tick, pending.host.name, fullDigest, performance.now() - startedAt, "error");
       await this.cacheDb
         .execute({ sql: "UPDATE effect_cache SET state = ? WHERE full_digest = ?", args: ["error", fullDigest] })
         .catch(() => {});
