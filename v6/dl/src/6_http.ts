@@ -356,10 +356,10 @@ function sseClient$(
   bumpActive: (delta: number) => void,
 ): Observable<DlAppEvent> {
   const runtime = state.runtime;
-  const path = `/subscribe/${relName}`;
+  const route = `/subscribe/${relName}`;
   if (!runtime || !relDeclOf(state, relName)) {
     writeJson(response, 404, { error: `unknown rel '${relName}'` });
-    return of({ kind: "served", method: "GET", path });
+    return of({ kind: "served", method: "GET", path: route });
   }
 
   response.writeHead(200, {
@@ -443,12 +443,12 @@ function isProgramLoad(request: http.IncomingMessage): boolean {
 function serveFailure(
   response: http.ServerResponse,
   method: string,
-  path: string,
+  route: string,
   failure: unknown,
 ): DlAppEvent {
   if (response.headersSent) response.end();
   else writeJson(response, 500, { error: failure instanceof Error ? failure.message : String(failure) });
-  return { kind: "served", method, path };
+  return { kind: "served", method, path: route };
 }
 
 /** Every route except POST /edb/program (that one owns the program's lifetime, so it
@@ -462,9 +462,9 @@ function routeRequest(
   const { request, response } = exchange;
   const method = request.method ?? "GET";
   const segments = pathSegments(request);
-  const path = `/${segments.join("/")}`;
+  const route = `/${segments.join("/")}`;
   const served = (work: Promise<void>): Observable<DlAppEvent> =>
-    from(work).pipe(map((): DlAppEvent => ({ kind: "served", method, path })));
+    from(work).pipe(map((): DlAppEvent => ({ kind: "served", method, path: route })));
 
   const answered = ((): Observable<DlAppEvent> => {
     if (method === "POST" && segments.length === 2 && segments[0] === "edb" && segments[1] === "file_changed") {
@@ -483,10 +483,10 @@ function routeRequest(
       return served(handleQuery(state, request, response));
     }
     writeJson(response, 404, { error: "not found", routes: ROUTE_LIST });
-    return of({ kind: "served", method, path });
+    return of({ kind: "served", method, path: route });
   })();
 
-  return answered.pipe(catchError((failure: unknown) => of(serveFailure(response, method, path, failure))));
+  return answered.pipe(catchError((failure: unknown) => of(serveFailure(response, method, route, failure))));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
