@@ -54,6 +54,7 @@
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
+:- use_module(registry, [ surface/5, wrapper_lower_role/3 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -506,44 +507,18 @@ body(Body, Vars0, Vars, S0, S) :-
 % not), then bare `true`, then bind (:=/is), then comparison, then dialect-B
 % prefix negation (!rel(args)), then a plain/probe/mutation relation atom.
 
-body_item(latest(Atom), Vars0, Vars, S0, S) :-
-    keyword_call(latest, InnerCodes, S0, S),
-    parse_full(rel_atom_term(Atom, Vars0, Vars), InnerCodes), !.
-body_item(Body, Vars0, Vars, S0, S) :-
-    keyword_call(combine, InnerCodes, S0, S),
-    parse_atom_list(InnerCodes, Atoms, Vars0, Vars),
-    combine_body(Atoms, Body), !.
-body_item(Atom, Vars0, Vars, S0, S) :-
-    keyword_call(next, InnerCodes, S0, S),
-    parse_full(rel_atom_term(Atom, Vars0, Vars), InnerCodes), !.
-body_item(zip(Left, Right), Vars0, Vars, S0, S) :-
-    keyword_call(zip, InnerCodes, S0, S),
-    parse_atom_list(InnerCodes, [Left, Right], Vars0, Vars), !.
-body_item(finalize(Atom), Vars0, Vars, S0, S) :-
-    keyword_call(finalize, InnerCodes, S0, S), !,
-    parse_full(rel_atom_term(Atom, Vars0, Vars), InnerCodes).
-body_item(pre(Atom), Vars0, Vars, S0, S) :-
-    keyword_call(pre, InnerCodes, S0, S), !,
-    parse_full(rel_atom_term(Atom, Vars0, Vars), InnerCodes).
-body_item(now(Var), Vars0, Vars, S0, S) :-
-    keyword_call(now, InnerCodes, S0, S), !,
-    parse_full(expr(Var, Vars0, Vars), InnerCodes).
-body_item(decode(Expr, Pattern), Vars0, Vars, S0, S) :-
-    keyword_call(decode, InnerCodes, S0, S), !,
-    parse_two_args(InnerCodes, Expr, Pattern, Vars0, Vars).
-body_item(json_each(Expr, Elem), Vars0, Vars, S0, S) :-
-    keyword_call(json_each, InnerCodes, S0, S), !,
-    parse_two_args(InnerCodes, Expr, Elem, Vars0, Vars).
-body_item(not(Inner), Vars0, Vars, S0, S) :-
-    keyword_call(not, InnerCodes, S0, S), !,
-    parse_full(body_item(Inner, Vars0, Vars), InnerCodes).
 body_item(Item, Vars0, Vars, S0, S) :-
-    lifecycle_arm_name(Name),
+    surface(Name/Arity, _, AnalyzeRole, LowerRole, Status),
+    wrapper_lower_role(LowerRole, Shape, _),
     keyword_call(Name, InnerCodes, S0, S),
-    parse_full(rel_atom_term(Atom, Vars0, Vars), InnerCodes), !,
-    Item =.. [Name, Atom].
-body_item(true, Vars, Vars, S0, S) :-
-    word(`true`, S0, S), !.
+    !,
+    parse_surface_wrapper(Shape, Arity, InnerCodes, Args, Vars0, Vars),
+    build_surface_item(Name, AnalyzeRole, Status, Args, Item).
+body_item(Item, Vars, Vars, S0, S) :-
+    surface(Name/0, _, _, word(_), _),
+    atom_codes(Name, NameCodes),
+    word(NameCodes, S0, S), !,
+    Item = Name.
 body_item(Item, Vars0, Vars, S0, S) :-
     bind_item(Item, Vars0, Vars, S0, S), !.
 body_item(Item, Vars0, Vars, S0, S) :-
@@ -615,10 +590,25 @@ combine_body([Atom], Atom) :- !.
 combine_body([Left | Rest], Body) :-
     combine_body(Rest, Right), Body = (Left, Right).
 
-lifecycle_arm_name(unsubscribe).
-lifecycle_arm_name(complete).
-lifecycle_arm_name(subscribe).
-lifecycle_arm_name(error).
+parse_surface_wrapper(rel_atom, 1, Codes, [Atom], Vars0, Vars) :-
+    parse_full(rel_atom_term(Atom, Vars0, Vars), Codes).
+parse_surface_wrapper(atom_list, Arity, Codes, Atoms, Vars0, Vars) :-
+    parse_atom_list(Codes, Atoms, Vars0, Vars),
+    surface_arity_matches(Arity, Atoms).
+parse_surface_wrapper(body_item, 1, Codes, [Inner], Vars0, Vars) :-
+    parse_full(body_item(Inner, Vars0, Vars), Codes).
+parse_surface_wrapper(expr, 1, Codes, [Expr], Vars0, Vars) :-
+    parse_full(expr(Expr, Vars0, Vars), Codes).
+parse_surface_wrapper(expr_pair, 2, Codes, [Left, Right], Vars0, Vars) :-
+    parse_two_args(Codes, Left, Right, Vars0, Vars).
+
+surface_arity_matches(variadic, _).
+surface_arity_matches(Arity, Args) :- integer(Arity), length(Args, Arity).
+
+build_surface_item(_, splice_bare, live, Args, Item) :- !,
+    combine_body(Args, Item).
+build_surface_item(Name, _, _, Args, Item) :-
+    Item =.. [Name | Args].
 
 args_positional([], Vars, Vars, S0, S) :- ws0(S0, S1), peek(0'), S1, S), !.
 args_positional([Arg | Rest], Vars0, Vars, S0, S) :-
@@ -630,12 +620,10 @@ args_positional([Arg | Rest], Vars0, Vars, S0, S) :-
 bind_item(BindTerm, Vars0, Vars, S0, S) :-
     expr(Lhs, Vars0, Vars1, S0, S1),
     ws0(S1, S2),
-    ( lit_dcg(`:=`, S2, S3) -> Op = (:=)
-    ; word(`is`, S2, S3) -> Op = is
-    ),
+    registered_infix_op(bind, Op, S2, S3),
     ws0(S3, S4),
     expr(Rhs, Vars1, Vars, S4, S),
-    ( Op == (:=) -> BindTerm = (Lhs := Rhs) ; BindTerm = (Lhs is Rhs) ).
+    BindTerm =.. [Op, Lhs, Rhs].
 
 % ═══ comparison item : Expr Op Expr, Op in {<,=<,<=,>,>=,==,=,\==,!=} ═══════
 % Canonical internal functor per SYNTAX.md's alias table: <= => =<, != =>
@@ -645,20 +633,34 @@ bind_item(BindTerm, Vars0, Vars, S0, S) :-
 comparison_item(Term, Vars0, Vars, S0, S) :-
     expr(Lhs, Vars0, Vars1, S0, S1),
     ws0(S1, S2),
-    comp_op(OpAtom, S2, S3),
+comp_op(OpAtom, S2, S3),
     ws0(S3, S4),
     expr(Rhs, Vars1, Vars, S4, S),
     Term =.. [OpAtom, Lhs, Rhs].
 
-comp_op(=<, S0, S) :- lit_dcg(`=<`, S0, S), !.
 comp_op(=<, S0, S) :- lit_dcg(`<=`, S0, S), !.
-comp_op(==, S0, S) :- lit_dcg(`==`, S0, S), !.
-comp_op(\==, S0, S) :- lit_dcg(`\\==`, S0, S), !.
 comp_op(\==, S0, S) :- lit_dcg(`!=`, S0, S), !.
-comp_op(>=, S0, S) :- lit_dcg(`>=`, S0, S), !.
-comp_op(<, S0, S) :- lit_dcg(`<`, S0, S), !.
-comp_op(>, S0, S) :- lit_dcg(`>`, S0, S), !.
+comp_op(Op, S0, S) :- registered_infix_op(guard, Op, S0, S), !.
 comp_op(==, S0, S) :- lit_dcg(`=`, S0, S), !.
+
+registered_infix_op(Axis, Op, S0, S) :-
+    findall(NegLength-(Codes-Candidate),
+            ( surface(Candidate/2, Axis, no_refs, infix(_), _),
+              atom_codes(Candidate, Codes),
+              length(Codes, Length),
+              NegLength is -Length
+            ),
+            Candidates),
+    keysort(Candidates, Ordered),
+    member(_-(Codes-Op), Ordered),
+    operator_codes(Codes, S0, S).
+
+operator_codes(Codes, S0, S) :-
+    Codes = [First | _],
+    ( code_type(First, alpha)
+    -> word(Codes, S0, S)
+    ; lit_dcg(Codes, S0, S)
+    ).
 
 % ═══ plain / probe / mutation relation atom ═════════════════════════════════
 

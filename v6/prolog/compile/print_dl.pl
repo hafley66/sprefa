@@ -23,6 +23,10 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(analyze, [ rel_columns/4 ]).
+:- use_module(registry,
+              [ body_surface_for_term/6,
+                wrapper_lower_role/3
+              ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -123,65 +127,30 @@ print_body((Left, Right), Bindings, Text) :- !,
 print_body(Item, Bindings, Text) :-
     print_body_item(Item, Bindings, Text).
 
-print_body_item(latest(Atom), Bindings, Text) :- !,
-    print_term(Atom, Bindings, 0, top, AtomText),
-    format(atom(Text), "latest(~w)", [AtomText]).
-print_body_item(zip(Left, Right), Bindings, Text) :- !,
-    print_term(Left, Bindings, 0, top, LeftText),
-    print_term(Right, Bindings, 0, top, RightText),
-    format(atom(Text), "zip(~w, ~w)", [LeftText, RightText]).
 print_body_item(Term, Bindings, Text) :-
-    compound(Term), Term =.. [combine | [First | Rest]], !,
-    print_term(First, Bindings, 0, top, FirstText),
-    print_combine_tail(Rest, Bindings, RestText),
-    format(atom(Text), "combine(~w~w)", [FirstText, RestText]).
-print_body_item(next(Atom), Bindings, Text) :- !,
-    print_term(Atom, Bindings, 0, top, AtomText),
-    format(atom(Text), "next(~w)", [AtomText]).
-print_body_item(Term, Bindings, Text) :-
-    Term =.. [Name, Atom],
-    lifecycle_arm_name(Name), !,
-    print_term(Atom, Bindings, 0, top, AtomText),
-    format(atom(Text), "~w(~w)", [Name, AtomText]).
-print_body_item(finalize(Atom), Bindings, Text) :- !,
-    print_term(Atom, Bindings, 0, top, AtomText),
-    format(atom(Text), "finalize(~w)", [AtomText]).
-print_body_item(pre(Atom), Bindings, Text) :- !,
-    print_term(Atom, Bindings, 0, top, AtomText),
-    format(atom(Text), "pre(~w)", [AtomText]).
-print_body_item(now(Var), Bindings, Text) :- !,
-    print_term(Var, Bindings, 0, top, VarText),
-    format(atom(Text), "now(~w)", [VarText]).
-print_body_item(decode(Expr, Pattern), Bindings, Text) :- !,
-    print_term(Expr, Bindings, 0, top, ExprText),
-    print_term(Pattern, Bindings, 0, top, PatternText),
-    format(atom(Text), "decode(~w, ~w)", [ExprText, PatternText]).
-print_body_item(json_each(Expr, Elem), Bindings, Text) :- !,
-    print_term(Expr, Bindings, 0, top, ExprText),
-    print_term(Elem, Bindings, 0, top, ElemText),
-    format(atom(Text), "json_each(~w, ~w)", [ExprText, ElemText]).
-print_body_item(not(Inner), Bindings, Text) :- !,
-    print_body_item(Inner, Bindings, InnerText),
-    format(atom(Text), "not(~w)", [InnerText]).
-print_body_item(true, _Bindings, "true") :- !.
-print_body_item(Lhs := Rhs, Bindings, Text) :- !,
-    print_term(Lhs, Bindings, 0, top, LhsText),
-    print_term(Rhs, Bindings, 0, top, RhsText),
-    format(atom(Text), "~w := ~w", [LhsText, RhsText]).
-print_body_item(Lhs is Rhs, Bindings, Text) :- !,
-    print_term(Lhs, Bindings, 0, top, LhsText),
-    print_term(Rhs, Bindings, 0, top, RhsText),
-    format(atom(Text), "~w is ~w", [LhsText, RhsText]).
-print_body_item(Term, Bindings, Text) :-
-    compound(Term), Term =.. [Op, Lhs, Rhs], comparison_op(Op), !,
-    print_term(Lhs, Bindings, 0, top, LhsText),
-    print_term(Rhs, Bindings, 0, top, RhsText),
-    format(atom(Text), "~w ~w ~w", [LhsText, Op, RhsText]).
+    body_surface_for_term(Term, _, _, _, LowerRole, _), !,
+    print_surface_body_item(LowerRole, Term, Bindings, Text).
 print_body_item(Term, Bindings, Text) :-
     print_term(Term, Bindings, 0, top, Text).
 
-comparison_op(<). comparison_op(=<). comparison_op(>). comparison_op(>=).
-comparison_op(==). comparison_op(\==).
+print_surface_body_item(LowerRole, Term, Bindings, Text) :-
+    wrapper_lower_role(LowerRole, Shape, _), !,
+    Term =.. [Name | Args],
+    print_surface_wrapper_args(Shape, Args, Bindings, ArgTexts),
+    atomic_list_concat(ArgTexts, ', ', ArgsText),
+    format(atom(Text), "~w(~w)", [Name, ArgsText]).
+print_surface_body_item(word(_), Term, _Bindings, Text) :-
+    format(atom(Text), "~w", [Term]).
+print_surface_body_item(infix(_), Term, Bindings, Text) :-
+    Term =.. [Op, Left, Right],
+    print_term(Left, Bindings, 0, top, LeftText),
+    print_term(Right, Bindings, 0, top, RightText),
+    format(atom(Text), "~w ~w ~w", [LeftText, Op, RightText]).
+
+print_surface_wrapper_args(body_item, [Inner], Bindings, [InnerText]) :- !,
+    print_body_item(Inner, Bindings, InnerText).
+print_surface_wrapper_args(_, Args, Bindings, ArgTexts) :-
+    maplist(print_arg(Bindings), Args, ArgTexts).
 
 % ═══ general term printer : var (via Bindings) | int | atom (single-quoted)
 % | string (double-quoted) | '{}'(Pairs) braces | list | arithmetic (infix,
@@ -214,17 +183,6 @@ print_term(Term, Bindings, ParentPrec, Side, Text) :-
     ).
 
 print_arg(Bindings, Arg, Text) :- print_term(Arg, Bindings, 0, top, Text).
-
-print_combine_tail([], _Bindings, "").
-print_combine_tail([Arg | Rest], Bindings, Text) :-
-    print_term(Arg, Bindings, 0, top, ArgText),
-    print_combine_tail(Rest, Bindings, RestText),
-    format(atom(Text), ", ~w~w", [ArgText, RestText]).
-
-lifecycle_arm_name(unsubscribe).
-lifecycle_arm_name(complete).
-lifecycle_arm_name(subscribe).
-lifecycle_arm_name(error).
 
 arith_op(+, 1). arith_op(-, 1). arith_op(*, 2). arith_op(/, 2). arith_op(mod, 2).
 
