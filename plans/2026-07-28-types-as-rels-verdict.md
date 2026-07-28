@@ -5,7 +5,7 @@ Contract: `plans/2026-07-28-types-as-rels-header.md`. Lab:
 recorded at the bottom of this file).
 
 Run: `swipl -q -l v6/prolog/labs/types_as_rels/types_as_rels.pl -g go -g halt`
--> 31 PASS, 0 fail, nothing else on stdout or stderr.
+-> 36 PASS, 0 fail, nothing else on stdout or stderr.
 Untouched and re-verified: conformance `go.pl` 110 pass / 0 fail;
 `v6/prolog/compile/scripts/roundtrip.sh` ALL GRADES PASS.
 
@@ -28,9 +28,14 @@ and it CRACKS on exactly one thing: cycles.**
   so an indexed list header row cannot state its own key. Fixed-arity cons
   cells restore the property. Souffle made the same call for the same reason
   (records are fixed-length; lists are `[head, tail]` with `nil`).
-- Amendment 2 (merge): see the lattice section. The kind words (`set`, `log`,
-  keyed-latest) are already three named merge rules, and the policy bundle
-  reads better with a merge bit than without one.
+- Amendment 2 (merge): the policy bundle is FOUR bits, not three. Identity,
+  mutation, lifetime, and MERGE. The existing kind words are already three
+  named join-semilattices (graded: `kind_words_are_joins`), and putting the
+  merge in the declaration is what Bloom-L, Flix and Ascent all do. What does
+  NOT follow is the attractive half: a monotone lattice state still produces a
+  retracting boundary delta (graded: `keyed_state_rises_but_boundary_retracts`),
+  and the systems that went all-in on lattices bought that by giving up
+  deletion entirely. See the merge-bit section.
 - The crack: **content-addressed identity cannot express a cyclic reference
   graph**, because a parent's id is computed FROM its children's ids. Every
   interned value graph is a DAG by construction (graded:
@@ -70,6 +75,9 @@ Nothing in the right-hand column is new. That is the whole result.
 
 ## THE FIVE MANDATORY CHECKS
 
+(Plus a sixth group, the merge bit, added mid-lab; it has its own section
+below.)
+
 ### 1. JSON round-trip, byte-identical, with shared substructure
 
 `round_trip_term_identical`, `round_trip_text_byte_identical`,
@@ -99,7 +107,7 @@ The op tape and its deltas, produced by the model, not asserted by prose:
 | release the last parent | `[-row(list, 1)]` | 0, row gone |
 
 The empty delta on the share step is not new behavior: adding a row a Set rel
-already holds produces no occurrence and no delta (engine.pl:191-192), and the
+already holds produces no occurrence and no delta (engine.pl:191-193), and the
 keyed-write path says the same thing separately (engine.pl:247-248, rulings.pl
 `r_equal_row_write`). The support rising
 to 2 is not new either (ARCH.pl:68-71, per-ROW origin support). PASS = no new
@@ -218,6 +226,30 @@ drop to; (a) is the prettiest and the only one with a real parse hazard.
 No fiat: this is a ranking by stated criteria, and SLOT-DECL-SPELLING is
 still the user's.
 
+### The DDL all three spellings generate
+
+Emitted by the lab (`all_ddl/1`, `elem_ddl/1`); text shape follows
+lower.pl:304-333. The `_content` unique index is what "same content, same
+row" means in SQL: the intern table is a keyed set rel and nothing more.
+
+```sql
+CREATE TABLE "route" ("id" INTEGER NOT NULL, "path" TEXT NOT NULL, "body" INTEGER NOT NULL, "children" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID
+CREATE UNIQUE INDEX "route_content" ON "route" ("path", "body", "children")
+CREATE TABLE "view" ("id" INTEGER NOT NULL, "title" TEXT NOT NULL, "tags" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID
+CREATE UNIQUE INDEX "view_content" ON "view" ("title", "tags")
+CREATE TABLE "body_page" ("id" INTEGER NOT NULL, "view" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID
+CREATE UNIQUE INDEX "body_page_content" ON "body_page" ("view")
+CREATE TABLE "body_redirect" ("id" INTEGER NOT NULL, "to" TEXT NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID
+CREATE UNIQUE INDEX "body_redirect_content" ON "body_redirect" ("to")
+-- the edge table, for the indexed-list modelling (cons cells replace it with
+-- an ordinary two-column value table, see amendment 1)
+CREATE TABLE "list_elem" ("list" INTEGER NOT NULL, "index" INTEGER NOT NULL, "item" INTEGER NOT NULL, PRIMARY KEY ("list", "index")) WITHOUT ROWID
+CREATE INDEX "list_elem_item" ON "list_elem" ("item")
+```
+
+Every ref column is a plain `INTEGER NOT NULL`. There is no FK clause and no
+`ON DELETE` clause anywhere, which is the Q3 answer stated in DDL.
+
 Note on the `value` policy word in (a) and (b): it is optional sugar. Spelling
 (c) proves the policy is fully expressible with `key(...)` plus the id bind,
 so the word buys brevity only. If it stays, it needs a vocabulary-law-legal
@@ -237,8 +269,13 @@ first two are even written down:
 | storage | one table | the same table |
 | identity | `key(Positions)`, or all columns by default | `key(all content columns)`, plus a derived id column |
 | mutation | keyed replace, latest wins | never reachable: a changed field is a different key |
+| merge | the kind word: `set` union, `log` union over stamps, keyed max on stamp | `set` union | 
 | subscribability | yes | yes, identically (see ambiguity A3) |
 | lifetime | derivable = alive | the same |
+
+The merge row is the fourth policy bit (amendment 2). It is not a new
+mechanism: the kind word already names it, and the lab grades that all three
+kind words are joins.
 
 ### Enum layouts, priced
 
@@ -340,7 +377,8 @@ The rx lowering for (b), written out per the snippet law:
 const support$ = merge(refAdded$, refRemoved$).pipe(
   scan((counts, delta) => bump(counts, delta.childId, delta.sign), new Map<Id, number>()),
 );
-// the cascade rounds: expand, the same operator the tsv2 tickLoop already uses
+// the cascade rounds: expand, the operator the tsv2 tick loop already runs on
+// (v6/tsv2/runtime/tickLoop.ts:47)
 const collected$ = support$.pipe(
   map(counts => zeroSupport(counts)),
   expand(zeros => zeros.length ? of(zeroSupport(applyRemovals(zeros))) : EMPTY),
@@ -477,6 +515,7 @@ nothing: the ref graph is edges, so descendants are the engine's own fixpoint
 | (a) compiler-side prolog only (today) | zero. `books/v6/algos/unify_hm.pl` is the whole of HM in 4 clauses because unification IS prolog | correct inference, occurs check by a flag (unify_hm.pl:19) | the type graph is invisible to the LSP, to measures, and to dl rules |
 | (b) dl rules over type tables | a real fixpoint program; type VARIABLES need an equivalence relation (union-find as a relation), and "no unifier exists" is a negation over a fixpoint, which pushes on stratification | self-hosting, and every capability that wants types gets rows | inference with fresh variables is awkward; the algorithm stops being 4 clauses |
 | (c) hybrid: infer in prolog, PUBLISH the type graph as rows | one emitter | both of the above | nothing identified |
+| (d) monotonicity in the type system, Datafun style | a typed core with discrete and monotone contexts, and `fix` restricted to finite-height semilattice types | the `not_stratified` guard becomes a typing rule instead of a graph pass, and it composes under higher-order code | it REFUSES MORE than the guard does: Datafun admits no negation inside a fixpoint at all, where stratified negation admits it across strata |
 
 Recommendation **(c)**, for one concrete reason beyond taste: the checking
 direction (does this program's declared type graph hold together) is a monotone
@@ -484,6 +523,18 @@ fixpoint and fits (b) perfectly, while the inference direction needs
 unification, which prolog gives for free and datalog does not. Publishing the
 result as rows is the part that pays for `capability(type_measurement)` and
 the LSP, and it costs one emitter rather than a rewrite.
+
+On (d), specifically, because the coordinator asked whether a monotonicity
+type layer could subsume the guard: it subsumes the ROLE, not the permissions.
+Datafun's own framing is that "the stratified negation restriction essentially
+ensures that the database transformer... is a monotone function on the set of
+facts. This is why the type system of Datafun tracks the monotonicity of
+functions" (ICFP 2016 section 7), and negative tests are legal only "after the
+fixed point computation completes" (section 3). So adopting it would trade a
+cheap graph pass for a typed core AND lose programs we currently accept. The
+one production datalog that has both lattices and negation, Flix, keeps
+stratified negation as a separate compile-time check. Recommendation: keep the
+guard; the tabling verdict already ruled that the guard IS semantics.
 
 Evidence that (b) is not impossible, only expensive: souffle ships `eqrel`, an
 equivalence-relation storage backed by union-find, precisely so that
@@ -565,8 +616,8 @@ RecordTable/SymbolTable/RecordTableImpl/SymbolTableImpl/ConcurrentFlyweight
 found no remove, erase, refcount, or GC entry point; the only `delete` calls
 are whole-table teardown. There IS an incremental line of work ("Towards
 Elastic Incrementalization for Datalog", PPDP 2021,
-https://souffle-lang.github.io/pdf/ppdp21incremental.pdf), unmerged, living on
-an unmerged branch of the `davidwzhao/souffle` fork; it
+https://souffle-lang.github.io/pdf/ppdp21incremental.pdf), living on an
+unmerged branch of the `davidwzhao/souffle` fork; it
 adds an iteration number and a COUNT per tuple and auxiliary diff relations,
 which is count-IVM by another name, but it operates entirely at the
 relation/tuple layer and the paper never mentions the record or symbol tables.
@@ -590,9 +641,153 @@ kind of thing to check before adopting 32-bit value ids.
 
 ---
 
-## PRIOR ART: LATTICES IN THE TYPE SYSTEM
+## THE MERGE BIT: LATTICES IN THE DECLARATION
 
-(pending)
+Extension hypothesis under test (Q1/Q2 extension): the policy bundle gains a
+MERGE bit, the existing kind words are just named lattices, and "latest"
+becomes a monotone max-merge so retraction machinery is only paid where a rule
+is genuinely non-monotone.
+
+**GRADE: HOLDS as vocabulary, BREAKS as a way to avoid retraction.**
+
+### What the lab graded (our claim, not theirs)
+
+`kind_words_are_joins`: `set`, `log` and `keyed` are each idempotent,
+commutative and associative on sample carriers. That is exactly the contract
+Bloom-L requires of a user-defined lattice: "this method returns the least
+upper bound of self and e... it must be commutative, associative, and
+idempotent" (EECS-2012-167 section 3.4, figure 4).
+
+`log_needs_its_stamp_to_be_a_join`: `log` is a join ONLY because the stamp is
+part of the value. Three arrivals of `a, a, b` keep 3 stamped rows and project
+to the bag `[a, a, b]`; strip the stamp and set union collapses them to 2.
+This is not a modelling convenience: Bloom-L ships `lbag` (table 3, merge =
+`a union b`), and a max-multiplicity bag union would collapse two separate
+arrivals of the same row into one, which is precisely what q1 occurrence
+identity forbids. **The `st(Tick, Seq)` stamp is what makes occurrence
+semantics a lattice at all.**
+
+`keyed_state_rises_but_boundary_retracts`: this is the one that kills the
+optimistic half of the hypothesis. Merging `k1 -> st(1,1)-v1` with
+`k1 -> st(2,1)-v2` moves the lattice state strictly UP (`leq` holds), and the
+boundary delta is still `[-row(k1,v1), +row(k1,v2)]`, because the OBSERVED
+projection changed. Monotone state does not imply a monotone projection. The
+merge bit buys the store (a keyed write is a pure function of state and
+arrival, so no re-derivation and no DRed), which is already how keyed replace
+works; it buys nothing at R7.
+
+`set_boundary_never_retracts_on_arrival`: the contrast case, `[+c]` only.
+
+### What the prior art actually says
+
+**Bloom-L** (Conway, Marczak, Alvaro, Hellerstein, Maier, UCB/EECS-2012-167,
+https://www2.eecs.berkeley.edu/Pubs/TechRpts/2012/EECS-2012-167.pdf).
+Confirmed: collections generalize to join-semilattices, with built-ins
+`lbool`, `lmax`, `lmin`, `lset`, `lpset`, `lbag`, `lmap` (table 3, section
+3.3), plus `lpair` introduced in the key-value-store case study and explicitly
+offered as promotable to a built-in (section 5.2.2). `lmap` nests: "The lmap
+merge function takes the union of the key sets of its input maps. If a key
+occurs in both inputs, the two corresponding values are merged using the
+appropriate lattice merge function" (section 3.3). The case study composes
+`lmap` of `lpair` of `lmap` of `lmax`, so nesting is used, not just permitted.
+
+The distinction worth stealing is **morphism vs monotone function** (section
+3.1): a morphism satisfies `g(a lub b) = g(a) lub g(b)`, a monotone function
+only preserves order. It matters for exactly our reason (sections 3.2.2, 4.1):
+"This optimization cannot be used for monotone functions that are not
+morphisms. This is because semi-naive evaluation requires that we apply
+functions to the partial results derived in each round... effectively
+distributing the function across the merge." Their counterexample is
+`size({1,2} lub {2,3}) != size({1,2}) lub size({2,3})`. That is a compile-time
+test for "may this rule be evaluated on deltas alone", and it is directly
+relevant to the aggregate backlog on the tsv2 scoreboard (aggregate_head, 9
+fixtures unsupported): under the q7 bag ruling, count and sum over a disjoint
+bag union are morphisms; the same aggregates over set union are not. Banked,
+not adopted here.
+
+**The cost Bloom-L pays is the one we cannot pay.** Section 3.2.1, verbatim:
+"BloomL does not support deletion (`<-` operator) for lattices." Lattice state
+only grows. The documented workaround is tombstones, and CALM is honest about
+what that means (Hellerstein and Alvaro, arXiv:1901.01930): "this distributed
+deletion can be coordinated lazily in the background on a rolling basis. In
+this case, monotonic design does not stamp out coordination entirely, it moves
+it off the critical path." Bloom-L also keeps stratification for its
+non-monotone methods (section 3.2.2): "the Bud interpreter stratifies the
+program to ensure that the input value is computed to completion before
+allowing the non-monotonic method to be invoked." So lattices did not remove
+stratification there; they shrank its footprint.
+
+**CALM theorem** (arXiv:1901.01930 section 1.4): "A program has a consistent,
+coordination-free distributed implementation if and only if it is monotonic."
+True and famous, and not our problem yet: we are single-node with a tick
+barrier, so CALM is a reason to track monotonicity only if we ever distribute.
+Saying otherwise would be borrowing prestige.
+
+**Flix** (https://doc.flix.dev/lattice-semantics.html). Two corrections to the
+recollection. First, the `lat` keyword is GONE from current Flix; a lattice
+column is now marked by a semicolon in the fact or rule itself
+(`LocalVar("x"; Pos).`), and the value type must carry `LowerBound`,
+`PartialOrder`, `JoinLattice` and `MeetLattice` instances. The 2016 PLDI
+spelling was `lat LocalVar(x: Var, v: Constant)` with key columns first and
+the lattice column last. Second, and more important for us: **Flix keeps
+stratified negation as a separate compile-time check**
+(https://doc.flix.dev/stratified-negation.html, "a program must not have
+recursive dependencies on which there is use of negation"), unrelated to its
+lattice machinery. The one production system with both did not unify them.
+
+**Ascent** (Rust datalog, corroborating): "The `lattice` keyword defines a
+lattice in Ascent. The type of the final column of a `lattice` must implement
+the `Lattice` trait... when a new `lattice` fact is discovered, and a fact
+with the same key columns is already present, the two values are `join`ed."
+Same shape again: merge lives in the type of the last column.
+
+So the answer to "is merge part of the declaration in these systems" is YES in
+all three, which is real support for the merge bit as a decl word. What none of
+them supports is the retraction half.
+
+**Datafun** (Arntzenius and Krishnaswami, ICFP 2016,
+https://www.cl.cam.ac.uk/~nk480/datafun.pdf). Confirmed: the typing judgment
+is `Delta; Gamma |- e : A`, where `Gamma` holds the variables the expression is
+MONOTONE in and `Delta` holds discrete ones. `fix` is typed only at finite
+semilattice eqtypes (`L^fin` in figure 5), with a second form `fix x <= e1`
+taking an explicit upper bound; termination is proved from finite height
+(lemma 4). On the stratification question, which is the one that matters here,
+the paper's own framing (section 7): "The stratified negation restriction
+essentially ensures that the database transformer defined by a Datalog program
+is a monotone function on the set of facts. This is why the type system of
+Datafun tracks the monotonicity of functions." And section 3: "the ability to
+test for negative information after the fixed point computation completes
+corresponds to a use of stratified negation in Datalog."
+
+Read precisely: Datafun's type system enforces the PROPERTY stratification
+exists to guarantee, so there is no separate dependency-graph pass. It is not
+more permissive; inside a fixpoint it admits no negation at all, where our
+guard admits negation across strata. So a monotonicity-tracking type layer
+would **subsume the not_stratified guard by refusing a superset of what the
+guard refuses**, not by accepting more. Priced under Q8 below.
+
+### What this changes in the design
+
+The merge bit is worth adopting as vocabulary and as a checkable law, and it
+lines up with the two identity policies the crack already forced. Three planes,
+each a (identity, merge, retraction) triple, all three already implemented:
+
+| plane | identity | merge | retraction |
+|---|---|---|---|
+| value | content hash | set union | support hits zero, collect |
+| state | extrinsic key | max on `(tick, value)` per key | keyed replace, `-old` then `+new` |
+| event | the `st(Tick, Seq)` stamp | union over stamped rows | never; occurrences cannot un-happen |
+
+That table is the compact statement of the whole design, and every row of it is
+graded somewhere in this lab. The merge column is new only as a NAME.
+
+One honesty note on the `lmax over (tick, value)` spelling: it is a
+generalization of a documented pattern, not a documented idiom. Bloom-L's
+closest published case is `lpair` where the first component is a VECTOR CLOCK,
+not a scalar timestamp (section 5.2.2), and no scalar-timestamp
+last-write-wins example was found in Bloom-L, Flix or Ascent. The
+generalization is sound (`lpair` is generic over both components) but it is
+ours, not cited.
 
 ---
 
@@ -644,6 +839,14 @@ kind of thing to check before adopting 32-bit value ids.
    rel that only contains variants somebody happened to construct.
 10. **32-bit value ids.** If we copy souffle's dense index, the narrowing to a
     32-bit id has no documented guard upstream. Check before adopting.
+11. **Morphism vs monotone, banked.** Bloom-L's compile-time test for "may this
+    be evaluated on deltas alone" (section 3.1, 4.1) is the missing gate for
+    delta-evaluating aggregate heads, the largest remaining unsupported bucket
+    on the tsv2 scoreboard after the trigger work. Not adopted here; recorded
+    so it is not rediscovered.
+12. **The merge word, if it lands, is a rename of the kind word.** `set`,
+    `log`, keyed already name the three joins. Adding a separate merge clause
+    beside the kind word would be two spellings for one bit.
 
 ---
 

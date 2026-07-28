@@ -8,6 +8,11 @@
 % nesting is never physical -- a nested position is a ref column, the tree
 % lives in the printer and the matcher.
 %
+% Six check groups: json round-trip, policy-bundle derivation, the domination
+% scenario pair (support counting vs SQL ON DELETE CASCADE on the SAME store),
+% match-path lowering at depth 1/2/3, compactness pricing of three decl
+% spellings, and the merge bit (kind words as named lattices).
+%
 % Verdict and the priced Q1-Q8 tables: plans/2026-07-28-types-as-rels-verdict.md.
 
 :- use_module(library(lists)).
