@@ -23,7 +23,14 @@
 % BootStatements, Text)`) so a future emit_rust.pl plugs in without
 % touching anything upstream of it -- same plan term, different renderer.
 
-:- module(compile, [ read_fixture_term/4, compile_fixture/3, compile_fixture/4, program_plan/2 ]).
+:- module(compile,
+          [ read_fixture_term/4,
+            compile_fixture/3,
+            compile_fixture/4,
+            compile_dl6/2,
+            compile_program/6,
+            program_plan/2
+          ]).
 
 :- use_module(library(lists)).
 :- use_module('../0_enum_expand', [expand_enum_program/2]).
@@ -31,6 +38,7 @@
 :- use_module(strat).
 :- use_module(lower).
 :- use_module(emit_ts).
+:- use_module(parse_dl, [parse_dl_file/4]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -116,6 +124,20 @@ compile_fixture(Name, FixtureFile, OutFile) :-
 compile_fixture(Name, FixtureFile, OutFile, Emitter) :-
     read_fixture_term(FixtureFile, Name, Term, Bindings),
     Term = fixture(Name, _Prog, Initial, _Schedule, _Expectations),
+    compile_program(Name, Term, Bindings, Initial, OutFile, Emitter).
+
+compile_dl6(File, OutFile) :-
+    parse_dl_file(File, Prog, Bindings, Findings),
+    ( Findings == []
+    -> true
+    ; throw(unsupported_construct(surface_findings(Findings)))
+    ),
+    file_base_name(File, BaseName),
+    file_name_extension(Name, _Extension, BaseName),
+    compile_program(Name, fixture(Name, Prog, [], [], []), Bindings,
+                    [], OutFile, emit_ts:emit_program).
+
+compile_program(Name, Term, Bindings, Initial, OutFile, Emitter) :-
     program_plan(Term-Bindings, Plan),
     lower_program(Plan, Lowered),
     Plan = plan(_, _, RelPlans, _, _, _),

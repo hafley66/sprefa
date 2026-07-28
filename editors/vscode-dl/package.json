@@ -15,7 +15,8 @@
   "main": "./out/extension.js",
   "activationEvents": [
     "onStartupFinished",
-    "workspaceContains:**/*.dl"
+    "workspaceContains:**/*.dl",
+    "workspaceContains:**/*.dl6"
   ],
   "contributes": {
     "commands": [
@@ -122,6 +123,16 @@
           "datalog"
         ],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "dl6",
+        "extensions": [
+          ".dl6"
+        ],
+        "aliases": [
+          "dl6"
+        ],
+        "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
@@ -129,6 +140,11 @@
         "language": "dl",
         "scopeName": "source.dl",
         "path": "./syntaxes/dl.tmLanguage.json"
+      },
+      {
+        "language": "dl6",
+        "scopeName": "source.dl6",
+        "path": "./syntaxes/dl6.tmLanguage.json"
       }
     ],
     "configuration": {

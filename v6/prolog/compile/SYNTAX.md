@@ -1,7 +1,7 @@
 # SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl)
 
 Contract: `plans/2026-07-28-tsv2-phase-d-parser-header.md`. This file is the
-term-form-construct -> `.dl` spelling -> grammar-authority mapping the
+term-form-construct -> `.dl6` spelling -> grammar-authority mapping the
 contract asks for, plus every gap finding with evidence.
 
 ## Ruling that reframes this whole document (relayed mid-flight)
@@ -9,7 +9,7 @@ contract asks for, plus every gap finding with evidence.
 `v6/dl/grammar/dl.langium` was always a stopgap. Effective now, **the
 prolog DCG in `parse_dl.pl` is the CANONICAL parser of the language**;
 dl.langium is demoted to a reference for surface SPELLING only (so the two
-existing real programs, `v6/dl/fixtures/ghcacher.dl` and `conformance.dl`,
+existing real programs, `v6/dl/fixtures/ghcacher.dl6` and `conformance.dl6`,
 keep parsing), not a permanent authority. Every row below marked EXT is
 therefore not "waiting on a grammar change" -- the grammar will not change to
 catch up. This parser's accepted surface **is** the language definition
@@ -25,10 +25,10 @@ bare identifier a variable -- there is no unquoted-atom-literal production
 anywhere in the grammar (`ArgTerm := Var | Literal | Wildcard`,
 `dl.langium:150-151`; `Literal := StrLit | IntLit | BoolLit | NullLit`,
 `dl.langium:165-166` -- no `AtomLit`). That is provably correct for the two
-real `.dl` files: grepped both, neither ever writes a bareword atom constant;
+real `.dl6` files: grepped both, neither ever writes a bareword atom constant;
 every constant is a quoted string (`"repos/cli/cli"`) or an int (`200`).
 
-The 112-fixture term-form corpus needs the opposite in places: a bareword
+The 115-fixture term-form corpus needs the opposite in places: a bareword
 constant-tag match is a real, critical construct:
 `fixtures/state_machine.pl`'s `phase(Endpoint, fetching)` matches the exact
 atom `fetching`, not a fresh variable. Since this parser is now canonical
@@ -90,7 +90,7 @@ the compiler inventory order. Edit the registry, then run the emitter.
 These rows describe syntax outside the registered body and aggregate
 construct inventory.
 
-| term-form shape | `.dl` spelling | parser treatment |
+| term-form shape | `.dl6` spelling | parser treatment |
 |---|---|---|
 | `kind(Ref, log)` | `log` after columns | declaration modifier |
 | `col_type(Ref, Column, Type)` | `Column: int` / `Column: text` | typed declaration entry; source order is preserved |
@@ -134,25 +134,25 @@ time. `print_dl.pl` therefore reproduces the LITERAL `kind`/`keep`/`keyed`/
 order -- never `rel_kind/3`/`decl_keep/3`/`decl_key/3`'s fallback-merged
 view, and never a synthesized decl line for a ref that has zero entries
 (the extreme case: `expressions.pl`'s fixtures all have `Decls = []` even
-though their rules reference many rels -- the printed `.dl` text correctly
+though their rules reference many rels -- the printed `.dl6` text correctly
 shows zero decl lines for those, with the rule text alone still revealing
 every ref's name, arity, and column names via `analyze.pl:rel_columns/5`).
 
 ## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
 
-- **G1**: 112 / 112 fixtures round-trip (`parse_dl(print_dl(Term)) =@= Term`
+- **G1**: 115 / 115 fixtures round-trip (`parse_dl(print_dl(Term)) =@= Term`
   for every `fixture/5` in `v6/prolog/conformance/fixtures/*.pl`).
 - **G2**: both real files parse without error.
-  - `ghcacher.dl`: Decls 16, Rules 9, 8 findings (3 host decls + 3 matching
+  - `ghcacher.dl6`: Decls 16, Rules 9, 8 findings (3 host decls + 3 matching
     probes + 2 query lines -- every one a genuine term-form GAP, not a
     parser defect).
-  - `conformance.dl`: Decls 29, Rules 28, 0 findings (the named/positional
+  - `conformance.dl6`: Decls 29, Rules 28, 0 findings (the named/positional
     mix resolves silently, per the construct table above).
-- **G3**: `v6/prolog/conformance/go.pl` unchanged, 112 pass / 0 fail.
+- **G3**: `v6/prolog/conformance/go.pl` unchanged, 115 pass / 0 fail.
 
-## What `dl_view/*.dl` is
+## What `dl_view/*.dl6` is
 
-Every fixture in the 112-fixture corpus, printed as `.dl` text by this
+Every fixture in the 115-fixture corpus, printed as `.dl6` text by this
 parser's own printer, committed under `v6/prolog/compile/dl_view/`. This is
 the "language you can see" deliverable: inspect any file there to read a
 conformance fixture's PROGRAM (not its test scaffolding -- `Initial`,

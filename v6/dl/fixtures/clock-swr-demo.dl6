@@ -1,4 +1,4 @@
-# clock-swr-demo.dl -- the bind seam's demo + receipt program (1_binds.ts). Proves
+# clock-swr-demo.dl6 -- the bind seam's demo + receipt program (1_binds.ts). Proves
 # clock_residency = world_fed_bind_not_construct: cadence enters as an ordinary
 # EDB rel (clock_bucket), fed by the clock bind, not as any new language construct.
 #

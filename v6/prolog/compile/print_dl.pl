@@ -1,7 +1,7 @@
 % print_dl.pl : phase D printer, the inverse of parse_dl.pl. Takes a
 % prog(Decls, Rules) term plus its Bindings (Name=Var pairs, the same shape
 % compile.pl:read_fixture_term/4 and parse_dl.pl both produce) and renders
-% canonical .dl TEXT that parse_dl.pl re-parses back to a variant of the
+% canonical .dl6 TEXT that parse_dl.pl re-parses back to a variant of the
 % original term (G1's round-trip grade).
 %
 % Column names for decl lines are MINED, not reinvented: this file calls
