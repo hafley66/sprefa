@@ -14,6 +14,7 @@ OUT=bench/out
 mkdir -p "$OUT"
 CSV="$OUT/results.csv"
 : > "$OUT/tsv2-results.jsonl"
+: > "$OUT/v1-results.jsonl"
 CAP="${CAP:-4096}"
 # Engines: label|binary|extra-env. sqlite runs twice (mem vs disk).
 ENGINES=(
@@ -27,6 +28,7 @@ ENGINES=(
   "swi-ts|bench/engines/swi_ts.sh|"
   "swi-emit|bench/engines/swi_emit.sh|"
   "tsv2-gen|bench/engines/tsv2_gen.sh|"
+  "v1-gen|bench/engines/v1_gen.sh|"
 )
 # Scale sweep as "layers x width". Kept medium so a laptop survives.
 SCALES="${SCALES:-2x200 6x2000 8x20000 10x50000 14x80000}"
@@ -43,6 +45,9 @@ for spec in "${ENGINES[@]}"; do
   scales="$SCALES"
   if [[ "$label" == "tsv2-gen" ]]; then
     scales="${TSV2_SCALES:-1x1000 1x10000 1x100000 2x1000 2x10000 2x100000 3x1000 3x10000 3x100000}"
+  fi
+  if [[ "$label" == "v1-gen" ]]; then
+    scales="${V1_SCALES:-1x1000 1x10000 1x100000 2x1000 2x10000 2x100000 3x1000 3x10000 3x100000}"
   fi
   for s in $scales; do
     layers="${s%x*}"; width="${s#*x}"
@@ -61,6 +66,8 @@ for spec in "${ENGINES[@]}"; do
     if [[ -n "$line" ]]; then
       echo "$line" >> "$CSV"
       echo "OK   $label $s -> $line"
+    elif [[ "$label" == "v1-gen" && "$(grep -c '^V1_NA' "$cell_log")" -gt 0 ]]; then
+      echo "N/A  $label $s"
     else
       # non-empty means it aborted/OOM'd at the cap: record as a wall hit.
       nodes=$(( 2 + layers * width ))

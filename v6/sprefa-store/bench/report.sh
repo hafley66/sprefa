@@ -56,21 +56,26 @@ awk -F, 'NR>1 && $1=="sqlite-disk" && $7!="WALL" && $7!="" {print $7}' "$CSV" \
   | sort -u | paste -sd, - \
   | awk '{print "- sqlite retract statement count across all scales: {" $0 "} (O(depth), not O(rows))."}'
 
-if [[ -s "$OUT/tsv2-results.jsonl" ]]; then
+if [[ -s "$OUT/tsv2-results.jsonl" || -s "$OUT/v1-results.jsonl" ]]; then
   echo
-  echo "## tsv2 generated-program scale data"
+  echo "## Generated-program scale data: tsv2 and v1"
   echo
-  echo "Each row is a fresh in-memory SQLite cell. The measured values are around the existing tsv2 TickFold; one warmup is discarded."
+  echo "Each row is a fresh in-memory SQLite cell. Both engines recompute the Datalog result per tick; one warmup is discarded."
   echo
-  echo "| shape | rows per EDB rel | status | total wall ms | mean tick ms | p95 tick ms | max tick ms | final table rows | ms per 1k arrivals |"
-  echo "|---|---:|---|---:|---:|---:|---:|---|---:|"
+  echo "| engine | shape | rows per EDB rel | status | reason | total wall ms | mean tick ms | p95 tick ms | max tick ms | final table rows | ms per 1k arrivals |"
+  echo "|---|---|---:|---|---|---:|---:|---:|---:|---|---:|"
   node -e '
     const fs = require("fs");
-    for (const line of fs.readFileSync(process.argv[1], "utf8").split("\n")) {
-      if (!line) continue;
-      const r = JSON.parse(line);
-      const sizes = r.final_table_sizes ? Object.entries(r.final_table_sizes).map(([k,v]) => `${k}=${v}`).join("; ") : "DNF";
-      console.log(`| ${r.shape} | ${r.rows} | ${r.status} | ${r.total_wall_ms ?? "DNF"} | ${r.mean_tick_ms ?? "DNF"} | ${r.p95_tick_ms ?? "DNF"} | ${r.max_tick_ms ?? "DNF"} | ${sizes} | ${r.ms_per_1k_arrivals ?? "DNF"} |`);
+    const rows = process.argv.slice(1).flatMap((path) => {
+      if (!fs.existsSync(path)) return [];
+      return fs.readFileSync(path, "utf8").split("\n").filter(Boolean).map(JSON.parse);
+    });
+    const order = { s1: 1, s2: 2, s3: 3 };
+    rows.sort((a, b) => order[a.shape] - order[b.shape] || a.rows - b.rows || a.engine.localeCompare(b.engine));
+    for (const r of rows) {
+      const sizes = r.final_table_sizes ? Object.entries(r.final_table_sizes).map(([k,v]) => `${k}=${v}`).join("; ") : "-";
+      const reason = r.reason ?? r.observed_failure ?? "-";
+      console.log(`| ${r.engine} | ${r.shape} | ${r.rows} | ${r.status} | ${reason} | ${r.total_wall_ms ?? "-"} | ${r.mean_tick_ms ?? "-"} | ${r.p95_tick_ms ?? "-"} | ${r.max_tick_ms ?? "-"} | ${sizes} | ${r.ms_per_1k_arrivals ?? "-"} |`);
     }
-  ' "$OUT/tsv2-results.jsonl"
+  ' "$OUT/tsv2-results.jsonl" "$OUT/v1-results.jsonl"
 fi
