@@ -432,6 +432,11 @@ language finding, not a reason to special-case the spine.
 - **Every .dl snippet shown to the user carries its intended pure-rxjs
   lowering** (user-set 2026-07-28: "if u cant then we are not right"). A
   construct whose rx lowering cannot be written is a design defect.
+- **Formerly-quadratic paths get COUNT tests** (user-set 2026-07-28): any
+  path that was ever O(n^2) gets a test asserting the operation count/plan
+  (statement counts, EXPLAIN QUERY PLAN SEARCH-not-SCAN), never end-state
+  equality alone. Additive tests only; do not ravage working code for
+  purity. Tracing/logging state in a single JSON file is acceptable.
 - dl variable names are descriptive, never single-letter: `path`/`line`/`callee_name`, not `p`/`l`/`q`. Applies to every snippet in skills, examples, book, tests, and agent prompts; rename opportunistically when touching old files.
 - N+1: never a per-row write. Collect the set, call `Db::insert_rows` once. The tick counter screams if you don't.
 - No `provenance`/`substrate`/`load-bearing`/`regime` as prose or identifiers (use source/base/critical/mode).
