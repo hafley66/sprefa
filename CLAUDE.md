@@ -254,9 +254,29 @@ rust-single-table rejection). NAMED GAP from the channel thread:
 retention driven by a derived rel (keep-until min(consumed.ordinal), the
 Kafka low-watermark) is the ONE missing construct between log and
 channel-with-N-readers; log+min-ordinal+consumed rows otherwise compose
-it today. Deletes lab OFFERED (support-zero vs fixpoint equivalence,
-cycle counterexample, retirement-as-history-move, C4 silent-prune),
-awaiting go. Scale bench brief DISPATCHED to luna
+it today. RETRACTION LAB LANDED (merge 2ef54e6e, lab-death a89acd3a,
+lab commit 36980bf8, verdict plans/2026-07-28-sqlite-retraction-
+verdict.md, 20/20 matrix re-run by coordinator against real sqlite3):
+fk_cascade WRONG on shared children (kills child with live second
+parent + dangling refs) and HARD-FAILS past sqlite trigger_depth 1000
+(unraisable on this build; 1001-node chain = statement rejected);
+support_count WRONG on cycles (counts never reach zero, both rows
+survive a full release) and 9999 rounds/19s on a 10k chain;
+recursive-CTE fixpoint reseed CORRECT on chain/shared/cycle/diamond
+incl deferred-FK circular inserts, 8ms at 10k, no depth ceiling.
+Crash-mid-cascade recovers both ways (ROLLBACK sim + real SIGKILL).
+Confirms types-lab finding 6 (never emit FK cascade); reseed is the
+retraction strategy going forward. REGISTRY LANDED (merge f414826f,
+codex sol, review-gated -- coordinator re-ran conformance 110,
+roundtrip ALL PASS, plunit 17/17, tsv2 6/6 + import gate, sweep
+31/28/0 with SCOREBOARD byte-identical): surface/5 construct registry
+(registry.pl) now drives analyze dispatch, refusal-by-absence
+(unsupported_construct thrown for any functor without a live row),
+parse/print body-word inventory, and a GENERATED SYNTAX.md construct
+table (1_emit_registry_docs.pl). Bidirectional single-DCG stretch NOT
+taken (variable-binding recovery + printer fidelity non-mechanical);
+two files consult one table. One-row demo receipt (fake_reserved) in
+task bmo2zn70a output. Scale bench brief DISPATCHED to luna
 (plans/2026-07-28-codex-scale-bench-brief.md): first tsv2 scale data,
 12-cell matrix, oracle cross-check rail. STORE-ADOPTION FINDINGS LANDED
 (plans/2026-07-28-store-adoption-findings.md, sonnet, merged): PREMISE
