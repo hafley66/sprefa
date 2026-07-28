@@ -236,3 +236,12 @@ ruling(match_block_word, match, user,
 % attaches to the arms implementation arc.
 ruling(transition_rule_semantics, first_to_last_per_boundary_with_collapse_logging, user,
        'user 2026-07-28 evening: "that is fine i think, we should log when that transition rule of sync/next/async boundaries happen"').
+
+% 2026-07-28 night. Overrides the round-2 lab amendment "no implicit
+% policy" for the bare case: a bare rel IS a table, and a table is
+% already a replay subject (late readers get every current row), so the
+% default policy is value, unkeyed. entity remains the marked case; the
+% dual-policy form still requires explicit producer words. Enum decl
+% spelling (the semicolon) explicitly NOT ruled; user not sold.
+ruling(rel_default_policy, value_unkeyed, user,
+       'user 2026-07-28 night: "rel default is value unkeyed, its a create table by itself, a literal dynamic replay subject"').
