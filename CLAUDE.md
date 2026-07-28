@@ -687,6 +687,30 @@ dl6 language id contributed, extension compiles. Grades: conformance
 115/0, roundtrip ALL PASS, sweep 34/31/0, plunit 28/28, tsv2 6/6 +
 gate. Receipt scratch out/text-door gitignored, stripped from the
 landing.
+SQLITE UDF GRAFT LAB LANDED (merge 4bcf9aba, lab-death 9de6cddb, last
+copy 9084850d, verdict plans/2026-07-29-sqlite-udf-graft-verdict.md;
+coordinator re-ran PASS x5 stdout twice + conformance 115/0 +
+roundtrip, which the agent had correctly fenced out of): v5 has 14
+DISTINCT UDF names across 16 call sites (header's 16 was call sites);
+usage: replace_re 38+21, regexp-as-=~ 78+13, split 34, lines 3+7 are
+the hot ones, sym_intern used ZERO times in examples/.dl. DRIVER
+REALITY: @libsql/client 0.17.4 has NO UDF registration API at all
+(all four candidate method names undefined) -- the current TS seam
+cannot register UDFs, period; better-sqlite3 .function() and sql.js
+create_function both proven working, rust sidecar registration
+proven, node-sqlite3 fails to load on node 24 arm64 (named slot).
+GRAFT SHAPES per class: core SQL fuses where semantics match
+(lower/upper/trim; parity 15-16/16, the misses are Unicode edge
+rows); regex needs a function or sidecar (JS-compatible subset 15/15,
+rust inline (?s) unparseable in JS); TS deopt proven delta-only (no
+full-table scan receipt); emit-time for constants. Q4 ASSERTION SET
+(P1 8 items / P2 5 / P3 8) handed to the running lift agent for
+summary-time reconciliation. Q5: sprf_sym can feed content_id only
+with type salt + canonicalization; dense intern mates stay
+storage-only, never semantic identity (consistent with the types-r2
+surrogate-mate ruling). Named slots: LIBSQL_UDF_API unresolved (the
+eventual driver decision), INTERN_SIDE_EFFECT staging,
+NODE_SQLITE3_ABI.
 
 ### Hands-on findings 2026-07-29 (coordinator wrote+ran a cold program; scratch fixture, receipts in chat)
 - **keyed() on a level-rule head is SILENTLY INERT** (F8/retention-inert
