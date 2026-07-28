@@ -64,3 +64,25 @@ push, no merge. If a cell OOMs or exceeds 10 minutes, record DNF for
 that cell with the observed failure and move on; do not shrink the
 matrix silently. Final summary: the SCALE.md table verbatim, DNFs,
 oracle cross-check receipt, suite results.
+
+## AMENDMENT (user, before launch): ride the EXISTING bench harness
+
+Do not build a standalone harness. v6/sprefa-store/bench/ is the house
+scale-test rig: one bash runner per engine in bench/engines/*.sh, each
+emitting the shared 8-field CSV protocol (see pure_wrap.sh header),
+orchestrated by run.sh with report.sh/chart.sh over bench/out/. Add tsv2
+as ANOTHER ENGINE THERE:
+- bench/engines/tsv2_gen.sh: bash runner following the existing shape
+  (same CSV fields, /usr/bin/time -l RSS merge) that compiles a
+  parameterized synthetic program via compile_fixture/4 and runs it on
+  the tsv2 A runtime for the given size args.
+- Reuse the harness's existing size parameterization style (layers/width
+  args like pure_wrap.sh) mapped onto the ROWS x SHAPE matrix from this
+  brief; if a shape does not fit the layers/width convention, add args,
+  do not fork the protocol.
+- Results land in bench/out/ through the existing report path; SCALE.md
+  becomes a short pointer + the headline table copied from the report,
+  not a parallel format.
+- The oracle cross-check rail stays exactly as specified.
+- scale-gen.pl may live in bench/ beside swi_reach.pl (the precedent for
+  prolog helpers in the bench dir) instead of v6/tsv2/scripts/.
