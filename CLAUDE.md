@@ -334,9 +334,22 @@ parse/print body-word inventory, and a GENERATED SYNTAX.md construct
 table (1_emit_registry_docs.pl). Bidirectional single-DCG stretch NOT
 taken (variable-binding recovery + printer fidelity non-mechanical);
 two files consult one table. One-row demo receipt (fake_reserved) in
-task bmo2zn70a output. Scale bench brief DISPATCHED to luna
-(plans/2026-07-28-codex-scale-bench-brief.md): first tsv2 scale data,
-12-cell matrix, oracle cross-check rail. STORE-ADOPTION FINDINGS LANDED
+task bmo2zn70a output. SCALE BENCH LANDED (merge 4dfac09c, codex luna two-phase incl
+amendment-2 resume, review-gated -- coordinator re-ran conformance
+110, tsv2 6/6, import gate on the branch; results v6/tsv2/SCALE.md,
+brief plans/2026-07-28-codex-scale-bench-brief.md): 9-cell matrix
+BOTH engines. HEADLINES: (1) tsv2 curve is superlinear as tables fill
+(s1 ms/1k-arrivals 65 -> 196 -> 1771); (2) v1 evalProgramSql is ~10x
+FASTER at every s2 size (17.1s vs 183.1s at 100k, 227MB vs 682MB RSS)
+on the SAME recompute-per-tick class -- the gap is A-runtime overhead,
+not algorithm; (3) tsv2 OOMs on s3 (2-atom combine cross join) even at
+1k rows where v1 completes in 2.95s (1M-row result), v1 times out at
+10k+ (shape is quadratic, but tsv2's memory blowup at 1k is its own
+defect, unowned); (4) v1 s1 N/A-with-reason (no keyed-replace edge
+semantics). Oracle cross-check byte-identical (sha 70c519e8). The
+before-curve for the emitter arc now exists; P1 also owes the s3
+memory answer. PROCESS: luna's first landing predated amendment 2;
+resumed by session id per codex-delegate.md, model re-pinned. STORE-ADOPTION FINDINGS LANDED
 (plans/2026-07-28-store-adoption-findings.md, sonnet, merged): PREMISE
 CORRECTED -- the js store's cascade/reconcile is a generic liveness
 propagator over (tag,id) keys + cx_dep edges, NO joins; the actual

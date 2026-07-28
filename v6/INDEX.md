@@ -57,6 +57,7 @@
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 163 | v6 store — retraction perf & completeness report |
 | [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
+| [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
 
 ## Full header index
 
@@ -810,5 +811,10 @@
 15:## Charts
 22:## Data
 43:## Takeaways (derived)
+```
+
+### tsv2/SCALE.md
+```
+1:# tsv2 and v1 generated-program scale data
 ```
 
