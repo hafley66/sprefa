@@ -251,3 +251,39 @@ ruling(rel_default_policy, value_unkeyed, user,
 % text)). Zero new tokens; the pun is the point.
 ruling(enum_variant_separator, prolog_semicolon, user,
        'user 2026-07-28 night: "semicolon as OR is ... yes please"').
+
+% 2026-07-29 (post-arms-lab sitting). Decl columns are the : operator,
+% nothing else: rel name(col: type, ...), source order significant (the
+% js-object-literal precedent, stated by the user against rust's
+% unordered fields). Types are inherently a second key-value dimension;
+% how they are STORED is the compiler's business. Kills the reserved
+% Key(text)/Min(int) column wrappers as a type spelling. Head/body rule
+% shapes are the LOWERING TARGET for matching and piping, not part of
+% the decl surface question.
+ruling(decl_column_spelling, colon_typed_ordered_columns, user,
+       'user 2026-07-29: "there is quite literally no difference to the : operator ... js inline objects have their source order bc it just makes sense ... rel name(key: types)"').
+
+% Same sitting. Enum variants live IN the rel decl as prolog functors
+% with the already-ruled semicolon separator:
+%   rel body(page(view: view) ; redirect(to: text)).
+% Supersedes the "user not sold" note on rel_default_policy: user is
+% now sold, on the lowering argument (N variant rels + derived tag
+% view, per the types-lab enum-shape slot).
+ruling(enum_decl_in_rel, semicolon_variants_in_decl, user,
+       'user 2026-07-29: "get that semicolon freak in the lang please it has good lowering to sql its fine"').
+
+% Same sitting. NO policy suffix words on decls. The word `set` is
+% REMOVED from the surface: a bare rel is already a set table in the
+% shipped engine (engine.pl rel_kind/4 fallback clause = set, and
+% keyed(...) already implies set), so the word states the default and
+% nothing else. The value/entity plane words from the coexistence lab
+% never land as decl suffixes; the plane is carried by key(...) choice
+% plus id binds, which the types-lab verdict itself proved sufficient
+% ("the value policy word is optional sugar ... fully expressible with
+% key(...) plus the id bind", verdict line 260). `log` remains the one
+% explicit kind word (it changes semantics: append + retention), with
+% keep(...)/key(...) as modifiers. Entity-plane EXTRAS (immutable
+% history, explicit checked retirement) still need a future spelling;
+% whatever it is, it will not be a bare suffix word on the decl.
+ruling(no_policy_suffix_words, bare_rel_is_set_log_is_the_only_kind_word, user,
+       'user 2026-07-29: "i dont want magic suffix words to trip anything up. no set. ... log all and a rel without any form of specificity are just tables no?"').
