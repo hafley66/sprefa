@@ -430,29 +430,54 @@ incremental_level_statement_lines(LevelStatements, RelPlans, Lines) :-
         ], Lines).
 
 incremental_level_statement_entry_line(RelPlans,
-        levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
-                  supportsql(ClearSql, SeedSql, UpdateSql, CollectZeroSql,
-                             InsertNewSql)), Line) :-
+        levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql, SupportSql,
+                  AggregateSql), Line) :-
     ref_name(HeadRef, HeadName),
     format(atom(DeltaTable), '__delta_~w', [HeadName]),
     memberchk(relplan(HeadRef, _, HeadColumns, _, _), RelPlans),
     quoted_string_array_text(HeadColumns, ColumnsText),
-    js_template(DeltaInsertSql, DeltaInsertTemplate),
+    optional_sql_template(DeltaInsertSql, DeltaInsertTemplate),
     maplist(quote_ident_local, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
     format(atom(SelectSql), 'SELECT ~w FROM "~w"', [HeadColumnsSql, HeadName]),
     js_template(SelectSql, SelectTemplate),
     atomic_list_concat([DeleteSql | InsertSqls], ';\\n', RecomputeSql),
     js_template(RecomputeSql, RecomputeTemplate),
+    support_sql_text(SupportSql, SupportText),
+    aggregate_sql_text(AggregateSql, AggregateText),
+    format(atom(Line),
+           '  { headRel: "~w", headDeltaTableName: "~w", headColumns: ~w, insertSql: ~w, selectSql: ~w, recomputeSql: ~w, supportSql: ~w, aggregateSql: ~w },',
+           [HeadName, DeltaTable, ColumnsText, DeltaInsertTemplate,
+            SelectTemplate, RecomputeTemplate, SupportText, AggregateText]).
+
+optional_sql_template(none, null) :- !.
+optional_sql_template(Sql, Template) :- js_template(Sql, Template).
+
+support_sql_text(none, null) :- !.
+support_sql_text(supportsql(ClearSql, SeedSql, UpdateSql, CollectZeroSql, InsertNewSql),
+                 Text) :-
     maplist(js_template,
             [ClearSql, SeedSql, UpdateSql, CollectZeroSql, InsertNewSql],
-            [ClearTemplate, SeedTemplate, UpdateTemplate, CollectZeroTemplate,
-             InsertNewTemplate]),
-    format(atom(Line),
-           '  { headRel: "~w", headDeltaTableName: "~w", headColumns: ~w, insertSql: ~w, selectSql: ~w, recomputeSql: ~w, supportSql: [~w, ~w, ~w, ~w, ~w] },',
-           [HeadName, DeltaTable, ColumnsText, DeltaInsertTemplate,
-            SelectTemplate, RecomputeTemplate, ClearTemplate, SeedTemplate,
-            UpdateTemplate, CollectZeroTemplate, InsertNewTemplate]).
+            Templates),
+    atomic_list_concat(Templates, ', ', Joined),
+    format(atom(Text), '[~w]', [Joined]).
+
+% The group-scoped aggregate plan (lower.pl level_aggregate_sql/4): clear the
+% scope, seed it from this tick's staged deltas, delete the scoped groups
+% (RETURNING the -1 events), re-derive them (RETURNING the +1 events).
+aggregate_sql_text(none, null) :- !.
+aggregate_sql_text(aggsql(_ScopeColumns, _ScopeTypes, ScopeClearSql, ScopeSeedSqls,
+                          DeleteScopedSql, InsertScopedSqls), Text) :-
+    js_template(ScopeClearSql, ScopeClearTemplate),
+    maplist(js_template, ScopeSeedSqls, ScopeSeedTemplates),
+    atomic_list_concat(ScopeSeedTemplates, ', ', ScopeSeedJoined),
+    js_template(DeleteScopedSql, DeleteScopedTemplate),
+    maplist(js_template, InsertScopedSqls, InsertScopedTemplates),
+    atomic_list_concat(InsertScopedTemplates, ', ', InsertScopedJoined),
+    format(atom(Text),
+           '{ scopeClearSql: ~w, scopeSeedSql: [~w], deleteScopedSql: ~w, insertScopedSql: [~w] }',
+           [ScopeClearTemplate, ScopeSeedJoined, DeleteScopedTemplate,
+            InsertScopedJoined]).
 
 quote_ident_local(Name, Quoted) :- format(atom(Quoted), '"~w"', [Name]).
 
@@ -621,7 +646,7 @@ recompute_levels_fn_lines(LevelStatements, Lines) :-
     % INSERT after exactly one DELETE, never one DELETE per clause); flattens
     % to the identical [Delete, Insert] sequence as before for the common
     % single-clause case.
-    findall(Sql, ( member(levelstmt(_, DeleteSql, InsertSqls, _, _), LevelStatements), ( Sql = DeleteSql ; member(Sql, InsertSqls) ) ), Sqls),
+    findall(Sql, ( member(levelstmt(_, DeleteSql, InsertSqls, _, _, _), LevelStatements), ( Sql = DeleteSql ; member(Sql, InsertSqls) ) ), Sqls),
     atomic_list_concat(Sqls, ';\\n', JoinedSql),
     js_template(JoinedSql, SqlTemplate),
     format(atom(SqlLine), '  const sql = ~w;', [SqlTemplate]),

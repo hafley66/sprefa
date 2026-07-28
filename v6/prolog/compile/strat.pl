@@ -30,7 +30,8 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
-:- use_module(analyze, [ rule_is_level/1, rule_head_ref/2, body_ref_uses/2 ]).
+:- use_module(analyze, [ rule_is_level/1, rule_head_ref/2, body_ref_uses/2,
+                         rule_is_aggregate/1 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -47,7 +48,7 @@ stratum_groups(Rules, Groups) :-
               rule_head_ref(Rule, HeadRef),
               body_ref_uses(Body, Uses),
               member(use(BodyRef, _, Sign, _), Uses),
-              gap_of(Sign, Gap),
+              rule_gap_of(Rule, Sign, Gap),
               memberchk(BodyRef, DerivedRefs)
             ), Constraints0),
     sort(Constraints0, Constraints),
@@ -62,6 +63,16 @@ stratum_groups(Rules, Groups) :-
     keysort(Numbered, Sorted),
     group_pairs_by_key(Sorted, Grouped),
     pairs_values(Grouped, Groups).
+
+% level_eval.pl:rule_body_constraint/4 forces Gap=1 for EVERY body ref of an
+% AGGREGATE head, positive or negated ("negated and aggregated rels strictly
+% below their consumers"), because an aggregate must see its input complete
+% before it folds. Mirroring that exactly is what keeps this file's stratum
+% numbers identical to the oracle's; treating an aggregate's positive read as
+% Gap=0 would let the aggregate and its input land in one group and be
+% emitted in a single pass, folding a half-built rel.
+rule_gap_of(Rule, _Sign, 1) :- rule_is_aggregate(Rule), !.
+rule_gap_of(_Rule, Sign, Gap) :- gap_of(Sign, Gap).
 
 gap_of(pos, 0).
 gap_of(neg, 1).

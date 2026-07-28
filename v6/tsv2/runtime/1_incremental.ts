@@ -1,6 +1,7 @@
 import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import type {
+  IAggregateLevelPlan,
   IArrivalBatch,
   IIncrementalEdgeStatement,
   IIncrementalLevelStatement,
@@ -244,15 +245,96 @@ function applyEdgeStatement(
   );
 }
 
+function levelFrontierCopies(
+  afterEdges: boolean,
+): readonly { tableName: (plan: IIncrementalRelationPlan) => string; phase: number }[] {
+  return afterEdges
+    ? [
+        { tableName: (plan: IIncrementalRelationPlan) => plan.frontierTableName, phase: 2 },
+        { tableName: (plan: IIncrementalRelationPlan) => plan.nextFrontierTableName, phase: 1 },
+      ]
+    : [{ tableName: (plan: IIncrementalRelationPlan) => plan.frontierTableName, phase: 2 }];
+}
+
+/**
+ * Group-scoped aggregate maintenance (IAggregateLevelPlan). The DELETE and
+ * every INSERT return only the rows of the AFFECTED GROUPS, so the aggregate
+ * head is re-derived without a full-table read on either side of the seam --
+ * the host_residency criterion holds here exactly as it does on the delta-join
+ * path. min/max ride this same shape because incremental min/max over a
+ * retractable set is not decomposable (match-frontier lab), and the scope is
+ * what keeps the recompute off the whole table.
+ */
+function applyAggregateLevelStatement(
+  seam: ISqlSeam,
+  statement: IIncrementalLevelStatement,
+  aggregate: IAggregateLevelPlan,
+  relation: IIncrementalRelationPlan,
+  afterEdges: boolean,
+  nextSequence: () => number,
+): Observable<void> {
+  const scopeStatements: SqlStatement[] = [
+    { sql: aggregate.scopeClearSql, args: [] },
+    ...aggregate.scopeSeedSql.map((sql): SqlStatement => ({ sql, args: [] })),
+  ];
+  return seam.runner.batch(seam.db, scopeStatements).pipe(
+    concatMap(() => seam.runner.execute(seam.db, aggregate.deleteScopedSql)),
+    concatMap((deleteResult) => {
+      const removedRows = resultRows(deleteResult, statement.headColumns);
+      return seam.runner
+        .batch(
+          seam.db,
+          aggregate.insertScopedSql.map((sql): SqlStatement => ({ sql, args: [] })),
+        )
+        .pipe(
+          concatMap((insertResults) => {
+            const events: DeltaEvent[] = removedRows.map((row) => ({
+              rel: statement.headRel,
+              sign: -1 as const,
+              sequence: nextSequence(),
+              row,
+            }));
+            for (const insertResult of insertResults) {
+              for (const row of resultRows(insertResult, statement.headColumns)) {
+                events.push({
+                  rel: statement.headRel,
+                  sign: 1,
+                  sequence: nextSequence(),
+                  row,
+                });
+              }
+            }
+            if (events.length === 0) return of(undefined);
+            return stageEvents(seam, [relation], events, levelFrontierCopies(afterEdges));
+          }),
+        );
+    }),
+  );
+}
+
 function applyLevelStatement(
   seam: ISqlSeam,
   statement: IIncrementalLevelStatement,
   relationByName: ReadonlyMap<string, IIncrementalRelationPlan>,
   afterEdges: boolean,
+  nextSequence: () => number,
 ): Observable<void> {
   const relation = relationByName.get(statement.headRel);
   if (relation === undefined) {
     throw new Error(`incremental level head relation missing: ${statement.headRel}`);
+  }
+  if (statement.aggregateSql !== null) {
+    return applyAggregateLevelStatement(
+      seam,
+      statement,
+      statement.aggregateSql,
+      relation,
+      afterEdges,
+      nextSequence,
+    );
+  }
+  if (statement.insertSql === null) {
+    throw new Error(`incremental level statement has neither insertSql nor aggregateSql: ${statement.headRel}`);
   }
   return seam.runner.execute(seam.db, statement.insertSql).pipe(
     concatMap((result) => {
@@ -261,18 +343,7 @@ function applyLevelStatement(
       const events = rows.map(
         (row, sequence): DeltaEvent => ({ rel: statement.headRel, sign: 1, sequence, row }),
       );
-      const frontierCopies = afterEdges
-        ? [
-            { tableName: (plan: IIncrementalRelationPlan) => plan.frontierTableName, phase: 2 },
-            {
-              tableName: (plan: IIncrementalRelationPlan) => plan.nextFrontierTableName,
-              phase: 1,
-            },
-          ]
-        : [
-            { tableName: (plan: IIncrementalRelationPlan) => plan.frontierTableName, phase: 2 },
-          ];
-      return stageEvents(seam, [relation], events, frontierCopies);
+      return stageEvents(seam, [relation], events, levelFrontierCopies(afterEdges));
     }),
   );
 }
@@ -471,9 +542,15 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<void> {
     const relationByName = new Map(relations.map((relation) => [relation.rel, relation]));
+    let sequence = 0;
+    const nextSequence = (): number => {
+      const current = sequence;
+      sequence += 1;
+      return current;
+    };
     return sequenceWork(
       statements,
-      (statement) => applyLevelStatement(seam, statement, relationByName, false),
+      (statement) => applyLevelStatement(seam, statement, relationByName, false, nextSequence),
     );
   },
 
@@ -499,9 +576,15 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<void> {
     const relationByName = new Map(relations.map((relation) => [relation.rel, relation]));
+    let sequence = 0;
+    const nextSequence = (): number => {
+      const current = sequence;
+      sequence += 1;
+      return current;
+    };
     return sequenceWork(
       statements,
-      (statement) => applyLevelStatement(seam, statement, relationByName, true),
+      (statement) => applyLevelStatement(seam, statement, relationByName, true, nextSequence),
     );
   },
 
@@ -517,43 +600,62 @@ export const IncrementalRuntime: IIncrementalRuntime = {
       (relation) =>
         `EXISTS (SELECT 1 FROM ${quoteIdentifier(relation.deltaTableName)} WHERE "_sign" = -1 LIMIT 1)`,
     );
+    // Per-statement rather than one batch over every statement's supportSql:
+    // the list is in strat.pl's own stratum order, and an AGGREGATE statement
+    // dispatches to the group-scoped plan instead of a refCount reconcile.
+    // Running them in order is what lets an aggregate observe the refCount
+    // deletions of the rel it reads (an aggregate always sits in a strictly
+    // higher stratum than its inputs -- level_eval.pl forces Gap=1 for every
+    // body ref of an aggregate head, and strat.pl mirrors that).
+    // `sequence` stays a single running counter across the whole reconcile so
+    // staged event ordering is unchanged from the batched shape.
     const reconcile = (): Observable<void> => {
-      const sql = statements.flatMap((statement) => statement.supportSql);
-      return seam.runner.batch(seam.db, sql).pipe(
-        concatMap((results) => {
-          const events: DeltaEvent[] = [];
-          let sequence = 0;
-          for (const [statementIndex, statement] of statements.entries()) {
-            const relation = relationByName.get(statement.headRel);
-            if (relation === undefined) {
-              throw new Error(`incremental level head relation missing: ${statement.headRel}`);
-            }
-            const resultOffset = statementIndex * statement.supportSql.length;
-            const deletedRows = resultRows(
-              results[resultOffset + 3]!,
-              statement.headColumns,
-            );
-            const insertedRows = resultRows(
-              results[resultOffset + 4]!,
-              statement.headColumns,
-            );
+      let sequence = 0;
+      const nextSequence = (): number => {
+        const current = sequence;
+        sequence += 1;
+        return current;
+      };
+      return sequenceWork(statements, (statement) => {
+        const relation = relationByName.get(statement.headRel);
+        if (relation === undefined) {
+          throw new Error(`incremental level head relation missing: ${statement.headRel}`);
+        }
+        if (statement.aggregateSql !== null) {
+          return applyAggregateLevelStatement(
+            seam,
+            statement,
+            statement.aggregateSql,
+            relation,
+            true,
+            nextSequence,
+          );
+        }
+        if (statement.supportSql === null) {
+          throw new Error(`incremental level statement has neither supportSql nor aggregateSql: ${statement.headRel}`);
+        }
+        const sql = statement.supportSql.map((text): SqlStatement => ({ sql: text, args: [] }));
+        return seam.runner.batch(seam.db, sql).pipe(
+          concatMap((results) => {
+            const events: DeltaEvent[] = [];
+            const deletedRows = resultRows(results[3]!, statement.headColumns);
+            const insertedRows = resultRows(results[4]!, statement.headColumns);
             for (const row of deletedRows) {
-              events.push({ rel: statement.headRel, sign: -1, sequence, row });
-              sequence += 1;
+              events.push({ rel: statement.headRel, sign: -1, sequence: nextSequence(), row });
             }
             for (const row of insertedRows) {
-              events.push({ rel: statement.headRel, sign: 1, sequence, row });
-              sequence += 1;
+              events.push({ rel: statement.headRel, sign: 1, sequence: nextSequence(), row });
             }
-          }
-          return stageEvents(
-            seam,
-            relations,
-            events,
-            [{ tableName: (relation) => relation.nextFrontierTableName, phase: 1 }],
-          );
-        }),
-      );
+            if (events.length === 0) return of(undefined);
+            return stageEvents(
+              seam,
+              relations,
+              events,
+              [{ tableName: (plan) => plan.nextFrontierTableName, phase: 1 }],
+            );
+          }),
+        );
+      });
     };
     if (reconcileEveryTick) return reconcile();
     if (retractionTerms.length === 0) return of(undefined);

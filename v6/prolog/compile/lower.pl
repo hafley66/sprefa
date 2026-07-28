@@ -175,12 +175,20 @@ relplan_column_types(RelPlans, Ref, ColumnTypes) :- memberchk(relplan(Ref, _, _,
 % (negated atom, read-only: never introduces a binding, an unbound var there
 % imposes no condition -- negation-as-failure over an unconstrained position).
 
-compile_pattern_arg(Arg, ColumnExpr, Bound0, Bound, WhereParts, Mode) :-
+% EXPRESSION LIFT: a Bound entry is now typed(Sql, int|text), not bare Sql.
+% lower.pl has to know a bound variable's SQL TYPE, not only its text, for
+% three reasons the phase-C sweep documented as miscompiles: `/` is integer
+% division only when both operands are INTEGER storage class, `mod` needs the
+% floored correction only over integers, and a comparison between an
+% INTEGER-affinity column and a TEXT one silently applies affinity conversion
+% where the oracle's ==/2 is term identity. Carrying the type beside the text
+% is what lets each of those be a NAMED refusal instead of a silent answer.
+compile_pattern_arg(Arg, ColumnExpr, ColumnType, Bound0, Bound, WhereParts, Mode) :-
     ( var(Arg)
-    -> ( bound_lookup(Bound0, Arg, Existing)
+    -> ( bound_lookup(Bound0, Arg, typed(Existing, _))
        -> WhereParts = [pair(ColumnExpr, Existing)], Bound = Bound0
        ; Mode == bind
-       -> WhereParts = [], Bound = [Arg-ColumnExpr | Bound0]
+       -> WhereParts = [], Bound = [Arg-typed(ColumnExpr, ColumnType) | Bound0]
        ; WhereParts = [], Bound = Bound0
        )
     ; compound(Arg)
@@ -193,10 +201,13 @@ compile_pattern_arg(Arg, ColumnExpr, Bound0, Bound, WhereParts, Mode) :-
     ; throw(unsupported_construct(pattern_arg(Arg)))
     ).
 
+% A destructured sub-argument comes back through json_extract, whose result
+% carries no declared column type at all -- typed text, matching the
+% inline-flat compound punt (PHASE C2 RULING 1).
 compile_sub_args([], _, _, Bound, Bound, [], _).
 compile_sub_args([SubArg | Rest], ParentExpr, Index, Bound0, Bound, WhereParts, Mode) :-
     format(atom(SubExpr), 'json_extract(~w, \'$.args[~w]\')', [ParentExpr, Index]),
-    compile_pattern_arg(SubArg, SubExpr, Bound0, Bound1, HereWhere, Mode),
+    compile_pattern_arg(SubArg, SubExpr, text, Bound0, Bound1, HereWhere, Mode),
     NextIndex is Index + 1,
     compile_sub_args(Rest, ParentExpr, NextIndex, Bound1, Bound, MoreWhere, Mode),
     append(HereWhere, MoreWhere, WhereParts).
@@ -229,16 +240,18 @@ compile_positive_uses(RelPlans, [use(Ref, Args, pos, _) | Rest], Index, Bound0, 
     format(atom(Alias), 'b~w', [Index]),
     format(atom(From), '~w ~w', [QuotedTable, Alias]),
     relplan_columns(RelPlans, Ref, Columns),
-    compile_atom_args(Args, Columns, Alias, Bound0, Bound1, HereWhere),
+    relplan_column_types(RelPlans, Ref, ColumnTypes),
+    compile_atom_args(Args, Columns, ColumnTypes, Alias, Bound0, Bound1, HereWhere),
     NextIndex is Index + 1,
     compile_positive_uses(RelPlans, Rest, NextIndex, Bound1, Bound, MoreFrom, MoreWhere),
     append(HereWhere, MoreWhere, WhereParts).
 
-compile_atom_args([], [], _, Bound, Bound, []).
-compile_atom_args([Arg | RestArgs], [Column | RestColumns], Alias, Bound0, Bound, WhereParts) :-
+compile_atom_args([], [], [], _, Bound, Bound, []).
+compile_atom_args([Arg | RestArgs], [Column | RestColumns], [ColumnType | RestTypes],
+                  Alias, Bound0, Bound, WhereParts) :-
     format(atom(ColumnExpr), '~w."~w"', [Alias, Column]),
-    compile_pattern_arg(Arg, ColumnExpr, Bound0, Bound1, HereWhere, bind),
-    compile_atom_args(RestArgs, RestColumns, Alias, Bound1, Bound, MoreWhere),
+    compile_pattern_arg(Arg, ColumnExpr, ColumnType, Bound0, Bound1, HereWhere, bind),
+    compile_atom_args(RestArgs, RestColumns, RestTypes, Alias, Bound1, Bound, MoreWhere),
     append(HereWhere, MoreWhere, WhereParts).
 
 % ═══ negative body-atom compilation (NOT EXISTS; unchanged from round 1) ════
@@ -251,7 +264,8 @@ compile_negative_uses(RelPlans, [use(Ref, Args, neg, _) | Rest], Index, Bound, [
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     format(atom(Alias), 'n~w', [Index]),
     relplan_columns(RelPlans, Ref, Columns),
-    compile_negative_atom_args(Args, Columns, Alias, Bound, WhereParts),
+    relplan_column_types(RelPlans, Ref, ColumnTypes),
+    compile_negative_atom_args(Args, Columns, ColumnTypes, Alias, Bound, WhereParts),
     maplist(where_text, WhereParts, WhereTexts),
     ( WhereTexts == []
     -> format(atom(Text), 'NOT EXISTS (SELECT 1 FROM ~w ~w)', [QuotedTable, Alias])
@@ -261,11 +275,12 @@ compile_negative_uses(RelPlans, [use(Ref, Args, neg, _) | Rest], Index, Bound, [
     NextIndex is Index + 1,
     compile_negative_uses(RelPlans, Rest, NextIndex, Bound, More).
 
-compile_negative_atom_args([], [], _, _, []).
-compile_negative_atom_args([Arg | RestArgs], [Column | RestColumns], Alias, Bound, WhereParts) :-
+compile_negative_atom_args([], [], [], _, _, []).
+compile_negative_atom_args([Arg | RestArgs], [Column | RestColumns], [ColumnType | RestTypes],
+                           Alias, Bound, WhereParts) :-
     format(atom(ColumnExpr), '~w."~w"', [Alias, Column]),
-    compile_pattern_arg(Arg, ColumnExpr, Bound, _BoundUnused, HereWhere, check),
-    compile_negative_atom_args(RestArgs, RestColumns, Alias, Bound, MoreWhere),
+    compile_pattern_arg(Arg, ColumnExpr, ColumnType, Bound, _BoundUnused, HereWhere, check),
+    compile_negative_atom_args(RestArgs, RestColumns, RestTypes, Alias, Bound, MoreWhere),
     append(HereWhere, MoreWhere, WhereParts).
 
 % ═══ head expression compilation (unchanged from round 1; reused for BOTH
@@ -273,27 +288,194 @@ compile_negative_atom_args([Arg | RestArgs], [Column | RestColumns], Alias, Boun
 % placeholder Bound -- compile_head_expr/3 does not care where a bound
 % variable's SQL text came from) ═════════════════════════════════════════
 
-compile_head_expr(Arg, Bound, Sql) :-
-    ( var(Arg)
-    -> ( bound_lookup(Bound, Arg, Sql) -> true ; throw(unsupported_construct(unbound_head_var(Arg))) )
-    ; compound(Arg)
-    -> Arg =.. [Functor | SubArgs],
-       maplist(compile_head_expr_bound(Bound), SubArgs, SubSqls),
+% compile_expr(+Expr, +Bound, -Sql, -Type) : the ONE expression compiler,
+% used for head arguments, `:=` right-hand sides, comparison operands and
+% aggregate arguments alike. Mirrors engine.pl:eval_expr/2 clause for clause
+% (ruling expression_residency: fuse to SQL, deopt to TypeScript only where
+% sqlite genuinely lacks the function -- nothing here needs a deopt).
+%
+% Three places where the naive translation is WRONG and this is not:
+%
+%  `/`   engine.pl eval_expr's `LeftV // RightV` truncates TOWARD ZERO (SWI's
+%        default integer_rounding_function). SQLite's `/` on two INTEGER
+%        operands does the same (measured against sqlite 3.45.1 through the
+%        real driver: -7/2 = -3, 7/-2 = -3), so the operator maps straight
+%        across -- but ONLY while both operands really are INTEGER storage
+%        class. A TEXT-affinity operand turns it into float division, which
+%        is why a non-int operand is a named refusal below rather than a
+%        cast.
+%  `mod` engine.pl uses Prolog `mod`, which is FLOORED (sign of the DIVISOR):
+%        7 mod -2 = -1, -7 mod 2 = 1. SQLite's `%` is C's (sign of the
+%        DIVIDEND): 7 % -2 = 1, -7 % 2 = -1. Emitting `%` directly gets the
+%        sign wrong on exactly the two rows
+%        division_truncates_toward_zero_mod_follows_divisor_sign grades.
+%        The floored correction ((A % B) + B) % B reproduces all four
+%        (measured, same run).
+%  Int-only  eval_int2/4 THROWS arith_on_non_int the moment a non-integer
+%        operand appears. SQLite instead coerces silently ('not_a_number' + 1
+%        evaluates to 1), so a text operand would produce a wrong row with no
+%        signal at all. Refused by name.
+compile_expr(Expr, Bound, Sql, Type) :-
+    ( var(Expr)
+    -> ( bound_lookup(Bound, Expr, typed(Sql, Type))
+       -> true
+       ;  throw(unsupported_construct(unbound_head_var(Expr))) )
+    ; integer(Expr)
+    -> sql_literal(Expr, Sql), Type = int
+    ; atomic(Expr)
+    -> sql_literal(Expr, Sql), Type = text
+    ; Expr = concat(Parts)
+    -> compile_concat_parts(Parts, Bound, Expr, PartSqls),
+       atomic_list_concat(PartSqls, ' || ', Joined),
+       format(atom(Sql), '(~w)', [Joined]),
+       Type = text
+    ; arithmetic_expr(Expr, Operator, Left, Right)
+    -> compile_int_operand(Left, Bound, Expr, LeftSql),
+       compile_int_operand(Right, Bound, Expr, RightSql),
+       arithmetic_sql(Operator, LeftSql, RightSql, Sql),
+       Type = int
+    ; json_value_expr(Expr)
+    -> throw(unsupported_construct(json_value_expression(Expr)))
+    ; compound(Expr)
+    -> Expr =.. [Functor | SubArgs],
+       maplist(compile_term_sub_expr(Bound), SubArgs, SubSqls),
        ( SubSqls == []
        -> format(atom(Sql), 'json_object(\'fn\', \'~w\', \'args\', json_array())', [Functor])
        ; atomic_list_concat(SubSqls, ', ', Joined),
          format(atom(Sql), 'json_object(\'fn\', \'~w\', \'args\', json_array(~w))', [Functor, Joined])
-       )
-    ; atomic(Arg)
-    -> sql_literal(Arg, Sql)
-    ; throw(unsupported_construct(head_expr(Arg)))
+       ),
+       Type = text
+    ; throw(unsupported_construct(head_expr(Expr)))
     ).
 
-compile_head_expr_bound(Bound, Arg, Sql) :- compile_head_expr(Arg, Bound, Sql).
+compile_term_sub_expr(Bound, Arg, Sql) :- compile_expr(Arg, Bound, Sql, _Type).
+
+compile_expr_bound(Bound, Arg, Sql) :- compile_expr(Arg, Bound, Sql, _Type).
+
+arithmetic_expr(Expr, Operator, Left, Right) :-
+    compound(Expr), Expr =.. [Operator, Left, Right],
+    memberchk(Operator, ['+', '-', '*', '/', mod]).
+
+% The json arm's own VALUE grammar: a braces literal ({}/1) and a list. Both
+% are ordinary compound terms structurally, and the generic compound branch
+% below would happily wrap either in this compiler's json1 tagged-term
+% encoding -- which is NOT what the oracle stores. engine.pl:json_canon/2
+% canonicalizes a braces literal to obj(SortedPairs) and a list to a list,
+% and the shared tick-log encoder then renders those as
+% obj([|](-(name,cli),[|](-(stars,4),[]))) -- right-nested cons text, not a
+% json1 object.
+%
+% MEASURED, not predicted: with only the bind lift in place and no refusal
+% here, json_arm.pl's braces_literal_canonicalizes compiled clean and stored
+% the text "null" where the oracle holds
+% obj([|](-(name,cli),[|](-(stars,4),[]))), and braces_in_head_position (which
+% the sweep has been calling IDENTICAL-but-vacuous since phase C, because its
+% Schedule is empty) stored {}({"fn":":","args":["repo","cli"]}). The
+% final-state leg is what surfaced both. Refused by name until the json arm
+% is lowered as its own class; that is the SAME cons-text encoding gap
+% registry.pl records against json_array/json_object.
+json_value_expr(Expr) :- compound(Expr), Expr = {}(_), !.
+json_value_expr(Expr) :- is_list(Expr), Expr \== [], !.
+json_value_expr(Expr) :- compound(Expr), Expr = [_ | _].
+
+compile_int_operand(Operand, Bound, Whole, Sql) :-
+    compile_expr(Operand, Bound, Sql, Type),
+    ( Type == int
+    -> true
+    ;  throw(unsupported_construct(arith_operand_not_int(Whole, Operand, Type)))
+    ).
+
+arithmetic_sql(mod, LeftSql, RightSql, Sql) :- !,
+    format(atom(Sql), '(((~w % ~w) + ~w) % ~w)', [LeftSql, RightSql, RightSql, RightSql]).
+arithmetic_sql(Operator, LeftSql, RightSql, Sql) :-
+    format(atom(Sql), '(~w ~w ~w)', [LeftSql, Operator, RightSql]).
+
+% engine.pl text_piece/2 throws non_display_in_concat on a compound piece;
+% an int piece auto-converts (atomic_list_concat), which SQLite's `||` also
+% does. Only the compound case needs refusing.
+compile_concat_parts(Parts, _, Whole, _) :-
+    \+ is_list(Parts),
+    throw(unsupported_construct(concat_not_a_list(Whole))).
+compile_concat_parts(Parts, Bound, Whole, PartSqls) :-
+    is_list(Parts),
+    maplist(compile_concat_part(Bound, Whole), Parts, PartSqls).
+
+compile_concat_part(Bound, Whole, Part, Sql) :-
+    compile_expr(Part, Bound, Sql, Type),
+    ( memberchk(Type, [int, text])
+    -> true
+    ;  throw(unsupported_construct(concat_non_display_piece(Whole, Part)))
+    ).
+
+% ═══ guard / bind goals (EXPRESSION LIFT) ═══════════════════════════════════
+% Folded LEFT TO RIGHT over the body's guard/bind goals, after every positive
+% atom has bound its own columns. engine.pl solve/2 resolves a conjunction
+% left to right, so a bind reads what earlier binds introduced; the fold
+% order here is the same. A bind whose variable is ALREADY bound is a check,
+% not a fresh binding (`solve(Variable := Expr)` ends in `Variable = Value`,
+% which is unification, so an already-bound left side filters) and compiles
+% to an equality condition.
+
+compile_guard_goals(Goals, Bound0, Bound, WhereTexts) :-
+    foldl(compile_guard_goal, Goals, Bound0-[], Bound-ReversedTexts),
+    reverse(ReversedTexts, WhereTexts).
+
+compile_guard_goal(Goal, Bound0-Texts0, Bound-Texts) :-
+    ( bind_goal(Goal, Variable, Expr)
+    -> compile_expr(Expr, Bound0, Sql, Type),
+       ( var(Variable), \+ bound_lookup(Bound0, Variable, _)
+       -> Bound = [Variable-typed(Sql, Type) | Bound0], Texts = Texts0
+       ;  compile_expr(Variable, Bound0, VariableSql, _VariableType),
+          format(atom(Text), '~w = ~w', [VariableSql, Sql]),
+          Bound = Bound0, Texts = [Text | Texts0]
+       )
+    ;  guard_goal(Goal)
+    -> compile_comparison(Goal, Bound0, Text),
+       Bound = Bound0, Texts = [Text | Texts0]
+    ;  throw(unsupported_construct(guard_goal_shape(Goal)))
+    ).
+
+% engine.pl solve_comparison/1: `< =< > >=` run through eval_int2/4, so BOTH
+% operands must be integers or the reference engine throws arith_on_non_int
+% -- SQLite would instead compare a TEXT-affinity value against an INTEGER
+% one under its own affinity rules and answer something. `==`/`\==` are
+% eval_expr then Prolog ==/2, term identity, so `1 == '1'` is FALSE there;
+% SQLite's `=` between an INTEGER column and a TEXT one applies affinity and
+% can answer TRUE. Both cases are refused by name rather than lowered to an
+% operator that means something else.
+compile_comparison(Goal, Bound, Text) :-
+    Goal =.. [Operator, Left, Right],
+    compile_expr(Left, Bound, LeftSql, LeftType),
+    compile_expr(Right, Bound, RightSql, RightType),
+    comparison_operator_sql(Operator, Goal, LeftType, RightType, OperatorSql),
+    format(atom(Text), '(~w ~w ~w)', [LeftSql, OperatorSql, RightSql]).
+
+comparison_operator_sql(Operator, Goal, LeftType, RightType, OperatorSql) :-
+    memberchk(Operator, ['<', '=<', '>', '>=']), !,
+    ( LeftType == int, RightType == int
+    -> true
+    ;  throw(unsupported_construct(comparison_operand_not_int(Goal, LeftType, RightType)))
+    ),
+    ordered_operator_sql(Operator, OperatorSql).
+comparison_operator_sql(Operator, Goal, LeftType, RightType, OperatorSql) :-
+    memberchk(Operator, ['==', '\\==']), !,
+    ( LeftType == RightType
+    -> true
+    ;  throw(unsupported_construct(comparison_type_mismatch(Goal, LeftType, RightType)))
+    ),
+    identity_operator_sql(Operator, OperatorSql).
+comparison_operator_sql(Operator, Goal, _, _, _) :-
+    throw(unsupported_construct(unknown_comparison_operator(Goal, Operator))).
+
+ordered_operator_sql('=<', '<=') :- !.
+ordered_operator_sql(Operator, Operator).
+
+identity_operator_sql('==', '=') :- !.
+identity_operator_sql('\\==', '<>').
 
 head_select_list(Head, Bound, ColumnAliases, SelectExprs) :-
     Head =.. [_ | Args],
-    maplist(compile_head_expr_bound(Bound), Args, SelectExprs0),
+    maplist(compile_expr_bound(Bound), Args, SelectExprs0),
     ( is_list(ColumnAliases)
     -> maplist(alias_select_expr, SelectExprs0, ColumnAliases, SelectExprs)
     ; SelectExprs = SelectExprs0
@@ -464,7 +646,8 @@ edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms,
     ; true  % log: no key concept, KeyPositions unused below
     ),
     TriggerAtom =.. [_ | TriggerArgs],
-    compile_trigger_bound(TriggerArgs, TriggerBound),
+    relplan_column_types(RelPlans, TriggerRef, TriggerBoundColumnTypes),
+    compile_trigger_bound(TriggerArgs, TriggerBoundColumnTypes, TriggerBound),
     ( OtherAtoms == []
     -> Bound = TriggerBound, FromSql = none, WhereSql = none
     ;  % maplist, NEVER findall (analyze.pl:ref_occurrence_args/3's own
@@ -532,7 +715,9 @@ edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, HeadColumns, Del
     quote_ident(FrontierTable, QuotedFrontierTable),
     DeltaAlias = d0,
     relplan_columns(RelPlans, TriggerRef, TriggerColumns),
-    compile_atom_args(TriggerArgs, TriggerColumns, DeltaAlias, [], TriggerBound, TriggerWhereParts),
+    relplan_column_types(RelPlans, TriggerRef, TriggerColumnTypes),
+    compile_atom_args(TriggerArgs, TriggerColumns, TriggerColumnTypes, DeltaAlias, [],
+                      TriggerBound, TriggerWhereParts),
     maplist(where_text, TriggerWhereParts, TriggerWhereTexts),
     maplist(other_atom_use, OtherAtoms, OtherUses),
     compile_positive_uses(RelPlans, OtherUses, TriggerBound, Bound, OtherFromParts, OtherWhereTexts),
@@ -557,13 +742,15 @@ other_atom_use(Atom, use(Ref, Args, pos, unmarked)) :- rel_ref(Atom, Ref), Atom 
 % as the bind args UNCHANGED, so a head expression can reference the same
 % trigger argument more than once (?1 reused) without the emitter needing
 % to reorder or duplicate anything.
-compile_trigger_bound(TriggerArgs, Bound) :- compile_trigger_bound(TriggerArgs, 1, Bound).
-compile_trigger_bound([], _, []).
-compile_trigger_bound([Arg | Rest], Index, [Arg-Placeholder | MoreBound]) :-
+compile_trigger_bound(TriggerArgs, TriggerColumnTypes, Bound) :-
+    compile_trigger_bound(TriggerArgs, TriggerColumnTypes, 1, Bound).
+compile_trigger_bound([], [], _, []).
+compile_trigger_bound([Arg | Rest], [ColumnType | RestTypes], Index,
+                      [Arg-typed(Placeholder, ColumnType) | MoreBound]) :-
     ( var(Arg) -> true ; throw(unsupported_construct(trigger_arg_not_var(Arg))) ),
     format(atom(Placeholder), '?~w', [Index]),
     NextIndex is Index + 1,
-    compile_trigger_bound(Rest, NextIndex, MoreBound).
+    compile_trigger_bound(Rest, RestTypes, NextIndex, MoreBound).
 
 nth1_list([], _, []).
 nth1_list([Position | Rest], List, [Element | More]) :- nth1(Position, List, Element), nth1_list(Rest, List, More).
@@ -607,12 +794,202 @@ take_same_head(_, Rules, [], Rules).
 
 level_statement_group(RelPlans, HeadRef-Rules,
                       levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
-                                SupportSql)) :-
+                                SupportSql, AggregateSql)) :-
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
     format(atom(DeleteSql), 'DELETE FROM ~w', [QuotedHeadTable]),
     maplist(level_insert_sql(RelPlans, HeadRef), Rules, InsertSqls),
-    level_delta_insert_sql(RelPlans, HeadRef, Rules, DeltaInsertSql),
-    level_support_sql(RelPlans, HeadRef, Rules, SupportSql).
+    partition(rule_is_aggregate, Rules, AggregateRules, PlainRules),
+    ( AggregateRules == []
+    -> level_delta_insert_sql(RelPlans, HeadRef, Rules, DeltaInsertSql),
+       level_support_sql(RelPlans, HeadRef, Rules, SupportSql),
+       AggregateSql = none
+    ;  PlainRules \== []
+    -> throw(unsupported_construct(aggregate_head_mixed_with_plain_clause(HeadRef)))
+    ;  % An aggregate head is maintained by GROUP-SCOPED recompute, never by
+       % the monotone delta-join insert (an aggregate row CHANGES rather than
+       % only arriving) and never by refCount reconciliation (a refCount is a
+       % count of derivations of one row; an aggregate row has exactly one
+       % derivation, its group). Both slots are `none`; the emitter renders
+       % them null and 1_incremental.ts dispatches on the aggregate plan.
+       DeltaInsertSql = none,
+       SupportSql = none,
+       level_aggregate_sql(RelPlans, HeadRef, AggregateRules, AggregateSql)
+    ).
+
+% ═══ group-scoped aggregate maintenance (the incremental family) ════════════
+% Four statements per tick, all SQL-side, all scoped to the groups this
+% tick's deltas can have touched:
+%
+%   1. ScopeClearSql   DELETE FROM __agg_scope_<head>
+%   2. ScopeSeedSqls   one arm per (clause, positive body atom): the GROUP
+%                      KEYS reachable from that rel's staged delta rows,
+%                      BOTH SIGNS (a retraction changes a group exactly as an
+%                      arrival does). DISTINCT, so the arm returns groups, not
+%                      derivations.
+%   3. DeleteScopedSql DELETE the head's existing rows for those groups,
+%                      RETURNING them -> the -1 delta events.
+%   4. InsertScopedSqls re-derive those groups from scratch and INSERT,
+%                      RETURNING them -> the +1 delta events.
+%
+% WHY DELETE-THEN-RECOMPUTE RATHER THAN INCREMENTAL ARITHMETIC. count and sum
+% are decomposable (+= on add, -= on retract) and min/max are NOT: the
+% match-frontier lab's rx table records "incremental min/max over a
+% retractable set" as one of its two IMPOSSIBLE rows, because removing the
+% current minimum tells you nothing about the next one without re-reading the
+% group. Rather than run two maintenance strategies side by side, all four
+% kinds take the same shape and the SCOPE is what keeps it cheap: the
+% recompute reads only the groups whose members actually moved, never the
+% whole table. That is the header's "delta-compare on inserts, GROUP-SCOPED
+% recompute on deletes, never whole-table" with one statement family instead
+% of two.
+%
+% A -1/+1 pair for a group whose aggregate value did NOT change cancels at
+% the boundary: 1_incremental.ts's boundaryDelta/2 groups by ROW VALUE and
+% sums the signed counts, so an unchanged row nets to zero and never reaches
+% the tick log. Over-approximating the scope is therefore SAFE (a wasted
+% recompute, invisible); under-approximating would not be, which is why the
+% seed arms carry no guard conditions at all.
+level_aggregate_sql(RelPlans, HeadRef, Rules,
+                    aggsql(ScopeColumns, ScopeTypes, ScopeClearSql, ScopeSeedSqls,
+                           DeleteScopedSql, InsertScopedSqls)) :-
+    aggregate_scope_columns(RelPlans, HeadRef, Rules, ScopeColumns, ScopeTypes),
+    aggregate_scope_table_name(HeadRef, ScopeTable),
+    quote_ident(ScopeTable, QuotedScopeTable),
+    format(atom(ScopeClearSql), 'DELETE FROM ~w', [QuotedScopeTable]),
+    findall(SeedSql,
+            ( member(Rule, Rules),
+              aggregate_scope_seed_sql(RelPlans, ScopeColumns, QuotedScopeTable,
+                                       Rule, SeedSql) ),
+            ScopeSeedSqls),
+    aggregate_delete_scoped_sql(RelPlans, HeadRef, ScopeColumns,
+                                QuotedScopeTable, DeleteScopedSql),
+    maplist(aggregate_insert_scoped_sql(RelPlans, HeadRef, ScopeColumns,
+                                        QuotedScopeTable),
+            Rules, InsertScopedSqls).
+
+aggregate_scope_table_name(Name/_Arity, ScopeTable) :-
+    format(atom(ScopeTable), '__agg_scope_~w', [Name]).
+
+% The scope table's columns are the head's OWN plain (grouped) columns, so a
+% group key in the scope table and a group key in the head table compare
+% column for column with matching storage types. A head with zero plain
+% columns (star_bag(json_array(_)) shape: one row for the whole rel) gets a
+% single sentinel column instead, since SQLite has no zero-column table.
+aggregate_scope_columns(RelPlans, HeadRef, [Rule | _], ScopeColumns, ScopeTypes) :-
+    Rule = (Head <- _),
+    aggregate_head_template(Head, Template),
+    aggregate_group_positions(Template, Positions),
+    relplan_columns(RelPlans, HeadRef, HeadColumns),
+    relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
+    ( Positions == []
+    -> ScopeColumns = ['_all'], ScopeTypes = [int]
+    ;  nth1_list(Positions, HeadColumns, ScopeColumns),
+       nth1_list(Positions, HeadColumnTypes, ScopeTypes)
+    ).
+
+% One seed arm per positive body atom of one clause. The group expressions
+% are compiled against THAT atom's staged delta rows alone (alias d0 over
+% __delta_<ref>); if a group expression needs a variable this atom does not
+% bind, compile_expr throws unbound_head_var and the whole program is refused
+% by name (aggregate_group_not_delta_local) rather than silently seeding an
+% incomplete scope -- an UNDER-approximated scope would leave a stale
+% aggregate row behind with no delta at all.
+aggregate_scope_seed_sql(RelPlans, ScopeColumns, QuotedScopeTable, (Head <- Body),
+                         SeedSql) :-
+    aggregate_head_template(Head, Template),
+    body_ref_uses(Body, Uses),
+    include(is_positive_use, Uses, PosUses),
+    member(use(DeltaRef, DeltaArgs, pos, _), PosUses),
+    delta_table_name(DeltaRef, DeltaTable),
+    quote_ident(DeltaTable, QuotedDeltaTable),
+    relplan_columns(RelPlans, DeltaRef, DeltaColumns),
+    relplan_column_types(RelPlans, DeltaRef, DeltaColumnTypes),
+    compile_atom_args(DeltaArgs, DeltaColumns, DeltaColumnTypes, d0, [],
+                      DeltaBound, DeltaWhereParts),
+    maplist(where_text, DeltaWhereParts, DeltaWhereTexts),
+    aggregate_scope_group_exprs(Template, DeltaBound, Head, GroupExprs),
+    atomic_list_concat(GroupExprs, ', ', GroupSql),
+    maplist(quote_ident, ScopeColumns, QuotedScopeColumns),
+    atomic_list_concat(QuotedScopeColumns, ', ', ScopeColumnsSql),
+    append(['d0."_sign" IN (-1, 1)'], DeltaWhereTexts, WhereTexts),
+    atomic_list_concat(WhereTexts, ' AND ', WhereSql),
+    format(atom(SeedSql),
+           'INSERT OR IGNORE INTO ~w (~w) SELECT DISTINCT ~w FROM ~w d0 WHERE ~w',
+           [QuotedScopeTable, ScopeColumnsSql, GroupSql, QuotedDeltaTable, WhereSql]).
+
+aggregate_scope_group_exprs(Template, DeltaBound, Head, GroupExprs) :-
+    aggregate_group_positions(Template, Positions),
+    ( Positions == []
+    -> GroupExprs = ['0']
+    ;  catch(aggregate_group_exprs(Template, DeltaBound, GroupExprs),
+             unsupported_construct(unbound_head_var(_)),
+             throw(unsupported_construct(aggregate_group_not_delta_local(Head))))
+    ).
+
+aggregate_delete_scoped_sql(RelPlans, HeadRef, ScopeColumns, QuotedScopeTable,
+                            DeleteScopedSql) :-
+    table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
+    relplan_columns(RelPlans, HeadRef, HeadColumns),
+    maplist(quote_ident, HeadColumns, QuotedHeadColumns),
+    atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
+    maplist(quote_ident, ScopeColumns, QuotedScopeColumns),
+    atomic_list_concat(QuotedScopeColumns, ', ', ScopeColumnsSql),
+    ( ScopeColumns == ['_all']
+    -> format(atom(DeleteScopedSql),
+              'DELETE FROM ~w WHERE EXISTS (SELECT 1 FROM ~w) RETURNING ~w',
+              [QuotedHeadTable, QuotedScopeTable, HeadColumnsSql])
+    ;  format(atom(DeleteScopedSql),
+              'DELETE FROM ~w WHERE (~w) IN (SELECT ~w FROM ~w) RETURNING ~w',
+              [QuotedHeadTable, ScopeColumnsSql, ScopeColumnsSql,
+               QuotedScopeTable, HeadColumnsSql])
+    ).
+
+aggregate_insert_scoped_sql(RelPlans, HeadRef, ScopeColumns, QuotedScopeTable,
+                            (Head <- Body), InsertScopedSql) :-
+    table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
+    relplan_columns(RelPlans, HeadRef, HeadColumns),
+    maplist(quote_ident, HeadColumns, QuotedHeadColumns),
+    atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
+    aggregate_head_template(Head, Template),
+    body_ref_uses(Body, Uses),
+    include(is_positive_use, Uses, PosUses),
+    include(is_negative_use, Uses, NegUses),
+    compile_positive_uses(RelPlans, PosUses, [], Bound0, FromParts, PosWhereTexts),
+    compile_body_guards(Body, Bound0, Bound, GuardWhereTexts),
+    compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
+    aggregate_group_exprs(Template, Bound, GroupExprs),
+    maplist(quote_ident, ScopeColumns, QuotedScopeColumns),
+    atomic_list_concat(QuotedScopeColumns, ', ', ScopeColumnsSql),
+    ( ScopeColumns == ['_all']
+    -> format(atom(ScopeWhereText), 'EXISTS (SELECT 1 FROM ~w)', [QuotedScopeTable])
+    ;  atomic_list_concat(GroupExprs, ', ', GroupKeySql),
+       format(atom(ScopeWhereText), '(~w) IN (SELECT ~w FROM ~w)',
+              [GroupKeySql, ScopeColumnsSql, QuotedScopeTable])
+    ),
+    append([PosWhereTexts, GuardWhereTexts, NegWhereTexts, [ScopeWhereText]],
+           AllWhereTexts),
+    atomic_list_concat(FromParts, ', ', FromSql),
+    aggregate_select_statement(Head, Template, Bound, FromSql, AllWhereTexts,
+                               SelectStatement),
+    format(atom(InsertScopedSql), 'INSERT OR IGNORE INTO ~w (~w) ~w RETURNING ~w',
+           [QuotedHeadTable, HeadColumnsSql, SelectStatement, HeadColumnsSql]).
+
+% The scope columns and their storage types ride inside the aggsql/6 term
+% itself, so DDL emission needs nothing but the levelstmt (lower_program/2
+% no longer has the rule list in scope by then).
+aggregate_scope_ddl(levelstmt(HeadRef, _, _, _, _,
+                              aggsql(ScopeColumns, ScopeTypes, _, _, _, _)),
+                    [Ddl]) :- !,
+    aggregate_scope_table_name(HeadRef, ScopeTable),
+    quote_ident(ScopeTable, QuotedScopeTable),
+    maplist(quote_ident, ScopeColumns, QuotedScopeColumns),
+    maplist(column_def, QuotedScopeColumns, ScopeTypes, ColumnDefs),
+    atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
+    atomic_list_concat(QuotedScopeColumns, ', ', PrimaryKeySql),
+    format(atom(Ddl),
+           'CREATE TEMP TABLE ~w (~w, PRIMARY KEY (~w)) WITHOUT ROWID',
+           [QuotedScopeTable, ColumnsSql, PrimaryKeySql]).
+aggregate_scope_ddl(_, []).
 
 level_support_sql(RelPlans, HeadRef, Rules,
                   supportsql(ClearSql, SeedSql, UpdateSql, CollectZeroSql,
@@ -711,9 +1088,10 @@ level_recursive_arm(RelPlans, Rule, RecursiveArm) :-
     body_ref_uses(Body, Uses),
     include(is_positive_use, Uses, PosUses),
     include(is_negative_use, Uses, NegUses),
-    compile_positive_uses(RelPlans, PosUses, [], Bound, FromParts, PosWhereTexts),
+    compile_positive_uses(RelPlans, PosUses, [], Bound0, FromParts, PosWhereTexts),
+    compile_body_guards(Body, Bound0, Bound, GuardWhereTexts),
     compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
-    append(PosWhereTexts, NegWhereTexts, AllWhereTexts),
+    append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], AllWhereTexts),
     atomic_list_concat(FromParts, ', ', FromSql),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     head_select_list(Head, Bound, HeadColumns, SelectExprs),
@@ -732,9 +1110,10 @@ level_support_arm(RelPlans, Rule, SupportArm) :-
     body_ref_uses(Body, Uses),
     include(is_positive_use, Uses, PosUses),
     include(is_negative_use, Uses, NegUses),
-    compile_positive_uses(RelPlans, PosUses, [], Bound, FromParts, PosWhereTexts),
+    compile_positive_uses(RelPlans, PosUses, [], Bound0, FromParts, PosWhereTexts),
+    compile_body_guards(Body, Bound0, Bound, GuardWhereTexts),
     compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
-    append(PosWhereTexts, NegWhereTexts, AllWhereTexts),
+    append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], AllWhereTexts),
     atomic_list_concat(FromParts, ', ', FromSql),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     head_select_list(Head, Bound, HeadColumns, AliasedSelectExprs),
@@ -766,20 +1145,117 @@ level_insert_sql(RelPlans, HeadRef, (Head <- Body), InsertSql) :-
     include(is_positive_use, Uses, PosUses),
     include(is_negative_use, Uses, NegUses),
     ( PosUses == [] -> throw(unsupported_construct(level_rule_no_positive_body(HeadRef))) ; true ),
-    compile_positive_uses(RelPlans, PosUses, [], Bound, FromParts, PosWhereTexts),
+    compile_positive_uses(RelPlans, PosUses, [], Bound0, FromParts, PosWhereTexts),
+    compile_body_guards(Body, Bound0, Bound, GuardWhereTexts),
     compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
-    append(PosWhereTexts, NegWhereTexts, AllWhereTexts),
+    append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], AllWhereTexts),
     atomic_list_concat(FromParts, ', ', FromSql),
-    head_select_list(Head, Bound, none, SelectExprs),
-    atomic_list_concat(SelectExprs, ', ', SelectSql),
-    ( AllWhereTexts == []
-    -> format(atom(SelectStatement), 'SELECT ~w FROM ~w', [SelectSql, FromSql])
-    ; atomic_list_concat(AllWhereTexts, ' AND ', WhereSql),
-      format(atom(SelectStatement), 'SELECT ~w FROM ~w WHERE ~w', [SelectSql, FromSql, WhereSql])
+    ( aggregate_head_template(Head, Template)
+    -> aggregate_select_statement(Head, Template, Bound, FromSql, AllWhereTexts, SelectStatement)
+    ;  head_select_list(Head, Bound, none, SelectExprs),
+       atomic_list_concat(SelectExprs, ', ', SelectSql),
+       ( AllWhereTexts == []
+       -> format(atom(SelectStatement), 'SELECT ~w FROM ~w', [SelectSql, FromSql])
+       ; atomic_list_concat(AllWhereTexts, ' AND ', WhereSql),
+         format(atom(SelectStatement), 'SELECT ~w FROM ~w WHERE ~w', [SelectSql, FromSql, WhereSql])
+       )
     ),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
     format(atom(InsertSql), 'INSERT OR IGNORE INTO ~w (~w) ~w', [QuotedHeadTable, HeadColumnsSql, SelectStatement]).
+
+% The one place the body's guard/bind goals turn into SQL, shared by every
+% level-rule statement family (recompute insert, delta arm, refCount arm,
+% recursive-CTE arm) so a guard can never be present in one family and
+% silently absent from another -- the phase-C silent-filter-loss class.
+compile_body_guards(Body, Bound0, Bound, GuardWhereTexts) :-
+    body_guard_goals(Body, GuardGoals),
+    compile_guard_goals(GuardGoals, Bound0, Bound, GuardWhereTexts).
+
+% ═══ aggregate heads ════════════════════════════════════════════════════════
+% engine.pl's aggregate contract, clause by clause (level_eval.pl
+% agg_rule_rows/4 + agg_compute/3), and how each half maps:
+%
+%   GROUPING  "grouping is by the evaluated non-aggregate head columns"
+%             (engine.pl header, q7/q9). group_key/3 collects exactly the
+%             plain(_) template positions' VALUES, so GROUP BY takes the same
+%             plain head expressions, evaluated, in head order.
+%   BAG       the aggregated multiset is `findall(Contribution, solve(Body))`
+%             -- one contribution PER BODY DERIVATION, duplicates kept (q7,
+%             the fail-pre-fix count_is_bag_of_derivations receipt: two hits
+%             on one line count 2, not 1). The FROM/WHERE join produces
+%             exactly those derivations as rows, so `count(*)` is the bag
+%             count. NOT count(<expr>), which skips NULLs, and emphatically
+%             not count(DISTINCT ...), the REJECTED READING q7 names.
+%   EMPTY     `Bag \== []` -- a body with no solutions yields NO row at all.
+%             With GROUP BY that falls out (no input rows, no groups); with
+%             ZERO plain columns SQLite would still return one row carrying
+%             count 0 over the empty set, so HAVING count(*) > 0 is the
+%             guard. Emitted unconditionally: it is a tautology whenever a
+%             GROUP BY is present, and the guard exactly when it is not.
+%   sum       sum_list/2 over integers; SQLite sum() over INTEGER operands
+%             returns INTEGER (measured through the real driver).
+%   min/max   min_list/2 and max_list/2 accept NUMBERS ONLY -- they fail
+%             outright on an atom -- so a non-int aggregated expression is a
+%             named refusal here rather than a silent lexicographic min.
+aggregate_select_statement(Head, Template, Bound, FromSql, AllWhereTexts, SelectStatement) :-
+    Head =.. [_ | Args],
+    aggregate_select_exprs(Template, Args, Bound, SelectExprs),
+    atomic_list_concat(SelectExprs, ', ', SelectSql),
+    aggregate_group_exprs(Template, Bound, GroupExprs),
+    ( AllWhereTexts == []
+    -> WhereClause = ''
+    ;  atomic_list_concat(AllWhereTexts, ' AND ', WhereSql),
+       format(atom(WhereClause), ' WHERE ~w', [WhereSql])
+    ),
+    ( GroupExprs == []
+    -> GroupClause = ''
+    ;  atomic_list_concat(GroupExprs, ', ', GroupSql),
+       format(atom(GroupClause), ' GROUP BY ~w', [GroupSql])
+    ),
+    format(atom(SelectStatement),
+           'SELECT ~w FROM ~w~w~w HAVING count(*) > 0',
+           [SelectSql, FromSql, WhereClause, GroupClause]).
+
+aggregate_select_exprs([], [], _, []).
+aggregate_select_exprs([TemplateArg | RestTemplate], [_Arg | RestArgs], Bound,
+                       [Sql | RestSqls]) :-
+    aggregate_select_expr(TemplateArg, Bound, Sql),
+    aggregate_select_exprs(RestTemplate, RestArgs, Bound, RestSqls).
+
+aggregate_select_expr(plain(Expr), Bound, Sql) :- !,
+    compile_expr(Expr, Bound, Sql, _Type).
+aggregate_select_expr(agg(count, _Expr), _Bound, 'count(*)') :- !.
+aggregate_select_expr(agg(sum, Expr), Bound, Sql) :- !,
+    compile_aggregate_int_operand(sum, Expr, Bound, InnerSql),
+    format(atom(Sql), 'sum(~w)', [InnerSql]).
+aggregate_select_expr(agg(min, Expr), Bound, Sql) :- !,
+    compile_aggregate_int_operand(min, Expr, Bound, InnerSql),
+    format(atom(Sql), 'min(~w)', [InnerSql]).
+aggregate_select_expr(agg(max, Expr), Bound, Sql) :- !,
+    compile_aggregate_int_operand(max, Expr, Bound, InnerSql),
+    format(atom(Sql), 'max(~w)', [InnerSql]).
+aggregate_select_expr(agg(Kind, _), _, _) :-
+    throw(unsupported_construct(aggregate_kind_not_lowered(Kind))).
+
+compile_aggregate_int_operand(Kind, Expr, Bound, Sql) :-
+    compile_expr(Expr, Bound, Sql, Type),
+    ( Type == int
+    -> true
+    ;  throw(unsupported_construct(aggregate_operand_not_int(Kind, Expr, Type)))
+    ).
+
+aggregate_group_exprs(Template, Bound, GroupExprs) :-
+    findall(Sql,
+            ( member(plain(Expr), Template), compile_expr(Expr, Bound, Sql, _Type) ),
+            GroupExprs).
+
+% The head columns an aggregate rule GROUPS BY, as SQL text, reused by the
+% group-scoped incremental path below.
+aggregate_group_positions(Template, Positions) :-
+    findall(Position,
+            ( nth1(Position, Template, TemplateArg), TemplateArg = plain(_) ),
+            Positions).
 
 level_delta_insert_sql(RelPlans, HeadRef, Rules, DeltaInsertSql) :-
     table_name(HeadRef, HeadTable),
@@ -803,17 +1279,17 @@ level_rule_delta_arms(RelPlans, (Head <- Body), DeltaArms) :-
     body_ref_uses(Body, Uses),
     include(is_positive_use, Uses, PosUses),
     include(is_negative_use, Uses, NegUses),
-    level_positive_delta_arms(RelPlans, Head, PosUses, NegUses, PosUses, DeltaArms).
+    level_positive_delta_arms(RelPlans, Head, Body, PosUses, NegUses, PosUses, DeltaArms).
 
-level_positive_delta_arms(_, _, [], _, _, []).
-level_positive_delta_arms(RelPlans, Head, [_ | RestPositions], NegUses, PosUses,
+level_positive_delta_arms(_, _, _, [], _, _, []).
+level_positive_delta_arms(RelPlans, Head, Body, [_ | RestPositions], NegUses, PosUses,
                           [DeltaArm | RestArms]) :-
     length(RestPositions, RemainingCount),
     length(PosUses, PositiveCount),
     Position is PositiveCount - RemainingCount - 1,
     nth0_select(Position, PosUses, DeltaUse, OtherPosUses),
-    level_delta_select_arm(RelPlans, Head, DeltaUse, OtherPosUses, NegUses, DeltaArm),
-    level_positive_delta_arms(RelPlans, Head, RestPositions, NegUses, PosUses, RestArms).
+    level_delta_select_arm(RelPlans, Head, Body, DeltaUse, OtherPosUses, NegUses, DeltaArm),
+    level_positive_delta_arms(RelPlans, Head, Body, RestPositions, NegUses, PosUses, RestArms).
 
 nth0_select(0, [Selected | Rest], Selected, Rest) :- !.
 nth0_select(Index, [Item | Rest], Selected, [Item | More]) :-
@@ -821,15 +1297,27 @@ nth0_select(Index, [Item | Rest], Selected, [Item | More]) :-
     NextIndex is Index - 1,
     nth0_select(NextIndex, Rest, Selected, More).
 
-level_delta_select_arm(RelPlans, Head, use(DeltaRef, DeltaArgs, pos, _),
+% The guard walk runs HERE too, not only in the recompute insert. Omitting it
+% was a real miscompile caught by the sweep, not a theoretical one: with the
+% guard present in level_insert_sql/4 but absent from the delta arm,
+% spine_semantics.pl's dirty_retracts_on_matching_commit correctly retracted
+% dirty("src/lib.rs") at tick 2 and then the tick-3 drain re-inserted it off
+% the frontier with `WorktreeDigest \== TreeDigest` simply not applied --
+% oracle tick 3 is empty, actual added the row back. Every statement family
+% that reproduces a rule body has to reproduce its guards; compile_body_guards/4
+% is the single place that happens.
+level_delta_select_arm(RelPlans, Head, Body, use(DeltaRef, DeltaArgs, pos, _),
                        OtherPosUses, NegUses, DeltaArm) :-
     frontier_table_name(DeltaRef, FrontierTable),
     quote_ident(FrontierTable, QuotedFrontierTable),
     relplan_columns(RelPlans, DeltaRef, DeltaColumns),
-    compile_atom_args(DeltaArgs, DeltaColumns, d0, [], DeltaBound, DeltaWhereParts),
+    relplan_column_types(RelPlans, DeltaRef, DeltaColumnTypes),
+    compile_atom_args(DeltaArgs, DeltaColumns, DeltaColumnTypes, d0, [],
+                      DeltaBound, DeltaWhereParts),
     maplist(where_text, DeltaWhereParts, DeltaWhereTexts),
-    compile_positive_uses(RelPlans, OtherPosUses, DeltaBound, Bound,
+    compile_positive_uses(RelPlans, OtherPosUses, DeltaBound, Bound0,
                           OtherFromParts, OtherWhereTexts),
+    compile_body_guards(Body, Bound0, Bound, GuardWhereTexts),
     compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
     head_select_list(Head, Bound, none, SelectExprs),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
@@ -837,7 +1325,7 @@ level_delta_select_arm(RelPlans, Head, use(DeltaRef, DeltaArgs, pos, _),
     append([DeltaFrom], OtherFromParts, FromParts),
     atomic_list_concat(FromParts, ', ', FromSql),
     append(['d0."_phase" >= 0' | DeltaWhereTexts], OtherWhereTexts, PositiveWhereTexts),
-    append(PositiveWhereTexts, NegWhereTexts, WhereTexts),
+    append([PositiveWhereTexts, GuardWhereTexts, NegWhereTexts], WhereTexts),
     atomic_list_concat(WhereTexts, ' AND ', WhereSql),
     format(atom(DeltaArm), 'SELECT DISTINCT ~w FROM ~w WHERE ~w',
            [SelectSql, FromSql, WhereSql]).
@@ -911,7 +1399,11 @@ delta_ddl(relplan(Ref, _Kind, Columns, _, ColumnTypes),
            'CREATE INDEX ~w ON ~w ("_phase")',
            [QuotedNextFrontierIndexName, QuotedNextFrontierTable]).
 
-support_ddl(RelPlans, levelstmt(HeadRef, _, _, _, _), Ddl) :-
+% An aggregate head has no refCount table (aggsql/6 replaces the refCount
+% family entirely -- level_statement_group/3's own comment), so it gets no
+% refCount DDL either.
+support_ddl(_, levelstmt(_, _, _, _, none, _), []) :- !.
+support_ddl(RelPlans, levelstmt(HeadRef, _, _, _, _, _), [Ddl]) :-
     support_table_name(HeadRef, SupportTable),
     quote_ident(SupportTable, QuotedSupportTable),
     relplan_columns(RelPlans, HeadRef, Columns),
@@ -998,8 +1490,11 @@ lower_program(plan(Name, prog(_Decls, _Rules), RelPlans, ArrivalTargets, RuleOrd
     maplist(edge_statements_for_rule(RelPlans), EdgeRules, EdgeStatementGroups),
     append(EdgeStatementGroups, EdgeStatements),
     level_statement_groups(RelPlans, RuleOrder, LevelStatements),
-    maplist(support_ddl(RelPlans), LevelStatements, SupportDdl),
-    append([RelationDdl, DeltaDdl, SupportDdl], Ddl),
+    maplist(support_ddl(RelPlans), LevelStatements, SupportDdlGroups),
+    maplist(aggregate_scope_ddl, LevelStatements, AggregateScopeDdlGroups),
+    append(SupportDdlGroups, SupportDdl),
+    append(AggregateScopeDdlGroups, AggregateScopeDdl),
+    append([RelationDdl, DeltaDdl, SupportDdl, AggregateScopeDdl], Ddl),
     maplist(delta_statement, RelPlans, DeltaStatements).
 
 arrival_target_relplan(ArrivalTargets, relplan(Ref, _, _, _, _)) :- memberchk(Ref, ArrivalTargets).
@@ -1028,6 +1523,6 @@ boot_seed_statement_for(Initial, RelPlan, Statements) :- boot_seed_statement(Rel
 % Initial-seeded data starts at its real t=0 rows rather than empty.
 boot_level_recompute_statements(LevelStatements, BootStatements) :-
     findall(bootstmt(Sql, []),
-            ( member(levelstmt(_, DeleteSql, InsertSqls, _, _), LevelStatements),
+            ( member(levelstmt(_, DeleteSql, InsertSqls, _, _, _), LevelStatements),
               ( Sql = DeleteSql ; member(Sql, InsertSqls) ) ),
             BootStatements).

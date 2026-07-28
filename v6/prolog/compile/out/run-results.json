@@ -30,7 +30,7 @@
   {
     "name": "log_retraction_rejected",
     "bucket": "run_error",
-    "detail": "retract from log rel 'event'",
+    "detail": "log_retraction_rejected: retract from log rel 'event' (engine.pl retract_from_log)",
     "finalBucket": "final_wrong",
     "finalDetail": "run threw before the final state could be read"
   },
@@ -56,6 +56,48 @@
     "finalDetail": ""
   },
   {
+    "name": "head_expression_evaluates_derived_column",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "comparison_filters_rows",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "range_join_over_arithmetic",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "bind_computes_derived_value_then_comparison_filters",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "interpolation_desugars_to_concat",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "division_truncates_toward_zero_mod_follows_divisor_sign",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "typed_int_without_literal_witness",
     "bucket": "identical",
     "detail": "",
@@ -63,11 +105,18 @@
     "finalDetail": ""
   },
   {
-    "name": "braces_in_head_position",
+    "name": "count_is_bag_of_derivations",
     "bucket": "identical",
     "detail": "",
-    "finalBucket": "final_wrong",
-    "finalDetail": "actual={\"final\":{\"doc_out\":[[\"{}({\\\"fn\\\":\\\":\\\",\\\"args\\\":[\\\"repo\\\",\\\"cli\\\"]})\"]],\"seed\":[[\"cli\"]]}} oracle={\"final\":{\"doc_out\":[[\"obj([|](-(repo,cli),[]))\"]],\"seed\":[[\"cli\"]]}}"
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "sum_min_max_group_by_plain_columns",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "merge_batches_per_tick",
@@ -127,6 +176,13 @@
   },
   {
     "name": "log_stacks_within_tick_and_across_ticks",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "filter_map_is_a_level_rule",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -224,6 +280,20 @@
     "finalDetail": ""
   },
   {
+    "name": "dirty_derives_from_digest_mismatch",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "dirty_retracts_on_matching_commit",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "head_move_replaces_key",
     "bucket": "identical",
     "detail": "",
@@ -232,6 +302,97 @@
   },
   {
     "name": "head_move_flips_current_tree_in_one_tick",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "clean_state_no_diags",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "clean_state_gate_and_exit_zero",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "waiver_range_join_exact_rows",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "over_baseline_diag_exact_rows",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "over_baseline_count_row",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "over_baseline_gate_blocks_commit_only",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "fix_by_waiver_returns_to_clean",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "new_file_diag_at_hit_line_exact_rows",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "new_file_no_exceeded_diag",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "unwrap_aggregate_and_interpolation",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "unwrap_unchanged_file_silent",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "unwrap_below_budget_silent",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "tightened_baseline_catches_regrowth",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",

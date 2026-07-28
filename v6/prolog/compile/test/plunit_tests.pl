@@ -176,7 +176,7 @@ ddl_for_table(Table, Ddl) :-
 test(switch_as_keyed_replace_level_sql) :-
     lowered_for(switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    LevelStatements = [levelstmt(demanded/2, DemandedDelete, [DemandedInsert], _, _), levelstmt(route_view/2, RouteViewDelete, [RouteViewInsert], _, _)],
+    LevelStatements = [levelstmt(demanded/2, DemandedDelete, [DemandedInsert], _, _, none), levelstmt(route_view/2, RouteViewDelete, [RouteViewInsert], _, _, none)],
     DemandedDelete == 'DELETE FROM "demanded"',
     DemandedInsert == 'INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_scope" b0',
     RouteViewDelete == 'DELETE FROM "route_view"',
@@ -198,7 +198,7 @@ test(demand_laziness_incremental_arrival_is_one_batch_statement) :-
 test(demand_laziness_level_sql) :-
     lowered_for(demand_laziness_effect_rows, Lowered),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    LevelStatements = [levelstmt(demanded/2, _, [DemandedInsert], DemandedDeltaInsert, _), levelstmt(effect_call/1, _, [EffectCallInsert], EffectCallDeltaInsert, _)],
+    LevelStatements = [levelstmt(demanded/2, _, [DemandedInsert], DemandedDeltaInsert, _, none), levelstmt(effect_call/1, _, [EffectCallInsert], EffectCallDeltaInsert, _, none)],
     DemandedInsert == 'INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_feed" b0',
     EffectCallInsert == 'INSERT OR IGNORE INTO "effect_call" ("target") SELECT b0."target" FROM "demanded" b0',
     DemandedDeltaInsert ==
@@ -267,7 +267,8 @@ test(acyclic_support_count_statements_are_emitted) :-
     memberchk('CREATE TEMP TABLE "__support_next_effect_call" ("target" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("target")) WITHOUT ROWID', Ddl),
     memberchk(levelstmt(effect_call/1, _, _, _,
                         supportsql(ClearSql, SeedSql, UpdateSql,
-                                   CollectZeroSql, InsertNewSql)),
+                                   CollectZeroSql, InsertNewSql),
+                        none),
               LevelStatements),
     ClearSql == 'DELETE FROM "__support_next_effect_call"',
     once(sub_atom(SeedSql, _, _, _, 'count(*) AS "__support_count"')),
@@ -311,8 +312,43 @@ test(set_delete_arrival_is_one_json_batch_statement) :-
 % lower yet, with a specific term rather than a generic failure -- verify the
 % guard itself fires rather than silently passing through.
 
-test(rejects_aggregate_head, [throws(unsupported_construct(aggregate_head(_)))]) :-
+% EXPRESSION + AGGREGATE LIFT: count/sum/min/max are LOWERED now, so the
+% blanket aggregate refusal is gone and the gate must accept them.
+test(accepts_count_aggregate_head) :-
     Prog = prog([], [ (total(count(X)) <- item(X)) ]),
+    check_supported_subset(Prog).
+
+% json_array/json_object stay refused, and the reason is NOT "not implemented
+% yet": a Prolog list value renders through the shared tick-log encoder
+% (ticklog.pl term_text/2) as right-nested cons text -- [|](4,[|](4,[|](9,[])))
+% -- and json_object as obj([|](-(k,v),[])). Neither is what
+% json_group_array/json_group_object produce, so no ORDER BY pinning makes
+% them byte-identical. Same encoding gap braces_in_head_position already
+% fails on in the final-state leg, which predates this arc.
+test(rejects_json_array_aggregate_head,
+     [throws(unsupported_construct(aggregate_head(_)))]) :-
+    Prog = prog([], [ (bag(json_array(X)) <- item(X)) ]),
+    check_supported_subset(Prog).
+
+test(rejects_json_object_aggregate_head,
+     [throws(unsupported_construct(aggregate_head(_)))]) :-
+    Prog = prog([], [ (doc(json_object(Key, Value)) <- pair(Key, Value)) ]),
+    check_supported_subset(Prog).
+
+% An aggregate whose body reads its own head: engine.pl forces Gap=1 for
+% every body ref of an aggregate head (level_eval.pl rule_body_constraint/4),
+% so the oracle throws not_stratified. Refused by a precise name here.
+test(rejects_self_reading_aggregate_head,
+     [throws(unsupported_construct(aggregate_head_reads_itself(total/1)))]) :-
+    Prog = prog([], [ (total(count(X)) <- total(X)) ]),
+    check_supported_subset(Prog).
+
+% A comparison under not/1 would be silently dropped: compile_negative_uses/4
+% renders a negated atom as a bare NOT EXISTS over rel columns and never sees
+% the conjunction's other goals.
+test(rejects_guard_under_negation,
+     [throws(unsupported_construct(negated_guard_goal(_, _)))]) :-
+    Prog = prog([], [ (flagged(Name) <- item(Name, Size), not((budget(Name, Cap), Size > Cap))) ]),
     check_supported_subset(Prog).
 
 % PHASE C2 RULING 2 renamed this refusal from the blanket edge_body_shape to
