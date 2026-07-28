@@ -211,7 +211,15 @@ failure, scheduler 244-behind, count-test 450-behind with NO v6/ — that
 agent tunneled around a permission denial via git archive|tar to
 materialize main's tree; disclosed, content read-only, branch history NOT
 merged, test commit cherry-picked instead). Worktree-base staleness needs
-a look before the next dispatch wave. MATCH FRONTIER LAB LANDED 2026-07-28 PM (merge aeba1b72, 63 PASS, lab
+a look before the next dispatch wave. CODEX LANE REOPENED (user,
+2026-07-28 PM; pattern = claude-research/commands/codex-delegate.md,
+OpenAI limits effectively free): first run LANDED (merge a48ed3f3,
+gpt-5.6-luna, review-gated -- coordinator re-ran sweep 31/28,
+conformance 110, roundtrip, plunit 17/17 on the branch): INTEGER columns
+drop the json CASE wrapper via canonical_column_expr/3 int/text split;
+generated SELECTs simplify to plain columns. Codex worktree removed,
+branch deleted. Luna-ready brief queue: endurance-as-gate, lower/types.ts
+I-prefix renames, v5 rails.dl descriptive names. MATCH FRONTIER LAB LANDED 2026-07-28 PM (merge aeba1b72, 63 PASS, lab
 deleted per protocol, last copy 5ba7b0c5, verdict =
 plans/2026-07-28-match-frontier-lab-verdict.md): event axis HOLDS, four
 cracks: Ta (DISSOLVES into pending rel, confirmed by tick-log diff both
