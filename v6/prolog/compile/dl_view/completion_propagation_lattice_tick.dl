@@ -8,5 +8,5 @@ rel open_inner(outer_id, inner_id) key(1, 2).
 
 closed_outer(OuterId) <+ end_a_signal(OuterId), end_b_signal(OuterId), open_outer(OuterId).
 live_outer(OuterId) <- open_outer(OuterId), not(closed_outer(OuterId)).
-closed_inner(OuterId, InnerId) <+ only(end_c_signal(InnerId)), open_inner(OuterId, InnerId).
+closed_inner(OuterId, InnerId) <+ end_c_signal(InnerId), latest(open_inner(OuterId, InnerId)).
 live_inner(OuterId, InnerId) <- open_inner(OuterId, InnerId), live_outer(OuterId), not(closed_inner(OuterId, InnerId)).

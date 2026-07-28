@@ -53,13 +53,17 @@ this reason -- never Prolog's own `~q` "quote only if necessary" -- see
 | `(Head <- Body)` level rule | `Head <- Body.` | `DlRule` (`dl.langium:66-67`) -- DIRECT MATCH | |
 | `(Head <+ Body)` edge rule | `Head <+ Body.` | GAP(EXT) -- `DlRule` has only one arrow (`<-`); no edge/level distinction exists in the grammar at all | |
 | bare fact (no body) | `Head.` | `DlRule`'s optional body (`dl.langium:66-67`) -- DIRECT MATCH | `Body` becomes `true` |
-| `only(Atom)` / `only(departed(Atom))` | `only(Atom)` / `only(departed(Atom))` | GAP(EXT) -- no marker of this kind exists; the grammar's `?` (`ProbeItem`) is an unrelated construct (effect-firing, not trigger-narrowing) | function-call-shaped, parsed via balanced-paren extraction then a dedicated sub-grammar |
+| bare positive atom / `latest(Atom)` | bare positive atom / `latest(Atom)` | GAP(EXT) -- no trigger/sample distinction exists in the grammar | bare atoms are edge triggers; `latest(Atom)` is a sampled positive read and is never a trigger |
+| `combine(A, B, ...)` in an edge body | bare `A, B, ...` | GAP(EXT) | parser sugar; desugars to a comma conjunction before analysis |
+| `next(A)` in an edge body | bare `A` | GAP(EXT) | parser sugar for the ruled default arm |
+| `zip(A, B)` in an edge body | `zip(A, B)` | GAP(EXT) | parses and prints; compiler throws `unsupported_construct(zip)`; future lowering uses the min-ordinal pending-queue pattern in the scopes fixtures |
+| `unsubscribe(A)`, `complete(A)`, `subscribe(A)`, `error(A)` | same wrapper spelling | GAP(EXT) | parses and prints; compiler throws `unsupported_construct(lifecycle_arm(Name))` |
 | `pre(Atom)` | `pre(Atom)` | GAP(EXT) | |
-| `departed(Atom)` (standalone) | `departed(Atom)` | GAP(EXT) | |
+| `finalize(Atom)` (standalone) | `finalize(Atom)` | GAP(EXT) | departure trigger; the ARCH construct name remains `departure_form` |
 | `now(Var)` | `now(Var)` | GAP(EXT) | |
 | `decode(Expr, Pattern)` | `decode(Expr, Pattern)` | GAP(EXT) | `Pattern` reuses the general term grammar (vars, wildcards, nested compounds, braces) |
 | `json_each(Expr, Elem)` | `json_each(Expr, Elem)` | GAP(EXT) | |
-| `not(Goal)` | `not(Goal)` (canonical print); `!rel(args)` accepted on **input** as a legacy alias | `NegItem` (`dl.langium:112-113`) is the grammar's own negation, but it only wraps a bare relation atom -- it cannot spell `not(pre(X))` or `not(departed(X))`, both real corpus shapes, so it is SUPERSEDED here rather than extended | printer never emits `!`; parser accepts both spellings |
+| `not(Goal)` | `not(Goal)` (canonical print); `!rel(args)` accepted on **input** as a legacy alias | `NegItem` (`dl.langium:112-113`) is the grammar's own negation, but it only wraps a bare relation atom -- it cannot spell `not(pre(X))` or `not(finalize(X))`, both real corpus shapes, so it is SUPERSEDED here rather than extended | printer never emits `!`; parser accepts both spellings |
 | `Var := Expr` | `Var := Expr` | GAP(EXT) -- no assignment operator anywhere in the grammar | |
 | `Var is Expr` | `Var is Expr` | GAP(EXT) | present in the reference evaluator's vocabulary (`expressions.pl` header comment) but zero corpus occurrences; parsed defensively, never exercised by a fixture |
 | comparisons `< =< > >= \==` | same operator text, printed from the term's own functor | GAP(EXT) widening of `CompareItem` (`dl.langium:119-121`), which only allows `Var op Literal` | this grammar allows an arbitrary arithmetic expression on EITHER side (`Shared * 100 / Union >= 40`); alias table below |

@@ -4,4 +4,4 @@ rel response(args, salt, payload) log keep(all).
 rel demand(args, salt) set key(1, 2).
 
 demand(Args, Salt) <+ watch_request(_, Args, Salt).
-response(Args, Salt, Payload) <+ only(fill(Args, Salt, Payload)), demand(Args, Salt).
+response(Args, Salt, Payload) <+ fill(Args, Salt, Payload), latest(demand(Args, Salt)).

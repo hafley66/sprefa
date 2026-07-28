@@ -96,10 +96,10 @@ braces_decode(Key: Pattern, Pairs) :-
 solve(true, _) :- !.
 solve((Left, Right), Ctx) :- !, solve(Left, Ctx), solve(Right, Ctx).
 solve(not(Goal), Ctx) :- !, \+ solve(Goal, Ctx).
-solve(only(Atom), Ctx) :- !, Ctx = ctx(Visible, _, _), member(Atom, Visible).
+solve(latest(Atom), Ctx) :- !, Ctx = ctx(Visible, _, _), member(Atom, Visible).
 solve(pre(Atom), Ctx) :- !, Ctx = ctx(_, PreState, _), member(Atom, PreState).
 solve(now(Tick), Ctx) :- !, Ctx = ctx(_, _, Tick).
-solve(departed(_), _) :- !, fail.   % satisfiable only as a trigger (r4)
+solve(finalize(_), _) :- !, fail.   % satisfiable only as a trigger (r4)
 solve(Variable := Expr, _) :- !, eval_expr(Expr, Value), Variable = Value.
 solve(Variable is Expr, _)  :- !, eval_expr(Expr, Value), Variable = Value.
 solve(decode(Expr, Pattern), _) :- !,
@@ -112,8 +112,8 @@ solve(Atom, Ctx) :- Ctx = ctx(Visible, _, _), member(Atom, Visible).
 body_atoms((Left, Right), Atoms) :- !,
     body_atoms(Left, LeftAtoms), body_atoms(Right, RightAtoms),
     append(LeftAtoms, RightAtoms, Atoms).
-body_atoms(only(Atom), [Atom]) :- !.
-body_atoms(departed(_), []) :- !.
+body_atoms(latest(_), []) :- !.
+body_atoms(finalize(_), []) :- !.
 body_atoms(pre(_), []) :- !.
 body_atoms(not(_), []) :- !.
 body_atoms(now(_), []) :- !.
@@ -130,7 +130,6 @@ substitute_goal((Left0, Right0), Target, (Left, Right)) :- !,
     substitute_goal(Left0, Target, Left),
     substitute_goal(Right0, Target, Right).
 substitute_goal(Goal, Target, true) :- Goal == Target, !.
-substitute_goal(only(Inner), Target, true) :- Inner == Target, !.
 substitute_goal(Goal, _, Goal).
 
 % Head values are expressions (named-column rule); evaluate after the joins.

@@ -75,7 +75,7 @@
 % Args alone, where a new value at the same key DOES replace).
 %
 % The canned fill/response pair shows "Edge rules route fills": `response`
-% fires only on a `fill` occurrence (only/1), never on the demand carry,
+% fires on a bare `fill` occurrence, never on the latest demand carry,
 % so two watchers still cost exactly one routed fill.
 
 fixture(identical_demand_dedups,
@@ -84,7 +84,7 @@ fixture(identical_demand_dedups,
          kind(response/3, log),      keep(response/3, all),
          kind(demand/2, set), keyed(demand/2, [1, 2]) ],
        [ (demand(Args, Salt) <+ watch_request(_, Args, Salt)),
-         (response(Args, Salt, Payload) <+ only(fill(Args, Salt, Payload)), demand(Args, Salt)) ]),
+         (response(Args, Salt, Payload) <+ fill(Args, Salt, Payload), latest(demand(Args, Salt))) ]),
   [],
   [ [ +watch_request(alice, src, sha_aaa), +watch_request(bob, src, sha_aaa) ],
     [ +fill(src, sha_aaa, payload_one) ] ],

@@ -4,8 +4,8 @@ rel closed(session_id, tab_id) log keep(all).
 rel tab_row(tab_id, body) set.
 rel open_tab(session_id, tab_id) key(1, 2).
 
-open_tab(SessionId, TabId) <+ only(open_request(SessionId, TabId)).
-closed(SessionId, TabId) <+ only(close_request(SessionId, TabId)).
+open_tab(SessionId, TabId) <+ open_request(SessionId, TabId).
+closed(SessionId, TabId) <+ close_request(SessionId, TabId).
 live_tab(SessionId, TabId) <- open_tab(SessionId, TabId), not(closed(SessionId, TabId)).
 demanded(tab(TabId), SessionId) <- live_tab(SessionId, TabId).
 tab_view(TabId, Body) <- demanded(tab(TabId), _), tab_row(TabId, Body).

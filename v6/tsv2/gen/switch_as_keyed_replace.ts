@@ -7,7 +7,7 @@
  *          kind(route_row/2, set),
  *          keyed(open_scope/2, [1]) ],
  *        [ (open_scope(SessionId, route_data(RouteId)) <+
- *             only(route_change(SessionId, RouteId))),
+ *             route_change(SessionId, RouteId)),
  *          (demanded(Target, SessionId) <- open_scope(SessionId, Target)),
  *          (route_view(RouteId, Body) <-
  *             demanded(route_data(RouteId), _), route_row(RouteId, Body)) ]),
@@ -119,7 +119,7 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 // ── the edge rule: open_scope(SessionId, route_data(RouteId)) <+
-//    only(route_change(SessionId, RouteId)). Trigger set = this tick's fresh
+//    route_change(SessionId, RouteId). Trigger set = this tick's fresh
 //    route_change arrivals, in arrival order; keyed replace on session_id,
 //    later write for the same key wins (engine.pl apply_edge_writes). ───────
 

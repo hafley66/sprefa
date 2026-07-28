@@ -3,4 +3,4 @@ rel stage_one(item) log keep(all).
 rel stage_two(item) log keep(all).
 
 stage_one(Item) <+ source_ev(Item).
-stage_two(Item) <+ only(stage_one(Item)).
+stage_two(Item) <+ stage_one(Item).

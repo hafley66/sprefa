@@ -3,4 +3,4 @@ rel latest(key, value) key(1).
 rel replaced_value(key, old_value) log keep(all).
 
 latest(Key, Value) <+ from_poll(Key, Value).
-replaced_value(Key, OldValue) <+ departed(latest(Key, OldValue)).
+replaced_value(Key, OldValue) <+ finalize(latest(Key, OldValue)).

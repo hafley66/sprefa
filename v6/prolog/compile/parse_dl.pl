@@ -1,7 +1,7 @@
 % parse_dl.pl : phase D parser. Plain SWI-Prolog DCG-and-recursive-descent
 % over codes, .dl TEXT in, the fixture term form out: prog(Decls, Rules) with
 % the SAME operators the conformance fixtures use (<-, <+, :=) and the same
-% wrappers (only/1, not/1, kind/2, keyed/2, keep/2, pre/1, departed/1, now/1,
+% wrappers (latest/1, not/1, kind/2, keyed/2, keep/2, pre/1, finalize/1, now/1,
 % decode/2, json_each/2). No consult of generated text, no new deps.
 %
 % Variable identity survives parsing: one Vars accumulator (Name-Var pairs)
@@ -16,7 +16,7 @@
 %
 % TWO SURFACE DIALECTS accepted by ONE grammar (no separate code paths):
 %   (a) the tsv2 "term form made visible" spelling this file's own printer
-%       (print_dl.pl) emits into dl_view/*.dl -- <-/<+ arrows, only/pre/
+%       (print_dl.pl) emits into dl_view/*.dl -- <-/<+ arrows, latest/pre/
 %       departed/now/decode/json_each/:= as function-call-shaped body items,
 %       arithmetic infix, `rel Name(cols) log|set [keep(...)] [key(...)].`
 %       decls.
@@ -502,15 +502,25 @@ body(Body, Vars0, Vars, S0, S) :-
     ).
 
 % ═══ one body item ═══════════════════════════════════════════════════════════
-% Order: keyword-shaped calls first (only/departed/pre/now/decode/json_each/
+% Order: keyword-shaped calls first (latest/departed/pre/now/decode/json_each/
 % not), then bare `true`, then bind (:=/is), then comparison, then dialect-B
 % prefix negation (!rel(args)), then a plain/probe/mutation relation atom.
 
-body_item(only(Inner), Vars0, Vars, S0, S) :-
-    keyword_call(only, InnerCodes, S0, S), !,
-    parse_only_inner(InnerCodes, Inner, Vars0, Vars).
-body_item(departed(Atom), Vars0, Vars, S0, S) :-
-    keyword_call(departed, InnerCodes, S0, S), !,
+body_item(latest(Atom), Vars0, Vars, S0, S) :-
+    keyword_call(latest, InnerCodes, S0, S),
+    parse_full(rel_atom_term(Atom, Vars0, Vars), InnerCodes), !.
+body_item(Body, Vars0, Vars, S0, S) :-
+    keyword_call(combine, InnerCodes, S0, S),
+    parse_atom_list(InnerCodes, Atoms, Vars0, Vars),
+    combine_body(Atoms, Body), !.
+body_item(Atom, Vars0, Vars, S0, S) :-
+    keyword_call(next, InnerCodes, S0, S),
+    parse_full(rel_atom_term(Atom, Vars0, Vars), InnerCodes), !.
+body_item(zip(Left, Right), Vars0, Vars, S0, S) :-
+    keyword_call(zip, InnerCodes, S0, S),
+    parse_atom_list(InnerCodes, [Left, Right], Vars0, Vars), !.
+body_item(finalize(Atom), Vars0, Vars, S0, S) :-
+    keyword_call(finalize, InnerCodes, S0, S), !,
     parse_full(rel_atom_term(Atom, Vars0, Vars), InnerCodes).
 body_item(pre(Atom), Vars0, Vars, S0, S) :-
     keyword_call(pre, InnerCodes, S0, S), !,
@@ -527,6 +537,11 @@ body_item(json_each(Expr, Elem), Vars0, Vars, S0, S) :-
 body_item(not(Inner), Vars0, Vars, S0, S) :-
     keyword_call(not, InnerCodes, S0, S), !,
     parse_full(body_item(Inner, Vars0, Vars), InnerCodes).
+body_item(Item, Vars0, Vars, S0, S) :-
+    lifecycle_arm_name(Name),
+    keyword_call(Name, InnerCodes, S0, S),
+    parse_full(rel_atom_term(Atom, Vars0, Vars), InnerCodes), !,
+    Item =.. [Name, Atom].
 body_item(true, Vars, Vars, S0, S) :-
     word(`true`, S0, S), !.
 body_item(Item, Vars0, Vars, S0, S) :-
@@ -544,7 +559,7 @@ body_item(Item, Vars0, Vars, S0, S) :-
 % the parens (unparsed), so each specific handler above re-parses that inner
 % text with its own sub-grammar. Consuming as balanced-paren text first
 % (rather than parsing args in place) sidesteps the fact that `only`'s inner
-% shape (departed(Atom) or a bare atom) differs from `decode`'s (two
+% shape (finalize(Atom) or a bare atom) differs from `decode`'s (two
 % comma-separated exprs).
 keyword_call(Keyword, InnerCodes, S0, S) :-
     atom_codes(Keyword, KeywordCodes),
@@ -575,19 +590,6 @@ rel_atom_term(Term, Vars0, Vars, S0, S) :-
     args_positional(Args, Vars0, Vars, S3, S4), ws0(S4, S5), lit_dcg(`)`, S5, S),
     Term =.. [Name | Args].
 
-parse_only_inner(Codes, Inner, Vars0, Vars) :-
-    skip_ws(Codes, Codes1),
-    ( try_departed_wrapper(Codes1, InnerCodes, Rest), skip_ws(Rest, [])
-    -> parse_full(rel_atom_term(Atom, Vars0, Vars), InnerCodes), Inner = departed(Atom)
-    ; parse_full(rel_atom_term(Atom, Vars0, Vars), Codes1), Inner = Atom
-    ).
-
-try_departed_wrapper(Codes0, InnerCodes, Rest) :-
-    word(`departed`, Codes0, C1),
-    skip_ws(C1, C2),
-    lit_dcg(`(`, C2, C3),
-    balanced_parens(C3, InnerCodes, Rest).
-
 parse_two_args(Codes, A, B, Vars0, Vars) :-
     skip_ws(Codes, Codes1),
     expr(A, Vars0, Vars1, Codes1, Rest1),
@@ -597,6 +599,26 @@ parse_two_args(Codes, A, B, Vars0, Vars) :-
     expr(B, Vars1, Vars, Rest4, Rest5),
     skip_ws(Rest5, Rest6),
     ( Rest6 == [] -> true ; throw(dl_parse_error(trailing_input(Rest6))) ).
+
+parse_atom_list(Codes, Atoms, Vars0, Vars) :-
+    parse_full(atom_list(Atoms, Vars0, Vars), Codes).
+
+atom_list([Atom | Rest], Vars0, Vars, S0, S) :-
+    rel_atom_term(Atom, Vars0, Vars1, S0, S1),
+    ws0(S1, S2),
+    ( lit_dcg(`,`, S2, S3)
+    -> ws0(S3, S4), atom_list(Rest, Vars1, Vars, S4, S)
+    ; Rest = [], Vars = Vars1, S = S2
+    ).
+
+combine_body([Atom], Atom) :- !.
+combine_body([Left | Rest], Body) :-
+    combine_body(Rest, Right), Body = (Left, Right).
+
+lifecycle_arm_name(unsubscribe).
+lifecycle_arm_name(complete).
+lifecycle_arm_name(subscribe).
+lifecycle_arm_name(error).
 
 args_positional([], Vars, Vars, S0, S) :- ws0(S0, S1), peek(0'), S1, S), !.
 args_positional([Arg | Rest], Vars0, Vars, S0, S) :-

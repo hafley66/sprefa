@@ -104,7 +104,7 @@ fixtures.
 
 | construct | fixtures blocked | example |
 |---|---:|---|
-| edge rule with `only(trigger)` **plus an extra guard goal** (`not/1`, `pre/1`, `now/1`, `decode/2`, `stars_of/2`... mixed in) | 21 | `only(demand_row(...)), decode(Response, fresh(_, Body)), stars_of(Body, Stars)` |
+| edge rule with a bare trigger **plus an extra guard goal** (`not/1`, `pre/1`, `now/1`, `decode/2`, `stars_of/2`... mixed in) | 21 | `demand_row(...), decode(Response, fresh(_, Body)), stars_of(Body, Stars)` |
 | **comparison operators** in a level body (`<`, `=<`, `>`, `>=`, `==`, `\==`) | 14 | `Union > 0, Shared*100/Union >= 40` |
 | **aggregate head** (`count`, `sum`, `min`, `max`, `json_array`, `json_object` as GROUP BY) | 9 | `hits(Repo, count(Item))` |
 | unmarked edge trigger needing `pre/1` (a same-tick fold chain) | 8 | `increment(Name, _), pre(counter(Name, Total)), Next := Total + 1` |
@@ -112,7 +112,7 @@ fixtures.
 | unmarked edge trigger needing `now/1` (the current tick number) | 5 | `worktree_edit(Path, Digest), now(Tick)` |
 | **JSON destructuring** (`decode/2`, `json_each/2`) in a level body | 4 | `decode(Doc, {name: Name})` |
 | unmarked edge trigger referencing a **derived** (edge- or level-headed) ref | 2 | `stage_two(Item) <+ stage_one(Item)`, `stage_one` itself edge-headed |
-| unmarked edge trigger needing `departed/1` | 2 | `departed(latest(Key, OldValue))` |
+| edge trigger needing `finalize/1` | 2 | `finalize(latest(Key, OldValue))` |
 | **arithmetic in a rule head** (`+`,`-`,`*`,`/`,`mod` as a head argument, not evaluated) | 2 | `jaccard(L, R, Shared*100/Union)` |
 | edge-derived head column **type mismatch** (value flows from an int-typed source column into a text-typed head column) | 2 | `xref(FromSpanId, ...) <+ pin_extracted(FromSpanId, ...)`, `xref`'s own column never sees a literal int |
 | `keyed(Ref, _)` on a **Log rel** | 1 | `keyed(latest/2, [1])` where `latest/2` is `kind(latest/2, log)` |
@@ -466,8 +466,8 @@ entry 5 and Finding 7's resolution.
 7. **RESOLVED by PHASE C2 RULING 2 (commit `tsv2 C2b`), with one residual
    stop-and-report.** Why the 48-fixture unmarked-trigger bucket was
    originally not attempted: an edge rule body that is a bare atom
-   (`ping(Item)`, no `only(...)` wrapper) looks structurally identical to
-   `only(Atom)` for a SINGLE-atom body, but `engine_core.pl`'s own paired
+   (`ping(Item)`, a bare trigger) looks structurally identical to
+   a single trigger atom for a SINGLE-atom body, but `engine_core.pl`'s own paired
    fixtures (`marker_stops_backlog_replay` vs `unmarked_edge_replays_backlog`)
    prove the semantics genuinely differ once a SECOND body goal is present:
    an unmarked body atom is *also* a trigger candidate, so a late arrival on
@@ -481,7 +481,7 @@ entry 5 and Finding 7's resolution.
    OWN `arrivals` parameter, which is always `[]` on a drain tick, so a
    chained edge trigger off ANOTHER edge rule's head can never fire.
    Confirmed WRONG, not theorized: `edge_chain_hops_tick_per_stage`
-   (`stage_two(Item) <+ only(stage_one(Item))`, `stage_one` itself
+   (`stage_two(Item) <+ stage_one(Item)`, `stage_one` itself
    `<+ source_ev(Item)`) compiled clean and produced an empty tick 2 where
    the oracle shows `+stage_two(alpha)`, once this ruling lifted the
    unmarked-shape refusal that had masked the gap the whole time (no
@@ -566,7 +566,7 @@ entry 5 and Finding 7's resolution.
       `json_object` as GROUP BY) — `level_eval.pl`'s own aggregate handling
       was not read closely enough this pass to judge lowering-ambiguity;
       flagged as the next research target, not attempted.
-    - `only(trigger) + extra guard goal` (21 fixtures, up from 9 now that
+    - `bare trigger + extra guard goal` (21 fixtures, up from 9 now that
       earlier-blocking unmarked edge rules no longer mask them: `not/1`,
       `pre/1`, `now/1`, `decode/2` + a follow-on goal mixed into an
       otherwise-marked edge body) is likely the next highest-value target

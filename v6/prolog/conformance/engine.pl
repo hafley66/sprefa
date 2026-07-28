@@ -15,9 +15,8 @@
 % 2. Trigger occurrences for edge rules = carry-in from the previous tick
 %    (q4 next_tick), then outside arrivals, then level rows newly true after
 %    arrivals. Each occurrence fires edge rules ONE AT A TIME in order.
-% 3. A body with only/1 markers fires on marked atoms only; an unmarked body
-%    keeps the any-atom rule (q6 explicit_marker; the first stage of every
-%    chain keeps any-atom).
+% 3. Bare positive body atoms are trigger sources; latest/1 samples the
+%    current visible relation without becoming a trigger source.
 % 4. pre(Atom) reads the EVOLVING pre-state: the persistent store as writes
 %    so far this tick left it, previous tick's level rows frozen. First
 %    occurrence therefore reads T-1; later occurrences chain (r1 rider).
@@ -108,8 +107,8 @@ check_program(prog(Decls, Rules)) :-
            throw(missing_retention(Ref))),
     forall(( member((Head <+ _), Rules), aggregate_head(Head, _, _) ),
            throw(aggregate_in_edge_head)),
-    forall(( member((_ <- Body), Rules), body_departed_ref(Body, Ref2) ),
-           throw(departed_in_level_rule(Ref2))).
+    forall(( member((_ <- Body), Rules), body_finalize_ref(Body, Ref2) ),
+           throw(finalize_in_level_rule(Ref2))).
 
 % ═══ the store ══════════════════════════════════════════════════════════════
 % srow(Row) for Set rels; lrow(st(Tick, Seq), Row) for Log rels. Level views
@@ -129,52 +128,50 @@ log_stamps(Store, Ref, Stamps) :-
             ( member(lrow(Stamp, Row), Store), rel_ref(Row, Ref) ), Stamps0),
     msort(Stamps0, Stamps).
 
-% q6: markers narrow the trigger set; an unmarked body keeps any-atom.
-% r4: departed(Atom) is a DEPARTURE trigger position; it fires on a Set/level
+% Bare positive atoms are trigger sources; latest(Atom) is a sampled read.
+% r4: finalize(Atom) is a DEPARTURE trigger position; it fires on a Set/level
 % row's -delta arriving as a next-tick occurrence, and is never satisfiable
 % as a read (the row is gone). Items are arrival(Atom) | departure(Atom).
 trigger_items(Body, Items) :-
-    marked_items(Body, Marked),
-    ( Marked == [] -> unmarked_items(Body, Items) ; Items = Marked ).
+    trigger_items_(Body, Items).
 
-marked_items((Left, Right), Items) :- !,
-    marked_items(Left, LeftItems), marked_items(Right, RightItems),
+trigger_items_((Left, Right), Items) :- !,
+    trigger_items_(Left, LeftItems), trigger_items_(Right, RightItems),
     append(LeftItems, RightItems, Items).
-marked_items(only(departed(Atom)), [departure(Atom)]) :- !.
-marked_items(only(Atom), [arrival(Atom)]) :- !.
-marked_items(_, []).
-
-unmarked_items((Left, Right), Items) :- !,
-    unmarked_items(Left, LeftItems), unmarked_items(Right, RightItems),
-    append(LeftItems, RightItems, Items).
-unmarked_items(departed(Atom), [departure(Atom)]) :- !.
+trigger_items_(finalize(Atom), [departure(Atom)]) :- !.
+trigger_items_(latest(_), []) :- !.
+trigger_items_(not(_), []) :- !.
+trigger_items_(pre(_), []) :- !.
+trigger_items_(now(_), []) :- !.
+trigger_items_(true, []) :- !.
+trigger_items_(_ := _, []) :- !.
+trigger_items_(_ is _, []) :- !.
+trigger_items_(decode(_, _), []) :- !.
+trigger_items_(json_each(_, _), []) :- !.
 % maplist, NEVER findall: findall copies its template, which would sever the
 % trigger atom from the body and let solve rejoin over the whole store.
-unmarked_items(Atom, Items) :-
-    body_atoms(Atom, Atoms),
-    maplist(wrap_arrival, Atoms, Items).
+trigger_items_(Atom, [arrival(Atom)]).
 
 wrap_arrival(Atom, arrival(Atom)).
 
 % An occurrence either is a departure (dep(Row) payload) matching a
-% departure item, with the ground departed goal substituted away before
+% departure item, with the ground finalize goal substituted away before
 % solving (the row is absent from Visible), or a plain arrival.
 occurrence_trigger(dep(Row), Items, Body0, Body) :- !,
     member(departure(Atom), Items), Atom = Row,
-    substitute_goal(Body0, departed(Row), Body).
+    substitute_goal(Body0, finalize(Row), Body).
 occurrence_trigger(Row, Items, Body, Body) :-
     member(arrival(Atom), Items), Atom = Row.
 
 
 listened_departure_refs(Rules, Refs) :-
-    findall(Ref, ( member((_ <+ Body), Rules), body_departed_ref(Body, Ref) ),
+    findall(Ref, ( member((_ <+ Body), Rules), body_finalize_ref(Body, Ref) ),
             Refs0),
     sort(Refs0, Refs).
 
-body_departed_ref((Left, Right), Ref) :-
-    ( body_departed_ref(Left, Ref) ; body_departed_ref(Right, Ref) ).
-body_departed_ref(only(departed(Atom)), Ref) :- rel_ref(Atom, Ref).
-body_departed_ref(departed(Atom), Ref) :- rel_ref(Atom, Ref).
+body_finalize_ref((Left, Right), Ref) :-
+    ( body_finalize_ref(Left, Ref) ; body_finalize_ref(Right, Ref) ).
+body_finalize_ref(finalize(Atom), Ref) :- rel_ref(Atom, Ref).
 
 % ═══ arrivals ═══════════════════════════════════════════════════════════════
 
@@ -303,7 +300,7 @@ tick(Prog, state(Tick, Store0, PrevLevel, PrevAll), CarryIn, OutsideArrivals,
     dedupe_keep_order(CarryCandidates0, CarryCandidates),
     findall(Row, ( member(Row, CarryCandidates), memberchk(+Row, Deltas) ), ArrivalCarry),
     % r4: a -delta of a LISTENED rel is a departure occurrence at T+1. Only
-    % rels some rule actually binds with departed/1 carry, so programs
+    % rels some rule actually binds with finalize/1 carry, so programs
     % without departure rules never mint drain ticks for retractions.
     listened_departure_refs(Rules, DepartureRefs),
     findall(dep(Row),

@@ -10,7 +10,7 @@
 % already-owned module, not a duplicate implementation -- the repo style law
 % against reinventing a mining pass that already exists elsewhere).
 %
-% Syntax choices here are canonical per SYNTAX.md: `<-`/`<+` arrows, only/
+% Syntax choices here are canonical per SYNTAX.md: `<-`/`<+` arrows, latest/
 % pre/departed/now/decode/json_each/:= as function-call-shaped body items,
 % infix arithmetic (precedence-safe, parens added only where flattening
 % would change meaning), atom literals single-quoted (every bare identifier
@@ -123,15 +123,29 @@ print_body((Left, Right), Bindings, Text) :- !,
 print_body(Item, Bindings, Text) :-
     print_body_item(Item, Bindings, Text).
 
-print_body_item(only(departed(Atom)), Bindings, Text) :- !,
+print_body_item(latest(Atom), Bindings, Text) :- !,
     print_term(Atom, Bindings, 0, top, AtomText),
-    format(atom(Text), "only(departed(~w))", [AtomText]).
-print_body_item(only(Atom), Bindings, Text) :- !,
+    format(atom(Text), "latest(~w)", [AtomText]).
+print_body_item(zip(Left, Right), Bindings, Text) :- !,
+    print_term(Left, Bindings, 0, top, LeftText),
+    print_term(Right, Bindings, 0, top, RightText),
+    format(atom(Text), "zip(~w, ~w)", [LeftText, RightText]).
+print_body_item(Term, Bindings, Text) :-
+    compound(Term), Term =.. [combine | [First | Rest]], !,
+    print_term(First, Bindings, 0, top, FirstText),
+    print_combine_tail(Rest, Bindings, RestText),
+    format(atom(Text), "combine(~w~w)", [FirstText, RestText]).
+print_body_item(next(Atom), Bindings, Text) :- !,
     print_term(Atom, Bindings, 0, top, AtomText),
-    format(atom(Text), "only(~w)", [AtomText]).
-print_body_item(departed(Atom), Bindings, Text) :- !,
+    format(atom(Text), "next(~w)", [AtomText]).
+print_body_item(Term, Bindings, Text) :-
+    Term =.. [Name, Atom],
+    lifecycle_arm_name(Name), !,
     print_term(Atom, Bindings, 0, top, AtomText),
-    format(atom(Text), "departed(~w)", [AtomText]).
+    format(atom(Text), "~w(~w)", [Name, AtomText]).
+print_body_item(finalize(Atom), Bindings, Text) :- !,
+    print_term(Atom, Bindings, 0, top, AtomText),
+    format(atom(Text), "finalize(~w)", [AtomText]).
 print_body_item(pre(Atom), Bindings, Text) :- !,
     print_term(Atom, Bindings, 0, top, AtomText),
     format(atom(Text), "pre(~w)", [AtomText]).
@@ -200,6 +214,17 @@ print_term(Term, Bindings, ParentPrec, Side, Text) :-
     ).
 
 print_arg(Bindings, Arg, Text) :- print_term(Arg, Bindings, 0, top, Text).
+
+print_combine_tail([], _Bindings, "").
+print_combine_tail([Arg | Rest], Bindings, Text) :-
+    print_term(Arg, Bindings, 0, top, ArgText),
+    print_combine_tail(Rest, Bindings, RestText),
+    format(atom(Text), ", ~w~w", [ArgText, RestText]).
+
+lifecycle_arm_name(unsubscribe).
+lifecycle_arm_name(complete).
+lifecycle_arm_name(subscribe).
+lifecycle_arm_name(error).
 
 arith_op(+, 1). arith_op(-, 1). arith_op(*, 2). arith_op(/, 2). arith_op(mod, 2).
 
