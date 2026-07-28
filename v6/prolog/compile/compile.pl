@@ -65,15 +65,19 @@ find_fixture(Stream, Name, Term, Bindings) :-
 % once so both stay pure functions of it rather than re-deriving it ═════════
 %
 % plan(Name, Prog, RelPlans, ArrivalTargets, RuleOrder, EdgeRules)
-%   RelPlans: list of relplan(Ref, Kind, Columns, KeyPositionsOrNone)
-%             covering every ref program_refs/2 finds (arrival targets and
-%             derived rels alike -- the tick log envelope reports both).
+%   RelPlans: list of relplan(Ref, Kind, Columns, KeyPositionsOrNone,
+%             ColumnTypes) covering every ref program_refs/2 finds (arrival
+%             targets and derived rels alike -- the tick log envelope
+%             reports both). ColumnTypes (PHASE C2 RULING 1) is int|text per
+%             Columns position, inferred by analyze.pl:rel_column_types/5
+%             from the fixture's own literal values (Decls carries no column
+%             type syntax) -- lower.pl:column_def/3 is the only reader.
 %   RuleOrder: level rules in strat.pl:sql_rule_order/2 order.
 %   EdgeRules: edge rules, program order (engine.pl tries edge rules in
 %              program order for each occurrence; with at most one edge rule
 %              per target fixture this is a formality kept for generality).
 
-program_plan(fixture(Name, Prog, _Initial, _Schedule, _Expectations)-Bindings, Plan) :-
+program_plan(fixture(Name, Prog, Initial, Schedule, _Expectations)-Bindings, Plan) :-
     Prog = prog(Decls, Rules),
     check_supported_subset(Prog),
     % Union rule-derived refs with EVERY declared ref (analyze.pl:
@@ -85,12 +89,17 @@ program_plan(fixture(Name, Prog, _Initial, _Schedule, _Expectations)-Bindings, P
     append(RuleRefs, DeclaredRefs, AllRefs0), sort(AllRefs0, AllRefs),
     derived_refs(Rules, DerivedRefs),
     subtract(AllRefs, DerivedRefs, ArrivalTargets),
-    findall(relplan(Ref, Kind, Columns, KeyOrNone),
+    findall(relplan(Ref, Kind, Columns, KeyOrNone, ColumnTypes),
             ( member(Ref, AllRefs),
               rel_kind(Decls, Ref, Kind),
               rel_columns(Rules, Bindings, Ref, Columns),
+              rel_column_types(Rules, Initial, Schedule, Ref, ColumnTypes),
               ( decl_key(Decls, Ref, Positions) -> KeyOrNone = key(Positions) ; KeyOrNone = none )
             ), RelPlans),
+    % PHASE C2 RULING 1 x RULING 2: this needs RelPlans (ColumnTypes), so it
+    % runs here rather than inside check_supported_subset/1 above (which
+    % runs before RelPlans exists).
+    check_edge_head_column_types(RelPlans, Rules),
     sql_rule_order(Rules, RuleOrder),
     include(rule_is_edge, Rules, EdgeRules),
     Plan = plan(Name, Prog, RelPlans, ArrivalTargets, RuleOrder, EdgeRules).
@@ -106,7 +115,8 @@ compile_fixture(Name, FixtureFile, OutFile, Emitter) :-
     program_plan(Term-Bindings, Plan),
     lower_program(Plan, Lowered),
     Plan = plan(_, _, RelPlans, _, _, _),
-    boot_statements(RelPlans, Initial, BootStatements),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    boot_statements(RelPlans, Initial, LevelStatements, BootStatements),
     call(Emitter, Name, Plan, Lowered, BootStatements, Text),
     setup_call_cleanup(
         open(OutFile, write, Stream),

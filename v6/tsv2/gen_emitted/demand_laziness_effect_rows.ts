@@ -62,6 +62,10 @@ const relColumns: Record<string, readonly string[]> = {
 const arrivalTargets: readonly string[] = ["open_feed"];
 
 const boot: readonly IBootStatement[] = [
+  { sql: `DELETE FROM "demanded"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_feed" b0`, params: [] },
+  { sql: `DELETE FROM "effect_call"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "effect_call" ("target") SELECT b0."target" FROM "demanded" b0`, params: [] },
 ];
 
 type Snapshot = {

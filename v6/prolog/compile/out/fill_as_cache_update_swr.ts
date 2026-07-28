@@ -47,6 +47,25 @@ function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
 }
 
+function triggerOccurrences(
+  kind: "log" | "set",
+  relName: string,
+  beforeRows: readonly IRow[],
+  arrivals: IArrivalBatch,
+): IArrivalBatch {
+  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === relName && arrival.sign === "add");
+  const seen = new Set<string>(beforeRows.map((row) => JSON.stringify(row)));
+  const occurrences: IArrivalRow[] = [];
+  for (const arrival of arrivals) {
+    if (arrival.rel !== relName || arrival.sign !== "add") continue;
+    const key = JSON.stringify(arrival.row);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    occurrences.push(arrival);
+  }
+  return occurrences;
+}
+
 const ddl: readonly string[] = [
   `CREATE TABLE "cache_row" ("target" TEXT NOT NULL, "body" TEXT NOT NULL, PRIMARY KEY ("target")) WITHOUT ROWID`,
   `CREATE TABLE "demanded" ("target" TEXT NOT NULL, "session_id" TEXT NOT NULL, PRIMARY KEY ("target", "session_id")) WITHOUT ROWID`,
@@ -66,6 +85,10 @@ const relColumns: Record<string, readonly string[]> = {
 const arrivalTargets: readonly string[] = ["fill_arrived", "open_feed"];
 
 const boot: readonly IBootStatement[] = [
+  { sql: `DELETE FROM "demanded"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_feed" b0`, params: [] },
+  { sql: `DELETE FROM "feed_view"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "feed_view" ("target", "body") SELECT b0."target", b1."body" FROM "demanded" b0, "cache_row" b1 WHERE b1."target" = b0."target"`, params: [] },
 ];
 
 type Snapshot = {
@@ -113,23 +136,25 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
   return seam.runner.batch(seam.db, statements);
 }
 
-const EDGE_CACHE_ROW_PROJECT_SQL = `SELECT ?1 AS "target", ?2 AS "body"`;
-const EDGE_CACHE_ROW_UPSERT_SQL = `INSERT INTO "cache_row" ("target", "body") VALUES (?, ?) ON CONFLICT("target") DO UPDATE SET "body" = excluded."body"`;
-const EDGE_CACHE_ROW_HEAD_COLUMNS: readonly string[] = ["target", "body"];
-const EDGE_CACHE_ROW_KEY_INDICES: readonly number[] = [0];
+const EDGE_CACHE_ROW_0_PROJECT_SQL = `SELECT ?1 AS "target", ?2 AS "body"`;
+const EDGE_CACHE_ROW_0_WRITE_SQL = `INSERT INTO "cache_row" ("target", "body") VALUES (?, ?) ON CONFLICT("target") DO UPDATE SET "body" = excluded."body"`;
+const EDGE_CACHE_ROW_0_HEAD_COLUMNS: readonly string[] = ["target", "body"];
+const EDGE_CACHE_ROW_0_KEY_INDICES: readonly number[] = [0];
 
-function resolveCacheRowWrites(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const triggerRows = arrivals.filter((arrival) => arrival.rel === "fill_arrived" && arrival.sign === "add");
+function resolveCacheRow_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
+  const triggerRows = triggerOccurrences("log", "fill_arrived", before.fill_arrived, arrivals);
   if (triggerRows.length === 0) return of([]);
-  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CACHE_ROW_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
+  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CACHE_ROW_0_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
     map((results) => {
       const resolved = new Map<string, IRow>();
       for (const result of results) {
-        const projectedRow = EDGE_CACHE_ROW_HEAD_COLUMNS.map((column) => result.rows[0]![column] as IRowValue) as IRow;
-        const key = JSON.stringify(EDGE_CACHE_ROW_KEY_INDICES.map((index) => projectedRow[index]));
-        resolved.set(key, projectedRow);
+        const projectedRows = result.rows.map((row) => EDGE_CACHE_ROW_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projectedRow of projectedRows) {
+          const key = JSON.stringify(EDGE_CACHE_ROW_0_KEY_INDICES.map((index) => projectedRow[index]));
+          resolved.set(key, projectedRow);
+        }
       }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_CACHE_ROW_UPSERT_SQL, args: bindArgs(row) }));
+      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_CACHE_ROW_0_WRITE_SQL, args: bindArgs(row) }));
     }),
   );
 }
@@ -161,7 +186,7 @@ function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDelta
   return readSnapshot(seam).pipe(
     concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) =>
-      resolveCacheRowWrites(seam, arrivals).pipe(
+      resolveCacheRow_0Writes(seam, before, arrivals).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),

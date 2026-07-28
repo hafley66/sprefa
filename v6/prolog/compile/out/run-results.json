@@ -15,7 +15,17 @@
     "detail": "log_retraction_rejected: retract from log rel 'event' (engine.pl retract_from_log)"
   },
   {
+    "name": "unmarked_edge_replays_backlog",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
     "name": "retraction_only_tick_retracts_level_view",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "set_dedups_log_stacks",
     "bucket": "identical",
     "detail": ""
   },
@@ -25,19 +35,44 @@
     "detail": ""
   },
   {
+    "name": "merge_batches_per_tick",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "merge_never_retracts",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "key_last_write_wins",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "key_identical_write_is_silent",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "key_same_tick_ordered_not_conflict",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
     "name": "log_deltas_follow_arrival_order",
-    "bucket": "wrong",
-    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"line\":{\"add\":[[\"1\",\"a.ts\",\"alpha\"],[\"1\",\"a.ts\",\"beta\"],[\"1\",\"b.ts\",\"gamma\"]],\"del\":[]},\"seen\":{\"add\":[[\"a.ts\"],[\"b.ts\"]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"line\":{\"add\":[[1,\"a.ts\",\"alpha\"],[1,\"a.ts\",\"beta\"],[1,\"b.ts\",\"gamma\"]],\"del\":[]},\"seen\":{\"add\":[[\"a.ts\"],[\"b.ts\"]],\"del\":[]}}}"
+    "bucket": "identical",
+    "detail": ""
   },
   {
     "name": "shuffled_arrival_reorders_log_deltas",
-    "bucket": "wrong",
-    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"line\":{\"add\":[[\"1\",\"a.ts\",\"alpha\"],[\"1\",\"a.ts\",\"beta\"],[\"1\",\"b.ts\",\"gamma\"]],\"del\":[]},\"seen\":{\"add\":[[\"a.ts\"],[\"b.ts\"]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"line\":{\"add\":[[1,\"a.ts\",\"alpha\"],[1,\"a.ts\",\"beta\"],[1,\"b.ts\",\"gamma\"]],\"del\":[]},\"seen\":{\"add\":[[\"a.ts\"],[\"b.ts\"]],\"del\":[]}}}"
+    "bucket": "identical",
+    "detail": ""
   },
   {
     "name": "level_view_reads_set_projection_not_occurrences",
-    "bucket": "wrong",
-    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"line\":{\"add\":[[\"1\",\"a.ts\",\"alpha\"]],\"del\":[]},\"seen\":{\"add\":[[\"a.ts\"]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"line\":{\"add\":[[1,\"a.ts\",\"alpha\"]],\"del\":[]},\"seen\":{\"add\":[[\"a.ts\"]],\"del\":[]}}}"
+    "bucket": "identical",
+    "detail": ""
   },
   {
     "name": "fork_join_is_a_conjunctive_body",
@@ -51,6 +86,11 @@
   },
   {
     "name": "switch_as_keyed_replace",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "merge_policy",
     "bucket": "identical",
     "detail": ""
   },
@@ -75,13 +115,38 @@
     "detail": ""
   },
   {
+    "name": "new_salt_refires_fresh_stream",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
     "name": "terminal_is_terminal",
-    "bucket": "wrong",
-    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"stream_item\":{\"add\":[[\"src\",\"1\",\"alpha\"]],\"del\":[]},\"stream_status\":{\"add\":[[\"src\",\"running\"]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"stream_item\":{\"add\":[[\"src\",1,\"alpha\"]],\"del\":[]},\"stream_status\":{\"add\":[[\"src\",\"running\"]],\"del\":[]}}}"
+    "bucket": "identical",
+    "detail": ""
   },
   {
     "name": "live_nonzero_exit_keeps_rows",
-    "bucket": "wrong",
-    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"stream_item\":{\"add\":[[\"src\",\"1\",\"alpha\"]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"stream_item\":{\"add\":[[\"src\",1,\"alpha\"]],\"del\":[]}}}"
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "worktree_edit_replaces_digest_and_flips_kind_view",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "worktree_edit_identical_resave_is_silent",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "head_move_replaces_key",
+    "bucket": "identical",
+    "detail": ""
+  },
+  {
+    "name": "head_move_flips_current_tree_in_one_tick",
+    "bucket": "identical",
+    "detail": ""
   }
 ]

@@ -64,6 +64,11 @@ const relColumns: Record<string, readonly string[]> = {
 const arrivalTargets: readonly string[] = ["outcome_a", "outcome_b"];
 
 const boot: readonly IBootStatement[] = [
+  { sql: `DELETE FROM "any_failed"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "any_failed" ("status") SELECT json_extract(b0."col1", '$.args[0]') FROM "outcome_a" b0 WHERE json_extract(b0."col1", '$.fn') = 'error'`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "any_failed" ("status") SELECT json_extract(b0."col1", '$.args[0]') FROM "outcome_b" b0 WHERE json_extract(b0."col1", '$.fn') = 'error'`, params: [] },
+  { sql: `DELETE FROM "both_ok"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "both_ok" ("body_a", "body_b") SELECT json_extract(b0."col1", '$.args[0]'), json_extract(b1."col1", '$.args[0]') FROM "outcome_a" b0, "outcome_b" b1 WHERE json_extract(b0."col1", '$.fn') = 'ok' AND json_extract(b1."col1", '$.fn') = 'ok'`, params: [] },
 ];
 
 type Snapshot = {

@@ -48,7 +48,7 @@ function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "line" ("_stream_id" TEXT NOT NULL, "path" TEXT NOT NULL, "_name" TEXT NOT NULL)`,
+  `CREATE TABLE "line" ("_stream_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "_name" TEXT NOT NULL)`,
   `CREATE TABLE "seen" ("path" TEXT NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
 ];
 
@@ -60,6 +60,8 @@ const relColumns: Record<string, readonly string[]> = {
 const arrivalTargets: readonly string[] = ["line"];
 
 const boot: readonly IBootStatement[] = [
+  { sql: `DELETE FROM "seen"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "seen" ("path") SELECT b0."path" FROM "line" b0`, params: [] },
 ];
 
 type Snapshot = {

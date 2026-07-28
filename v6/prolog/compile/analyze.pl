@@ -19,8 +19,9 @@
             program_refs/2, arrival_target_refs/2, derived_refs/2,
             edge_headed_refs/2, level_headed_refs/2,
             rule_head_ref/2, rule_is_edge/1, rule_is_level/1,
-            body_ref_uses/2, rel_columns/4, snake_name/2,
-            check_supported_subset/1 ]).
+            body_ref_uses/2, rel_columns/4, rel_column_types/5, snake_name/2,
+            check_supported_subset/1, edge_trigger_shape/2,
+            conjunction_goals/2, check_edge_head_column_types/2 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -202,26 +203,175 @@ snake_codes([Code | Rest], Out) :-
     ),
     snake_codes(Rest, More).
 
+% ═══ column type inference from concrete literal values (PHASE C2 RULING 1)
+% ═══════════════════════════════════════════════════════════════════════════
+% Decls carries no per-column type syntax at all (no fixture in the corpus
+% declares one -- expressions.pl's own header comment: "no HM/enum type
+% checker... no rel_decl/column type", SCOREBOARD.md Finding 3), so a
+% column's SQL storage type is inferred from every literal atomic value ever
+% observed at that argument position, across three sources: the fixture's
+% own Rules (head/body atom occurrences, reusing ref_occurrence_args/3 --
+% var and compound arguments there are not literals and are filtered by
+% atomic/1 below), its Initial seed rows, and its Schedule arrivals (either
+% sign; a retraction's row is as real a literal witness as an addition's).
+% A position is INTEGER only when EVERY literal witness found is a Prolog
+% integer/1; TEXT otherwise, including "zero literal witnesses at all" (a
+% column reached only through variables or nested inside a compound
+% argument -- compound-term columns stay inline-flat text per the ruling's
+% punt, and this default is exactly how that stays true with no special
+% case: a compound occurrence is never atomic/1, so it never contributes a
+% witness, and the column falls through to text). Matches the corpus
+% observation behind the heuristic (Finding 3): no fixture here quotes a
+% digit string, so Prolog's own reader never hands this scan an ambiguous
+% integer-vs-atom token.
+rel_column_types(Rules, Initial, Schedule, Name/Arity, Types) :-
+    numlist(1, Arity, Positions),
+    maplist(column_type_at(Rules, Initial, Schedule, Name/Arity), Positions, Types).
+
+column_type_at(Rules, Initial, Schedule, Ref, Position, Type) :-
+    findall(Witness,
+            ( column_source_args(Rules, Initial, Schedule, Ref, Args),
+              nth1(Position, Args, Witness),
+              atomic(Witness)
+            ), AtomicWitnesses),
+    ( AtomicWitnesses \== [], forall(member(Witness, AtomicWitnesses), integer(Witness))
+    -> Type = int
+    ;  Type = text
+    ).
+
+% Every place a ground literal for Ref can appear: a rule head/body atom
+% occurrence, an Initial seed row, or one Schedule tick's arrival row.
+column_source_args(Rules, _Initial, _Schedule, Ref, Args) :- ref_occurrence_args(Rules, Ref, Args).
+column_source_args(_Rules, Initial, _Schedule, Ref, Args) :-
+    member(Row, Initial), rel_ref(Row, Ref), Row =.. [_ | Args].
+column_source_args(_Rules, _Initial, Schedule, Ref, Args) :-
+    member(Batch, Schedule), member(Signed, Batch),
+    ( Signed = +Atom ; Signed = -Atom ),
+    rel_ref(Atom, Ref), Atom =.. [_ | Args].
+
+% ═══ edge trigger shape (PHASE C2 RULING 2: unmarked edge triggers) ═════════
+% Grounded in engine.pl's own trigger_items/2 (marked_items/2 if nonempty,
+% else unmarked_items/2 -- engine.pl:136-145) and body.pl's body_atoms/2
+% (:112-126, the exact goal classification engine.pl's unmarked fallback
+% walks). Two ACCEPTED shapes, everything else a NAMED refusal:
+%   marked_single(Atom)      -- Body = only(Atom), not departed. UNCHANGED
+%     from before this ruling; only/1 makes Atom the SOLE trigger source
+%     (engine.pl marked_items/2), no other body goal is ever a trigger.
+%   unmarked_conjunction(Atoms) -- Body has NO only/1 anywhere and is a plain
+%     comma-conjunction of one or more ordinary positive rel atoms (arity
+%     >= 1), nothing else: engine.pl's unmarked_items/2 wraps EVERY body
+%     atom as its own arrival(...) trigger item when no only/1 is present,
+%     so ANY of them arriving is an independent trigger occurrence,
+%     evaluated by solving the WHOLE body (occurrence_trigger/4 binds only
+%     the firing atom's own arguments via unification with the arrived row;
+%     solve/2 then re-checks every other atom against the CURRENT store --
+%     body.pl:96-110). A single atom (N=1) is the degenerate case: no other
+%     atom to join, so lowering it is unchanged from marked_single except
+%     the trigger no longer needs the only/1 wrapper.
+% Everything else names the SPECIFIC blocking construct instead of a
+% blanket edge_body_shape reason, so the scoreboard's per-construct tally
+% stays precise as this widens further.
+edge_trigger_shape(only(departed(Atom)), unsupported(edge_body_needs_departed(departed(Atom)))) :- !.
+edge_trigger_shape(only(Atom), marked_single(Atom)) :- !.
+edge_trigger_shape(Body, unmarked_conjunction(Atoms)) :-
+    conjunction_goals(Body, Goals),
+    \+ member(only(_), Goals),
+    maplist(plain_positive_atom, Goals),
+    !, Atoms = Goals.
+edge_trigger_shape(Body, unsupported(Reason)) :-
+    conjunction_goals(Body, Goals),
+    ( member(only(_), Goals) -> Reason = edge_marked_with_extra_goal(Body)
+    ; member(G1, Goals), G1 = departed(_) -> Reason = edge_body_needs_departed(Body)
+    ; member(G2, Goals), G2 = pre(_) -> Reason = edge_body_needs_pre(Body)
+    ; member(G3, Goals), G3 = now(_) -> Reason = edge_body_needs_now(Body)
+    ; member(G4, Goals), G4 = not(_) -> Reason = edge_body_needs_negation(Body)
+    ; member(G5, Goals), ( G5 = (_ := _) ; G5 = (_ is _) ) -> Reason = edge_body_needs_bind(Body)
+    ; member(G6, Goals), comparison_goal(G6) -> Reason = edge_body_needs_comparison(Body)
+    ; member(G7, Goals), ( G7 = decode(_, _) ; G7 = json_each(_, _) ) -> Reason = edge_body_needs_json_destructure(Body)
+    ; Reason = edge_body_shape(Body)
+    ).
+
+conjunction_goals((Left, Right), Goals) :- !,
+    conjunction_goals(Left, LeftGoals), conjunction_goals(Right, RightGoals),
+    append(LeftGoals, RightGoals, Goals).
+conjunction_goals(Goal, [Goal]).
+
+plain_positive_atom(Goal) :-
+    compound(Goal),
+    Goal \= only(_), Goal \= departed(_), Goal \= pre(_), Goal \= now(_), Goal \= not(_),
+    Goal \= (_ := _), Goal \= (_ is _), Goal \= decode(_, _), Goal \= json_each(_, _),
+    \+ comparison_goal(Goal).
+
+% Trigger refs a shape can fire from -- used by the same-key conflict-risk
+% check below. marked_single fires from exactly one ref; unmarked_conjunction
+% fires from ANY of its atoms' refs (engine.pl unmarked_items/2 wraps every
+% one independently).
+shape_trigger_refs(marked_single(Atom), [Ref]) :- rel_ref(Atom, Ref).
+shape_trigger_refs(unmarked_conjunction(Atoms), Refs) :-
+    findall(Ref, ( member(Atom, Atoms), rel_ref(Atom, Ref) ), Refs0), sort(Refs0, Refs).
+
+% ═══ edge head column-type consistency (PHASE C2 RULING 1 x RULING 2) ═══════
+% A real gap the unmarked-trigger widening surfaced, not present in the
+% marked_single-only corpus before this ruling: an edge rule's HEAD column
+% inherits its VALUE from a body atom via a shared variable (e.g.
+% spine_semantics.pl's `xref(FromSpanId, ...) <+ pin_extracted(FromSpanId,
+% ...)`), but analyze.pl:rel_column_types/5 infers each ref's column types
+% from ITS OWN literal occurrences alone -- xref/6 never appears as a raw
+% Schedule arrival (it is edge-headed), so its own from_span_id position
+% never sees the literal integer values that only ever arrive via
+% pin_extracted's arguments, and defaults to text (PHASE C2 RULING 1's own
+% "zero witnesses -> text" rule). The stored column is TEXT while the
+% flowing value is a genuine integer, so the tick log prints the quoted
+% string form the oracle prints as a bare number -- WRONG, not a silent
+% pass. This is called AFTER RelPlans exists (compile.pl:program_plan/2,
+% past check_supported_subset/1, which runs before RelPlans is built) and
+% refuses the specific mismatch by name rather than attempting general
+% cross-rule type propagation (a real fix, out of this ruling's scope --
+% Item 1 only ever reasons about one ref's OWN literal occurrences).
+check_edge_head_column_types(RelPlans, Rules) :-
+    forall(( member(Rule, Rules), rule_is_edge(Rule) ),
+           check_edge_head_column_types_for_rule(RelPlans, Rule)).
+
+check_edge_head_column_types_for_rule(RelPlans, (Head <+ Body)) :-
+    edge_trigger_shape(Body, Shape),
+    ( Shape = marked_single(TriggerAtom) -> BodyAtoms = [TriggerAtom]
+    ; Shape = unmarked_conjunction(Atoms) -> BodyAtoms = Atoms
+    ; BodyAtoms = []
+    ),
+    rel_ref(Head, HeadRef),
+    memberchk(relplan(HeadRef, _, _, _, HeadColumnTypes), RelPlans),
+    Head =.. [_ | HeadArgs],
+    forall(( nth1(HeadPosition, HeadArgs, HeadArg), var(HeadArg),
+             nth1(HeadPosition, HeadColumnTypes, HeadColumnType),
+             member(BodyAtom, BodyAtoms),
+             rel_ref(BodyAtom, BodyRef),
+             BodyAtom =.. [_ | BodyArgs],
+             nth1(BodyPosition, BodyArgs, BodyArg), BodyArg == HeadArg,
+             memberchk(relplan(BodyRef, _, _, _, BodyColumnTypes), RelPlans),
+             nth1(BodyPosition, BodyColumnTypes, BodyColumnType),
+             BodyColumnType \== HeadColumnType ),
+           throw(unsupported_construct(edge_head_column_type_mismatch(HeadRef, HeadPosition, BodyColumnType, HeadColumnType)))).
+
 % ═══ supported-subset gate ═══════════════════════════════════════════════════
 % Refuses (with a specific term, not a generic failure) any construct wider
-% than what lower.pl knows how to emit: an edge rule body must be exactly
-% `only(Atom)` (optionally `only(departed(Atom))`, still unsupported by
-% lower.pl today and refused separately); a level rule must not carry an
-% aggregate head (aggregate_head, level_eval.pl) and must not reference
-% pre/1, now/1, decode/2 or json_each/2 (none of the two target fixtures need
-% them; lower.pl has no SQL shape for them yet).
+% than what lower.pl knows how to emit: an edge rule body must classify as
+% marked_single or unmarked_conjunction (edge_trigger_shape/2 above); a level
+% rule must not carry an aggregate head (aggregate_head, level_eval.pl) and
+% must not reference pre/1, now/1, decode/2 or json_each/2 (none of the two
+% target fixtures need them; lower.pl has no SQL shape for them yet).
 
 check_supported_subset(prog(Decls, Rules)) :-
     forall(( member(Rule, Rules), rule_is_edge(Rule) ), check_edge_rule_shape(Rule)),
     forall(( member(Rule, Rules), rule_is_level(Rule) ), check_level_rule_shape(Rule)),
+    derived_refs(Rules, DerivedRefs),
+    forall(( member(Rule, Rules), rule_is_edge(Rule) ), check_edge_body_refs_not_derived(Rule, DerivedRefs)),
+    check_no_edge_head_conflict_risk(Decls, Rules),
     forall(( member(keyed(Ref, Positions), Decls), rel_kind(Decls, Ref, log) ),
            throw(unsupported_construct(keyed_log_rel(Ref, Positions)))).
 
 check_edge_rule_shape((Head <+ Body)) :-
-    ( Body = only(Atom), \+ ( Atom = departed(_) )
-    -> true
-    ; throw(unsupported_construct(edge_body_shape(Head, Body)))
-    ),
+    edge_trigger_shape(Body, Shape),
+    ( Shape = unsupported(Reason) -> throw(unsupported_construct(Reason)) ; true ),
     % Same hazard as a level head (head_arithmetic_shape/2's comment):
     % compile_head_expr renders every compound argument as a json1 tagged
     % term unconditionally, arithmetic functor or not. No fixture in the
@@ -229,6 +379,75 @@ check_edge_rule_shape((Head <+ Body)) :-
     ( head_arithmetic_shape(Head, ArithExpr)
     -> throw(unsupported_construct(head_arithmetic(Head, ArithExpr)))
     ; true ).
+
+% A trigger firing off a DERIVED ref (edge-headed OR level-headed --
+% analyze.pl:derived_refs/2 unions both) is a genuine gap in BOTH shapes,
+% not attempted, for two INDEPENDENT reasons this compiler's pipeline
+% cannot currently close:
+%   (a) level-headed trigger: a newly-true level row is ALSO a valid
+%       trigger occurrence in engine.pl (LevelOccs, tick/7:286-290), and a
+%       level-headed ref's CURRENT table state during edge-write resolution
+%       (which this compiler's pipeline runs BEFORE recomputeLevels --
+%       run_tick_fn_lines) reflects the PREVIOUS tick's level rows, not
+%       MidLevel (the post-arrival, pre-write snapshot engine.pl's Visible
+%       actually reads).
+%   (b) edge-headed trigger: engine.pl threads a THIS-tick edge write
+%       forward as a genuine CarryIn occurrence for T+1 (tick/7:299-312,
+%       "carry-out is boundary-observable writes only"; process_occurrences
+%       fires it exactly like any other occurrence next tick). This
+%       compiler's `triggerOccurrences` (emit_ts.pl) only ever reads the
+%       tick's OWN `arrivals` parameter -- IGenProgram's `tick(seam,
+%       arrivals)` carries no slot for "rows an edge rule wrote last tick"
+%       at all (round 2's own note: no tick number, no carry value, reaches
+%       tick() in the real seam). A drain tick's `arrivals` is always `[]`,
+%       so a marked_single or unmarked_conjunction trigger firing off
+%       ANOTHER edge rule's head can never see it -- confirmed WRONG, not
+%       theorized: engine_core.pl's edge_chain_hops_tick_per_stage
+%       (`stage_two(Item) <+ only(stage_one(Item))`, stage_one itself
+%       `<+ source_ev(Item)`) compiled clean and produced an empty tick 2
+%       where the oracle shows `+stage_two(alpha)`, once PHASE C2 RULING 2
+%       lifted the unmarked-shape refusal that had masked this the whole
+%       time (no fixture with an all-marked_single/unmarked, no-extra-guard
+%       edge CHAIN had ever reached compilation before). Fixing this is a
+%       real IGenProgram/tickLoop.ts change (threading carry occurrences
+%       into the next tick call) -- STOP-AND-REPORT per the phase C2
+%       contract, not attempted here; refused by name.
+check_edge_body_refs_not_derived((_Head <+ Body), DerivedRefs) :-
+    edge_trigger_shape(Body, Shape),
+    ( Shape = unsupported(_)
+    -> true  % already refused earlier in check_edge_rule_shape
+    ;  shape_trigger_refs(Shape, TriggerRefs),
+       forall(( member(Ref, TriggerRefs), memberchk(Ref, DerivedRefs) ),
+              throw(unsupported_construct(edge_trigger_is_derived(Ref))))
+    ).
+
+% engine.pl's check_occurrence_conflicts (called once per OCCURRENCE, across
+% every rule in the program) throws keyed_conflict/3 when the SAME occurrence
+% satisfies two rules heading the same keyed rel with two DIFFERENT derived
+% rows for the same key. This compiler's lowering resolves each edge rule/arm
+% independently and has no equivalent per-occurrence validation, so it would
+% silently let the LAST-running arm's write win instead of throwing -- the
+% exact shape merge_family.pl:one_occurrence_two_rows_still_conflicts exists
+% to catch (`(latest(cli,a) <+ ping(_)), (latest(cli,b) <+ ping(_))`, both
+% rules triggered by the SAME ping/1 occurrence). The conflict can only arise
+% when two edge rules/arms sharing a KEYED head also share a trigger ref
+% (shape_trigger_refs/2 above) -- refused by name rather than left to
+% silently miscompile. key_last_write_wins and its siblings stay clean: each
+% rule there is triggered by a DIFFERENT ref (from_poll vs from_push), so no
+% single occurrence can ever satisfy both.
+check_no_edge_head_conflict_risk(Decls, Rules) :-
+    include(rule_is_edge, Rules, EdgeRules),
+    findall(HeadRef-TriggerRefs,
+            ( member(Rule, EdgeRules), rule_head_ref(Rule, HeadRef),
+              rule_body(Rule, Body), edge_trigger_shape(Body, Shape),
+              shape_trigger_refs(Shape, TriggerRefs) ),
+            HeadTriggerPairs),
+    forall(( decl_key(Decls, HeadRef, _),
+             findall(Refs, member(HeadRef-Refs, HeadTriggerPairs), AllRefsForHead),
+             nth0(IndexA, AllRefsForHead, RefsA),
+             nth0(IndexB, AllRefsForHead, RefsB), IndexA < IndexB,
+             intersection(RefsA, RefsB, Shared), Shared \== [] ),
+           throw(unsupported_construct(edge_head_conflict_risk(HeadRef, Shared)))).
 
 check_level_rule_shape((Head <- Body)) :-
     ( aggregate_head_shape(Head)

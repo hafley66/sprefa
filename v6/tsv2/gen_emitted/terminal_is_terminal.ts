@@ -49,7 +49,7 @@ function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "stream_end" ("args" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
-  `CREATE TABLE "stream_item" ("args" TEXT NOT NULL, "col2" TEXT NOT NULL, "col3" TEXT NOT NULL)`,
+  `CREATE TABLE "stream_item" ("args" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" TEXT NOT NULL)`,
   `CREATE TABLE "stream_status" ("args" TEXT NOT NULL, "col2" TEXT NOT NULL, PRIMARY KEY ("args", "col2")) WITHOUT ROWID`,
 ];
 
@@ -62,6 +62,9 @@ const relColumns: Record<string, readonly string[]> = {
 const arrivalTargets: readonly string[] = ["stream_end", "stream_item"];
 
 const boot: readonly IBootStatement[] = [
+  { sql: `DELETE FROM "stream_status"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", 'running' FROM "stream_item" b0 WHERE NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = b0."args")`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", 'done' FROM "stream_end" b0`, params: [] },
 ];
 
 type Snapshot = {
