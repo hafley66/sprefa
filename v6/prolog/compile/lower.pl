@@ -185,8 +185,9 @@ relplan_column_types(RelPlans, Ref, ColumnTypes) :- memberchk(relplan(Ref, _, _,
 % is what lets each of those be a NAMED refusal instead of a silent answer.
 compile_pattern_arg(Arg, ColumnExpr, ColumnType, Bound0, Bound, WhereParts, Mode) :-
     ( var(Arg)
-    -> ( bound_lookup(Bound0, Arg, typed(Existing, _))
-       -> WhereParts = [pair(ColumnExpr, Existing)], Bound = Bound0
+    -> ( bound_lookup(Bound0, Arg, typed(Existing, ExistingType))
+       -> join_column_types_agree(ColumnExpr, ColumnType, Existing, ExistingType),
+          WhereParts = [pair(ColumnExpr, Existing)], Bound = Bound0
        ; Mode == bind
        -> WhereParts = [], Bound = [Arg-typed(ColumnExpr, ColumnType) | Bound0]
        ; WhereParts = [], Bound = Bound0
@@ -200,6 +201,29 @@ compile_pattern_arg(Arg, ColumnExpr, ColumnType, Bound0, Bound, WhereParts, Mode
     -> WhereParts = [lit(ColumnExpr, Arg)], Bound = Bound0
     ; throw(unsupported_construct(pattern_arg(Arg)))
     ).
+
+% A shared variable across two columns of DIFFERENT storage type is the same
+% TEXT-collapse hazard as a cross-type comparison, one hop out: engine.pl
+% joins by UNIFICATION, where the atom '1' and the integer 1 are distinct
+% terms and never join. SQLite applies affinity conversion instead -- with a
+% TEXT-affinity column on one side and an INTEGER one on the other, the text
+% operand is converted, so `'1' = 1` is TRUE and the two rows join.
+%
+% MEASURED through the real driver, not assumed (sqlite 3.45.1):
+%   SELECT b0."value" FROM "label" b0, "number" b1 WHERE b0."value" = b1."value"
+%   with label.value = TEXT '1' and number.value = INTEGER 1
+%   -> one row {"v":"1","t0":"text","t1":"integer"}
+% where the oracle derives NOTHING. Refused by name; this is the Q4 P1.2 /
+% P1.8 assertion from the sqlite_udf verdict ("text `1` and numeric `1` remain
+% distinct", "comparison and arithmetic use typed SQLite values, not rendered
+% text") turned into a compiler guard, and
+% conformance/expressions.pl:text_one_and_numeric_one_never_join is the
+% fixture that pins the oracle side of it.
+join_column_types_agree(_, ColumnType, _, ExistingType) :-
+    ColumnType == ExistingType, !.
+join_column_types_agree(ColumnExpr, ColumnType, Existing, ExistingType) :-
+    throw(unsupported_construct(
+        join_column_type_mismatch(ColumnExpr, ColumnType, Existing, ExistingType))).
 
 % A destructured sub-argument comes back through json_extract, whose result
 % carries no declared column type at all -- typed text, matching the

@@ -427,6 +427,79 @@ test(concat_result_column_stays_text) :-
     memberchk(relplan(message/3, _, _, _, Types), RelPlans),
     assertion(Types == [text, int, text]).
 
+% ═══ Q4 reconciliation (plans/2026-07-29-sqlite-udf-graft-verdict.md) ═══════
+% The assertions from the sqlite_udf verdict's expression-lift set that bind
+% on THIS arc. The UDF-specific ones (P1.5 NULL behavior, P1.7 registration on
+% every connection, P3.3/P3.4 sprf_sym staging) do not apply: no UDF is
+% grafted here, and LIBSQL_UDF_API is still an unresolved slot in that verdict.
+
+% Q4 P1.1 / P2.1: typed columns carry explicit INTEGER or TEXT affinity, and
+% the __delta_ / __frontier_ / __next_frontier_ TEMP tables repeat the SAME
+% types rather than defaulting to no affinity -- a delta row that lost its
+% affinity would compare differently from the base row it mirrors.
+test(delta_and_frontier_tables_repeat_column_affinity) :-
+    expressions_fixture_file(File),
+    once(( read_fixture_term(File, head_expression_evaluates_derived_column, Term, Bindings),
+           program_plan(Term-Bindings, Plan),
+           lower_program(Plan, Lowered) )),
+    Lowered = lowered(_, Ddl, _, _, _, _, _, _),
+    forall(member(Prefix, ['', '__delta_', '__frontier_', '__next_frontier_']),
+           ( atomic_list_concat(['CREATE TEMP TABLE "', Prefix, 'callee_set_size"'], TempHead),
+             atomic_list_concat(['CREATE TABLE "', Prefix, 'callee_set_size"'], BaseHead),
+             once(( member(Sql, Ddl),
+                    ( sub_atom(Sql, 0, _, _, TempHead) ; sub_atom(Sql, 0, _, _, BaseHead) ),
+                    sub_atom(Sql, _, _, _, '"left" TEXT NOT NULL'),
+                    sub_atom(Sql, _, _, _, '"left_size" INTEGER NOT NULL') )) )).
+
+% Q4 P1.8: a comparison compiles to typed SQLite values, never to rendered
+% text, and a cross-type comparison is REFUSED rather than answered under
+% affinity conversion. Prolog ==/2 is term identity, so '1' never equals 1.
+test(cross_type_comparison_is_refused,
+     [throws(unsupported_construct(comparison_type_mismatch(_, _, _)))]) :-
+    expressions_fixture_file(File),
+    once(( read_fixture_term(File, text_one_and_numeric_one_are_not_equal, Term, Bindings),
+           program_plan(Term-Bindings, Plan),
+           lower_program(Plan, _) )).
+
+% Q4 P1.2: text "1" and numeric 1 stay distinct. The same boundary in JOIN
+% position: engine.pl joins by unification, SQLite joins under affinity
+% conversion and would answer the opposite (measured, see
+% lower.pl:join_column_types_agree/4).
+test(cross_type_join_is_refused,
+     [throws(unsupported_construct(join_column_type_mismatch(_, _, _, _)))]) :-
+    expressions_fixture_file(File),
+    once(( read_fixture_term(File, text_one_and_numeric_one_never_join, Term, Bindings),
+           program_plan(Term-Bindings, Plan),
+           lower_program(Plan, _) )).
+
+% Q4 P1.4: every expression carries a declared result type that reaches the
+% destination column. head_arithmetic_column_is_int_not_text_collapse above
+% asserts the type; this asserts it survives into the DDL that stores it,
+% since column_def/3 is the only reader.
+test(expression_result_type_reaches_the_ddl) :-
+    expressions_fixture_file(File),
+    once(( read_fixture_term(File, head_expression_evaluates_derived_column, Term, Bindings),
+           program_plan(Term-Bindings, Plan),
+           lower_program(Plan, Lowered) )),
+    Lowered = lowered(_, Ddl, _, _, _, _, _, _),
+    once(( member(Sql, Ddl),
+           sub_atom(Sql, 0, _, _, 'CREATE TABLE "union_size"'),
+           sub_atom(Sql, _, _, _, '"col3" INTEGER NOT NULL') )).
+
+% engine.pl's `mod` is FLOORED (sign of the divisor); SQLite's `%` is C's
+% (sign of the dividend). The emitted text must be the floored correction, not
+% a bare `%`, or division_truncates_toward_zero_mod_follows_divisor_sign gets
+% two of its four rows wrong.
+test(mod_lowers_to_the_floored_correction) :-
+    expressions_fixture_file(File),
+    once(( read_fixture_term(File, division_truncates_toward_zero_mod_follows_divisor_sign,
+                             Term, Bindings),
+           program_plan(Term-Bindings, Plan),
+           lower_program(Plan, Lowered) )),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    memberchk(levelstmt(probe/3, _, [InsertSql], _, _, _), LevelStatements),
+    once(sub_atom(InsertSql, _, _, _, '% b0."denominator") + b0."denominator") % b0."denominator")')).
+
 expressions_fixture_file(File) :-
     test_dir_fact(Here),
     atomic_list_concat([Here, '/../../conformance/fixtures/expressions.pl'], File).
