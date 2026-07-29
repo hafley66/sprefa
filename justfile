@@ -51,6 +51,9 @@ bench-printk:
 bench-printk-on linux:
     bash "{{repo}}/bench/run.sh" "{{repo}}/bench/printk.dl" "{{linux}}"
 
+crawl-bench:
+    nice -n 19 bash "{{repo}}/v6/tsv2/scripts/crawl-bench.sh"
+
 # remove scratch dbs
 clean-db:
     rm -f /tmp/dl-*.db* /tmp/dlbench.db*
