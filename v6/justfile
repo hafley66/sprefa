@@ -18,7 +18,7 @@ default:
 
 # ── prolog side ──
 
-# the fixture corpus vs the oracle engine (expect: 137 PASS, nothing else)
+# the fixture corpus vs the oracle engine (expect: 139 PASS, nothing else)
 conformance:
 	cd {{v6}}/prolog/conformance && swipl -q -l go.pl -g go -g halt
 
@@ -26,7 +26,7 @@ conformance:
 roundtrip:
 	cd {{v6}}/prolog/compile && bash scripts/roundtrip.sh
 
-# term door vs .dl6 text door, byte-identical emitted modules (expect: 85/85/0)
+# term door vs .dl6 text door, byte-identical emitted modules (expect: 87/87/0)
 text-door:
 	cd {{v6}}/prolog && bash compile/scripts/text_door_receipt.sh
 
@@ -48,7 +48,7 @@ prolog-lint:
 # ── tsv2 (prolog compiles TO TypeScript) ──
 
 # full corpus sweep: compile every fixture, replay vs oracle tick logs
-# (expect: RUN total=85 identical=83 wrong=0; slow, minutes)
+# (expect: RUN total=87 identical=85 wrong=0; slow, minutes)
 sweep:
 	cd {{v6}}/tsv2 && bash scripts/sweep.sh
 
@@ -87,6 +87,14 @@ serve-endurance:
 serve-leak-soak:
 	cd {{v6}}/tsv2 && bash scripts/leak-soak.sh
 
+# THE ALPHA'S HEADLINE RECEIPT: v5's own examples/callgraph-ast.dl and the v6
+# port of it, both over one pinned corpus, diffed rel by rel with every row of
+# difference bucketed and proven (expect: FLAGSHIP CALLGRAPH GRADED, 0
+# unclassified, exit 0; builds target/release/dl and the release extractor on
+# first run, seconds after)
+flagship:
+	cd {{v6}}/tsv2 && bash scripts/flagship-callgraph.sh
+
 # the golden plan's PHASE 2 EXIT RECEIPT: an sg-rail-class diag rail end to end
 # on real file edits -- watcher, extractor, retraction, and kill -9 mid-extraction
 # (expect: EXTRACTION LIVE HOLDS, 8 phases, exit 0; builds the release extractor
@@ -122,4 +130,4 @@ bench:
 green: conformance roundtrip text-door plunit prolog-lint tsv2-test import-gate one-subscribe dl-test store-test
 
 # everything, including the sweep
-green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate sweep
+green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate flagship sweep

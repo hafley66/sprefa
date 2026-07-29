@@ -1372,3 +1372,27 @@ json/decode 15 (decode_arc, user-level encoding call first).
 FLAGSHIP DISPATCHED per fork flagship_pick: callgraph rail first
 proves the v5-output-vs-v6 grading rig, flow-interproc rides the
 same rig.
+FLAGSHIP STEP 1 LANDED (opus worktree, 2 commits, merged;
+coordinator RE-RAN THE RIG ITSELF exit 0 same table + green +
+conformance 139 + sweep 87/85/0): THE ALPHA'S HEADLINE RECEIPT
+EXISTS. examples/callgraph-ast.dl byte-unmodified vs its v6 port
+over a pinned 13-file rust corpus (scratch one-commit repo as
+shared cwd so paths match; v5 leg DL_STATE_DIR-isolated, daemon
+untouched). CLASSIFICATION: def 57/67, call 36/217, calls 143/574,
+unused 39/23 -- EVERY diff row bucket (a) extraction-input, 0
+expression gaps, 0 defects. v6 strict superset on monotone rels
+(tree-sitter sees trait signatures, method/path/struct-literal
+calls that v5's bare-identifier ast query cannot), unused inverts
+as anti-monotone must. calls/unused proven by RULE FIDELITY (v5's
+rule bodies run against EACH engine's own inputs -- this leg
+defeated a wrong classifier draft that sabotage caught). Glob
+semantics divergence pinned by assertion (v5 globset vs git
+pathspec). 2 fixtures promoted; `just flagship` in green-all.
+NAMED GAPS: probe-output guard refusal misnamed + unlocated (ARCH
+probe_output_guard, B4 in the wild); byte spans cannot enter
+programs (decode_arc dependency); NEW UNOWNED DEFECT extra drain
+tick after refCount re-assertion (ARCH extra_drain_tick).
+flow-interproc = BLOCKED (ARCH row): rides SCIP-resolved builtins
+the phase-1 extractor CLI does not emit -- unblocking is a USER
+call (expose the resolve pass) since the extractor is fixed.
+reaches/closure not graded (cyclic; graph-algo queue item).
