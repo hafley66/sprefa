@@ -49,8 +49,9 @@
 | [plans/2026-07-25-sql-builder-build-vs-buy.md](plans/2026-07-25-sql-builder-build-vs-buy.md) | 322 | SQL query-builder / templating: build-vs-buy for `lowerSql.ts` |
 | [prolog/LANG.md](prolog/LANG.md) | 95 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
 | [prolog/compile/PIPELINE.md](prolog/compile/PIPELINE.md) | 153 | The tsv2 compiler pipeline, stage by stage |
-| [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 592 | TSV2 Phase C scoreboard |
-| [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 162 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
+| [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 724 | TSV2 Phase C scoreboard |
+| [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 213 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
+| [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 115 | TICK MODEL: the semiring/grading semantics behind the clock checker |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-extract/AGENTS.md](sprefa-extract/AGENTS.md) | 66 | sprefa-extract — Agent Guidance |
@@ -732,10 +733,13 @@
 ```
 1:# TSV2 Phase C scoreboard
 15:## Totals (current)
-57:## Per-fixture table: compiled (31)
-103:## Per-construct blocked tally (UNSUPPORTED, ranked) — post PHASE C2 RULING 2
-134:## Widening / fix history (chronological, each transition measured)
-351:## Findings
+37:### The UNSUPPORTED bucket, by named reason (65)
+59:### The final-state leg (new, and it changes how to read this table)
+117:## Per-fixture table: compiled (60)
+185:## Per-construct blocked tally (UNSUPPORTED, ranked)
+216:## EXPRESSION + AGGREGATE LIFT (2026-07-29)
+266:## Widening / fix history (chronological, each transition measured)
+483:## Findings
 ```
 
 ### prolog/compile/SYNTAX.md
@@ -744,10 +748,24 @@
 7:## Ruling that reframes this whole document (relayed mid-flight)
 21:## The central superseding decision: bare identifier = variable, always
 45:## Construct table
-88:### Core grammar and input aliases
-126:## Round-trip design note (why decl lines are exact, not fallback-merged)
-141:## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
-153:## What `dl_view/*.dl` is
+103:### Context status
+109:### Core grammar and input aliases
+149:### Legacy surface: parsed, then refused
+160:### World term lowering rows
+178:## Round-trip design note (why decl lines are exact, not fallback-merged)
+193:## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
+204:## What `dl_view/*.dl6` is
+```
+
+### prolog/compile/TICK-MODEL.md
+```
+1:# TICK MODEL: the semiring/grading semantics behind the clock checker
+10:## 1. Objects: three semirings
+26:## 2. The derivative reading (lifecycle = sign decomposition)
+50:## 3. Grading: what tick a thing is on
+68:## 4. Coercions between rings (the A2 analysis)
+84:## 5. Theorems already shipped (each = a ring error made a refusal)
+103:## 6. What the checker does (phase 5 spec)
 ```
 
 ### prolog/conformance/FIXTURES.md
