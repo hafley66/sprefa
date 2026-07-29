@@ -1396,3 +1396,21 @@ flow-interproc = BLOCKED (ARCH row): rides SCIP-resolved builtins
 the phase-1 extractor CLI does not emit -- unblocking is a USER
 call (expose the resolve pass) since the extractor is fixed.
 reaches/closure not graded (cyclic; graph-algo queue item).
+CLI "THE BOP" LANDED (sonnet worktree; merge + coordinator commit
+6dcd02c9 -- PROCESS DEVIATION: agent reported done with the whole
+tree UNCOMMITTED; coordinator reviewed file-by-file, ran every
+receipt itself, committed on the branch; exactly the sonnet failure
+mode the user warned about, caught by the dispatch-law base check):
+registry cli_command/3 -> commander bop.ts, serve/run/check/load/q,
+run+check boot serveTsv2 IN-PROCESS, no daemon; exit contract
+verified by coordinator's own runs (clean 0, broken/missing 1,
+ghcacher named refusal 2); 12 tests + inventory parity, tsv2 suite
+56/0/1skip; commander = the one dep (user-required); one-subscribe
+1/1 both apps. bop_check.pl documents the swipl halt-inside-catch
+trap. tmLanguage regen fixed pre-existing finalize-still-reserved
+staleness. justfile: bop-test recipe. Post-merge trip: main
+node_modules lacked commander until pnpm install (9 bop tests red,
+then all green; golden flake hit again on the same run, 74/74
+isolated -- ARCH row golden_flake_hunt filed). THE 6.2.0 TAG GATE
+("the bop") IS SATISFIED -- push + tag = user call. LSP milestone
+= the remaining phase-4 half.
