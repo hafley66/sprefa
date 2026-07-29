@@ -1,46 +1,162 @@
-# flagship-flow.dl6 -- portable v6 leg of examples/flow-interproc.dl.
+# flagship-flow.dl6 -- v6 value-plane port of examples/flow-interproc.dl.
 #
-# The host invokes `extract --resolve` across the pinned corpus. Its rows are
-# resolved callable edges, so `flow_edge` and `flow_reach` below are the
-# callable-plane approximation available from v6 today. The v5 program's
-# value-plane edge union reads df_edge, df_arg, df_param, and df_node; no v6
-# extractor family emits those rows, so this program does not manufacture them.
+# `span` preserves the extractor's half-open byte identities. Each extractor
+# host is one named JSONL projection. `df_node` deliberately omits `name`: many
+# value nodes have `name: null`, and node identity is its file plus span.
 #
-# `sig` records carry slot, position, and type, but their callable identity is
-# the nested `owner` span. The sh text projection reads only top-level keys, so
-# no rule can join a signature to a resolved callee. `flow_param_type` remains
-# declared and empty as the named text-door stop. `flow_node_type` additionally
-# requires df_node and df_param, so it remains declared and empty as well.
+# NAMED STOP host_struct_output_type: the current text door refuses every
+# span-typed host output with
+# `unsupported_surface(column_type_wrapper(<host>, <column>, none))`.
+# If that compiler stop is lifted, host_struct_output_coercion remains: the
+# served host currently serializes an object returned for a declared `span`
+# output as text before arrival. These rules and the promoted fixtures state
+# the intended exact joins; this program must not replace them with
+# callable-plane edges.
 
-sh resolve_at(rev: text, glob: text) -> (caller_path: text, caller_name: text, callee_path: text, callee_name: text, kind: text) =
+type span(start: int, end: int).
+
+sh enumerate_at(rev: text, glob: text) -> (path: text, digest: text) =
+  `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
+
+sh df_node_at(path: text) -> (record: text, family: text, span: span, kind: text) =
+  `"$DL_EXTRACT_BIN" --family df {path}`.
+sh df_edge_at(path: text) -> (record: text, family: text, kind: text, from: span, to: span) =
+  `"$DL_EXTRACT_BIN" --family df {path}`.
+sh df_param_at(path: text) -> (record: text, family: text, span: span, pos: int) =
+  `"$DL_EXTRACT_BIN" --family df {path}`.
+sh df_arg_at(path: text) -> (record: text, family: text, call: span, pos: int, arg: span) =
+  `"$DL_EXTRACT_BIN" --family df {path}`.
+sh call_node_at(path: text) -> (record: text, family: text, span: span, kind: text, name: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+sh type_node_at(path: text) -> (record: text, family: text, span: span, kind: text, name: text) =
+  `"$DL_EXTRACT_BIN" --family type {path}`.
+sh sig_at(path: text) -> (record: text, family: text, owner_start: int, owner_end: int, slot: text, pos: int, ty: text) =
+  `"$DL_EXTRACT_BIN" --family type {path}`.
+sh resolve_at(rev: text, glob: text) -> (caller_path: text, caller_name: text, callee_path: text, callee_name: text, caller_site_start: int, caller_site_end: int, kind: text) =
   `git ls-files --with-tree='{rev}' -- '{glob}' | xargs "$DL_EXTRACT_BIN" --resolve`.
 
 rel want_at(rev: text, glob: text).
+rel file(path: text, digest: text).
+file(path, digest) <- want_at(rev, glob), ? enumerate_at(rev, glob, path, digest).
 
-rel resolved_call_edge(caller_path: text, caller_name: text, callee_path: text, callee_name: text, kind: text).
-resolved_call_edge(caller_path, caller_name, callee_path, callee_name, kind) <-
-  want_at(rev, glob), ? resolve_at(rev, glob, caller_path, caller_name, callee_path, callee_name, kind).
+rel df_node(path: text, at: span, kind: text).
+df_node(path, at, kind) <-
+  file(path, digest), ? df_node_at(path, 'node', 'df', at, kind) @ salt(digest: digest).
 
-rel flow_edge(from_path: text, from_name: text, to_path: text, to_name: text).
-flow_edge(from_path, from_name, to_path, to_name) <-
-  resolved_call_edge(from_path, from_name, to_path, to_name, _).
+rel df_edge(path: text, from: span, to: span).
+df_edge(path, from, to) <-
+  file(path, digest), ? df_edge_at(path, 'edge', 'df', 'direct', from, to) @ salt(digest: digest).
 
-rel flow_reach(from_path: text, from_name: text, to_path: text, to_name: text).
-flow_reach(from_path, from_name, to_path, to_name) <-
-  flow_edge(from_path, from_name, to_path, to_name).
-flow_reach(from_path, from_name, to_path, to_name) <-
-  flow_reach(from_path, from_name, middle_path, middle_name),
-  flow_edge(middle_path, middle_name, to_path, to_name).
+rel df_param(path: text, at: span, pos: int).
+df_param(path, at, pos) <-
+  file(path, digest), ? df_param_at(path, 'param', 'df', at, pos) @ salt(digest: digest).
+
+rel df_arg(path: text, call: span, pos: int, arg: span).
+df_arg(path, call, pos, arg) <-
+  file(path, digest), ? df_arg_at(path, 'arg', 'df', call, pos, arg) @ salt(digest: digest).
+
+rel call_callable(path: text, at: span, name: text).
+call_callable(path, at, name) <-
+  file(path, digest), ? call_node_at(path, 'node', 'call', at, _, name) @ salt(digest: digest).
+
+rel type_callable(path: text, at: span, name: text).
+type_callable(path, at, name) <-
+  file(path, digest), ? type_node_at(path, 'node', 'type', at, _, name) @ salt(digest: digest).
+
+rel sig(path: text, owner_start: int, owner_end: int, slot: text, pos: int, ty: text).
+sig(path, owner_start, owner_end, slot, pos, ty) <-
+  file(path, digest), ? sig_at(path, 'sig', 'type', owner_start, owner_end, slot, pos, ty) @ salt(digest: digest).
+
+rel resolved_call_edge(caller_path: text, caller_name: text, callee_path: text, callee_name: text, caller_site_start: int, caller_site_end: int, kind: text).
+resolved_call_edge(caller_path, caller_name, callee_path, callee_name, caller_site_start, caller_site_end, kind) <-
+  want_at(rev, glob), ? resolve_at(rev, glob, caller_path, caller_name, callee_path, callee_name, caller_site_start, caller_site_end, kind).
+
+rel df_value(path: text, start: int, end: int, kind: text).
+df_value(path, start, end, kind) <- df_node(path, at, kind), decode(at, {start: start, end: end}).
+
+rel df_direct(from: text, to: text).
+df_direct(from, to) <-
+  df_edge(path, from_at, to_at),
+  decode(from_at, {start: from_start, end: from_end}),
+  decode(to_at, {start: to_start, end: to_end}),
+  from = concat([path, ':', from_start, ':', from_end]),
+  to = concat([path, ':', to_start, ':', to_end]).
+
+rel type_owner(path: text, name: text, start: int, end: int).
+type_owner(path, name, start, end) <- type_callable(path, at, name), decode(at, {start: start, end: end}).
+
+# A df parameter or return belongs to the innermost typed callable containing
+# its span. This preserves nested-lambda ownership. The alternative, joining
+# every enclosing callable, makes a nested parameter an outer callable slot.
+rel smaller_type_owner(path: text, value_start: int, value_end: int, owner_start: int, owner_end: int).
+smaller_type_owner(path, value_start, value_end, owner_start, owner_end) <-
+  type_owner(path, _, owner_start, owner_end),
+  type_owner(path, _, inner_start, inner_end),
+  value_start >= inner_start, value_end =< inner_end,
+  inner_start >= owner_start, inner_end =< owner_end,
+  inner_start \== owner_start.
+smaller_type_owner(path, value_start, value_end, owner_start, owner_end) <-
+  type_owner(path, _, owner_start, owner_end),
+  type_owner(path, _, inner_start, inner_end),
+  value_start >= inner_start, value_end =< inner_end,
+  inner_start >= owner_start, inner_end =< owner_end,
+  inner_end \== owner_end.
+
+rel value_owner(path: text, value_start: int, value_end: int, callee_path: text, callee_name: text).
+value_owner(path, value_start, value_end, callee_path, callee_name) <-
+  df_value(path, value_start, value_end, _),
+  type_owner(callee_path, callee_name, owner_start, owner_end),
+  path == callee_path,
+  value_start >= owner_start, value_end =< owner_end,
+  not(smaller_type_owner(path, value_start, value_end, owner_start, owner_end)).
+
+rel call_target(caller_path: text, call_start: int, call_end: int, callee_path: text, callee_name: text).
+call_target(caller_path, call_start, call_end, callee_path, callee_name) <-
+  resolved_call_edge(caller_path, _, callee_path, callee_name, call_start, call_end, _).
+
+rel flow_edge(from: text, to: text).
+flow_edge(from, to) <- df_direct(from, to).
+flow_edge(arg, param) <-
+  df_arg(caller_path, call_at, pos, arg_at),
+  decode(call_at, {start: call_start, end: call_end}),
+  decode(arg_at, {start: arg_start, end: arg_end}),
+  call_target(caller_path, call_start, call_end, callee_path, callee_name),
+  df_param(callee_path, param_at, pos),
+  decode(param_at, {start: param_start, end: param_end}),
+  value_owner(callee_path, param_start, param_end, callee_path, callee_name),
+  arg = concat([caller_path, ':', arg_start, ':', arg_end]),
+  param = concat([callee_path, ':', param_start, ':', param_end]).
+flow_edge(ret, call) <-
+  call_target(caller_path, call_start, call_end, callee_path, callee_name),
+  value_owner(callee_path, ret_start, ret_end, callee_path, callee_name),
+  df_value(callee_path, ret_start, ret_end, 'ret'),
+  ret = concat([callee_path, ':', ret_start, ':', ret_end]),
+  call = concat([caller_path, ':', call_start, ':', call_end]).
+
+rel flow_reach(from: text, to: text).
+flow_reach(from, to) <- flow_edge(from, to).
+flow_reach(from, to) <- flow_reach(from, middle), flow_edge(middle, to).
 
 rel sink_callee(callee_path: text, callee_name: text).
-sink_callee(callee_path, callee_name) <-
-  resolved_call_edge(_, _, callee_path, callee_name, _).
+sink_callee(callee_path, callee_name) <- call_target(_, _, _, callee_path, callee_name).
 
 rel flow_param_type(callee_path: text, callee_name: text, pos: int, ty: text).
+flow_param_type(callee_path, callee_name, pos, ty) <-
+  sink_callee(callee_path, callee_name),
+  type_owner(callee_path, callee_name, owner_start, owner_end),
+  sig(callee_path, owner_start, owner_end, 'param', pos, ty).
 
 rel flow_node_type(node: text, callee_path: text, callee_name: text, ty: text).
+flow_node_type(node, callee_path, callee_name, ty) <-
+  sink_callee(callee_path, callee_name),
+  df_param(callee_path, param_at, pos),
+  decode(param_at, {start: param_start, end: param_end}),
+  value_owner(callee_path, param_start, param_end, callee_path, callee_name),
+  type_owner(callee_path, callee_name, owner_start, owner_end),
+  sig(callee_path, owner_start, owner_end, 'param', pos, ty),
+  node = concat([callee_path, ':', param_start, ':', param_end]).
 
-? flow_edge(from_path, from_name, to_path, to_name).
-? flow_reach(from_path, from_name, to_path, to_name).
+? flow_edge(from, to).
+? flow_reach(from, to).
 ? flow_param_type(callee_path, callee_name, pos, ty).
 ? flow_node_type(node, callee_path, callee_name, ty).

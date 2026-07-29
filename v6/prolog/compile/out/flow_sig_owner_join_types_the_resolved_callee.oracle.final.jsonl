@@ -1,0 +1,1 @@
+{"final":{"df_param":[["src/f.rs","f_param",0,120]],"flow_node_type":[["f_param","src/f.rs","f","string"]],"flow_param_type":[["src/f.rs","f",0,"string"]],"sig":[["src/f.rs",100,160,"param",0,"string"],["src/f.rs",200,260,"param",0,"integer"]],"sink_callee":[["src/f.rs","f"]],"type_owner":[["src/f.rs","f",100,160],["src/f.rs","g",200,260]]}}

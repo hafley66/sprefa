@@ -1,16 +1,10 @@
 """Classify the flagship flow port's four query diffs.
 
-The v5 program closes a value-flow graph made from df_edge plus positional
-argument/parameter and return/call-result hops. The v6 extractor currently
-arrives only resolved callable edges. Therefore the flow_edge and flow_reach
-rows are distinct planes, rather than byte-comparable representations of one
-relation. The signature rows are also unjoinable through the text host: their
-owner is a nested span, while resolved calls identify a callee by path and name.
-
-Every nonmatching row is consequently the named v6 expression gap. This is a
-classifier, rather than a count assertion: it reads each sorted TSV and proves
-that all rows in every set difference land in that bucket. Exit nonzero if a
-new queried relation is not covered by the table below.
+The v6 rail now has the same value-plane inputs as the v5 query: direct df
+edges, positional arg/param slots pinned by resolved caller-site spans, return
+hops, and flat sig-owner fields. A nonzero flow_edge intersection is therefore
+an executable requirement, not a descriptive count. The three output buckets
+remain extraction-input difference, v6 expression gap, and real defect.
 """
 
 import os
@@ -18,10 +12,10 @@ import sys
 
 
 REASONS = {
-    "flow_edge": "df value-plane rows unavailable; v6 rows are resolved callable edges",
-    "flow_reach": "df value-plane closure unavailable; v6 closes resolved callable edges",
-    "flow_param_type": "sig owner is a nested span and cannot join to a resolved callee through the text host",
-    "flow_node_type": "df_node and df_param are unavailable from the v6 extractor",
+    "flow_edge": "value-plane rows differ after the df union",
+    "flow_reach": "value-plane closure differs after the df union",
+    "flow_param_type": "resolved-callee sig-owner join differs",
+    "flow_node_type": "df-param positional type join differs",
 }
 
 
@@ -46,6 +40,11 @@ def main():
         gap = len(v5_only) + len(v6_only)
         rows.append((rel, len(v5), len(v6), len(matched), len(v5_only), len(v6_only), gap, reason, v5_only, v6_only))
 
+    flow_edge = next(row for row in rows if row[0] == "flow_edge")
+    if flow_edge[3] == 0:
+        print("FAIL  flow_edge match assertion: expected at least one matching value-plane row")
+        return 1
+
     print("CLASSIFICATION TABLE")
     print("  {:<16}{:>7}{:>7}{:>7}{:>8}{:>8}{:>7}{:>8}{:>8}".format(
         "rel", "v5", "v6", "match", "v5only", "v6only", "(a)", "(b)", "(c)"))
@@ -60,7 +59,7 @@ def main():
         print(f"  {rel} v5-only: {sample(v5_only)}")
         print(f"  {rel} v6-only: {sample(v6_only)}")
 
-    print("\nevery difference classified: 0 extraction-input rows, 0 defects, 0 unclassified")
+    print("\nevery difference classified: 0 extraction-input rows, gaps shown in (b), 0 defects, 0 unclassified")
     return 0
 
 

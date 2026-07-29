@@ -1,0 +1,1 @@
+{"final":{"df_arg":[["src/main.rs",10,15,-1,"receiver",17],["src/main.rs",10,15,0,"secret",16],["src/main.rs",30,35,0,"benign",36]],"df_param":[["src/f.rs","f_param",0,8],["src/g.rs","g_param",0,8]],"flow_edge":[["benign","g_param"],["secret","f_param"]],"resolved_call_edge":[["src/main.rs",10,15,"src/f.rs","f"],["src/main.rs",30,35,"src/g.rs","g"]]}}
