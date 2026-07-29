@@ -742,9 +742,33 @@ edge_registered_refusal(Body, Goals, Reason) :-
 
 edge_goal_refusal(latest(Atom), Body, 1, edge_body_with_latest(Body)) :-
     \+ plain_positive_rel_atom(Atom).
+% finalize/1 needs a DEPARTURE STREAM the emitted runtime does not have, and
+% that stream is runtime-owned, not emitter-owned. engine.pl turns a -delta of
+% a listened rel into a T+1 occurrence (tick/7's DepartureCarry, gated by
+% listened_departure_refs/2), while 1_incremental.ts:stageEvents/4 copies ONLY
+% `event.sign === 1` rows into __frontier_/__next_frontier_, whose DDL carries
+% _phase and _sequence and no sign at all. So a departure can never reach an
+% arm. The naive path is further off: triggerOccurrences reads the arrivals
+% BATCH and filters sign === "add", and it holds no cross-tick state to carry
+% a departure into the next tick with.
+% What the seam owes, exactly: a signed (or separate) frontier stream, staged
+% for the refs some rule binds with finalize/1, promoted and counted in
+% carryPending the way additions are. The emitter's half (departure DDL, the
+% arm's DeltaProjectSql, and a per-relation "departure listened" flag) is
+% small and rides on top of it.
 edge_goal_refusal(Goal, Body, 2, edge_body_needs_finalize(Body)) :-
     body_surface_for_term(Goal, _, time, refs_of_arg(_, pos, trigger),
                           wrapper(rel_atom, refuse(goal)), refused).
+% pre/1 is NOT a wider arm, which is why the edge-body arc widened everything
+% around it and left this one standing. engine.pl fires occurrences ONE AT A
+% TIME and pre(Atom) reads the store as the writes so far THIS TICK left it
+% (engine.pl step 4), so two arrivals for one key fold 0 -> 1 -> 2. A sampled
+% base-table read -- the shape latest/1 got -- projects (clicks,1) twice and
+% lands 1 where the oracle pins 2 (receipt quoted in SCOREBOARD.md's
+% "edge_body_needs_pre" section, run against
+% merge_family.pl:batched_increments_both_count). The fold is also CROSS-ARM,
+% so no per-arm recursive CTE expresses it either. It needs an ordered
+% occurrence loop in the runtime; refused by name until that exists.
 edge_goal_refusal(Goal, Body, 3, edge_body_needs_pre(Body)) :-
     body_surface_for_term(Goal, _, sample, refs_of_arg(_, pos, sampled),
                           wrapper(rel_atom, refuse(goal)), refused).
@@ -761,6 +785,18 @@ edge_goal_refusal(now(Argument), Body, 4, edge_body_with_now(Body)) :-
 % condition rather than refused.
 edge_goal_refusal(not(Atom), Body, 5, edge_body_with_negation(Body)) :-
     \+ plain_positive_rel_atom(Atom).
+% decode/2 and json_each/2 are blocked BELOW the arm, on the value encoding,
+% which is why widening the arm did not reach them. A compound value that
+% ARRIVES is stored as canonical term text (`fresh(tag_w1,body1)` --
+% sweep.pl:term_text/2, mirroring ticklog.pl's own value_json/2), while
+% compile_pattern_arg/7's compound branch destructures the json1 tagged form
+% (`json_extract(Expr,'$.fn')` / `'$.args[N]'`) that the emitter writes for a
+% compound a HEAD expression produces. The two encodings do not meet, and that
+% mismatch is the one SCOREBOARD.md has carried since phase C ("compound
+% arrival text vs json1 match"). Lowering decode/2 on top of it would answer
+% zero rows where the oracle unifies. The object-pattern half (`{name: X}`)
+% needs a third shape again, and json_each/2 needs a table-valued read.
+% A decode arc owns the encoding decision first; the arm is not the blocker.
 edge_goal_refusal(Goal, Body, 8, edge_body_needs_json_destructure(Body)) :-
     body_surface_for_term(Goal, _, guard, no_refs,
                           wrapper(expr_pair, refuse(goal)), refused).
