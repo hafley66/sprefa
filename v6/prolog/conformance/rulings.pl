@@ -338,3 +338,18 @@ ruling(json_ticklog_encoding, canonical_json_text, user,
 % constants. Driver swap / rust sidecar deferred to the rust return.
 ruling(udf_residency, libsql_fuse_and_delta_deopt, user,
        'user 2026-07-29: "there is truly no other way in ts" -- accepted stay-libsql from the multiple-choice round').
+
+% 2026-07-29 (second multiple-choice round, after plain-words
+% explanation). keyed() on a level-rule head is a COMPILE ERROR
+% (named refusal) in oracle and tsv2 both; keyed replace stays edge
+% semantics. Closes the silently-inert defect from the hands-on
+% findings.
+ruling(keyed_level_head, named_refusal, user,
+       'user 2026-07-29: chose "Compile error" -- keyed stays an edge-rule thing').
+
+% 2026-07-29. keep(count(N)) retention is LOWERED FOR REAL in tsv2:
+% emitted as an ordinary retracting rule over the log rows beyond N,
+% riding the landed P3 retraction SQL. The consumption lab's s1
+% smallest-honest spelling. Closes the final_wrong retention rows.
+ruling(retention_count_lowering, retracting_rule_over_log, user,
+       'user 2026-07-29: chose "Lower it for real" from the second multiple-choice round').

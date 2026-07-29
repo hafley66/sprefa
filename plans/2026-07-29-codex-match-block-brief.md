@@ -54,3 +54,25 @@ conformance max 3 runs. Final summary: expansion predicate name and
 home, fixture counts, sugar-vs-desugar byte-identity receipt, all
 grades (conformance/roundtrip/sweep/plunit/tsv2/gate), per-fixture
 movement, cracks.
+
+## ADDENDUM 2026-07-29 (same lane, ruled in the multiple-choice rounds)
+
+Two additional pieces ride this arc since you own compile/* + engine.pl:
+
+A1 KEYED-LEVEL REFUSAL (ruling keyed_level_head = named_refusal):
+   keyed()/key(...) on a rel headed by a LEVEL rule is a compile
+   error in BOTH the oracle (engine.pl program load) and tsv2
+   (analyze.pl), refusal named keyed_level_head(Rel). Today it is
+   silently inert (decl_key consulted only in apply_edge_writes).
+   Add 1 refusal fixture + 1 fixture proving the edge-headed keyed
+   case still works. Fail-first: show the inert accumulation red
+   receipt before the refusal exists.
+
+A2 keep(count(N)) LOWERING (ruling retention_count_lowering =
+   retracting_rule_over_log): emit retention as an ordinary
+   retracting rule over log rows beyond N, riding the landed P3
+   retraction SQL (support-count guard machinery). Grades:
+   retention_count_prunes_oldest leaves final_wrong (final-state leg
+   green); tick log stays byte-identical to the oracle; statement
+   counts flat per tick (COUNT-test law: no per-row prune loop);
+   sweep movement = exactly this fixture class, zero elsewhere.
