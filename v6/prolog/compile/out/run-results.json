@@ -77,6 +77,13 @@
     "finalDetail": ""
   },
   {
+    "name": "flagship_flow_reach_over_resolved_edges",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "diag_scenario_seven_ticks_end_to_end",
     "bucket": "identical",
     "detail": "",

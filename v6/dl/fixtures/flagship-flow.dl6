@@ -1,0 +1,46 @@
+# flagship-flow.dl6 -- portable v6 leg of examples/flow-interproc.dl.
+#
+# The host invokes `extract --resolve` across the pinned corpus. Its rows are
+# resolved callable edges, so `flow_edge` and `flow_reach` below are the
+# callable-plane approximation available from v6 today. The v5 program's
+# value-plane edge union reads df_edge, df_arg, df_param, and df_node; no v6
+# extractor family emits those rows, so this program does not manufacture them.
+#
+# `sig` records carry slot, position, and type, but their callable identity is
+# the nested `owner` span. The sh text projection reads only top-level keys, so
+# no rule can join a signature to a resolved callee. `flow_param_type` remains
+# declared and empty as the named text-door stop. `flow_node_type` additionally
+# requires df_node and df_param, so it remains declared and empty as well.
+
+sh resolve_at(rev: text, glob: text) -> (caller_path: text, caller_name: text, callee_path: text, callee_name: text, kind: text) =
+  `git ls-files --with-tree='{rev}' -- '{glob}' | xargs "$DL_EXTRACT_BIN" --resolve`.
+
+rel want_at(rev: text, glob: text).
+
+rel resolved_call_edge(caller_path: text, caller_name: text, callee_path: text, callee_name: text, kind: text).
+resolved_call_edge(caller_path, caller_name, callee_path, callee_name, kind) <-
+  want_at(rev, glob), ? resolve_at(rev, glob, caller_path, caller_name, callee_path, callee_name, kind).
+
+rel flow_edge(from_path: text, from_name: text, to_path: text, to_name: text).
+flow_edge(from_path, from_name, to_path, to_name) <-
+  resolved_call_edge(from_path, from_name, to_path, to_name, _).
+
+rel flow_reach(from_path: text, from_name: text, to_path: text, to_name: text).
+flow_reach(from_path, from_name, to_path, to_name) <-
+  flow_edge(from_path, from_name, to_path, to_name).
+flow_reach(from_path, from_name, to_path, to_name) <-
+  flow_reach(from_path, from_name, middle_path, middle_name),
+  flow_edge(middle_path, middle_name, to_path, to_name).
+
+rel sink_callee(callee_path: text, callee_name: text).
+sink_callee(callee_path, callee_name) <-
+  resolved_call_edge(_, _, callee_path, callee_name, _).
+
+rel flow_param_type(callee_path: text, callee_name: text, pos: int, ty: text).
+
+rel flow_node_type(node: text, callee_path: text, callee_name: text, ty: text).
+
+? flow_edge(from_path, from_name, to_path, to_name).
+? flow_reach(from_path, from_name, to_path, to_name).
+? flow_param_type(callee_path, callee_name, pos, ty).
+? flow_node_type(node, callee_path, callee_name, ty).
