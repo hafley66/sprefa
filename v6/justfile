@@ -80,6 +80,12 @@ serve-endurance:
 serve-leak-soak:
 	cd {{v6}}/tsv2 && bash scripts/leak-soak.sh
 
+# sustained assert/retract churn on one served program; process memory,
+# sqlite page count, and statements/tick must all stay flat post-warmup
+# (expect: MEMORY SOAK HOLDS, exit 0; TSV2_SOAK_LONG=1 for an overnight run)
+memory-soak:
+	cd {{v6}}/tsv2 && bash scripts/memory-soak.sh
+
 # exactly one terminal subscription per app (dl/src and tsv2/serve)
 one-subscribe:
 	bash {{v6}}/tools/one-subscribe.sh
@@ -96,4 +102,4 @@ bench:
 green: conformance roundtrip text-door plunit tsv2-test import-gate one-subscribe dl-test store-test
 
 # everything, including the sweep
-green-all: green endurance leak-soak serve-endurance serve-leak-soak sweep
+green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak sweep
