@@ -683,3 +683,71 @@ to carry.
 conformance 137/0, plunit 119/119, roundtrip ALL PASS, TEXT_DOOR 72/72/0,
 sweep 137/72 RUN identical=70 wrong=0 with a clean artifact diff, ghcacher
 report unchanged, prolog-lint findings=1 baseline=1 OK.
+
+---
+
+## R4: oracle aggregate classification onto registry roles
+
+Landed, narrowly. `level_eval:classify_head_arg/2` reads registry.pl's
+aggregate axis instead of the local list
+`[count, sum, min, max, json_array]` plus a `json_object/2` clause.
+`analyze.pl` already read the same set that way, so adding an aggregate row
+used to update the compiler and silently miss the oracle.
+
+### The constraint, and how it is held
+
+The oracle is deliberately WIDER than the compiler. `json_array/1` and
+`json_object/2` carry `head(refuse(aggregate))` in the registry and the
+compiler refuses them, while the reference engine executes both. So the
+lookup keys off the aggregate AXIS and leaves the Status field unbound:
+
+```prolog
+surface_for_term(Arg, Kind/1, aggregate, _, head(_), _)
+```
+
+A lookup filtering on `live` would make a json aggregate head fall through to
+plain level evaluation and derive a row per body derivation instead of one
+grouped row, QUIETLY.
+
+Sabotage receipt, binding that last field to `live`:
+
+| Gate | Result under sabotage |
+|---|---|
+| `oracle_aggregate_classification` | 2 tests red, naming json_array and json_object |
+| conformance | 137 to 134 |
+
+So the corpus does catch it, and the new unit says why in one line instead of
+three fixture failures.
+
+### What R4 deliberately did NOT take
+
+The review's rank 4 also names `level_eval`'s body-form list and `body.pl`'s
+eleven `solve/2` cases.
+
+- `goal_rel_refs/3` keeps its list, for the ordering contract already recorded
+  under R1: its `not/1` clause appends inner-positive before inner-negative, so
+  for `not((not(a), b))` it answers `[b/1, a/1]` rather than source order, and
+  the `not_mixed` golden pins that.
+- `body.pl:solve/2`'s eleven cases are EXECUTION, not classification. Each
+  clause does something different with its goal (evaluate, negate, sample the
+  visible set, read the pre-state, fail by construction), so there is no shared
+  dispatch to lift. Its one classification site, `comparison_goal/1`, went to
+  the registry under R5.
+
+### Five new tests
+
+Every registry aggregate row is an oracle aggregate; the registry actually
+carries the six (so the previous test is not vacuous); both refused json rows
+stay live in the oracle; a plain head is not an aggregate; and a compound head
+argument that is not a registry aggregate stays plain.
+
+The first of those hit the same `findall/3` copy trap as R1: `split_rules/4`
+collects through `findall`, so the rule it returns is a VARIANT of the input
+rather than the same term, and `==` fails for a reason unrelated to
+classification. `=@=` is the right operator and the comment says so.
+
+### Receipts
+
+conformance 137/0, plunit 124/124 (+5), roundtrip ALL PASS,
+TEXT_DOOR 72/72/0, sweep 137/72 RUN identical=70 wrong=0 with a clean artifact
+diff, prolog-lint findings=1 baseline=1 OK.

@@ -14,6 +14,7 @@
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
 :- use_module(body).
+:- use_module('../compile/registry', [surface_for_term/6]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -29,11 +30,24 @@ aggregate_head(Head, Template, Ref) :-
     maplist(classify_head_arg, Args, Template),
     memberchk(agg(_, _), Template).
 
-classify_head_arg(Arg, agg(Kind, Expr)) :-
-    nonvar(Arg), Arg =.. [Kind, Expr],
-    memberchk(Kind, [count, sum, min, max, json_array]), !.
+% The aggregate inventory is registry.pl's aggregate AXIS (rank R4 of
+% plans/2026-07-29-prolog-org-review.md), not a local list. analyze.pl already
+% read the same set that way, so adding an aggregate row used to update the
+% compiler and silently miss the oracle.
+%
+% Status is DELIBERATELY not consulted. json_array/1 and json_object/2 carry
+% head(refuse(aggregate)) because this compiler cannot emit them, and the
+% reference engine executes both: the oracle is the wider language on purpose.
+% Filtering on `live` here would make a json aggregate head fall through to
+% plain level evaluation and derive a row per body derivation instead of one
+% grouped row, and it would do it QUIETLY. The
+% oracle_aggregate_classification unit pins exactly that.
 classify_head_arg(Arg, agg(json_object, KeyExpr-ValueExpr)) :-
     nonvar(Arg), Arg = json_object(KeyExpr, ValueExpr), !.
+classify_head_arg(Arg, agg(Kind, Expr)) :-
+    nonvar(Arg),
+    surface_for_term(Arg, Kind/1, aggregate, _, head(_), _), !,
+    arg(1, Arg, Expr).
 classify_head_arg(Arg, plain(Arg)).
 
 split_rules(Rules, AggRules, PlainLevel, EdgeRules) :-

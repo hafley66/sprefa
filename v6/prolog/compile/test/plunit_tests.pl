@@ -48,7 +48,8 @@
               [ trigger_items/2, body_finalize_ref/2,
                 body_latest_ref/2, body_pre_ref/2,
                 check_program/1 ]).
-:- use_module('../../conformance/level_eval', [ goal_rel_refs/3 ]).
+:- use_module('../../conformance/level_eval',
+              [ goal_rel_refs/3, split_rules/4 ]).
 :- use_module('../../conformance/body', [ body_atoms/2, comparison_goal/1 ]).
 :- use_module('../../1_host_expand', [ body_goals/2 ]).
 
@@ -1821,3 +1822,81 @@ test(printer_precedence_comes_from_the_table) :-
     Loose == '1 + 2 * 3'.
 
 :- end_tests(expression_inventory).
+
+% ═══════════════════════════════════════════════════════════════════════════
+% REGISTRY ROW TO ORACLE CLASSIFICATION (rank R4)
+%
+% level_eval.pl carried its own aggregate list, [count, sum, min, max,
+% json_array] plus a json_object/2 clause, while analyze.pl already read the
+% same set off registry.pl's aggregate rows. Adding an aggregate row updated
+% the compiler and silently missed the oracle.
+%
+% THE CONSTRAINT THIS TABLE EXISTS TO PROTECT: the oracle is deliberately
+% WIDER than the compiler. json_array/1 and json_object/2 carry
+% head(refuse(aggregate)) in registry.pl and the compiler refuses them, but the
+% reference engine EXECUTES both. So the oracle's classification must key off
+% the aggregate AXIS and ignore the Status field entirely. A lookup that
+% filtered on `live` would silently stop treating a json aggregate head as an
+% aggregate, and it would stop QUIETLY: the rule would fall through to plain
+% level evaluation and derive a row per body derivation instead of one grouped
+% row.
+%
+% Tested through split_rules/4 rather than the classifier directly, so the
+% assertion is about oracle BEHAVIOR and needs no new export.
+
+:- begin_tests(oracle_aggregate_classification).
+
+% One head term per registry aggregate row, arity taken from the row.
+aggregate_head_term(Signature, Head) :-
+    expression_free_aggregate(Signature, Name/Arity),
+    length(Args, Arity),
+    AggregateTerm =.. [Name | Args],
+    Head =.. [total, AggregateTerm].
+
+expression_free_aggregate(Signature, Signature) :-
+    surface(Signature, aggregate, _, _, _).
+
+% =@= and not ==: split_rules/4 collects through findall/3, which copies, so
+% the returned rule is a VARIANT of the one passed in rather than the same
+% term. == would fail here for a reason that has nothing to do with
+% classification.
+test(every_registry_aggregate_row_is_an_oracle_aggregate) :-
+    forall(aggregate_head_term(_, Head),
+           ( Rule = (Head <- src(1)),
+             split_rules([Rule], AggregateRules, PlainLevel, _),
+             AggregateRules =@= [Rule],
+             PlainLevel == [] )).
+
+% The registry has to actually carry the six, or the test above is vacuous.
+test(registry_carries_the_six_aggregate_rows) :-
+    findall(Signature, surface(Signature, aggregate, _, _, _), Rows),
+    msort(Rows, Sorted),
+    Sorted == [ count/1, json_array/1, json_object/2, max/1, min/1, sum/1 ].
+
+% The oracle stays WIDER than the compiler. Both json rows are refused by the
+% compiler and both are still oracle aggregates.
+test(refused_json_aggregates_stay_live_in_the_oracle) :-
+    forall(member(Signature, [json_array/1, json_object/2]),
+           surface(Signature, aggregate, _, head(refuse(aggregate)), refused)),
+    forall(( member(Name/Arity, [json_array/1, json_object/2]),
+             length(Args, Arity),
+             AggregateTerm =.. [Name | Args],
+             Head =.. [total, AggregateTerm] ),
+           ( Rule = (Head <- src(1)),
+             split_rules([Rule], AggregateRules, PlainLevel, EdgeRules),
+             AggregateRules =@= [Rule],
+             PlainLevel == [],
+             EdgeRules == [] )).
+
+% A head with no aggregate argument is a plain level rule, so the classifier
+% has not become "any compound argument is an aggregate".
+test(plain_head_is_not_an_aggregate) :-
+    Rule = (total(1) <- src(1)),
+    split_rules([Rule], [], [Rule], []).
+
+% A compound head argument that is NOT a registry aggregate stays plain.
+test(non_aggregate_compound_head_argument_stays_plain) :-
+    Rule = (total(wrapped(1)) <- src(1)),
+    split_rules([Rule], [], [Rule], []).
+
+:- end_tests(oracle_aggregate_classification).
