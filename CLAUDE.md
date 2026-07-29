@@ -1283,8 +1283,38 @@ fallout, output byte-identical). Journal:
 plans/2026-07-29-prolog-org-refactor-journal.md. Agent note worth
 keeping: findall/3 copies its template, bit twice with far-away
 failure messages.
-PHASE 2 DISPATCHED (opus worktree, forks watcher_first_impl +
-phase2_agent_tier in ARCH.pl): fs.watch behind the bind seam first
-(@parcel/watcher upgrade = one adapter, pending user word on the
-dep), extraction hosts live, enumerate/enumerate_at, exit receipt =
-sg-rail diag rail retick on a real file edit.
+PHASE 2 EXTRACTION LIVE LANDED (opus worktree, 6 commits, merged;
+coordinator re-ran EVERYTHING in worktree AND merged main -- green
+exit 0, conformance 137/0, tsv2 28/0/1skip, sweep both modes 72/70/0,
+EXTRACTION LIVE HOLDS 8/8, ENUMERATE HOSTS HOLD): watch bind on node
+fs.watch behind an injectable IWatchSource seam (ZERO new deps per
+fork watcher_first_impl; @parcel/watcher = one-adapter swap on user
+word). SLOT DECISIONS (agent, reasoned, ARCH task row carries them):
+event vocabulary never crosses the seam -- watch(glob, path, digest)
+rows with arrival SIGN (rename = -old +new one batch; atomic save =
+digest change; identical bytes = zero delta; no kind column, no
+null); bufferTime(100ms) NOT debounce (git checkout ~20 ticks,
+bounded both ways); enumerate = git ls-files pathspec (tracked-only,
+node_modules NEVER WALKED, 972-on-disk/0-in-answer receipt);
+MEASURED: git ls-tree accepts no glob pathspec, enumerate_at = 
+ls-files --with-tree + rev-parse blob oids; one demand row per
+(path,digest), declared outputs = named projection over extractor
+JSONL. LIVE DEFECT FOUND+FIXED (fail-first): __host_response_* keyed
+on witness digest ALONE silently lost all but the last row of every
+multi-row host answer (every extractor is multi-row -- would have
+blocked the whole feed); now ordinal:int, key (witness,ordinal),
+oracle+emitter same-arc per the A4 lesson. EXIT RECEIPT
+extraction-live.sh: real edit -> extraction -> finding, atomic save,
+content-addressed zero-tick, delete retraction, restart zero
+re-extraction, kill -9 mid-extraction exactly-once. justfile grew
+extraction-live + enumerate recipes (green-all), tsv2-test comment
+28/1. LEDGER-WORTHY EDGE the arc hit: dl6_oracle door maps JSON
+schedule strings to ATOMS while double-quoted rule literals are
+prolog STRINGS -- oracle derives nothing where emitted SQL derives
+correctly; fixtures spell literals single-quoted (SYNTAX ruling
+agrees); real divergence surface for cold authors. Also:
+4_ingest.ts:93 DEBUG default unchanged, but extraction-live.sh now
+exercises the correct resolution order (DL_EXTRACT_BIN -> in-tree
+release -> build), the shape 4_ingest should adopt. Watcher
+restart+delete retraction gap + one-shape-per-host-decl limits named
+in ARCH row. PHASE 2 OF THE GOLDEN PLAN IS COMPLETE.

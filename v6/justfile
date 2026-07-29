@@ -52,7 +52,7 @@ prolog-lint:
 sweep:
 	cd {{v6}}/tsv2 && bash scripts/sweep.sh
 
-# tsv2 runtime + served-engine tests (expect: 21/21, leak soak skipped)
+# tsv2 runtime + served-engine tests (expect: 28 pass / 1 skip, and growing)
 tsv2-test:
 	cd {{v6}}/tsv2 && npm test
 
@@ -87,6 +87,19 @@ serve-endurance:
 serve-leak-soak:
 	cd {{v6}}/tsv2 && bash scripts/leak-soak.sh
 
+# the golden plan's PHASE 2 EXIT RECEIPT: an sg-rail-class diag rail end to end
+# on real file edits -- watcher, extractor, retraction, and kill -9 mid-extraction
+# (expect: EXTRACTION LIVE HOLDS, 8 phases, exit 0; builds the release extractor
+# on first run via cargo build --release --features cli)
+extraction-live:
+	cd {{v6}}/tsv2 && bash scripts/extraction-live.sh
+
+# the file-set feed against THIS repo: enumerate = git ls-files exactly, zero
+# node_modules rows, enumerate_at reports git's own blob oids
+# (expect: ENUMERATE HOSTS HOLD, exit 0; needs a populated node_modules)
+enumerate:
+	cd {{v6}}/tsv2 && bash scripts/enumerate.sh
+
 # sustained assert/retract churn on one served program; process memory,
 # sqlite page count, and statements/tick must all stay flat post-warmup
 # (expect: MEMORY SOAK HOLDS, exit 0; TSV2_SOAK_LONG=1 for an overnight run)
@@ -109,4 +122,4 @@ bench:
 green: conformance roundtrip text-door plunit prolog-lint tsv2-test import-gate one-subscribe dl-test store-test
 
 # everything, including the sweep
-green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak sweep
+green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate sweep
