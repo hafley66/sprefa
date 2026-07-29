@@ -1414,3 +1414,27 @@ then all green; golden flake hit again on the same run, 74/74
 isolated -- ARCH row golden_flake_hunt filed). THE 6.2.0 TAG GATE
 ("the bop") IS SATISFIED -- push + tag = user call. LSP milestone
 = the remaining phase-4 half.
+LSP DIAGS MILESTONE LANDED (sonnet worktree, committed 77b5bbce
+after TWO coordinator continue-nudges -- the agent kept ending its
+turn to wait on background builds; work itself clean; coordinator
+re-ran the receipt LSP DIAGS HOLDS exit 0): ZERO NEW LSP CODE.
+diag-rail.dl6 declares rel diag_v5 in v5's exact 9-column shape;
+tsv2 names tables by bare rel name (lower.pl table_name) so the
+program's own rel IS the table src/lsp.rs:545 selects -- bridge
+fully in-language, no serve projection, no view. Receipt: no-eval +
+unused-def rails over the live watcher/extraction feed, engine-side
+appear+retract AND the real v5 dl --lsp --diag-db over real stdio
+JSON-RPC receiving publishDiagnostics both directions (editor
+rendering + clean shutdown explicitly NOT proven). Line numbers
+HONESTLY ZERO until decode_arc lands spans. Sabotage receipt:
+renaming a diag_v5 column passed every engine-side phase (curl
+reads positionally) and went red only at the real LSP client --
+the v5 leg is the discriminating check. TWO REAL FINDINGS -> ARCH
+rows: emitter_groupby_literal (bare integer-literal head columns
+read as POSITIONAL refs in the support GROUP BY; 0+0 workaround in
+the rail), v5_lsp_exit_hang (dl --lsp answers shutdown then hangs
+on exit+EOF, reproduced standalone, disclosed not patched).
+justfile: lsp-diags recipe in green-all. PHASE 4 OF THE GOLDEN
+PLAN IS COMPLETE (CLI + LSP). Golden-plan alpha spine now P0-P4
+DONE; phase 5 (type pass float/REAL+avg, clock checker, ingest
+commit_ms) is the remaining leg, all rows priced in ARCH.
