@@ -77,6 +77,13 @@
     "finalDetail": ""
   },
   {
+    "name": "flagship_flow_reach_over_resolved_edges",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "struct_column_renders_canonical_json",
     "bucket": "identical",
     "detail": "",
@@ -149,7 +156,7 @@
   {
     "name": "log_retraction_rejected",
     "bucket": "run_error",
-    "detail": "retract from log rel 'event'",
+    "detail": "log_retraction_rejected: retract from log rel 'event' (engine.pl retract_from_log)",
     "finalBucket": "final_wrong",
     "finalDetail": "run threw before the final state could be read"
   },
