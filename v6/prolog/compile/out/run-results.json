@@ -84,6 +84,13 @@
     "finalDetail": "run threw before the final state could be read"
   },
   {
+    "name": "world_fed_keyed_arrival_replaces",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "edge_chain_hops_tick_per_stage",
     "bucket": "identical",
     "detail": "",

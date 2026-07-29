@@ -174,6 +174,44 @@ test(switch_as_keyed_replace_ddl_pk_shape) :-
     include(ddl_for_table(route_row), Ddl, [RouteRowDdl]),
     once(sub_atom(RouteRowDdl, _, _, _, 'PRIMARY KEY ("route_id", "body")')).
 
+% FAIL-FIRST RECEIPT: world-fed keyed arrival replacement.
+%
+% RED:
+%   [10/70] sql_text_snapshots:
+%     world_fed_keyed_arrival_uses_key_constraint_and_replace **FAILED
+%   test sql_text_snapshots:
+%     world_fed_keyed_arrival_uses_key_constraint_and_replace: failed
+% GREEN:
+%   [10/70] sql_text_snapshots:
+%     world_fed_keyed_arrival_uses_key_constraint_and_replace passed
+% EMITTER RED, both modes:
+%   WRONG world_fed_keyed_arrival_replaces first diff at line 2:
+%     actual={"tick":2,"deltas":{"world_mode":{
+%       "add":[[1,"b"]],"del":[]}}}
+%     oracle={"tick":2,"deltas":{"world_mode":{
+%       "add":[[1,"b"]],"del":[[1,"a"]]}}}
+%   FINAL_WRONG world_fed_keyed_arrival_replaces
+%     actual={"final":{"world_mode":[[1,"a"],[1,"b"]]}}
+%     oracle={"final":{"world_mode":[[1,"b"]]}}
+% EMITTER GREEN, both modes:
+%   RUN total=70 identical=67 wrong=0 run_error=2 no_oracle_log=1
+%   FINAL total=70 final_identical=67 final_wrong=2 no_oracle_final=1
+test(world_fed_keyed_arrival_uses_key_constraint_and_replace) :-
+    lowered_for('engine_core.pl', world_fed_keyed_arrival_replaces, Lowered),
+    Lowered = lowered(_, Ddl, ArrivalStatements, _, _, _, _, _),
+    include(ddl_for_table(world_mode), Ddl, [WorldModeDdl]),
+    once(sub_atom(WorldModeDdl, _, _, _, 'PRIMARY KEY ("col1")')),
+    \+ sub_atom(WorldModeDdl, _, _, _, 'PRIMARY KEY ("col1", "col2")'),
+    memberchk(
+        arrivalstmt(
+            world_mode/2,
+            set,
+            'INSERT OR REPLACE INTO "world_mode" ("col1", "col2") VALUES (?, ?)',
+            'DELETE FROM "world_mode" WHERE "col1" = ? AND "col2" = ?',
+            'INSERT OR REPLACE INTO "world_mode" ("col1", "col2") SELECT json_extract(value, \'$[0]\'), json_extract(value, \'$[1]\') FROM json_each(?) RETURNING "col1", "col2"',
+            'DELETE FROM "world_mode" WHERE ("col1", "col2") IN (SELECT json_extract(value, \'$[0]\'), json_extract(value, \'$[1]\') FROM json_each(?)) RETURNING "col1", "col2"'),
+        ArrivalStatements).
+
 test(switch_as_keyed_replace_frontier_ddl) :-
     lowered_for(switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, Ddl, _, _, _, _, _, _),
@@ -209,7 +247,7 @@ test(demand_laziness_incremental_arrival_is_one_batch_statement) :-
     memberchk(arrivalstmt(open_feed/2, set, _, _, IncrementalAddSql, _),
               ArrivalStatements),
     IncrementalAddSql ==
-      'INSERT OR IGNORE INTO "open_feed" ("session_id", "target") SELECT json_extract(value, \'$[0]\'), json_extract(value, \'$[1]\') FROM json_each(?) RETURNING "session_id", "target"'.
+      'INSERT OR REPLACE INTO "open_feed" ("session_id", "target") SELECT json_extract(value, \'$[0]\'), json_extract(value, \'$[1]\') FROM json_each(?) RETURNING "session_id", "target"'.
 
 test(demand_laziness_level_sql) :-
     lowered_for(demand_laziness_effect_rows, Lowered),
@@ -407,8 +445,48 @@ test(rejects_edge_body_with_extra_goal, [throws(unsupported_construct(edge_body_
     Prog = prog([keyed(scope/1, [1])], [ (scope(X) <+ (open(X), not(closed(X)))) ]),
     check_supported_subset(Prog).
 
-test(rejects_pre_in_level_body, [throws(unsupported_construct(level_body_goal(_, pre(_))))]) :-
-    Prog = prog([], [ (snapshot(X) <- pre(item(X))) ]),
+% FAIL-FIRST RECEIPTS: silent-inert level-rule forms.
+%
+% RED:
+%   rejects_log_on_level_headed_rel: no_exception
+%   rejects_latest_in_level_rule: no_exception
+%   rejects_pre_in_level_rule: wrong error
+%     Expected: unsupported_construct(pre_in_level_rule(item/1))
+%     Got: unsupported_construct(
+%       level_body_goal(snapshot(A),pre(item(A))))
+% GREEN:
+%   [34/70] rejects_log_on_level_headed_rel passed
+%   [35/70] rejects_latest_in_level_rule passed
+%   [36/70] rejects_pre_in_level_rule passed
+% ENGINE RED:
+%   132 PASS / 3 fail
+%   fail log_on_level_headed_rel_rejected
+%   fail latest_in_level_rule_rejected
+%   fail pre_in_level_rule_rejected
+% ENGINE GREEN:
+%   135 PASS / 0 fail
+% COMPILER GREEN:
+%   log_on_level_headed_rel_rejected:
+%     unsupported log_on_level_headed_rel(derived_event/1)
+%   latest_in_level_rule_rejected:
+%     unsupported latest_in_level_rule(source_item/1)
+%   pre_in_level_rule_rejected:
+%     unsupported pre_in_level_rule(source_item/1)
+test(rejects_log_on_level_headed_rel,
+     [throws(unsupported_construct(log_on_level_headed_rel(derived_event/1)))]) :-
+    Prog = prog(
+        [kind(derived_event/1, log), keep(derived_event/1, all)],
+        [ (derived_event(X) <- item(X)) ]),
+    check_supported_subset(Prog).
+
+test(rejects_latest_in_level_rule,
+     [throws(unsupported_construct(latest_in_level_rule(item/1)))]) :-
+    Prog = prog([], [ (snapshot(X) <- item(X), latest(item(X))) ]),
+    check_supported_subset(Prog).
+
+test(rejects_pre_in_level_rule,
+     [throws(unsupported_construct(pre_in_level_rule(item/1)))]) :-
+    Prog = prog([], [ (snapshot(X) <- item(X), pre(item(X))) ]),
     check_supported_subset(Prog).
 
 test(accepts_level_derived_edge_trigger) :-

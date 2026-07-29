@@ -707,6 +707,15 @@ check_supported_subset(SugaredProg) :-
 check_supported_subset_expanded(prog(Decls, Rules)) :-
     forall(( member(Rule, Rules), rule_reserved_construct(Rule, Construct) ),
            throw(unsupported_construct(Construct))),
+    forall(( member(kind(Ref, log), Decls), member(LevelRule, Rules),
+             rule_is_level(LevelRule), rule_head_ref(LevelRule, Ref) ),
+           throw(unsupported_construct(log_on_level_headed_rel(Ref)))),
+    forall(( member(LevelRule, Rules), rule_is_level(LevelRule),
+             rule_body(LevelRule, Body), level_body_latest_ref(Body, Ref) ),
+           throw(unsupported_construct(latest_in_level_rule(Ref)))),
+    forall(( member(LevelRule, Rules), rule_is_level(LevelRule),
+             rule_body(LevelRule, Body), level_body_pre_ref(Body, Ref) ),
+           throw(unsupported_construct(pre_in_level_rule(Ref)))),
     forall(( member(Rule, Rules), rule_is_edge(Rule) ), check_edge_rule_shape(Rule)),
     forall(( member(Rule, Rules), rule_is_level(Rule) ), check_level_rule_shape(Rule)),
     check_no_edge_head_conflict_risk(Decls, Rules),
@@ -715,6 +724,16 @@ check_supported_subset_expanded(prog(Decls, Rules)) :-
            throw(unsupported_construct(keyed_level_head(Ref)))),
     forall(( member(keyed(Ref, Positions), Decls), rel_kind(Decls, Ref, log) ),
            throw(unsupported_construct(keyed_log_rel(Ref, Positions)))).
+
+level_body_latest_ref((Left, Right), Ref) :-
+    ( level_body_latest_ref(Left, Ref) ; level_body_latest_ref(Right, Ref) ).
+level_body_latest_ref(not(Body), Ref) :- level_body_latest_ref(Body, Ref).
+level_body_latest_ref(latest(Atom), Ref) :- rel_ref(Atom, Ref).
+
+level_body_pre_ref((Left, Right), Ref) :-
+    ( level_body_pre_ref(Left, Ref) ; level_body_pre_ref(Right, Ref) ).
+level_body_pre_ref(not(Body), Ref) :- level_body_pre_ref(Body, Ref).
+level_body_pre_ref(pre(Atom), Ref) :- rel_ref(Atom, Ref).
 
 check_edge_rule_shape((Head <+ Body)) :-
     edge_trigger_shape(Body, Shape),

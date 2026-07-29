@@ -101,18 +101,25 @@ key_of(Positions, Row, Key) :-
     Row =.. [_ | Args],
     findall(Column, ( member(Position, Positions), nth1(Position, Args, Column) ), Key).
 
-% Load-time program checks: keyed-Log exclusion, retention presence.
+% Load-time program checks: headed relation compatibility, body markings,
+% keyed-Log exclusion, and retention presence.
 check_program(prog(Decls, Rules)) :-
     forall(( member(keyed(Ref, _), Decls), level_headed(Rules, Ref) ),
            throw(keyed_level_head(Ref))),
     forall(( member(keyed(Ref, _), Decls), declared_kind(Decls, Ref, log) ),
            throw(keyed_log_rel(Ref))),
+    forall(( member(kind(Ref, log), Decls), level_headed(Rules, Ref) ),
+           throw(log_on_level_headed_rel(Ref))),
     forall(( member(kind(Ref, log), Decls), \+ memberchk(keep(Ref, _), Decls) ),
            throw(missing_retention(Ref))),
     forall(( member((Head <+ _), Rules), aggregate_head(Head, _, _) ),
            throw(aggregate_in_edge_head)),
     forall(( member((_ <- Body), Rules), body_finalize_ref(Body, Ref2) ),
-           throw(finalize_in_level_rule(Ref2))).
+           throw(finalize_in_level_rule(Ref2))),
+    forall(( member((_ <- Body), Rules), body_latest_ref(Body, Ref3) ),
+           throw(latest_in_level_rule(Ref3))),
+    forall(( member((_ <- Body), Rules), body_pre_ref(Body, Ref4) ),
+           throw(pre_in_level_rule(Ref4))).
 
 % ═══ the store ══════════════════════════════════════════════════════════════
 % srow(Row) for Set rels; lrow(st(Tick, Seq), Row) for Log rels. Level views
@@ -176,6 +183,16 @@ listened_departure_refs(Rules, Refs) :-
 body_finalize_ref((Left, Right), Ref) :-
     ( body_finalize_ref(Left, Ref) ; body_finalize_ref(Right, Ref) ).
 body_finalize_ref(finalize(Atom), Ref) :- rel_ref(Atom, Ref).
+
+body_latest_ref((Left, Right), Ref) :-
+    ( body_latest_ref(Left, Ref) ; body_latest_ref(Right, Ref) ).
+body_latest_ref(not(Body), Ref) :- body_latest_ref(Body, Ref).
+body_latest_ref(latest(Atom), Ref) :- rel_ref(Atom, Ref).
+
+body_pre_ref((Left, Right), Ref) :-
+    ( body_pre_ref(Left, Ref) ; body_pre_ref(Right, Ref) ).
+body_pre_ref(not(Body), Ref) :- body_pre_ref(Body, Ref).
+body_pre_ref(pre(Atom), Ref) :- rel_ref(Atom, Ref).
 
 % ═══ arrivals ═══════════════════════════════════════════════════════════════
 

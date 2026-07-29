@@ -44,6 +44,45 @@ fixture(log_retraction_rejected,
   [ [ +event(one) ], [ -event(one) ] ],
   [ throws(retract_from_log(event/1)) ]).
 
+% A world-fed keyed Set replaces the existing row at the same key. The
+% boundary reports the departed row before the arriving row.
+fixture(world_fed_keyed_arrival_replaces,
+  prog([ keyed(world_mode/2, [1]) ], []),
+  [],
+  [ [ +world_mode(1, a) ],
+    [ +world_mode(1, b) ] ],
+  [ deltas(world_mode/2,
+           [ [ +world_mode(1, a) ],
+             [ -world_mode(1, a), +world_mode(1, b) ] ]),
+    final(world_mode/2, [ world_mode(1, b) ]) ]).
+
+% A level-headed Log has no stamped store writes and therefore no Log delta
+% channel. Refuse the declaration and rule combination at load time.
+fixture(log_on_level_headed_rel_rejected,
+  prog([ kind(derived_event/1, log), keep(derived_event/1, all) ],
+       [ (derived_event(Item) <- source_item(Item)) ]),
+  [],
+  [ [ +source_item(alpha) ] ],
+  [ throws(log_on_level_headed_rel(derived_event/1)) ]).
+
+% latest/1 in a level body reads the same Visible rows as a bare atom. The
+% marking has no level-rule meaning, so refuse it at load time.
+fixture(latest_in_level_rule_rejected,
+  prog([],
+       [ (latest_copy(Item) <- source_item(Item), latest(source_item(Item))) ]),
+  [],
+  [ [ +source_item(alpha) ] ],
+  [ throws(latest_in_level_rule(source_item/1)) ]).
+
+% Level evaluation receives an empty PreState list, so pre/1 in a level body
+% can never succeed. Refuse it at load time.
+fixture(pre_in_level_rule_rejected,
+  prog([],
+       [ (previous_copy(Item) <- source_item(Item), pre(source_item(Item))) ]),
+  [],
+  [ [ +source_item(alpha) ] ],
+  [ throws(pre_in_level_rule(source_item/1)) ]).
+
 % now() reads the phantom tick (R3, kernel; never an arrival).
 fixture(now_reads_the_tick,
   prog([ kind(ping/1, log),   keep(ping/1, all),
