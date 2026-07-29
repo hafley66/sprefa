@@ -880,74 +880,16 @@ check_edge_head_column_types_for_rule(RelPlans, (Head <+ Body)) :-
            throw(unsupported_construct(edge_head_column_type_mismatch(HeadRef, HeadPosition, BodyColumnType, HeadColumnType)))).
 
 % ═══ mid-tick level state on the non-trigger side of an edge arm ═══════════
-% A RUNTIME-SEAM PLACEHOLDER, not a language decision. Remove it with the
-% runtime fix; the fixture that pins it is check_eventing.pl's
-% clock_rel_join_storms, which the oracle runs correctly.
-%
-% engine.pl freezes MidLevel = level_closure over the store AFTER arrivals are
-% absorbed and BEFORE any edge write (tick/7, frozen(MidLevel, PrevLevel)), so
-% a level row an arrival RETRACTED this tick is already gone from the Visible
-% an edge body reads. The emitted runtime's mid-tick level maintenance is
-% insert-only: 1_incremental.ts applyLevelStatement/5 runs insertSql and stages
-% sign=1 events, and the retraction half lives in recomputeLevelsAfterEdges,
-% which runs AFTER applyEdges. The naive path has the same order
-% (recomputeLevels sits after the edge batch). So a retracted level row is
-% still in its table when a NON-TRIGGER atom joins it.
-%
-% MEASURED on clock_rel_join_storms (`diag_seen(Path,Line,Code,At) <+
-% diagnostic(Path,Line,Code,_), tick_rel(At)`, where diagnostic is level-headed
-% off the arrival-fed file_line): at tick 3, two file_line rows flip to `none`
-% and tick_rel(3) arrives. The tick_rel arm joins diagnostic and gets THREE
-% rows (lines 3, 5, 7) where the oracle derives ONE (line 5) -- the two
-% retracted diagnostics are still in the table.
-%
-% The condition is narrow on purpose:
-%   - only a NON-TRIGGER read. When the level rel is the trigger, the arm reads
-%     its frontier (a delta stream) and the stale table never enters, which is
-%     why diag_scenario_seven_ticks_end_to_end (one trigger, now/1 beside it)
-%     grades identical.
-%   - only a level rel that arrivals can move. exhaust_policy reads
-%     not(live_tab(...)), and live_tab derives from open_tab and closed, BOTH
-%     edge-written, so no arrival can retract it before the edges run. It stays
-%     compiled and identical.
-% Anything wider would refuse the dataflow shape the flagship needs (an edge
-% rule joining an extraction-fed level view), which is the argument for fixing
-% the runtime rather than widening this.
-check_no_edge_joins_arrival_fed_level(Rules) :-
-    level_headed_refs(Rules, LevelRefs),
-    derived_refs(Rules, DerivedRefs),
-    forall(( member(Rule, Rules), rule_is_edge(Rule),
-             rule_body(Rule, Body),
-             edge_trigger_shape(Body, Shape),
-             shape_joined_ref(Shape, JoinedRef),
-             memberchk(JoinedRef, LevelRefs),
-             level_ref_reads_arrival(Rules, DerivedRefs, JoinedRef, []) ),
-           throw(unsupported_construct(edge_body_joins_arrival_fed_level(JoinedRef)))).
-
-% Every ref an arm reads WITHOUT firing from it: the other trigger atoms of an
-% unmarked conjunction (each arm joins the ones it does not fire from), the
-% latest() samples, and the negated atoms.
-shape_joined_ref(unmarked_conjunction(Atoms), Ref) :-
-    length(Atoms, Count), Count > 1,
-    member(Atom, Atoms), rel_ref(Atom, Ref).
-shape_joined_ref(sampled_conjunction(TriggerAtoms, SampleAtoms, NegAtoms, _), Ref) :-
-    ( length(TriggerAtoms, Count), Count > 1, member(Atom, TriggerAtoms)
-    ; member(Atom, SampleAtoms)
-    ; member(Atom, NegAtoms)
-    ),
-    rel_ref(Atom, Ref).
-
-% Does this level rel's derivation reach a rel no rule heads (an EDB rel an
-% arrival can write)? Seen/1 stops the walk on a recursive level rel.
-level_ref_reads_arrival(Rules, DerivedRefs, Ref, Seen) :-
-    \+ memberchk(Ref, Seen),
-    member(Rule, Rules), rule_is_level(Rule), rule_head_ref(Rule, Ref),
-    rule_body(Rule, Body), body_ref_uses(Body, Uses),
-    member(use(BodyRef, _, _, _), Uses),
-    (   \+ memberchk(BodyRef, DerivedRefs)
-    ->  true
-    ;   level_ref_reads_arrival(Rules, DerivedRefs, BodyRef, [Ref | Seen])
-    ).
+% The refusal that used to live here (`edge_body_joins_arrival_fed_level`) is
+% GONE, closed by the TICK PHASE ALIGNMENT arc. It was a runtime-seam
+% placeholder: the emitted mid-tick level plane was insert-only, so a level row
+% an arrival retracted this tick was still in its table when a NON-TRIGGER atom
+% joined it (clock_rel_join_storms tick 3 derived three diag_seen rows where
+% the oracle derives one). Both pipelines now freeze the plane where engine.pl
+% freezes it -- 1_incremental.ts:recomputeLevelsBeforeEdges runs the retracting
+% half between applyLevelsBeforeEdges and applyEdges, and the naive referee
+% calls recomputeLevels once before the edge batch and once after -- so the
+% whole class compiles and grades identical in both emitter modes.
 
 % ═══ supported-subset gate ═══════════════════════════════════════════════════
 % Refuses (with a specific term, not a generic failure) any construct wider
@@ -1005,7 +947,6 @@ check_supported_subset_expanded(Program) :-
                               aggregate_in_edge_head ]),
     forall(( member(Rule, Rules), rule_is_edge(Rule) ), check_edge_rule_shape(Rule)),
     forall(( member(Rule, Rules), rule_is_level(Rule) ), check_level_rule_shape(Rule)),
-    check_no_edge_joins_arrival_fed_level(Rules),
     check_no_edge_head_conflict_risk(Decls, Rules),
     shared_refusal(Program, [ keyed_level_head, keyed_log_rel ]).
 

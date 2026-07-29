@@ -422,6 +422,62 @@ function sequenceWork<Item>(
   );
 }
 
+/**
+ * The refCount reconcile of ONE plain (non-aggregate) level statement:
+ * reseed `__support_next_<rel>` from the base tables, subtract the difference
+ * into the head's own count, delete what fell to zero, insert what is newly
+ * derivable. Extracted from `recomputeLevelsAfterEdges` so the pre-edge pass
+ * (TICK PHASE ALIGNMENT) runs the SAME five statements against a different
+ * frontier target -- a mid-tick correction's new rows are THIS tick's
+ * occurrences (frontier phase 2), the post-edge pass's are next tick's
+ * (nextFrontier phase 1). The statement TEXT is emitter-owned and identical
+ * on both passes; only where the +1 events are copied differs.
+ */
+function reconcileSupportStatement(
+  seam: ISqlSeam,
+  statement: IIncrementalLevelStatement,
+  relations: readonly IIncrementalRelationPlan[],
+  frontierCopies: readonly {
+    readonly tableName: (relation: IIncrementalRelationPlan) => string;
+    readonly phase: number;
+  }[],
+  nextSequence: () => number,
+): Observable<void> {
+  if (statement.supportSql === null) {
+    throw new Error(
+      `incremental level statement has neither supportSql nor aggregateSql: ${statement.headRel}`,
+    );
+  }
+  const sql = statement.supportSql.map((text): SqlStatement => ({ sql: text, args: [] }));
+  return seam.runner.batch(seam.db, sql).pipe(
+    concatMap((results) => {
+      const events: DeltaEvent[] = [];
+      const deletedRows = resultRows(results[3]!, statement.headColumns);
+      const insertedRows = resultRows(results[4]!, statement.headColumns);
+      for (const row of deletedRows) {
+        events.push({ rel: statement.headRel, sign: -1, sequence: nextSequence(), row });
+      }
+      for (const row of insertedRows) {
+        events.push({ rel: statement.headRel, sign: 1, sequence: nextSequence(), row });
+      }
+      if (events.length === 0) return of(undefined);
+      return stageEvents(seam, relations, events, frontierCopies);
+    }),
+  );
+}
+
+/** `1` when some delta table already holds a retraction this tick. The gate
+ *  both reconcile passes use when the program has no negative level body
+ *  (`reconcileEveryTick === false`): with only monotone level bodies, a level
+ *  row can stop being derivable only if one of its inputs left. */
+function retractionGuardSql(relations: readonly IIncrementalRelationPlan[]): string {
+  const terms = relations.map(
+    (relation) =>
+      `EXISTS (SELECT 1 FROM ${quoteIdentifier(relation.deltaTableName)} WHERE "_sign" = -1 LIMIT 1)`,
+  );
+  return `SELECT CASE WHEN ${terms.join(" OR ")} THEN 1 ELSE 0 END AS has_retraction`;
+}
+
 function applyRetentionStatement(
   seam: ISqlSeam,
   statement: IIncrementalRetentionStatement,
@@ -654,6 +710,70 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     );
   },
 
+  /**
+   * TICK PHASE ALIGNMENT: the emitted mid-tick level plane, frozen the way
+   * engine.pl freezes it.
+   *
+   * engine.pl:tick/7 computes `MidLevel = level_closure(store AFTER arrivals)`
+   * and hands it to `process_occurrences/7` as `frozen(MidLevel, PrevLevel)`,
+   * so a level row an arrival RETRACTED this tick is already gone from the
+   * `Visible` an edge body reads. `applyLevelsBeforeEdges` is insert-only
+   * (`INSERT OR IGNORE ... RETURNING` plus, for aggregate heads, a
+   * group-scoped delete+reinsert), so before this pass existed the retracted
+   * half of that closure only ran in `recomputeLevelsAfterEdges` -- AFTER the
+   * edges had already joined the stale rows. Receipt, `clock_rel_join_storms`
+   * tick 3: three `diag_seen` rows where the oracle derives one.
+   *
+   * Three narrowings, each with its reason:
+   *   - `arrivals.length === 0` returns immediately. The level tables at tick
+   *     start are the closure the previous tick's post-edge pass left; with no
+   *     arrivals nothing has moved them, so the frozen closure is already on
+   *     disk and a drain tick pays zero statements.
+   *   - aggregate statements are skipped: `applyLevelsBeforeEdges` already
+   *     dispatches them to `applyAggregateLevelStatement`, whose scoped
+   *     DELETE+INSERT is a full correction of the affected groups, retraction
+   *     included. Running them twice would restage net-zero delta pairs.
+   *   - the `reconcileEveryTick` / retraction-guard policy is the SAME one
+   *     `recomputeLevelsAfterEdges` uses, not a new one: `reconcileEveryTick`
+   *     is emitted true exactly when some level rule has a NEGATED body ref
+   *     (emit_ts.pl:reconcile_every_tick/2), which is the one way an ADDED row
+   *     can retract a level row without staging any -1.
+   */
+  recomputeLevelsBeforeEdges(
+    seam: ISqlSeam,
+    statements: readonly IIncrementalLevelStatement[],
+    relations: readonly IIncrementalRelationPlan[],
+    reconcileEveryTick: boolean,
+    arrivals: IArrivalBatch,
+  ): Observable<void> {
+    if (arrivals.length === 0) return of(undefined);
+    const supportStatements = statements.filter((statement) => statement.aggregateSql !== null ? false : true);
+    if (supportStatements.length === 0 || relations.length === 0) return of(undefined);
+    const reconcile = (): Observable<void> => {
+      let sequence = 0;
+      const nextSequence = (): number => {
+        const current = sequence;
+        sequence += 1;
+        return current;
+      };
+      return sequenceWork(supportStatements, (statement) =>
+        reconcileSupportStatement(
+          seam,
+          statement,
+          relations,
+          [{ tableName: (plan) => plan.frontierTableName, phase: 2 }],
+          nextSequence,
+        ),
+      );
+    };
+    if (reconcileEveryTick) return reconcile();
+    return seam.runner.execute(seam.db, retractionGuardSql(relations)).pipe(
+      concatMap((result) =>
+        Number(result.rows[0]?.has_retraction ?? 0) === 0 ? of(undefined) : reconcile()
+      ),
+    );
+  },
+
   mergeNextIntoCurrent(
     seam: ISqlSeam,
     relations: readonly IIncrementalRelationPlan[],
@@ -715,10 +835,6 @@ export const IncrementalRuntime: IIncrementalRuntime = {
   ): Observable<void> {
     if (statements.length === 0) return of(undefined);
     const relationByName = new Map(relations.map((relation) => [relation.rel, relation]));
-    const retractionTerms = relations.map(
-      (relation) =>
-        `EXISTS (SELECT 1 FROM ${quoteIdentifier(relation.deltaTableName)} WHERE "_sign" = -1 LIMIT 1)`,
-    );
     // Per-statement rather than one batch over every statement's supportSql:
     // the list is in strat.pl's own stratum order, and an AGGREGATE statement
     // dispatches to the group-scoped plan instead of a refCount reconcile.
@@ -770,37 +886,18 @@ export const IncrementalRuntime: IIncrementalRuntime = {
             nextSequence,
           );
         }
-        if (statement.supportSql === null) {
-          throw new Error(`incremental level statement has neither supportSql nor aggregateSql: ${statement.headRel}`);
-        }
-        const sql = statement.supportSql.map((text): SqlStatement => ({ sql: text, args: [] }));
-        return seam.runner.batch(seam.db, sql).pipe(
-          concatMap((results) => {
-            const events: DeltaEvent[] = [];
-            const deletedRows = resultRows(results[3]!, statement.headColumns);
-            const insertedRows = resultRows(results[4]!, statement.headColumns);
-            for (const row of deletedRows) {
-              events.push({ rel: statement.headRel, sign: -1, sequence: nextSequence(), row });
-            }
-            for (const row of insertedRows) {
-              events.push({ rel: statement.headRel, sign: 1, sequence: nextSequence(), row });
-            }
-            if (events.length === 0) return of(undefined);
-            return stageEvents(
-              seam,
-              relations,
-              events,
-              [{ tableName: (plan) => plan.nextFrontierTableName, phase: 1 }],
-            );
-          }),
+        return reconcileSupportStatement(
+          seam,
+          statement,
+          relations,
+          [{ tableName: (plan) => plan.nextFrontierTableName, phase: 1 }],
+          nextSequence,
         );
       });
     };
     if (reconcileEveryTick) return reconcile();
-    if (retractionTerms.length === 0) return of(undefined);
-    const retractionSql =
-      `SELECT CASE WHEN ${retractionTerms.join(" OR ")} THEN 1 ELSE 0 END AS has_retraction`;
-    return seam.runner.execute(seam.db, retractionSql).pipe(
+    if (relations.length === 0) return of(undefined);
+    return seam.runner.execute(seam.db, retractionGuardSql(relations)).pipe(
       concatMap((result) =>
         Number(result.rows[0]?.has_retraction ?? 0) === 0 ? of(undefined) : reconcile()
       ),

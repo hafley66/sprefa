@@ -70,6 +70,13 @@
     "finalDetail": ""
   },
   {
+    "name": "clock_rel_join_storms",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "retention_count_prunes_oldest",
     "bucket": "identical",
     "detail": "",

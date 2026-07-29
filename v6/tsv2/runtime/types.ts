@@ -209,6 +209,13 @@ export interface IIncrementalRuntime {
     statements: readonly IIncrementalLevelStatement[],
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<void>;
+  recomputeLevelsBeforeEdges(
+    seam: ISqlSeam,
+    statements: readonly IIncrementalLevelStatement[],
+    relations: readonly IIncrementalRelationPlan[],
+    reconcileEveryTick: boolean,
+    arrivals: IArrivalBatch,
+  ): Observable<void>;
   mergeNextIntoCurrent(
     seam: ISqlSeam,
     relations: readonly IIncrementalRelationPlan[],

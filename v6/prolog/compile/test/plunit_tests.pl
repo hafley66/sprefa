@@ -591,17 +591,50 @@ test(initial_only_ref_still_gets_a_table) :-
     lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
     memberchk('CREATE TABLE "known_repo" ("col1" INTEGER NOT NULL, PRIMARY KEY ("col1")) WITHOUT ROWID', Ddl).
 
-% RUNTIME-SEAM PLACEHOLDER (analyze.pl:check_no_edge_joins_arrival_fed_level/1).
-% The oracle runs this program; the emitted runtime's mid-tick level plane is
-% insert-only, so a level row an arrival retracted this tick is still in its
-% table when a non-trigger atom joins it. Remove with the runtime fix.
-test(rejects_edge_join_against_an_arrival_fed_level_rel,
-     [throws(unsupported_construct(edge_body_joins_arrival_fed_level(diagnostic/2)))]) :-
+% The class the TICK PHASE ALIGNMENT arc opened: an edge arm joining a level
+% rel an ARRIVAL can retract. It used to throw
+% edge_body_joins_arrival_fed_level (a runtime-seam placeholder); now both
+% pipelines freeze the mid-tick level plane where engine.pl freezes it, so it
+% compiles. FAIL-FIRST RECEIPT for the runtime half, captured before the
+% phase-order change with the refusal switched off, on the fixture this
+% program is a reduction of (check_eventing.pl:clock_rel_join_storms, BOTH
+% emitter modes, tick 3):
+%   actual  "diag_seen":{"add":[["a_rs",3,..],["a_rs",5,..],["a_rs",7,..]]}
+%   oracle  "diag_seen":{"add":[["a_rs",5,..]]}
+% The two retracted diagnostics were still in the table when the tick_rel arm
+% joined it. After the change both modes are byte-identical on tick log AND
+% final state.
+test(accepts_edge_join_against_an_arrival_fed_level_rel) :-
     Prog = prog([kind(tick_rel/1, log), keep(tick_rel/1, all),
                  kind(seen/2, log), keep(seen/2, all)],
                 [ (diagnostic(Path, Code) <- file_line(Path, Code)),
                   (seen(Path, At) <+ diagnostic(Path, _), tick_rel(At)) ]),
     check_supported_subset(Prog).
+
+% The emitted incremental tick must CARRY the freeze: applyLevelsBeforeEdges
+% only grows the plane, so the retracting pass has to sit between it and
+% applyEdges. Sabotage receipt: dropping
+% emit_ts.pl:pre_edge_level_reconcile_lines/2 from the pipeline flips this red
+% and takes clock_rel_join_storms back to the three-row tick above.
+test(emitted_incremental_tick_freezes_the_level_plane_before_edges) :-
+    Prog = prog([kind(tick_rel/1, log), keep(tick_rel/1, all),
+                 kind(seen/2, log), keep(seen/2, all)],
+                [ (diagnostic(Path, Code) <- file_line(Path, Code)),
+                  (seen(Path, At) <+ diagnostic(Path, _), tick_rel(At)) ]),
+    program_plan(fixture(freeze, Prog, [], [], [])-[], Plan),
+    lower_program(Plan, Lowered),
+    Plan = plan(_, _, RelPlans, _, _, _),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    boot_statements(RelPlans, [], LevelStatements, Boot),
+    emit_program(freeze, Plan, Lowered, Boot, Text),
+    once(sub_atom(Text, BeforeAt, _, _, 'IncrementalRuntime.applyLevelsBeforeEdges')),
+    once(sub_atom(Text, ReconcileAt, _, _, 'IncrementalRuntime.recomputeLevelsBeforeEdges')),
+    once(sub_atom(Text, EdgesAt, _, _, 'IncrementalRuntime.applyEdges')),
+    BeforeAt < ReconcileAt, ReconcileAt < EdgesAt,
+    % The naive referee's own freeze: recomputeLevels once before the edge
+    % batch and once after (engine.pl's two level closures).
+    findall(At, sub_atom(Text, At, _, _, 'concatMap((before) => recomputeLevels(seam)'), RecomputeAts),
+    length(RecomputeAts, 2), !.
 
 % The narrowing that keeps exhaust_policy compiled: a level rel whose own
 % derivation reads only EDGE-WRITTEN rels cannot be moved by an arrival before

@@ -977,6 +977,12 @@ run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick, Lines) :-
       ],
       AdvanceTickLines,
       [ '    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),',
+      % TICK PHASE ALIGNMENT: the referee freezes the level plane where
+      % engine.pl does -- after arrivals, before the edge batch. The naive
+      % recompute is a DELETE + rebuild of every level table, so this one call
+      % supplies both halves of MidLevel; the second call below is the oracle's
+      % second closure, over the post-write store.
+      '    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),',
       '    concatMap((before) =>',
       EdgeWritesLine,
       '        concatMap((statements) => seam.runner.batch(seam.db, statements)),',
@@ -1060,9 +1066,34 @@ advance_tick_naive_line(false, []) :- !.
 advance_tick_naive_line(true,
     ['    concatMap((before) => advanceTick(seam).pipe(map(() => before))),']).
 
+% TICK PHASE ALIGNMENT: the mid-tick level plane an edge body reads must be
+% engine.pl's FROZEN MidLevel (`level_closure` over the store AFTER arrivals,
+% BEFORE any edge write). applyLevelsBeforeEdges only grows that plane;
+% recomputeLevelsBeforeEdges runs the retracting half at the same point.
+% Emitted ONLY for programs that have edge rules: with no edge rule nothing
+% reads the plane mid-tick, the correction is unobservable, and those modules'
+% text stays byte-identical to what the previous emitter wrote.
+pre_edge_level_reconcile_lines([], [], []) :- !.
+pre_edge_level_reconcile_lines(EdgeStatements,
+    ['    concatMap(() => IncrementalRuntime.recomputeLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),'],
+    % The tick pipeline is emitted as TWO chained pipes when the reconcile line
+    % is present, split at the edge boundary: the mid-tick phases (arrivals ->
+    % frozen level plane -> edges -> post-write level growth), then the closing
+    % phases (retention -> reconcile -> boundary -> carry). rxjs types `pipe`
+    % through a fixed overload list that stops at NINE operators; the reconcile
+    % line is the tenth, and a tenth silently degrades the whole chain to
+    % Observable<unknown>, which tsgo then rejects against the ITickDeltas
+    % return type. TYPE boundary only: the operator sequence, and therefore the
+    % executed statement sequence, is unchanged. A program with no edge rules
+    % takes neither line and its emitted text is byte-identical to what the
+    % previous emitter wrote.
+    ['  ).pipe(']) :-
+    EdgeStatements \== [].
+
 run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
                               HasRetention, UsesTick, Lines) :-
     advance_tick_pipeline_line(UsesTick, AdvanceTickLines),
+    pre_edge_level_reconcile_lines(EdgeStatements, PreEdgeReconcileLines, PipeSplitLines),
     ( EdgeStatements == []
     -> MergeLine = '    concatMap(() => of(undefined)),',
        PostEdgeLevelLine = '    concatMap(() => of(undefined)),'
@@ -1082,11 +1113,14 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
       ],
       AdvanceTickLines,
       [ '    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, INCREMENTAL_RELATIONS)),',
-      '    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),',
-      '    concatMap(() => IncrementalRuntime.applyEdges(seam, INCREMENTAL_EDGE_STATEMENTS, INCREMENTAL_RELATIONS)),',
+      '    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),'
+      ],
+      PreEdgeReconcileLines,
+      [ '    concatMap(() => IncrementalRuntime.applyEdges(seam, INCREMENTAL_EDGE_STATEMENTS, INCREMENTAL_RELATIONS)),',
       MergeLine,
       PostEdgeLevelLine
       ],
+      PipeSplitLines,
       RetentionLines,
       [
       RecomputeLine,
