@@ -534,6 +534,52 @@ test(accepts_comparison_and_bind_in_edge_body) :-
                                           Doubled := Score * 2) ]),
     check_supported_subset(Prog).
 
+% FAIL-FIRST RECEIPT: now/1 in an edge body.
+%
+% RED (before the __tick lowering):
+%   accepts_now_in_edge_body
+%     unsupported_construct(edge_body_needs_now((ping(_),now(_))))
+% GREEN: all four below.
+% engine.pl step 8: "now(Tick) is a kernel read of the current tick (R3),
+% never an arrival"; engine_core.pl:now_reads_the_tick is the fixture.
+test(accepts_now_in_edge_body) :-
+    Prog = prog([kind(ping/1, log), keep(ping/1, all),
+                 kind(seen_at/2, log), keep(seen_at/2, all)],
+                [ (seen_at(Name, Tick) <+ ping(Name), now(Tick)) ]),
+    check_supported_subset(Prog).
+
+% now/1 around anything but a variable is a MATCH against the tick, which
+% engine.pl's solve/2 permits by unification and this lowering cannot express.
+test(rejects_now_with_non_variable_argument,
+     [throws(unsupported_construct(edge_body_with_now(_)))]) :-
+    Prog = prog([kind(ping/1, log), keep(ping/1, all),
+                 kind(seen_at/2, log), keep(seen_at/2, all)],
+                [ (seen_at(Name, 7) <+ ping(Name), now(7)) ]),
+    check_supported_subset(Prog).
+
+% Compiler-only refusal (0_program_check.pl and engine.pl are deliberately
+% untouched): a level body has no tick in its emitted DELETE/INSERT pair.
+test(rejects_now_in_level_rule,
+     [throws(unsupported_construct(now_in_level_rule(_, _)))]) :-
+    Prog = prog([], [ (stamped(Name, Tick) <- ping(Name), now(Tick)) ]),
+    check_supported_subset(Prog).
+
+% The tick is an INTEGER witness. Without the seed in
+% analyze.pl:seed_column_contribution/8 this column takes the C2 "no witness
+% -> text" default and the emitted DDL says TEXT, which prints the tick
+% quoted where the oracle prints it bare.
+test(now_bound_head_column_is_integer_storage) :-
+    Prog = prog([kind(ping/1, log), keep(ping/1, all),
+                 kind(seen_at/2, log), keep(seen_at/2, all)],
+                [ (seen_at(Name, Tick) <+ ping(Name), now(Tick)) ]),
+    program_plan(fixture(now_typing, Prog, [], [], [])-[], Plan),
+    lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+    % Column NAMES are col1/col2 here: surface names come from the fixture
+    % file's variable bindings, and this program is built in Prolog with an
+    % empty Bindings list. The TYPES are the point.
+    memberchk('CREATE TABLE "seen_at" ("col1" TEXT NOT NULL, "col2" INTEGER NOT NULL)', Ddl),
+    memberchk('CREATE TABLE "__tick" ("n" INTEGER NOT NULL)', Ddl).
+
 % FAIL-FIRST RECEIPT: latest/1 in an edge body.
 %
 % RED:

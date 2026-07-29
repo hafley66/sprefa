@@ -84,6 +84,13 @@
     "finalDetail": ""
   },
   {
+    "name": "now_reads_the_tick",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "edge_chain_hops_tick_per_stage",
     "bucket": "identical",
     "detail": "",
@@ -421,6 +428,20 @@
   },
   {
     "name": "head_move_flips_current_tree_in_one_tick",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "changed_since_spans_two_turns",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "changed_since_ignores_events_before_turn",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",

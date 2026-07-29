@@ -26,7 +26,8 @@
             edge_trigger_shape/2,
             conjunction_goals/2, check_edge_head_column_types/2,
             aggregate_head_template/2, rule_is_aggregate/1,
-            body_guard_goals/2, guard_goal/1, bind_goal/3,
+            body_guard_goals/2, guard_goal/1, bind_goal/3, tick_goal/2,
+            program_uses_tick/2,
             program_column_types/7,
             % Body traversals, exported as the characterization seam for the
             % shared-walker consolidation (rank R1). The oracle ships its own
@@ -175,6 +176,30 @@ body_guard_goals(Body, Goals) :-
 
 guard_or_bind_goal(Goal) :- guard_goal(Goal), !.
 guard_or_bind_goal(Goal) :- bind_goal(Goal, _, _).
+
+% now/1 reads the kernel tick counter (engine.pl step 8: "now(Tick) is a
+% kernel read of the current tick (R3), never an arrival"). It binds like a
+% `:=` goal and contributes zero rel uses, which is why it rides the same
+% guard fold rather than a plane of its own; the argument must be a plain
+% variable, since the tick is produced, never matched.
+tick_goal(Goal, Variable) :-
+    body_surface_for_term(Goal, now/1, time, no_refs, wrapper(expr, _), _),
+    arg(1, Goal, Variable),
+    var(Variable).
+
+% Does any rule in this program read the tick? lower.pl only emits the
+% __tick counter table, and emit_ts.pl only emits the per-tick advance, for
+% programs that answer yes -- every other emitted module stays byte-identical
+% to what it was before now/1 was lowered.
+program_uses_tick(prog(_, Rules), UsesTick) :-
+    (   member(Rule, Rules),
+        rule_body(Rule, Body),
+        conjunction_goals(Body, Goals),
+        member(Goal, Goals),
+        tick_goal(Goal, _)
+    ->  UsesTick = true
+    ;   UsesTick = false
+    ).
 
 % ═══ program-wide ref inventory ═════════════════════════════════════════════
 % declared_refs/2: every kind(Ref, _) declaration, regardless of whether any
@@ -421,7 +446,19 @@ seed_column_contribution(Decls, Rules, Initial, Schedule, Ref, Columns, Position
                ( column_source_args(Rules, Initial, Schedule, Ref, Args),
                  nth1(Position, Args, Witness),
                  atomic(Witness)
-               ), AtomicWitnesses),
+               ), LiteralWitnesses),
+       % now/1 is a witness the way a literal is: the kernel tick is an
+       % INTEGER (engine.pl run_ticks/7 counts from 1, step 8 "never an
+       % arrival"), so a head column fed only by now/1 -- which has no
+       % literal anywhere in the program, by construction -- would otherwise
+       % take C2's "zero witnesses -> text" default and store the tick as
+       % TEXT. Downstream that is either a named refusal
+       % (comparison_operand_not_int on `EventTick > TurnTick`) or an
+       % affinity comparison the oracle does not perform.
+       ( now_bound_head_position(Rules, Ref, Position)
+       -> AtomicWitnesses = [0 | LiteralWitnesses]
+       ;  AtomicWitnesses = LiteralWitnesses
+       ),
        ( AtomicWitnesses == []
        -> Seed = open(none)
        ;  forall(member(Witness, AtomicWitnesses), integer(Witness))
@@ -429,6 +466,23 @@ seed_column_contribution(Decls, Rules, Initial, Schedule, Ref, Columns, Position
        ;  Seed = open(text)
        )
     ).
+
+% A rule head position whose variable is exactly the one now/1 binds in that
+% same rule's body. Anything else -- the tick flowing through a `:=`, or
+% through another rel first -- is already covered by the normal contribution
+% path or by edge_head_column_type_mismatch.
+now_bound_head_position(Rules, Ref, Position) :-
+    member(Rule, Rules),
+    rule_head_ref(Rule, Ref),
+    rule_body(Rule, Body),
+    conjunction_goals(Body, Goals),
+    member(TickGoal, Goals),
+    tick_goal(TickGoal, TickVariable),
+    rule_head(Rule, Head),
+    Head =.. [_ | HeadArgs],
+    nth1(Position, HeadArgs, HeadArg),
+    HeadArg == TickVariable,
+    !.
 
 % TypeMap carries the RAW contribution per position (int | text | none), NOT
 % the resolved storage type. Resolving `none` to its TEXT default before the
@@ -651,7 +705,7 @@ edge_sampled_goals([not(Atom) | Rest], TriggerAtoms, SampleAtoms,
     edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals).
 edge_sampled_goals([Goal | Rest], TriggerAtoms, SampleAtoms, NegAtoms,
                    [Goal | GuardGoals]) :-
-    guard_or_bind_goal(Goal), !,
+    ( guard_or_bind_goal(Goal) ; tick_goal(Goal, _) ), !,
     edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals).
 edge_sampled_goals([Atom | Rest], [Atom | TriggerAtoms], SampleAtoms, NegAtoms,
                    GuardGoals) :-
@@ -674,9 +728,11 @@ edge_goal_refusal(Goal, Body, 2, edge_body_needs_finalize(Body)) :-
 edge_goal_refusal(Goal, Body, 3, edge_body_needs_pre(Body)) :-
     body_surface_for_term(Goal, _, sample, refs_of_arg(_, pos, sampled),
                           wrapper(rel_atom, refuse(goal)), refused).
-edge_goal_refusal(Goal, Body, 4, edge_body_needs_now(Body)) :-
-    body_surface_for_term(Goal, _, time, no_refs,
-                          wrapper(expr, refuse(goal)), refused).
+% now/1 is lowered around a plain variable; `now(7)` or `now(f(X))` would be a
+% MATCH against the tick, which engine.pl's solve(now(Tick), ctx(_,_,Tick))
+% permits by unification and this lowering has no shape for.
+edge_goal_refusal(now(Argument), Body, 4, edge_body_with_now(Body)) :-
+    \+ var(Argument).
 % Negation is LIVE around ONE plain relation atom (lowered to NOT EXISTS
 % against that rel's current table, the same text compile_negative_uses/4
 % emits for a level body). not/1 around a conjunction, a comparison or
@@ -930,6 +986,17 @@ check_level_rule_shape((Head <- Body)) :-
     ( body_forbidden_goal(Body, Forbidden)
     -> throw(unsupported_construct(level_body_goal(Head, Forbidden)))
     ; true ),
+    % COMPILER-ONLY refusal, deliberately NOT mirrored into 0_program_check.pl
+    % or engine.pl: the oracle DOES solve now/1 in a level body (solve/2 reads
+    % the tick straight out of ctx/3, and level_closure/5 is handed the same
+    % Tick), so this is a capability gap named precisely, not a semantics
+    % change. Lowering it would need the tick inside the level DELETE/INSERT
+    % pair as well as inside an edge arm, and no fixture writes one; leaving
+    % it to the guard fold, which never sees a level body's now/1, would drop
+    % the binding silently.
+    ( rule_body_tick_ref(Body, TickGoal)
+    -> throw(unsupported_construct(now_in_level_rule(Head, TickGoal)))
+    ; true ),
     ( negated_guard_goal(Body, NegatedGuard)
     -> throw(unsupported_construct(negated_guard_goal(Head, NegatedGuard)))
     ; true ),
@@ -949,6 +1016,14 @@ negated_guard_goal(Body, Goal) :-
     NegatedGoal = not(Inner),
     body_guard_goals(Inner, InnerGuards),
     InnerGuards = [Goal | _].
+
+% Any now/1 goal a level body reaches, negation included -- the refusal is
+% about the level plane having no tick source in its emitted SQL, and that is
+% true on either side of a not/1.
+rule_body_tick_ref(Body, Goal) :-
+    walk_body(Body, walk_policy(descend_not(true), splice_bare(true)), Events),
+    member(event(_, _, surface(now/1, _, _, _, _), Goal), Events),
+    !.
 
 % An aggregate head column whose body reads the head's OWN rel: engine.pl
 % stratifies an aggregate strictly above every rel its body reads

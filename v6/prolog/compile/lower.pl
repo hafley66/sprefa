@@ -465,8 +465,32 @@ compile_guard_goals(Goals, Bound0, Bound, WhereTexts) :-
     foldl(compile_guard_goal, Goals, Bound0-[], Bound-ReversedTexts),
     reverse(ReversedTexts, WhereTexts).
 
+% The one SQL text now/1 reads. `__tick` is a one-row counter table the
+% emitted program advances at the head of every tick, so a scalar subquery
+% over it IS the kernel tick read engine.pl performs off ctx(_, _, Tick).
+% A subquery, not a bind parameter: the same ProjectSql text runs both as a
+% per-arrival prepared statement (naive) and as one set-based delta join
+% (incremental), and neither shape has a free parameter slot to spare.
+tick_column_sql('(SELECT "n" FROM "__tick")').
+
+tick_table_ddl([ 'CREATE TABLE "__tick" ("n" INTEGER NOT NULL)',
+                 % Idempotent on purpose: serve/3_engine.ts re-runs a
+                 % program's DDL on every swap and swallows "already exists",
+                 % so a bare INSERT would reset (or duplicate) the counter
+                 % under a running server.
+                 'INSERT INTO "__tick" ("n") SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM "__tick")'
+               ]).
+
 compile_guard_goal(Goal, Bound0-Texts0, Bound-Texts) :-
-    ( bind_goal(Goal, Variable, Expr)
+    ( tick_goal(Goal, Variable)
+    -> tick_column_sql(TickSql),
+       ( \+ bound_lookup(Bound0, Variable, _)
+       -> Bound = [Variable-typed(TickSql, int) | Bound0], Texts = Texts0
+       ;  compile_expr(Variable, Bound0, VariableSql, _),
+          format(atom(Text), '~w = ~w', [VariableSql, TickSql]),
+          Bound = Bound0, Texts = [Text | Texts0]
+       )
+    ;  bind_goal(Goal, Variable, Expr)
     -> compile_expr(Expr, Bound0, Sql, Type),
        ( var(Variable), \+ bound_lookup(Bound0, Variable, _)
        -> Bound = [Variable-typed(Sql, Type) | Bound0], Texts = Texts0
@@ -1572,7 +1596,7 @@ boot_seed_statement(relplan(Ref, set, Columns, _, _), Initial, Statements) :-
 
 % ═══ top level ═══════════════════════════════════════════════════════════════
 
-lower_program(plan(Name, prog(Decls, _Rules), RelPlans, ArrivalTargets, RuleOrder, EdgeRules),
+lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder, EdgeRules),
               lowered(Name, Ddl, ArrivalStatements, EdgeStatements, LevelStatements, DeltaStatements, RelPlans, ArrivalTargets)) :-
     findall(EdgeHeadedRef, ( member(EdgeRule, EdgeRules), rule_head_ref(EdgeRule, EdgeHeadedRef) ), EdgeHeadedRefs),
     findall(LevelHeadedRef,
@@ -1598,7 +1622,9 @@ lower_program(plan(Name, prog(Decls, _Rules), RelPlans, ArrivalTargets, RuleOrde
     maplist(aggregate_scope_ddl, RuleLevelStatements, AggregateScopeDdlGroups),
     append(SupportDdlGroups, SupportDdl),
     append(AggregateScopeDdlGroups, AggregateScopeDdl),
-    append([RelationDdl, DeltaDdl, SupportDdl, AggregateScopeDdl], Ddl),
+    program_uses_tick(prog(Decls, Rules), UsesTick),
+    ( UsesTick == true -> tick_table_ddl(TickDdl) ; TickDdl = [] ),
+    append([RelationDdl, DeltaDdl, SupportDdl, AggregateScopeDdl, TickDdl], Ddl),
     maplist(delta_statement, RelPlans, DeltaStatements).
 
 arrival_target_relplan(ArrivalTargets, relplan(Ref, _, _, _, _)) :- memberchk(Ref, ArrivalTargets).
