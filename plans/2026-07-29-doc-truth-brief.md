@@ -13,12 +13,16 @@ zero semantics changes.
    sh/query become unsupported_surface findings are FALSE since
    hosts wiring (they parse to first-class terms; top term is
    program/3); the G2 description updates (ghcacher.dl6 = zero
-   findings); dead spellings REMOVED from grammar + doc (review C6:
-   retention marker rel(N) and column wrappers Key(text)/Min/Max --
-   parse_dl drops their grammar clauses, they become plain parse
-   errors, SYNTAX rows deleted). If any fixture still exercises the
-   dead spellings, STOP AND REPORT it instead of keeping the
-   grammar.
+   findings). AMENDMENT (coordinator, after the first run correctly
+   STOPPED on real-file usage): the dead spellings (retention marker
+   rel(N), column wrappers Key/Min/Max) are NOT removed from
+   parse_dl -- G2's real-file contract (clock-swr-demo.dl6,
+   sg-rail.dl6 parse with findings) requires recognition, and
+   v6/dl's langium surface still uses them (v6/dl is out of fence
+   entirely, tests included). Instead: SYNTAX.md moves their rows
+   into an explicit "legacy surface: parsed, then refused" section
+   showing the unsupported_surface term each produces; grammar
+   clauses and findings stay exactly as they are.
 3. Refused-vs-live presentation (review C4): the construct table
    gains a clear split or marker so refused constructs are not
    presented as writable surface; latest's row reflects the actual

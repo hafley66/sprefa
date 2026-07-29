@@ -21,6 +21,14 @@ fixture(log_without_retention_rejected,
   [ [ +event(one) ] ],
   [ throws(missing_retention(event/1)) ]).
 
+% Retention is meaningful only on Log relations. A keep clause on a Set was
+% previously accepted and had no effect.
+fixture(keep_on_non_log_rel_rejected,
+  prog([ keep(state/1, all) ], []),
+  [],
+  [],
+  [ throws(keep_on_non_log_rel(state/1)) ]).
+
 % Log rels cannot be keyed (a keyed rel is a Set by construction).
 fixture(keyed_log_rejected,
   prog([ kind(latest/2, log), keep(latest/2, all), keyed(latest/2, [1]) ], []),
