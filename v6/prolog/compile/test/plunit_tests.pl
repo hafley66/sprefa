@@ -34,6 +34,10 @@ fixture_file(File) :-
     test_dir_fact(Here),
     atomic_list_concat([Here, '/../../conformance/fixtures/scopes.pl'], File).
 
+fixture_file(Base, File) :-
+    test_dir_fact(Here),
+    atomic_list_concat([Here, '/../../conformance/fixtures/', Base], File).
+
 % once/1 around both: plunit warns ("Test succeeded with choicepoint") on a
 % test whose body leaves one open, and neither read_fixture_term/4 nor
 % program_plan/2 promises single-solution determinism on its own (nothing
@@ -46,6 +50,12 @@ load_plan(Name, Plan) :-
 
 lowered_for(Name, Lowered) :-
     once(( load_plan(Name, Plan), lower_program(Plan, Lowered) )).
+
+lowered_for(Base, Name, Lowered) :-
+    once(( fixture_file(Base, File),
+           read_fixture_term(File, Name, Term, Bindings),
+           program_plan(Term-Bindings, Plan),
+           lower_program(Plan, Lowered) )).
 
 :- begin_tests(stratum_order).
 
@@ -206,6 +216,23 @@ test(demand_laziness_level_sql) :-
     EffectCallDeltaInsert ==
       'INSERT OR IGNORE INTO "effect_call" ("target") SELECT DISTINCT d0."target" FROM "__frontier_demanded" d0 WHERE d0."_phase" >= 0 RETURNING "target"'.
 
+test(edge_derived_trigger_reads_promoted_frontier) :-
+    lowered_for('engine_core.pl', edge_chain_hops_tick_per_stage, Lowered),
+    Lowered = lowered(_, _, _, EdgeStatements, _, _, _, _),
+    memberchk(
+        edgestmt(stage_two/1, stage_one/1, [item], [], _, _,
+                 'SELECT d0."item" AS "item" FROM "__frontier_stage_one" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"'),
+        EdgeStatements).
+
+test(level_derived_trigger_reads_same_tick_frontier) :-
+    lowered_for('occurrence_identity.pl', demand_view_fires_its_consumer_once,
+                Lowered),
+    Lowered = lowered(_, _, _, EdgeStatements, _, _, _, _),
+    memberchk(
+        edgestmt(fetch_call/1, fetch_demand/1, [endpoint], [], _, _,
+                 'SELECT d0."endpoint" AS "endpoint" FROM "__frontier_fetch_demand" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"'),
+        EdgeStatements).
+
 % Round 2: one plain "read every row" query per rel (log and set alike) --
 % no __prev shadow table, no EXCEPT, no tick filter. The runtime (or, for
 % this harness, test/run_sql_check.pl's own Prolog-side multiset_diff/4)
@@ -260,6 +287,20 @@ test(negative_level_body_uses_incremental_reconcile) :-
     Lowered = lowered(_, _, _, EdgeStatements, LevelStatements, _, _, _),
     emit_ts:incremental_program_safe(Plan, EdgeStatements, LevelStatements, true),
     emit_ts:reconcile_every_tick(Plan, true).
+
+test(derived_edge_trigger_requires_incremental_carry_path) :-
+    fixture_file('engine_core.pl', File),
+    once(( read_fixture_term(File, edge_chain_hops_tick_per_stage, Term, Bindings),
+           program_plan(Term-Bindings, Plan),
+           lower_program(Plan, Lowered) )),
+    Lowered = lowered(_, _, _, EdgeStatements, _, _, _, _),
+    emit_ts:derived_edge_carry_required(Plan, EdgeStatements, true).
+
+test(edb_edge_trigger_keeps_naive_referee_available) :-
+    load_plan(switch_as_keyed_replace, Plan),
+    lower_program(Plan, Lowered),
+    Lowered = lowered(_, _, _, EdgeStatements, _, _, _, _),
+    emit_ts:derived_edge_carry_required(Plan, EdgeStatements, false).
 
 test(acyclic_support_count_statements_are_emitted) :-
     lowered_for(shared_demand_refcount, Lowered),
@@ -362,6 +403,21 @@ test(rejects_edge_body_with_extra_goal, [throws(unsupported_construct(edge_body_
 
 test(rejects_pre_in_level_body, [throws(unsupported_construct(level_body_goal(_, pre(_))))]) :-
     Prog = prog([], [ (snapshot(X) <- pre(item(X))) ]),
+    check_supported_subset(Prog).
+
+test(accepts_level_derived_edge_trigger) :-
+    Prog = prog(
+        [kind(source/1, log), keep(source/1, all),
+         kind(sink/1, log), keep(sink/1, all)],
+        [(view(X) <- source(X)), (sink(X) <+ view(X))]),
+    check_supported_subset(Prog).
+
+test(accepts_edge_derived_edge_trigger) :-
+    Prog = prog(
+        [kind(source/1, log), keep(source/1, all),
+         kind(stage_one/1, log), keep(stage_one/1, all),
+         kind(stage_two/1, log), keep(stage_two/1, all)],
+        [(stage_one(X) <+ source(X)), (stage_two(X) <+ stage_one(X))]),
     check_supported_subset(Prog).
 
 :- end_tests(supported_subset_gate).
@@ -548,5 +604,25 @@ test(refuses_variant_name_collision,
         ],
         []),
     expand_enum_program(Sugared, _).
+
+test(enum_tag_view_can_trigger_keyed_edge_head) :-
+    string_codes(
+        "rel door(closed(note: text) ; open(note: text)).\nrel current(id: int, tag: text) key(1).\ncurrent(Id, Tag) <+ door_tag(Id, Tag).\n",
+        Codes),
+    parse_dl(Codes, Prog, Bindings, Findings),
+    assertion(Findings == []),
+    Schedule = [
+        [+door_closed(1, "boot")],
+        [+door_open(1, "ready")]
+    ],
+    once(program_plan(
+        fixture(door_enum_edge_acceptance, Prog, [], Schedule, [])-Bindings,
+        Plan)),
+    lower_program(Plan, Lowered),
+    Lowered = lowered(_, _, _, EdgeStatements, _, _, _, _),
+    memberchk(
+        edgestmt(current/2, door_tag/2, [id, tag], [id], _, _,
+                 'SELECT d0."id" AS "id", d0."tag" AS "tag" FROM "__frontier_door_tag" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"'),
+        EdgeStatements).
 
 :- end_tests(enum_decl_expansion).

@@ -20,6 +20,10 @@ import {
   incrementalPlan as negativeIncrementalPlan,
   program as negativeProgram,
 } from "../gen_emitted/merge_policy.ts";
+import {
+  incrementalPlan as edgeCarryIncrementalPlan,
+  program as edgeCarryProgram,
+} from "../gen_emitted/edge_chain_hops_tick_per_stage.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import type {
   IArrivalBatch,
@@ -40,9 +44,19 @@ type Shape =
   | "p2-switch"
   | "p3-retraction"
   | "p3-shared"
-  | "p3-negative";
+  | "p3-negative"
+  | "p2-edge-carry";
 
 function scheduleFor(shape: Shape, rows: number): readonly IArrivalBatch[] {
+  if (shape === "p2-edge-carry") {
+    return [
+      Array.from({ length: rows }, (_, index) => ({
+        rel: "source_ev",
+        sign: "add" as const,
+        row: [`item_${index}`] as const,
+      })),
+    ];
+  }
   if (shape === "p2-switch") {
     return [
       [{ rel: "route_change", sign: "add", row: ["session_one", "settings"] }],
@@ -206,7 +220,8 @@ async function main(): Promise<void> {
     shapeArg !== "p2-switch" &&
     shapeArg !== "p3-retraction" &&
     shapeArg !== "p3-shared" &&
-    shapeArg !== "p3-negative"
+    shapeArg !== "p3-negative" &&
+    shapeArg !== "p2-edge-carry"
   ) {
     throw new Error("p1-receipts: unknown receipt shape");
   }
@@ -220,6 +235,8 @@ async function main(): Promise<void> {
   }
   const selected = shapeArg === "p2-switch"
     ? { plan: switchIncrementalPlan, program: switchProgram }
+    : shapeArg === "p2-edge-carry"
+    ? { plan: edgeCarryIncrementalPlan, program: edgeCarryProgram }
     : shapeArg === "p3-retraction"
     ? { plan: retractionIncrementalPlan, program: retractionProgram }
     : shapeArg === "p3-shared"
@@ -278,7 +295,7 @@ async function main(): Promise<void> {
     const deltas = await firstValueFrom(selectedProgram.tick(seam, arrivals));
     statementCounts.push(stmt_counter.get());
     lastCarryPending = deltas.carryPending;
-    if (shapeArg === "p2-switch") await drain();
+    if (shapeArg === "p2-switch" || shapeArg === "p2-edge-carry") await drain();
   }
   await drain();
   const receipt = {
