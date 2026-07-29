@@ -79,15 +79,18 @@ import {
   type SchedulerLike,
   asyncScheduler,
   bufferTime,
+  catchError,
   concatMap,
   defer,
   filter,
+  finalize,
   from,
   interval,
   map,
   merge,
   mergeMap,
   take,
+  throwError,
 } from "rxjs";
 
 import type {
@@ -204,13 +207,15 @@ export class NodeWatchSource implements IWatchSource {
   watch(root: string): Observable<string> {
     return defer(() => {
       const controller = new AbortController();
-      const events = watchDirectory(root, { recursive: true, signal: controller.signal });
-      return new Observable<string>((subscriber) => {
-        from(events)
-          .pipe(map((event) => path.resolve(root, event.filename ?? "")))
-          .subscribe(subscriber);
-        return () => controller.abort();
-      });
+      return from(watchDirectory(root, { recursive: true, signal: controller.signal })).pipe(
+        map((event) => path.resolve(root, event.filename ?? "")),
+        // The abort we ourselves just performed comes back out of the iterator
+        // as an error; it is this stream ENDING, not a fault to propagate.
+        catchError((failure: unknown) =>
+          failure instanceof Error && failure.name === "AbortError" ? EMPTY : throwError(() => failure),
+        ),
+        finalize(() => controller.abort()),
+      );
     });
   }
 }

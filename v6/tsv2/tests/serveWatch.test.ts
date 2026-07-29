@@ -77,7 +77,7 @@ test("watch bind: real file bytes become (glob, path, digest) rows, one batch pe
   const root = mkdtempSync(join(tmpdir(), "tsv2-watch-"));
   const scheduler = new VirtualTimeScheduler();
   const watchSource = new ScriptedWatchSource(scheduler);
-  const served = await startServed(17541, scheduler, ":memory:", {
+  const served = await startServed(17601, scheduler, ":memory:", {
     watchRoot: root,
     watchCoalesceMs: COALESCE_MS,
     watchSource,
