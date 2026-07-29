@@ -157,7 +157,7 @@ breaks a file in the same commit. The edit is mechanical: `emit_ts:decl_ts`,
 else in that file or that directory was touched, and its output is proven
 byte-identical above.
 
-### Side finding, unowned
+### R6 side finding, unowned
 
 Those same three call sites are private cross-module calls (`decl_ts/2`,
 `rule_ts/3`, `used_helpers/2` are not in the module's export list, which is
@@ -165,3 +165,218 @@ Those same three call sites are private cross-module calls (`decl_ts/2`,
 cannot see, because `v6/sprefa-store/bench/` is not one of the two clusters
 the gate loads. Widening the gate to a bench cluster is a follow-up, not part
 of this arc.
+
+---
+
+## R1: shared registry-driven body walker
+
+Landed in two commits, test first. New module `v6/prolog/0_body_walk.pl`,
+181 lines of which 84 are the header stating the contract and the deliberate
+exclusions.
+
+```prolog
+walk_body(+Body, +WalkPolicy, -Events)
+% Events = left-to-right list of event(Path, Polarity, Surface, Term)
+% WalkPolicy = walk_policy(descend_not(Bool), splice_bare(Bool))
+```
+
+Design points that made the consolidation possible:
+
+- Polarity absorbs to `neg` under any descended `not/1` rather than flipping.
+  Both consumers that read polarity already behaved that way, so a doubly
+  negated atom reads negative on both sides.
+- `Surface` is the registry projection, or the atom `plain_atom` when the
+  registry has no row. Refusal by absence stays the registry's job, and
+  "is a relation atom" becomes "has no registry row".
+- A wrapper node is always emitted whether or not the walk descends through
+  it. That is what lets one traversal serve both the projections that read
+  the wrapper (`latest/1`'s argument is the sampled reference) and those that
+  read past it.
+- Conjunction is flattened by shape, not by registry row, because `','/2` is
+  the body spine and not a construct. Left-nested and right-nested bodies
+  produce the same event list.
+
+### Sites consolidated, 10
+
+| Site | Policy | Note |
+|---|---|---|
+| `engine:body_finalize_ref/2` | not(false), splice(false) | now `body_wrapper_refs/4` |
+| `engine:body_latest_ref/2` | not(true), splice(false) | same predicate as the compiler's |
+| `engine:body_pre_ref/2` | not(true), splice(false) | same predicate as the compiler's |
+| `analyze:level_body_latest_ref/2` | not(true), splice(false) | four predicates, two implementations, now one |
+| `analyze:level_body_pre_ref/2` | not(true), splice(false) | |
+| `analyze:body_ref_uses/2` | not(true), splice(true) | the reference semantics, now a projection |
+| `analyze:conjunction_goals/2` | not(false), splice(true) | splicing is the registry's `splice_bare` role now |
+| `analyze:reserved_construct_in_body/2` | not(false), splice(false) | |
+| `analyze:body_forbidden_goal/2` | not(false), splice(false) | |
+| `engine:trigger_items/2` | not(false), splice(false) | shared spine, local classification |
+| `body:body_atoms/2` | not(false), splice(false) | shared spine, local classification |
+| `host_expand:body_goals/2` | not(false), splice(false) | the plainest flatten in the tree |
+
+### The one rank-1 site deliberately not taken
+
+`level_eval:goal_rel_refs/3` keeps its own `not/1` recursion. Its clause
+appends inner-positive before inner-negative, so for `not((not(a), b))` it
+answers `[b/1, a/1]` and not source order. The `not_mixed` golden pins that
+empirically. A source-ordered projection would reorder stratification
+constraints, so the review's "can project from registry roles" reading does
+not survive contact with the actual clause.
+
+### The three drifts stay drifts
+
+`trigger_items/2` and `body_atoms/2` each keep the silent-form list they
+always had, and each list is a strict subset of the registry's body rows:
+`next/1`, variadic `combine`, `zip/2`, the four reserved lifecycle wrappers
+and the six comparison operators are absent from both. So `next(d(4))`,
+`combine(e,f)`, `8<9` and `unsubscribe(a(1))` are still classified as arrivals
+and as atoms respectively.
+
+They are inert downstream, because `occurrence_trigger/4` unifies an arrival
+against a real stored row and none of those shapes can match one. Projecting
+them from the registry would reclassify them, which is a semantics change owed
+a fixture, not something to slip in under a refactor. Both sites now say so in
+place.
+
+### The trap, hit and fixed mid-refactor
+
+The first draft collected uses with `findall/3`. It copies its template, which
+severed every `use/4`'s `Args` from the body's own variables, and 27 plunit
+tests went red at once. Both collectors are recursive now. `engine.pl` already
+carried this exact warning about trigger items, which is what named the cause
+in one read.
+
+### Receipts
+
+| Gate | Result |
+|---|---|
+| conformance | 136 pass / 0 fail |
+| plunit | 90 / 90 (75 before the characterization test) |
+| roundtrip | ALL GRADES PASS |
+| TEXT_DOOR | compiled=73 byte_identical=73 failures=0 |
+| sweep | 136/73 compiled, RUN 73 identical=70 wrong=0, FINAL 70 identical |
+| sweep, naive referee | identical counts under `SPREFA_TSV2_EMITTER_MODE=naive` |
+| prolog-lint | findings=10 baseline=10 OK |
+
+The strongest is the sweep leaving a CLEAN git diff: regenerating every
+emitted TypeScript module and every tick log after the refactor produced
+byte-identical artifacts.
+
+Sabotage receipt for the characterization test itself: deleting the `not/1`
+descent clause from `engine:body_latest_ref/2` turns two tests red, while
+conformance stays 136/0 under the same sabotage. The test covers ground the
+existing battery did not.
+
+### Environment note
+
+The worktree had no `node_modules` under `v6/tsv2` or `v6/sprefa-store/js`, so
+the sweep's diff stage could not start. `pnpm install` in both (the packages
+declare `packageManager: pnpm` and a `link:` dependency npm refuses) fixed it.
+No lockfile changed.
+
+---
+
+## R2: shared cross-plane program-check module
+
+Landed in two commits, test first. New module
+`v6/prolog/0_program_check.pl`, 156 lines.
+
+```prolog
+program_violation(+CheckName, +Program, -Payload)
+first_violation(+Program, +OrderedChecks, -violation(Name, Payload))
+```
+
+The shared part is the TRIGGER CONDITION only. Three things stayed with each
+door, all of them fixture-visible data:
+
+| Kept per door | Why |
+|---|---|
+| exception terms | the oracle throws bare terms, the compiler wraps in `unsupported_construct/1` |
+| check ORDER | a program violating two classes reports a different one at each door |
+| compiler capability refusals | the oracle is deliberately the wider language |
+
+Order in particular could not be a single shared list: the compiler
+INTERLEAVES the shared classes with its own per-rule checks (edge body shape,
+head arithmetic, conflict risk). It calls `shared_refusal/2` twice, in the two
+positions where the four separate `forall/2` goals it replaced used to sit.
+
+### Six mirrored classes, one implementation each
+
+`keyed_level_head`, `keyed_log_rel`, `log_on_level_headed_rel`,
+`keep_on_non_log_rel`, `latest_in_level_rule`, `pre_in_level_rule`, plus
+`finalize_in_level_rule` which the oracle checked directly and the compiler
+still reaches through its generic refused-goal path.
+
+The `keyed_log_rel` payload is the one that differs by design: the shared
+trigger yields `Ref-Positions`, the oracle's adapter drops the positions, the
+compiler's keeps them. `keyed_log_rel_payloads_differ_by_design` pins both.
+
+### Two engine-only holes CLOSED, both fail-first
+
+| Hole | Compiler before | Compiler after |
+|---|---|---|
+| `missing_retention` | accepted | `unsupported_construct(missing_retention(Ref))` |
+| `aggregate_in_edge_head` | accepted | `unsupported_construct(aggregate_in_edge_head(Ref))` |
+
+Red-before receipts are recorded in the test unit header. The retention hole
+was not hypothetical: `engine_core.pl:log_without_retention_rejected` sat in
+the sweep manifest's `compiled` bucket with an empty reason, against an oracle
+that throws `missing_retention(event/1)`. The compiler was emitting a
+TypeScript module for a program the reference door rejects.
+
+The compiler names the aggregate hole WITH the offending head reference where
+the oracle's term is bare `aggregate_in_edge_head`. A compiler refusal has to
+say which rule to edit; the oracle's bare term is what fixtures already pin,
+so it is unchanged.
+
+### Deliberate count movement, authorized by the brief's diagnostic clause
+
+| Metric | Before | After | Cause |
+|---|---:|---:|---|
+| conformance | 136 | 137 | new fixture `aggregate_in_edge_head_rejected` |
+| sweep total | 136 | 137 | same |
+| sweep compiled | 73 | 72 | `log_without_retention_rejected` stops being fake-compiled |
+| sweep unsupported | 63 | 65 | that fixture plus the new one |
+| RUN identical | 70 | 70 | unchanged |
+| RUN wrong | 0 | 0 | unchanged |
+| RUN no_oracle_log | 1 | 0 | the fake compile was the only one |
+| FINAL no_oracle_final | 1 | 0 | same |
+| TEXT_DOOR | 73/73/0 | 72/72/0 | one fewer compiled fixture to check |
+
+`identical` and `wrong` are the quality metrics and both held. The `compiled`
+drop is a fixture leaving a bucket it never belonged in.
+
+### Stale artifact removed
+
+`v6/tsv2/gen_emitted/log_without_retention_rejected.ts` survived the sweep,
+because the sweep only removes the fixture module it rewrites and this fixture
+no longer compiles. Nothing imported it. Deleted; the import gate stays green
+at 3 gen / 8 runtime / 7 serve. This is the checked-in-stale-gen-module class
+the ledger already records against `door-handwritten.ts`.
+
+### Receipts
+
+| Gate | Result |
+|---|---|
+| conformance | 137 pass / 0 fail |
+| plunit | 103 / 103 (90 before this rank's 13 tests) |
+| roundtrip | ALL GRADES PASS |
+| TEXT_DOOR | compiled=72 byte_identical=72 failures=0 |
+| sweep | 137/72 compiled, RUN identical=70 wrong=0, FINAL identical=70 |
+| sweep, naive referee | identical counts |
+| import gate | OK |
+| prolog-lint | findings=10 baseline=10 OK |
+
+### Finding banked, not acted on
+
+`finalize_in_level_rule` is refused by both doors but named differently: the
+oracle says `finalize_in_level_rule(gone/1)`, the compiler says
+`level_body_goal(out(Item), finalize(gone(Item)))` with the rule's own
+variable shared between head and goal. The shared trigger exists and the
+oracle uses it; routing the compiler onto it would change a fixture-visible
+diagnostic for no correctness gain, so the drift is pinned by
+`finalize_in_level_rule_diagnostics_drift` instead of repaired.
+
+Related asymmetry, also pinned rather than fixed: neither door's finalize scan
+descends `not/1`, so `not(finalize(...))` in a level rule is ACCEPTED by both.
+`nested_not_finalize_is_opaque_to_both_doors` records it, so closing one side
+alone becomes a visible change rather than a silent divergence.

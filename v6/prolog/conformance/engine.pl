@@ -63,7 +63,11 @@
             % body_pre_ref/2 are the oracle's copies of two compiler scans;
             % the test that pins them equal reaches both sides by name.
             trigger_items/2, body_finalize_ref/2,
-            body_latest_ref/2, body_pre_ref/2 ]).
+            body_latest_ref/2, body_pre_ref/2,
+            % The oracle's load-time program gate, exported so the
+            % cross_plane_check_parity unit (rank R2) can put the same prog/2
+            % term through both doors and compare the two exception terms.
+            check_program/1 ]).
 :- reexport(body, [json_canon/2]).
 
 :- use_module(library(lists)).
@@ -73,6 +77,7 @@
 :- use_module('../0_match_expand', [expand_match_program/2]).
 :- use_module('../0_body_walk', [walk_body/3, event_is_relation_atom/2,
                                  body_wrapper_refs/4]).
+:- use_module('../0_program_check', [first_violation/3]).
 :- use_module('../1_host_expand', [prepare_program/5]).
 :- use_module(rulings).
 :- use_module(body).
@@ -111,25 +116,41 @@ key_of(Positions, Row, Key) :-
 
 % Load-time program checks: headed relation compatibility, body markings,
 % keyed-Log exclusion, and retention presence.
-check_program(prog(Decls, Rules)) :-
-    forall(( member(keyed(Ref, _), Decls), level_headed(Rules, Ref) ),
-           throw(keyed_level_head(Ref))),
-    forall(( member(keyed(Ref, _), Decls), declared_kind(Decls, Ref, log) ),
-           throw(keyed_log_rel(Ref))),
-    forall(( member(kind(Ref, log), Decls), level_headed(Rules, Ref) ),
-           throw(log_on_level_headed_rel(Ref))),
-    forall(( member(kind(Ref, log), Decls), \+ memberchk(keep(Ref, _), Decls) ),
-           throw(missing_retention(Ref))),
-    forall(( member(keep(Ref, _), Decls), rel_kind(Decls, Rules, Ref, Kind), Kind \== log ),
-           throw(keep_on_non_log_rel(Ref))),
-    forall(( member((Head <+ _), Rules), aggregate_head(Head, _, _) ),
-           throw(aggregate_in_edge_head)),
-    forall(( member((_ <- Body), Rules), body_finalize_ref(Body, Ref2) ),
-           throw(finalize_in_level_rule(Ref2))),
-    forall(( member((_ <- Body), Rules), body_latest_ref(Body, Ref3) ),
-           throw(latest_in_level_rule(Ref3))),
-    forall(( member((_ <- Body), Rules), body_pre_ref(Body, Ref4) ),
-           throw(pre_in_level_rule(Ref4))).
+%
+% The trigger conditions live in 0_program_check.pl, shared with the compiler's
+% supported-subset gate (rank R2 of plans/2026-07-29-prolog-org-review.md).
+% What stays here is this door's ORDER and this door's exception vocabulary,
+% both of which are fixture data: the oracle throws bare terms, the compiler
+% wraps in unsupported_construct/1, and a program violating two classes reports
+% different ones at the two doors.
+engine_check_order([ keyed_level_head,
+                     keyed_log_rel,
+                     log_on_level_headed_rel,
+                     missing_retention,
+                     keep_on_non_log_rel,
+                     aggregate_in_edge_head,
+                     finalize_in_level_rule,
+                     latest_in_level_rule,
+                     pre_in_level_rule ]).
+
+check_program(Program) :-
+    engine_check_order(Order),
+    (   first_violation(Program, Order, violation(Name, Payload))
+    ->  engine_refusal(Name, Payload, Term),
+        throw(Term)
+    ;   true
+    ).
+
+engine_refusal(keyed_level_head,        Ref,   keyed_level_head(Ref)).
+engine_refusal(keyed_log_rel,           Ref-_, keyed_log_rel(Ref)).
+engine_refusal(log_on_level_headed_rel, Ref,   log_on_level_headed_rel(Ref)).
+engine_refusal(missing_retention,       Ref,   missing_retention(Ref)).
+engine_refusal(keep_on_non_log_rel,     Ref,   keep_on_non_log_rel(Ref)).
+% The oracle names this one without a reference, and always has.
+engine_refusal(aggregate_in_edge_head,  _,     aggregate_in_edge_head).
+engine_refusal(finalize_in_level_rule,  Ref,   finalize_in_level_rule(Ref)).
+engine_refusal(latest_in_level_rule,    Ref,   latest_in_level_rule(Ref)).
+engine_refusal(pre_in_level_rule,       Ref,   pre_in_level_rule(Ref)).
 
 % ═══ the store ══════════════════════════════════════════════════════════════
 % srow(Row) for Set rels; lrow(st(Tick, Seq), Row) for Log rels. Level views

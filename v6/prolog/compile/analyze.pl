@@ -41,6 +41,7 @@
 :- use_module('../0_body_walk',
               [ walk_body/3, event_is_relation_atom/2,
                 body_conjunction_goals/3, body_wrapper_refs/4 ]).
+:- use_module('../0_program_check', [ first_violation/3 ]).
 :- use_module('../conformance/body', [rel_ref/2]).
 :- use_module(registry,
               [ surface_for_term/6,
@@ -761,28 +762,59 @@ check_supported_subset(SugaredProg) :-
     expand_match_program(SugaredProg, ExpandedProg),
     check_supported_subset_expanded(ExpandedProg).
 
-check_supported_subset_expanded(prog(Decls, Rules)) :-
+% The cross-plane trigger conditions come from 0_program_check.pl, shared with
+% the oracle's engine:check_program/1 (rank R2 of
+% plans/2026-07-29-prolog-org-review.md). This door keeps its own order, which
+% INTERLEAVES the shared classes with compiler-only capability refusals, and
+% its own exception vocabulary: every refusal here wraps in
+% unsupported_construct/1, and keyed_log_rel additionally carries the key
+% positions the emitter would have needed.
+%
+% Order is fixture data. A program violating two classes reports a different
+% one at each door, so the two segments below sit exactly where the four
+% separate forall/2 goals they replaced used to sit.
+check_supported_subset_expanded(Program) :-
+    Program = prog(Decls, Rules),
     forall(( member(Rule, Rules), rule_reserved_construct(Rule, Construct) ),
            throw(unsupported_construct(Construct))),
-    forall(( member(kind(Ref, log), Decls), member(LevelRule, Rules),
-             rule_is_level(LevelRule), rule_head_ref(LevelRule, Ref) ),
-           throw(unsupported_construct(log_on_level_headed_rel(Ref)))),
-    forall(( member(LevelRule, Rules), rule_is_level(LevelRule),
-             rule_body(LevelRule, Body), level_body_latest_ref(Body, Ref) ),
-           throw(unsupported_construct(latest_in_level_rule(Ref)))),
-    forall(( member(LevelRule, Rules), rule_is_level(LevelRule),
-             rule_body(LevelRule, Body), level_body_pre_ref(Body, Ref) ),
-           throw(unsupported_construct(pre_in_level_rule(Ref)))),
-    forall(( member(keep(Ref, _), Decls), rel_kind(Decls, Ref, Kind), Kind \== log ),
-           throw(unsupported_construct(keep_on_non_log_rel(Ref)))),
+    shared_refusal(Program, [ log_on_level_headed_rel,
+                              latest_in_level_rule,
+                              pre_in_level_rule,
+                              keep_on_non_log_rel,
+                              % RANK R2 HOLE CLOSURES. Both were checked by the
+                              % oracle alone, so the compiler accepted programs
+                              % the reference door rejects. They run here, after
+                              % the classes that were already shared and before
+                              % the per-rule capability checks, so an
+                              % already-refused program keeps its current
+                              % diagnostic.
+                              missing_retention,
+                              aggregate_in_edge_head ]),
     forall(( member(Rule, Rules), rule_is_edge(Rule) ), check_edge_rule_shape(Rule)),
     forall(( member(Rule, Rules), rule_is_level(Rule) ), check_level_rule_shape(Rule)),
     check_no_edge_head_conflict_risk(Decls, Rules),
-    forall(( member(keyed(Ref, _), Decls), member(LevelRule, Rules),
-             rule_is_level(LevelRule), rule_head_ref(LevelRule, Ref) ),
-           throw(unsupported_construct(keyed_level_head(Ref)))),
-    forall(( member(keyed(Ref, Positions), Decls), rel_kind(Decls, Ref, log) ),
-           throw(unsupported_construct(keyed_log_rel(Ref, Positions)))).
+    shared_refusal(Program, [ keyed_level_head, keyed_log_rel ]).
+
+shared_refusal(Program, Order) :-
+    (   first_violation(Program, Order, violation(Name, Payload))
+    ->  compiler_refusal(Name, Payload, Construct),
+        throw(unsupported_construct(Construct))
+    ;   true
+    ).
+
+compiler_refusal(keyed_level_head,        Ref, keyed_level_head(Ref)).
+% The only payload that differs from the oracle's: lowering needs the
+% positions to explain which key decl is at fault.
+compiler_refusal(keyed_log_rel,   Ref-Positions, keyed_log_rel(Ref, Positions)).
+compiler_refusal(log_on_level_headed_rel, Ref, log_on_level_headed_rel(Ref)).
+compiler_refusal(keep_on_non_log_rel,     Ref, keep_on_non_log_rel(Ref)).
+compiler_refusal(latest_in_level_rule,    Ref, latest_in_level_rule(Ref)).
+compiler_refusal(pre_in_level_rule,       Ref, pre_in_level_rule(Ref)).
+compiler_refusal(missing_retention,       Ref, missing_retention(Ref)).
+% Named WITH the offending head reference, where the oracle's bare
+% aggregate_in_edge_head names nothing. A compiler refusal has to say which
+% rule to edit; the oracle's term is the one fixtures already pin.
+compiler_refusal(aggregate_in_edge_head,  Ref, aggregate_in_edge_head(Ref)).
 
 % Both are the shared walk (rank R1 of
 % plans/2026-07-29-prolog-org-review.md). The oracle's engine:body_latest_ref/2

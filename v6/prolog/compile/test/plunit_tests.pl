@@ -37,7 +37,8 @@
                 reserved_construct_in_body/2, body_forbidden_goal/2 ]).
 :- use_module('../../conformance/engine',
               [ trigger_items/2, body_finalize_ref/2,
-                body_latest_ref/2, body_pre_ref/2 ]).
+                body_latest_ref/2, body_pre_ref/2,
+                check_program/1 ]).
 :- use_module('../../conformance/level_eval', [ goal_rel_refs/3 ]).
 :- use_module('../../conformance/body', [ body_atoms/2 ]).
 :- use_module('../../1_host_expand', [ body_goals/2 ]).
@@ -1395,3 +1396,177 @@ test(engine_and_compiler_pre_scans_agree) :-
              EngineRefs == CompilerRefs )).
 
 :- end_tests(body_walk_characterization).
+
+% ═══════════════════════════════════════════════════════════════════════════
+% CROSS-PLANE PROGRAM CHECK PARITY (rank R2)
+%
+% The review found six invalid-program trigger classes implemented twice, once
+% in the oracle's engine:check_program/1 and once in the compiler's
+% analyze:check_supported_subset/1, plus two classes the ORACLE alone checks.
+% These tests state, per class, what each door does with the same prog/2 term.
+%
+% Both doors keep their own exception vocabulary on purpose. The oracle throws
+% a bare term; the compiler wraps in unsupported_construct/1 and, for keyed
+% Log, carries the key positions the emitter would have needed. Those terms are
+% fixture-visible data, so the shared trigger implementation must not
+% normalize them.
+%
+% TWO OF THESE WERE WRITTEN RED. Before the shared check module existed the
+% compiler ACCEPTED both programs the oracle rejects:
+%
+%   compiler_refuses_log_without_retention
+%     was: check_supported_subset/1 succeeded, so the program compiled and
+%     v6/prolog/compile/out/manifest.json carried
+%     log_without_retention_rejected in bucket "compiled" with an empty
+%     reason, against an oracle that throws missing_retention(event/1).
+%   compiler_refuses_aggregate_in_edge_head
+%     was: check_supported_subset/1 succeeded on (total(count(N)) <+ hit(N)),
+%     so a compound aggregate argument reached generic head-expression
+%     lowering, against an oracle that throws aggregate_in_edge_head.
+%
+% Both are green below and the manifest bucket moved with them.
+
+:- begin_tests(cross_plane_check_parity).
+
+% Throws Term, or the atom accepted if the door lets the program through.
+door_verdict(oracle, Prog, Verdict) :-
+    (   catch(check_program(Prog), Thrown, true)
+    ->  ( var(Thrown) -> Verdict = accepted ; Verdict = Thrown )
+    ;   Verdict = failed
+    ).
+door_verdict(compiler, Prog, Verdict) :-
+    (   catch(check_supported_subset(Prog), Thrown, true)
+    ->  ( var(Thrown) -> Verdict = accepted ; Verdict = Thrown )
+    ;   Verdict = failed
+    ).
+
+% ── the six mirrored classes ─────────────────────────────────────────────────
+
+test(keyed_level_head_both_doors) :-
+    Prog = prog([ keyed(current/2, [1]) ], [ (current(Id, Tag) <- src(Id, Tag)) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == keyed_level_head(current/2),
+    CompilerVerdict == unsupported_construct(keyed_level_head(current/2)).
+
+% The compiler payload carries the key POSITIONS as well as the reference; the
+% oracle's carries only the reference. Pinned so the shared trigger cannot
+% quietly normalize one door's payload into the other's.
+test(keyed_log_rel_payloads_differ_by_design) :-
+    Prog = prog([ kind(latest/2, log), keep(latest/2, all),
+                  keyed(latest/2, [1]) ], []),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == keyed_log_rel(latest/2),
+    CompilerVerdict == unsupported_construct(keyed_log_rel(latest/2, [1])).
+
+test(log_on_level_headed_rel_both_doors) :-
+    Prog = prog([ kind(view/1, log), keep(view/1, all) ],
+                [ (view(Item) <- src(Item)) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == log_on_level_headed_rel(view/1),
+    CompilerVerdict == unsupported_construct(log_on_level_headed_rel(view/1)).
+
+test(keep_on_non_log_rel_both_doors) :-
+    Prog = prog([ keep(state/1, all) ], []),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == keep_on_non_log_rel(state/1),
+    CompilerVerdict == unsupported_construct(keep_on_non_log_rel(state/1)).
+
+test(latest_in_level_rule_both_doors) :-
+    Prog = prog([], [ (out(Item) <- (src(Item), latest(cfg(Item)))) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == latest_in_level_rule(cfg/1),
+    CompilerVerdict == unsupported_construct(latest_in_level_rule(cfg/1)).
+
+test(pre_in_level_rule_both_doors) :-
+    Prog = prog([], [ (out(Item) <- (src(Item), pre(cfg(Item)))) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == pre_in_level_rule(cfg/1),
+    CompilerVerdict == unsupported_construct(pre_in_level_rule(cfg/1)).
+
+% ── the finalize diagnostic drift, stated rather than repaired ───────────────
+% Both doors refuse a finalize/1 in a level rule, and they name it differently:
+% the oracle has a dedicated check, the compiler reaches it through the generic
+% refused-goal path and reports the enclosing head. The review flagged this as
+% diagnostic drift; it is fixture-visible on both sides, so R2 preserves it and
+% records it here instead.
+test(finalize_in_level_rule_diagnostics_drift) :-
+    Prog = prog([], [ (out(Item) <- (src(Item), finalize(gone(Item)))) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == finalize_in_level_rule(gone/1),
+    % =@= over a term whose variable is SHARED between the head and the
+    % finalize atom, because that is how the compiler reports it: the payload
+    % keeps the rule's own variable rather than copying. Two anonymous holes
+    % are not a variant of one repeated hole, so writing `out(_)` and
+    % `gone(_)` here would fail for the wrong reason.
+    Expected = unsupported_construct(
+                 level_body_goal(out(Item), finalize(gone(Item)))),
+    CompilerVerdict =@= Expected.
+
+% ── nested not/1 parity ─────────────────────────────────────────────────────
+% Both level-rule scans descend not/1, so a latest or pre buried under any
+% depth of negation still refuses, and both doors agree on which reference is
+% named. This is the shared-walker property (rank R1) read through the checks
+% that consume it.
+test(nested_not_latest_parity) :-
+    Prog = prog([], [ (out(Item) <- (src(Item),
+                                     not(not(latest(cfg(Item)))))) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == latest_in_level_rule(cfg/1),
+    CompilerVerdict == unsupported_construct(latest_in_level_rule(cfg/1)).
+
+test(nested_not_pre_parity) :-
+    Prog = prog([], [ (out(Item) <- (src(Item),
+                                     not(not(pre(cfg(Item)))))) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == pre_in_level_rule(cfg/1),
+    CompilerVerdict == unsupported_construct(pre_in_level_rule(cfg/1)).
+
+% A finalize under not/1 is opaque to BOTH doors, which is the asymmetry the
+% review named: the finalize scan does not descend negation on either side.
+% Pinned so closing one side alone becomes a visible change.
+test(nested_not_finalize_is_opaque_to_both_doors) :-
+    Prog = prog([], [ (out(Item) <- (src(Item), not(finalize(gone(Item))))) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == accepted,
+    CompilerVerdict == accepted.
+
+% ── the two classes the oracle alone used to check ──────────────────────────
+
+% FAIL-FIRST: CompilerVerdict was `accepted` before the shared check module.
+test(compiler_refuses_log_without_retention) :-
+    Prog = prog([ kind(event/1, log) ], []),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == missing_retention(event/1),
+    CompilerVerdict == unsupported_construct(missing_retention(event/1)).
+
+% FAIL-FIRST: CompilerVerdict was `accepted` before the shared check module.
+test(compiler_refuses_aggregate_in_edge_head) :-
+    Prog = prog([ kind(hit/1, log), keep(hit/1, all) ],
+                [ (total(count(Item)) <+ hit(Item)) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == aggregate_in_edge_head,
+    CompilerVerdict == unsupported_construct(aggregate_in_edge_head(total/1)).
+
+% A plain edge head is untouched by the aggregate-edge closure.
+test(plain_edge_head_still_accepted_by_both_doors) :-
+    Prog = prog([ kind(hit/1, log), keep(hit/1, all),
+                  keyed(total/1, [1]) ],
+                [ (total(Item) <+ hit(Item)) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == accepted,
+    CompilerVerdict == accepted.
+
+:- end_tests(cross_plane_check_parity).

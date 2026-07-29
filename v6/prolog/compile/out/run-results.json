@@ -70,13 +70,6 @@
     "finalDetail": ""
   },
   {
-    "name": "log_without_retention_rejected",
-    "bucket": "no_oracle_log",
-    "detail": "oracle run threw (see oracle_dump.pl ORACLE_THROW output); nothing to diff",
-    "finalBucket": "no_oracle_final",
-    "finalDetail": "oracle run threw; no final state to diff"
-  },
-  {
     "name": "log_retraction_rejected",
     "bucket": "run_error",
     "detail": "retract from log rel 'event'",
