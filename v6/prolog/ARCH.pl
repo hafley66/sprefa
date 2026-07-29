@@ -161,7 +161,17 @@ algorithm(tsv2_analyze,    ast,         fold,              'compile/analyze.pl (
 algorithm(tsv2_strata,     strata,      monotone_fixpoint, 'compile/strat.pl (mirrors engine relax_strata; Kahn once-per-tick order)').
 algorithm(tsv2_lower,      ast,         rewrite,           'compile/lower.pl (lowered/8 target-neutral plan: SQL text + structure, zero TS idiom)').
 algorithm(tsv2_ts_emit,    ast,         rewrite,           'compile/emit_ts.pl (backend #1 over lowered/8; emit_rust.pl plugs the same plan via compile_fixture/4)').
-algorithm(tsv2_surface_dcg, ast,        rewrite,           'compile/parse_dl.pl + print_dl.pl (phase D, in flight: DCG is the CANONICAL parser; langium was stopgap)').
+algorithm(tsv2_surface_dcg, ast,        rewrite,           'compile/parse_dl.pl + print_dl.pl (phase D, LANDED: DCG is the CANONICAL parser; langium was stopgap; compile_dl6/2 is the text door)').
+
+% Added by the world-health audit 2026-07-29: five modules that carry real
+% analyses and had no row, three of them born in the org refactor (rank
+% numbers = plans/2026-07-29-prolog-org-review.md).
+algorithm(tsv2_expansion,   ast,         rewrite,           '1_expansion.pl declared phase order enum -> decl spread -> row spread -> match, shared by oracle + compiler').
+algorithm(tsv2_host_expand, ast,         rewrite,           '1_host_expand.pl: sh_decl/probe/bind_decl/query/ts_query -> demand rules + keyed response rels').
+algorithm(tsv2_type_plane,  ast,         fold,              '0_type_plane.pl: struct decls, topological type order, canonicalize_world_rows/3, cycle witness').
+algorithm(tsv2_program_check, ast,       fold,              '0_program_check.pl: the six cross-plane invalid-program triggers, one implementation, two doors (rank 2)').
+algorithm(tsv2_body_walk,   ast,         fold,              '0_body_walk.pl walk_body/3: the one body traversal 10 sites used to hand-roll (rank 1)').
+algorithm(refcount_retraction, delta_flow, monotone_fixpoint, 'emitted SQL (P3): plain refCount where the rule graph is acyclic, recursive-CTE reseed where cycles are reachable; the guard is per rule graph').
 
 % ── prior art: the user's own tools and what each feeds v6 ──────────────────
 % prior_art(Name, Path, Feeds, Gift). The anti-forgetting ledger (user
@@ -197,6 +207,26 @@ capability(refactoring,        'v5 --move, auto-refactor brace arcs',           
 capability(auto_docing,        'gen rules writing doc indexes',                 't5_write_effects_audit15').
 capability(lsp,                'dl-lsp, --diag-db, diag_v5 loop',               't3_diag_plus_t6_tail_asks').
 capability(codegen_typegen,    'hafley-tsp + json-rx lineage',                  'far_emitters_over_facts').
+
+% RECEIPT STATE of the inventory above, audit 2026-07-29. The V6Home column is
+% still the aspirational tier name; these are the receipts that now exist, so
+% the row is not read as all-aspiration:
+%   lsp                -- GRADED. diag-rail.dl6 declares diag_v5 in v5's 9-column
+%                         shape; v5's own `dl --lsp --diag-db` reads it over real
+%                         stdio (`just lsp-diags`). Line numbers were 0 until the
+%                         comment lab's byte-span flattener; still unwired.
+%   comment_management -- GRADED BYTE-EXACT. comment_node 745/745, arch_node 4/4
+%                         vs v5 (plans/2026-07-29-comment-node-verdict.md), zero
+%                         new constructs. Markdown is the one extractor hole.
+%   flow_analysis      -- PARTIAL. flagship-flow.dl6 grades four queries against
+%                         v5: flow_edge 2184/2184 v6 rows matched (278 v5-only),
+%                         flow_reach 9112 matched, flow_param_type 0 matched
+%                         (referee key gap), flow_node_type EMPTY v6-side.
+%   language_parsing   -- PARTIAL. cst/type/call/df families over ts/rust/go/
+%                         kotlin/prolog; html/xml/md/json/yaml/toml planned only
+%                         (plans/2026-07-29-extract-doc-formats-header.md).
+%   doc_management, type_measurement, cross_repo_pointing, refactoring,
+%   auto_docing, codegen_typegen -- NO v6 receipt yet.
 
 % ── tech roles: who is allowed to do what ───────────────────────────────────
 
@@ -268,10 +298,18 @@ technique(protocols,     bind_facts_at_link,          'signatures in program, bi
 % forward. This section counts 29, the fuller accounting that includes every
 % ruled addition; the gap against a naive read of "28" is exactly that one
 % uncarried digit in extraction-spellings.md, and it is cited here both ways
-% instead of silently picking one. Tiers T5 and above (effect arrow, envelope
-% enums, streaming wrappers, tail asks) are NOT part of this budget — the
-% aggregate doc's own count table (1d) stops at T4, and this section follows
-% it exactly.
+% instead of silently picking one.
+%
+% POST-BUDGET TIER (t5, added 2026-07-29 by the world-health audit). The
+% T0-T4 rows above are the FROZEN LANG.md-era budget and their accounting is
+% not reopened. Everything the 2026-07-28/29 rulings ADDED to the surface
+% lives in the t5 block at the end of this section, so the table stops
+% understating the language: compile/registry.pl carries 41 surface/5 rows
+% today against this file's 29, and the difference was invisible. t5 rows
+% are exactly the constructs that (a) have a live registry row and (b) were
+% ruled after the budget was written. Constructs that exist only as design
+% (rel spreading, priced in plans/2026-07-29-rel-spreading-verdict.md, NOT
+% wired) get no row until they are wired.
 %
 % construct(Name, Tier, Status). Tier in {t0,t1,t2,t3,t4}, matching the
 % aggregate doc's tier map. Status is a CLOSED 3-value set (coarser than the
@@ -299,7 +337,16 @@ construct(negation,             t0, kept).
 construct(aggregate_head_forms, t0, kept).
 construct(comparison_ops,       t0, kept).
 construct(arithmetic_ops,       t0, kept).
-construct(bind_goal,            t0, kept).
+construct(bind_goal,            t0, new).     % STATUS CORRECTED 2026-07-29 (was
+%   `kept`, which claims LANG.md carried the spelling unchanged). LANG.md's
+%   keyword list is enum/struct/rel/bind and names no bind-goal operator; `:=`
+%   first appears at f26fc6ef (2026-07-27, the reference-interpreter commit)
+%   and is a live registry row today (registry.pl:72, beside is/2). The
+%   spelling is itself under an open question: SLOT-BIND-SPELLING
+%   (plans/2026-07-29-simplify-wave-brief.md tail) records that `:=` is not an
+%   rxjs, prolog or SQL word (the vocabulary law), that prolog's own
+%   candidates are `is` and `=`, and that `Var = expr` currently dies as
+%   unbound_head_var with no mention of `=` at all.
 construct(fn_application,       t0, kept).
 construct(interpolation,        t0, kept).
 construct(named_column_atoms,   t0, kept).
@@ -321,6 +368,20 @@ construct(pre_read,             t4, kept).
 construct(retention_clause,     t4, kept).
 construct(departure_form,       t4, new).          % R4, ruled 2026-07-27 PM
 
+% ── t5: what the 2026-07-28/29 rulings added to the surface ──────────────────
+% Each row has a live compile/registry.pl surface/5 entry AND a ruling; each
+% is grounded below by a fixture FILE that exercises it (counts are grep of
+% the functor in that file, taken 2026-07-29).
+
+construct(struct_type_decl,     t5, new).   % ruling compound_storage; `type name(col: type)`
+construct(decode_join,          t5, new).   % decode/2 = dictionary join, same ruling
+construct(match_block,          t5, new).   % ruling match_block_word; arms expand to rules
+construct(host_decl,            t5, new).   % sh_decl/4, EXPLICIT input->output split
+construct(probe_rider,          t5, new).   % probe/4 + @ salt(col: Val) riders
+construct(query_form,           t5, new).   % query/1, `? rel(args)`
+construct(ts_query_value,       t5, new).   % ts_query/1 compiles to exact query text
+construct(latest_sample,        t5, new).   % replacement spelling for the killed only()
+
 construct_status(kept).
 construct_status(respecified).
 construct_status(new).
@@ -330,6 +391,7 @@ construct_tier(t1).
 construct_tier(t2).
 construct_tier(t3).
 construct_tier(t4).
+construct_tier(t5).   % post-budget, see the section header
 
 % ── covers(FixtureFileOrRuling, Construct) ───────────────────────────────────
 % FixtureFileOrRuling is a fixture basename (matches fixture_file/1 in
@@ -460,6 +522,24 @@ covers(r6_pre_visibility,         pre_read).
 covers(s2_file_rels,              key_type).
 covers(s3_dirtiness,              level_rule).
 
+% ── t5 coverage (audit 2026-07-29) ───────────────────────────────────────────
+% Fixture-file endpoints, each verified by grepping the functor in that file
+% on this sha; ruling endpoints name the row in conformance/rulings.pl that
+% decided the spelling.
+covers('4_struct_values',         struct_type_decl).   % type_decl/2 x19
+covers(compound_storage,          struct_type_decl).   % ruling: struct_as_rows
+covers('4_struct_values',         decode_join).        % decode/2 x7 on declared types
+covers(compound_storage,          decode_join).
+covers('1_match_block',           match_block).        % match/2 x3
+covers(match_block_word,          match_block).
+covers('2_hosts_wiring',          host_decl).          % sh_decl/4 x4
+covers(host_residency,            host_decl).
+covers('2_hosts_wiring',          probe_rider).        % probe/4 x5
+covers('2_hosts_wiring',          query_form).         % query/1 + bind_decl/2 x7
+covers('2_hosts_wiring',          ts_query_value).     % ts_query/1 x1
+covers(merge_family,              latest_sample).      % latest/1 x18
+covers(engine_core,               latest_sample).      % latest/1 x5
+
 % Resolve fixtures relative to THIS file, not the process cwd: `just arch`
 % runs swipl from v6/ and the old repo-root-relative path made
 % covers_endpoints_ground fail there while passing from the repo root
@@ -500,8 +580,40 @@ fork('2026-07-29', pre_lowering_premise, refusal_with_measured_receipt, force_sa
      "coordinator's dispatch premise (pre = sampled read like latest) was WRONG -- agent measured pre-as-sampled projecting [1,1] where the oracle pins 2; pre is a chained mid-tick read through ordered occurrences; the honest refusal + receipt beats a silently-wrong lowering, and pre_occurrence_loop is now a priced arc instead of a hidden defect").
 fork('2026-07-29', tick_alignment_tier, opus_worktree_fourth_lane, sonnet_or_wait_for_user,
      "runtime tick phase order vs the oracle freeze IS the semantics of the engine; a wrong ordering grades wrong only on join-storm shapes (exactly the flagship shape), so the misfire cost dwarfs the tier cost; flagship is gated on it and the night has hours left").
+fork('2026-07-29', rig_coordinate_translation, referee_translates_coordinates, change_one_engines_output,
+     "v5 prints path:line:col:kind through _txt views, v6 carries byte spans; the flow rig needed one key space. Translating INSIDE the classifier (pinned-corpus newline index, calibration receipt in flagship-flow-classify.py's header) keeps BOTH engines unbent -- a v6 line/col column would have been a program change made to satisfy a referee, and a v5 span column is not ours to add. Backtrack = the translation is 40 lines in one python file").
+fork('2026-07-29', sweep_gc_false, disable_gc_for_the_one_shot_batch, restructure_the_sweep_into_chunks,
+     "swipl 10.0.2 aborts the compile sweep with 'system error: Mismatch in up phase' (GC compaction), deterministically at the 88th collection once the corpus reached 163 fixtures; the same goal typed at the toplevel completes. gc(false) on a one-shot process whose peak RSS is tens of MB costs nothing and keeps the sweep shape; chunking would have changed the receipt's meaning to chase someone else's bug. Receipt in sweep.sh:26. Upstream-shaped, see task swipl_gc_abort").
+fork('2026-07-29', bind_spelling_filed, file_the_slot_and_keep_running, rename_mid_rig,
+     "`:=` is nobody's word (vocabulary law) and terra typed `=` first, which dies as unbound_head_var; both are real. Renaming mid-flow-rig would have churned registry + parse/print + engine op + 16 fixture files inside a lane graded on row counts. Filed as SLOT-BIND-SPELLING with the `=`-must-refuse-by-name half attached; backtrack = the rename stays mechanical").
 fork('2026-07-29', flagship_pick, callgraph_rail_first_then_flow_interproc, flow_interproc_directly,
      "both need the same new rig (v5 rel output captured on a pinned corpus, v6 graded against it); a callgraph rail is the smaller program so the rig gets proven on less surface, and flow-interproc then rides the SAME rig -- best of both: the pick is not either-or, it is an ordering; backtrack = the rig outlives whichever program disappoints").
+
+% ═════════════════════════════════════════════════════════════════════════════
+% BATTERY OF RECORD — measured by the world-health audit at b535ca62
+% (2026-07-29 midday), each number from that agent's OWN run, not a report.
+% Full assessment: plans/2026-07-29-v6-world-health.md.
+%
+%   conformance          163 PASS / 0 findings   (swipl conformance/go.pl -g go)
+%   plunit               140 / 140
+%   TEXT_DOOR            compiled=102 byte_identical=102 failures=0
+%   sweep (artifacts)    163 swept: 102 compiled / 61 named refusals;
+%                        of the 102: 100 IDENTICAL, 0 WRONG, 2 run_error
+%                        (one is a rejection fixture, one is a real defect --
+%                        see task fork_join_malformed_json)
+%   emitted modules      103 in tsv2/gen_emitted, 161 .dl6 views
+%
+% NOT re-run here (this audit worktree has no node_modules): tsv2 / dl / store
+% suites and every shell receipt. Last committed receipt for those is the
+% host-seam landing (42d11f47): tsv2 69 pass / 1 skip, extraction-live HOLDS,
+% leak-soak PASS.
+%
+% STALE ELSEWHERE, verified at this sha and NOT edited here (v6/justfile is
+% another lane's file): the justfile expect comments read conformance 156,
+% text-door 95/95, sweep 95/93, plunit 137/137, tsv2 65/1, dl 97/1, and the
+% corpus line says "135-fixture baseline". SCOREBOARD.md totals read 155/94/
+% 92/0/2. Both are one to three landings behind the numbers above.
+% ═════════════════════════════════════════════════════════════════════════════
 
 % ═════════════════════════════════════════════════════════════════════════════
 % BUILD ORDER — task(Name, Status, Needs). `roadmap` topsorts it; learning
@@ -558,24 +670,41 @@ task(tick_phase_alignment, done, [edge_body_constructs]).  % LANDED 2026-07-29 n
 task(c7_durable_carry,     unbuilt, [tick_phase_alignment]). % match-frontier C7 INHERITED by the departure frontier (measured, departureFrontier.test.ts non-vacuous probe): frontier + departure TEMP tables die with the connection, kill -9 loses staged carries in BOTH implementations incl the oracle-side Ti carry. Endurance-law violation, whole-carry-set durability = own arc
 task(gen_staleness_gate,   done, []).                       % LANDED 2026-07-29 morning (sonnet worktree lane, coordinator review-merged): v6/tools/staleness-gate.sh in green-all -- gen half enumerates gen_emitted modules absent from manifest compiled set, regenerates via compile_dl6.sh + diffs (door-handwritten covered, unknown provenance = named FAIL); binary half fails when src .rs/Cargo.toml newer than existing target/release/{dl,extract} (missing binary = pass, receipt scripts own building). Sabotage receipts in script header. FIRST MAIN-TREE RUN CAUGHT A REAL ONE: extract binary predated terra's --resolve types.rs merge, gate red -> rebuild -> green. Agent also found+fixed a pipefail SIGPIPE race in its own draft (grep -q closing early)
 task(flagship_callgraph,   done, [tick_phase_alignment, extraction_live_p2]). % LANDED 2026-07-29 night (opus worktree, 2 commits, coordinator re-ran the rig + full battery): examples/callgraph-ast.dl BYTE-UNMODIFIED vs its v6 port over a pinned 13-file rust corpus; flagship-callgraph.sh + flagship-classify.py; every diff row bucketed, 0 expression gaps, 0 defects (def +10 = function_signature_item, call +181 = method/path/struct-literal sites v5's bare-identifier ast query cannot match; calls/unused proven by RULE FIDELITY -- v5's rule bodies run against each engine's own inputs); unused inverts as the anti-monotone rel must. 2 fixtures promoted (conformance 139/0, sweep 87/85/0, TEXT_DOOR 87/87/0). In green-all as `just flagship`
-task(flow_interproc_port,  blocked, [extract_resolve_flag]). % was blocked on extractor scope; user WAIVED the extractor-fixed directive for the resolve-flag expose (2026-07-29 morning, "sic codex terra on this"). Port dispatches once resolved edges flow; closure spelling rides the port arc (recursive strata are landed capability)
-task(extract_resolve_flag, in_flight, [flagship_callgraph]). % USER-WAIVED extractor touch, smallest correct: wire the EXISTING library-tested Resolve pass (tests/0_prolog.rs:70-95 is the exact recipe -- def index over all files, ProjectCx, per-file resolve) to a project-mode CLI entry emitting FLAT resolved-edge JSONL + a CLI-level golden test pinning the phase-2 contract that never existed (bin was phase-1 BY DESIGN, extract.rs:176; lib tests covered resolve; nothing asserted bin-vs-lib capability parity -- that asymmetry is the lesson). Brief plans/2026-07-29-extract-resolve-flag-brief.md. DISPATCHED codex terra, no-commit flow
+task(flow_interproc_port,  done, [extract_resolve_flag]). % UNBLOCKED then PORTED 2026-07-29: portable callable-plane port merged d322c93f (terra) with every gap named, value-plane rewrite merged 837fe7f2, rig grading ed81cdc6. The program is v6/dl/fixtures/flagship-flow.dl6 and it runs against v5's own std/flow.dl output on the pinned corpus (`bash v6/tsv2/scripts/flagship-flow.sh`). PORTED IS NOT PARITY -- see flow_parity_residue for the three open columns. closure/reaches over the extraction feed is graded here as flow_reach (9112 matched); the general closure() spelling still rides the graph-algo queue item
+task(extract_resolve_flag, done, [flagship_callgraph]). % LANDED 2026-07-29 morning (merge 17778bbb + 0_prolog ledger refresh c26b4e0e, codex terra, worktree+branch removed); the staleness gate then caught the stale extract binary twice on the same day, which is how the merge was proven live. Original brief text follows. USER-WAIVED extractor touch, smallest correct: wire the EXISTING library-tested Resolve pass (tests/0_prolog.rs:70-95 is the exact recipe -- def index over all files, ProjectCx, per-file resolve) to a project-mode CLI entry emitting FLAT resolved-edge JSONL + a CLI-level golden test pinning the phase-2 contract that never existed (bin was phase-1 BY DESIGN, extract.rs:176; lib tests covered resolve; nothing asserted bin-vs-lib capability parity -- that asymmetry is the lesson). Brief plans/2026-07-29-extract-resolve-flag-brief.md. DISPATCHED codex terra, no-commit flow
 task(extra_drain_tick,     done, [tick_phase_alignment]).   % FIXED 2026-07-29 morning (coordinator, main tree): recomputeLevelsAfterEdges refCount branch staged reconcile re-INSERTs into nextFrontier phase 1 (the P3 shape its own aggregate-branch comment had already called out as the unfixed asymmetry) -> promoteFrontiers read them as carry -> one empty drain. Fix = frontier copies [] on the reconcile call, matching the aggregate branch's afterEdges=false rationale (reconcile = same-closure correction, never post-write growth). Fail-first receipt in tests/extraDrainTick.test.ts: truncated 4-tick callgraph_unused schedule -> 5 lines w/ {"tick":5,"deltas":{}} red, 4 green; full-schedule oracle byte-identity guarded in the same file. Sweep both modes 87/85/0-wrong zero movement, tsv2 58/0/1skip
 task(cq_bundle_lane,       done, []).              % LANDED (merge 733d4c1b, coordinator re-ran conformance 158/plunit 138 in-worktree AND full battery on merged main: sweep both modes 98/96/0-wrong, TEXT_DOOR 98/98/0, roundtrip, staleness gate, LSP DIAGS HOLDS w/ 0+0 workaround REMOVED): groupby literals emit (N+0) (8 diag modules moved as predicted); probe guards fixed by GOAL PLACEMENT in host expansion (pre-probe goals -> demand rule, post-probe guards after response -- root cause, not a bound-set widen); 4 drift pins flipped; 0_refusal_messages.pl ONE umbrella prolog:message//1 over 77 dynamically inventoried refusal signatures + coverage test. Residue: locations say rule-index unavailable (parse_dl keeps no source positions). Was: codex sol, base 67719352, ../sprefa-codex-cqbundle: carries emitter_groupby_literal + probe_output_guard + org_banked_findings + b4_refusal_messages (prolog:message//1 umbrella w/ coverage test) IN ORDER; brief plans/2026-07-29-compiler-quality-bundle-brief.md; phase 5 + struct_host_output_seam both QUEUE BEHIND this lane (shared compile files)
-task(crawl_bench,          in_flight, []).              % codex luna, base 67719352, ../sprefa-codex-crawlbench: in-tree grafana crawl bench, v5 org-fan leg (yardstick 42739 files/389 repos/5.9s ~7244 files/s, memory-doc only until now) vs v6 served extraction leg (shell repo loop -- org fan-out has NO v6 spelling, stated gap), nice -19, NOT green-all; brief plans/2026-07-29-crawl-bench-brief.md
-task(flow_parity_upgrade,  built_held, [struct_host_output_seam]). % terra value-plane rewrite COMPLETE on branch codex/flow-parity (ccfe53ec, worktree removed): df hosts + arg->param positional hop + sig-owner joins + rig match assertions + 2 fixtures (graded 158/0 in-tree); merge + four-query parity table the moment the seam opens
+task(crawl_bench,          done, []).                   % LANDED 2026-07-29 (merge a192cd35, codex luna, review-gated; coordinator re-ran the bench itself and matched luna's stmts/tick 54.03 exactly). v6/tsv2/CRAWL-BENCH.md + scripts/crawl-bench.sh, hermetic scratch, ~/orgs/grafana read-only, nice -19 (the managed host REFUSED the niceness and said so), NOT in green-all. THE NUMBER: v5 org-fan 42,739 files / 389 repos / 12.07s = 3,540.9 files/s; v6 served extraction 779 files / 8 repos / 19.15s = 40.7 files/s. That is ~87x on the same machine, and the v5 memory-doc 7,244 files/s (5.9s) is a SECOND yardstick this run did not reproduce -- the honest v5 number on this host today is 3,541. Stated gaps in the doc: v5 reads a git tree at HEAD, v6 hashes the working tree; v6 has NO org fan-out spelling at all (the shell loop supplies it, one served process per repo); v6 runs cst+type+call+df families where v5 does a scan fact. 250 of 389 repos are usable for v6 (139 have no go/ts/tsx); the default --max-repos 8 exists because the linear projection of the full corpus is 1,050s
+task(flow_parity_upgrade,  done, [struct_host_output_seam]). % MERGED 2026-07-29 (837fe7f2, terra's ccfe53ec) once the seam opened, then GRADED the same morning (ed81cdc6): df hosts + arg->param positional hop + sig-owner joins + 2 fixtures (5_flow_value_plane.pl). FOUR-QUERY TABLE, first real-seam contact: flow_edge v5 2462 / v6 2184 / matched 2184 (v6 is a strict subset, 278 v5-only); flow_reach 9112 matched + 177 v6-only reflexive rows; flow_param_type 0 matched; flow_node_type EMPTY v6-side. Three fixes the contact forced: `= concat` -> `:=` at 7 sites (`=` refuses under the WRONG name, filed as SLOT-BIND-SPELLING), smaller_type_owner was missing its df_value join (the compiler refusal was CORRECT), and the referee learned to translate coordinates (fork rig_coordinate_translation). Residue = task flow_parity_residue
 task(struct_dictionary_gc, unbuilt, [struct_as_rows]).     % SLOT-GC-TIMING named debt: dictionaries are MONOTONE (unobservable in tick log -- collected and uncollected print identical bytes; edge-2 receipt). Zero cost for churning programs (content-addressed reuse); real growth only for ever-new distinct values (one row ~= canonical JSON twice + flat columns). Collecting = refcount across arrivals/level heads/edge heads/frontier/retention (arrival-only count deletes rows a derived row still renders). Own arc
-task(struct_host_output_seam, in_flight, [struct_as_rows, cq_bundle_lane]).  % ESCALATED debt->BLOCKER 2026-07-29: terra's flow-parity value-plane rewrite is COMPLETE and HELD on branch codex/flow-parity (ccfe53ec, worktree removed) behind exactly this seam -- span-typed host outputs refuse as unsupported_surface(column_type_wrapper(Host, Col, none)) at the compiler AND serve/1_hosts.ts coerce stringifies struct outputs. Seam arc = compiler wrapper acceptance (WAITS on cq-bundle lane, shared files) + serve union widening; flow-parity merges right after.
-task(probe_output_guard,   done, []).                    % flagship gap 1: comparison guard over a probe OUTPUT var in a level rule refused as unsupported_construct(unbound_head_var(_G)) -- wrong name, no location (review-B4 in the wild; lower.pl:383 compile_guard_goals bound-set lacks response atom output columns). Shipped workaround = route through own rel. Fix = widen bound set + name the real reason + location
+task(struct_host_output_seam, done, [struct_as_rows, cq_bundle_lane]).  % LANDED 2026-07-29 (merge 265da55f, codex sol, review-gated; in-worktree battery conformance 160/0, plunit 140/140, sweep both modes 99/97/0-wrong, TEXT_DOOR 99/99/0, tsv2 69/1skip; merged-tree sweep 100/98/0): decl-B host OUTPUT columns admit declared type names via host_output_columns (WRAPPER spellings keep the column_type_wrapper refusal, unknown names stop as column_type_unknown); serve carries host stdout across the arrival seam as JSON text and StructPlane decodes text for ref columns before shape-check + intern; IHostColumnPlan.type widens to string and is refused pre-emission by the shared type-plane check. Fail-first receipts both directions in 4_struct_values.pl. UNBLOCKED TWO ARCS: flow_parity_upgrade merged immediately after, and the comment lab's technique-1 payload destructure (which hit the same wall independently)
+task(probe_output_guard,   done, []).                    % FIXED by the cq bundle (merge 733d4c1b) and the fix was NOT the one the row predicted: the diagnosis said "widen the bound set", the root cause was GOAL PLACEMENT in host expansion (pre-probe goals belong in the demand rule, post-probe guards after the response), so the widen would have papered it. Fixture probe_output_comparison_guard (5_compiler_quality.pl). Original symptom: a comparison guard over a probe OUTPUT var in a level rule refused as unsupported_construct(unbound_head_var(_G)) -- wrong name, no location, review-B4 in the wild. RESIDUE: locations still print "rule-index unavailable" because parse_dl keeps no source positions
 task(cli_bop,              done, []).                       % LANDED 2026-07-29 night (sonnet worktree; agent left tree UNCOMMITTED-but-clean, coordinator reviewed file-by-file, ran every receipt itself, committed on the branch -- process deviation logged): registry cli_command/3 inventory -> commander bop.ts, verbs serve/run/check/load/q, run+check boot serveTsv2 IN-PROCESS (no daemon), exit contract 0 clean/2 named-refusal/1 broken verified by coordinator runs (ghcacher = 2 w/ recursive_stratum receipt). 12 tests + inventory-parity (swipl vs commander lines); one dep commander (user-required); one-subscribe 1/1 both apps (cli/ = run-fixture exemption). halt-inside-catch swipl trap documented in bop_check.pl. THE 6.2.0 TAG GATE IS SATISFIED; push = user. LSP milestone still open on task 11
 task(golden_flake_hunt,    done, []).                       % RCA LANE RAN 2026-07-29 morning (sonnet worktree, diagnostics merged): REPRODUCED 1/18 sub-runs under 3x-concurrent full-suite load -- all 11 subtests print pass yet the FILE fails with bare 'test failed', ZERO error payload (native/process-level signature, not a JS assertion). Ruled out: tmp paths/ports (all :memory:, zero fs), memcap singleton (process isolation confirmed), RSS budget (peak 186MB vs 512MB, rss subtest passed in the failing run). Leading candidate unproven: ~40 unclosed :memory: @libsql clients per run. Landed: additive exit-listener diagnostics (pid/exitCode/rss/storesOpened printed on nonzero exit only) so the next occurrence carries context. Rate too low (5.5%) to validate any fix inside a lane
-task(reactor_buffertime_flake, unbuilt, []).                % NEW, found by the golden RCA lane: tests/labs/reactor.test.ts "reactor A file+folder coalesce" is a MORE frequent real flake (6/18 under 3x load; AssertionError actual [1] vs expected [1,2,3]) -- wall-clock bufferTime coalescing assertion, the same class F3 killed in v6/dl with TestScheduler/virtual time. Fix shape known; small lane, unowned
+task(reactor_buffertime_flake, unbuilt, []).                % NEW, found by the golden RCA lane: v6/sprefa-store/js/tests/labs/reactor.test.ts "reactor A file+folder coalesce" is a MORE frequent real flake (6/18 under 3x load; AssertionError actual [1] vs expected [1,2,3]) -- wall-clock bufferTime coalescing assertion, the same class F3 killed in v6/dl with TestScheduler/virtual time. Fix shape known; small lane, unowned
 task(lsp_diags,            done, [extraction_live_p2, cli_bop]). % LANDED 2026-07-29 night (sonnet worktree after 2 coordinator continue-nudges, committed 77b5bbce, coordinator re-ran receipt: LSP DIAGS HOLDS): ZERO new LSP code -- diag-rail.dl6 declares rel diag_v5 in v5's exact 9-column shape and tsv2's bare-name tables (lower.pl table_name) make it THE table src/lsp.rs:545 selects; bridge fully in-language. Real v5 dl --lsp --diag-db over real stdio JSON-RPC: publishDiagnostics appear + retract for no-eval + unused-def rails over the live watcher/extraction feed. Line numbers HONESTLY 0 until decode_arc lands spans. Sabotage: column rename passed engine-side (positional curl) and went red at the real LSP client. In green-all as `just lsp-diags`
-task(emitter_groupby_literal, done, []).                 % REAL EMITTER DEFECT (lsp arc): a rule head with >=2 bare integer-literal columns reaches the support-count GROUP BY verbatim and SQLite reads a bare integer there as a POSITIONAL column ref -> SQLITE_ERROR 2nd GROUP BY term out of range. In-language workaround 0+0 in diag-rail.dl6. Fix = emitter wraps literal head columns (or excludes constants from GROUP BY). Owner emit_ts.pl, fail-first fixture wanted
-task(v5_lsp_exit_hang,     unbuilt, []).                    % v5 DEFECT disclosed by the lsp receipt, reproduced standalone: dl --lsp --diag-db answers shutdown correctly then hangs after exit + stdin EOF; receipt SIGKILLs after both directions proven. Owner src/lsp.rs, v5 side. ESCALATED 2026-07-29 morning: the receipt's SIGKILL does NOT reach every path -- coordinator found 3 hung dl --lsp processes ~4h old (one per lsp-diags run) and killed them; lsp-diags now rides green-all so EVERY battery run can leak one. Until the v5 fix, lsp-diags.sh owes a belt-and-suspenders pkill of its own spawned pid on exit
+task(emitter_groupby_literal, done, []).                 % REAL EMITTER DEFECT (lsp arc), FIXED IN TWO PASSES: a rule head with >=2 bare integer-literal columns reaches the GROUP BY verbatim and SQLite reads a bare integer there as a POSITIONAL column ref -> SQLITE_ERROR "Nth GROUP BY term out of range". Pass 1 (cq bundle, merge 733d4c1b) wrapped literals as (N+0) on support_group_exprs and REMOVED the 0+0 workaround from diag-rail.dl6; 8 diag modules moved as predicted. Pass 2 (coordinator, 6522f848, from the altitude review's finding 1) found aggregate_group_exprs -- the scoped-delta insert + recompute path -- still emitting bare integers, and gave both sites ONE shared group_expr/3. Fail-first fixtures: groupby_two_bare_integer_literals and groupby_aggregate_two_bare_integer_literals (5_compiler_quality.pl), each RED with the SQLITE_ERROR and GREEN oracle-identical both modes. THE LESSON WORTH KEEPING: the first fix was verified by a fixture that only exercised one of the two call sites
+task(v5_lsp_exit_hang,     unbuilt, []).                    % v5 DEFECT disclosed by the lsp receipt, reproduced standalone: dl --lsp --diag-db answers shutdown correctly then hangs after exit + stdin EOF; receipt SIGKILLs after both directions proven. Owner src/lsp.rs, v5 side. ESCALATED 2026-07-29 morning: the receipt's SIGKILL does NOT reach every path -- coordinator found 3 hung dl --lsp processes ~4h old (one per lsp-diags run) and killed them; lsp-diags now rides green-all so EVERY battery run can leak one. Until the v5 fix, lsp-diags.sh owes a belt-and-suspenders pkill of its own spawned pid on exit. MECHANISM CONFIRMED by the audit 2026-07-29: the script's stop_all trap kills DRIVER_PID, but DRIVER_PID is the PYTHON driver (lsp-diags.sh:239, scripts/lsp_diag_driver.py) and `dl --lsp` is its CHILD -- kill -9 on the parent orphans the binary that is already refusing to exit. Still unfixed at b535ca62 (zero pkill in the script), and lsp-diags is in green-all, so every full battery run can still leave one
 task(pre_occurrence_loop,  unbuilt, [edge_body_constructs]). % pre-in-edge (13 fixtures) needs an ORDERED OCCURRENCE LOOP with writes applied between occurrences (engine.pl process_occurrences chaining; cross-arm in arrival order, so no per-arm CTE reaches it) -- a new execution shape in the emitted runtime, NOT a sampled read (dispatch premise measured wrong: pre-as-sampled projects [1,1] where oracle pins 2, receipt in SCOREBOARD.md). Own arc, unowned
 task(decode_arc,           closed, []).                    % SUPERSEDED 2026-07-29 morning by ruling compound_storage = struct_as_rows: there is no blob to decode; destructuring becomes joins. See struct_as_rows
 task(struct_as_rows,       done, [tick_phase_alignment]).  % LANDED 2026-07-29 morning (opus worktree, 6 commits, merge dcfa6fcc; coordinator resolved manifest/run-results by regen, re-ran EVERYTHING on merged main: conformance 156/0, sweep BOTH modes 95/93/0-wrong, TEXT_DOOR 95/95/0, plunit 137/137, roundtrip ALL PASS, tsv2 65/1skip, dl 96/1skip, store 74/74, staleness gate OK, 0_prolog ledger 54->56): type name(col: type) decl (SQL word, NOT rel -- edge 2 forced it: a rel-spelled struct makes its dictionary nameable), intern-at-arrival dictionaries w/ __semantic full canonical text (no UDF hash exists) + __rendered memoized JSON, boundary render join (EXPLAIN: rowid SEARCH), decode/2 = sugar lowering to dictionary join via rule rewrite across all 7 level families, spans = declared struct (host columns accept type names). BOTH EDGES GRADED: values-never-ids (intern_order_a/b different dense ids, identical bytes both orders) + dictionary boundary-invisible (structural: dict relplans reach body compiler only). Migration receipt STRONGER than header: inline twin emitted log NEVER matched oracle (obj-term text vs canonical JSON) -- ref side byte-identical, migration is the fix. +16 fixtures (7 identical/9 named refusals); 2 json fixtures -> sharper decode_source_not_struct; 9 temporal_pipe compound-destructure stay (SLOT-TERM-STRUCT: prolog compound is NOT a struct spelling). Defect fixed en route: sweep.ts final-state encoder had drifted from ticklog canonicalization -- one TickLogEmitter.valueText now. Slots for user: SLOT-ARRIVAL-CANONICAL-ORDER (oracle refuses non-sorted keys; lifting = absorb_arrivals canonicalization ruling), SLOT-GC-TIMING debt + host-output seam = rows below
+
+% ── rows added by the world-health audit, 2026-07-29 midday ──────────────────
+% Every row below was verified against the tree at b535ca62, not carried over
+% from a report. Statuses: in_flight = a lane is running as this was written.
+
+task(flow_parity_residue,  unbuilt, [flow_parity_upgrade]). % THREE open columns in the four-query table, ranked by what they say: (1) flow_node_type is EMPTY v6-side -- a real rail gap, the df param nodes + df_param pos + sig join derives nothing, and an empty rel grades as "no diff to classify" unless someone reads the count; (2) flow_param_type 0 matched is a REFEREE key gap, not a rail gap -- v5 spells symbols with a root:: prefix and qualified type names where v6 is bare, so the two sides never key-match even when both are right; (3) 278 v5-only flow_edge rows are undiagnosed (v6 matched 2184/2184 of its OWN rows, which is a subset claim, not a parity claim). (1) and (3) are program work; (2) is rig work
+task(fork_join_malformed_json, unbuilt, []). % REAL EMITTER DEFECT hiding in the sweep's "2 pre-existing run_error" bucket. fork_join_error_arm_is_a_value (operators.pl:48) has a FULL oracle tick log (out/fork_join_error_arm_is_a_value.oracle.jsonl, 2 ticks) and the emitted module dies with SQLITE_ERROR: malformed JSON. The other run_error, log_retraction_rejected, is a genuine rejection-path fixture where the oracle throws too -- these two are NOT the same class and the scoreboard's one-line bucket hides that. Shape: compound arrivals ok(body_one)/error(502) matched in a level body, i.e. the SLOT-TERM-STRUCT family. Owner unassigned
+task(comment_rail_wiring,  unbuilt, []).   % the comment lab landed GRADED (745/745 vs v5) but promoted nothing: 4 fixture/5 candidates + 2 receipt programs live only in commit 9b5ba958. Wiring = promote the four fixtures (comment_witness_gates_a_scanner_hit, disable_next_line_shifts_the_effect_by_one, unused_suppression_antijoins_the_finding, arch_hierarchy_from_decomposed_marker_rows), port techniques 3/4/6, and write the block-range pairing rule (std/suppress.dl:135-149's nearest-enable argmax is ordinary datalog over rows the host already emits -- WORK, not a gap). Verdict: plans/2026-07-29-comment-node-verdict.md
+task(byte_span_flattener,  unbuilt, []).   % the comment lab's reusable half and the cheapest honesty fix on the board: sprefa-extract writes "span":{start,end} while decodeObjectItems projects TOP-LEVEL declared columns only, so a nested field can never reach a declared int column. Flattening span -> line/col/end_line/end_col IN THE HOST TEMPLATE gives every extractor family real line numbers at once. It closes diag-rail.dl6's whole-file zeros (LSP diagnostics currently point at line 0) and flagship-callgraph.dl6's dropped line column. Needs neither the struct seam nor an extractor change; recoverable from 9b5ba958:v6/prolog/labs/comment_node/cn.py
+task(extract_doc_formats,  unbuilt, []).   % USER DIRECTIVE 2026-07-29: raw html/xml/md/json/yaml/toml as extraction possibilities. Header plans/2026-07-29-extract-doc-formats-header.md (committed b535ca62, NOT dispatched): step 0 is the standing buy research (which grammars ship in our ast-grep registry vs need a tree-sitter dep), then a cst family for all six plus a doc family (key_path, value_text, value_kind, span) for json/yaml/toml and (element_path, attr, text, span) for html/xml. MARKDOWN is the one item with an existing receipt behind it: the comment lab named it the single extractor hole in comment parity (v5 has walk_md_comments, the cst family has no md grammar) and scoped SLOT-EXTRACTOR-WAIVER to exactly it. Four named slots incl SLOT-KEYPATH-SPELLING
+task(simplify_wave,        unbuilt, []).   % 19 deduped items from four read-only opus reviewers over 934dcc4d..HEAD (reuse/simplification/efficiency/altitude), brief plans/2026-07-29-simplify-wave-brief.md. P0 THREE ARE CORRECTNESS-ADJACENT, not cleanup: (1) lower.pl:1767 sniffs a `__dict_` NAME PREFIX to find dictionary relplans -- the banned magic-name pattern, and a user rel called __dict_x silently loses its delta arms; (2) 0_refusal_messages.pl's umbrella renders unsupported_construct/1 only, so 1_host_expand.pl's 15 bare throws still print "Unknown message" (the B4 complaint, half-closed); (3) watch and enumerate write two DIFFERENT hash functions into one column named `digest` (2_binds.ts sha256 vs git hash-object) and nothing asserts they agree. Item 1 of the altitude set already landed at 6522f848
+task(swipl_gc_abort,       unbuilt, []).   % UPSTREAM-SHAPED: swipl 10.0.2 aborts the compile sweep with "system error: Mismatch in up phase" under -g, deterministically at the 88th collection once the corpus reached 163 fixtures; the same goal typed at the toplevel completes. Worked around by set_prolog_flag(gc,false) for that one-shot process (sweep.sh:26, fork sweep_gc_false). Open work is not the workaround: it is (a) a minimal reproducer worth reporting upstream and (b) the knowledge that our compiler batch sits near a GC corner as the corpus grows
+task(analysis_oracle_exam, unbuilt, []).   % USER-DIRECTED direction: grade this engine against the analysis platforms that already exist (glean / joern / CodeQL as SHAPES and oracles, not dependencies). Prior art already written: plans/2026-07-25-analysis-engine-bakeoff-labs.md holds the constraints (parse-only, no builds; native-speed lens; declared RAM budget per tier; same corpus, same question battery, answers diffed against an oracle) and a fixed Q1-Qn battery. What has changed since that doc is that we now HAVE graded v5-vs-v6 rigs (callgraph, flow, comment) whose shape a third-engine leg can reuse
+task(storage_amplification_sensors, unbuilt, []). % NO COMMITTED RECEIPT YET, and that is the point. Coordinator measurement relayed at audit time: a ~3.4MB comment-facts database whose content is roughly two-thirds duplicated join-key TEXT. v5's own storage diet fought the identical disease (strings-as-keys, absolute paths per row) and won it with dense ids. The gap is that no bench in this repo SENSES amplification: `just memory-soak` asserts page-count flatness under churn and GET /stats reports page_count/freelist/dbstat sums, but nothing reports bytes-per-fact or duplicated-key share, so a 3x storage regression lands green. Build the sensor before the diet
+task(equals_refusal_by_name, unbuilt, []). % SMALL, and the first thing a prolog reader trips on: `Var = expr` is unregistered, so it dies as unbound_head_var with no mention of `=` anywhere in the message (terra typed it in the flow rig; the sole reason it surfaced is that a lane was watching). Whatever SLOT-BIND-SPELLING rules, `=` must refuse BY NAME or bind. Same row carries the rename cost if the ruling moves `:=`: registry + parse/print + engine op + 16 fixture files, mechanical
+task(assign_composition_lab, in_flight, []). % opus lab RUNNING at audit time (2026-07-29 midday). No brief committed at b535ca62; when it lands, the lab protocol applies (durable output distils to fixtures/rulings/plans, lab files die in the landing commit, the plan doc records the recovery hash)
+task(finish_the_job_epic,  in_flight, []). % opus lane RUNNING at audit time (2026-07-29 midday). No brief committed at b535ca62. Named here so the roadmap does not read as if the board were quiet
 
 roadmap :-
     findall(Name-Needs, task(Name, _, Needs), Pairs),
