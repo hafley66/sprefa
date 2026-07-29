@@ -610,10 +610,13 @@ placeholders(N, ['?' | Rest]) :- N > 0, N1 is N - 1, placeholders(N1, Rest).
 % ═══ edge rule lowering ═══════════════════════════════════════════════════
 % PHASE C2 RULING 2: a rule's body classifies via analyze.pl:edge_trigger_
 % shape/2 into marked_single(TriggerAtom) (unchanged from round 2: exactly
-% one trigger, no other body goal, TriggerAtom must be Log-kind) or
+% one trigger, no other body goal, TriggerAtom must be Log-kind),
 % unmarked_conjunction(Atoms) (N >= 1 plain positive atoms, no only/1
 % anywhere -- engine.pl's unmarked fallback wraps EVERY one as its own
-% independent trigger, body.pl:96-110/153-155). Lowering produces ONE
+% independent trigger, body.pl:96-110/153-155), or
+% sampled_conjunction(TriggerAtoms, SampleAtoms), where latest/1 removes the
+% SampleAtoms from the trigger set while retaining them as current-state
+% base-table reads. Lowering produces ONE
 % edgestmt/6 PER CANDIDATE TRIGGER ATOM (edge_statements_for_rule/3): for
 % marked_single that is the existing single edgestmt, unchanged; for
 % unmarked_conjunction with N atoms it is N edgestmt entries, one per atom
@@ -639,6 +642,12 @@ edge_statements_for_rule(RelPlans, (Head <+ Body), EdgeStatements) :-
     ; Shape = unmarked_conjunction(Atoms)
     -> findall(EdgeStmt,
                ( select(TriggerAtom, Atoms, OtherAtoms),
+                 edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, EdgeStmt) ),
+               EdgeStatements)
+    ; Shape = sampled_conjunction(TriggerAtoms, SampleAtoms)
+    -> findall(EdgeStmt,
+               ( select(TriggerAtom, TriggerAtoms, OtherTriggerAtoms),
+                 append(OtherTriggerAtoms, SampleAtoms, OtherAtoms),
                  edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, EdgeStmt) ),
                EdgeStatements)
     ).
@@ -1528,8 +1537,8 @@ lower_program(plan(Name, prog(Decls, _Rules), RelPlans, ArrivalTargets, RuleOrde
     append(DeltaDdlGroups, DeltaDdl),
     include(arrival_target_relplan(ArrivalTargets), RelPlans, ArrivalRelPlans),
     maplist(arrival_statement, ArrivalRelPlans, ArrivalStatements),
-    % PHASE C2 RULING 2: one rule may lower to MULTIPLE edgestmt entries now
-    % (an unmarked_conjunction body with N atoms produces N arms), so this
+    % One rule may lower to MULTIPLE edgestmt entries now (an unmarked or
+    % sampled conjunction with N trigger atoms produces N arms), so this
     % maplist collects a GROUP per rule and flattens, rather than assuming
     % one-to-one.
     maplist(edge_statements_for_rule(RelPlans), EdgeRules, EdgeStatementGroups),

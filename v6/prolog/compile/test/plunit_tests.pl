@@ -315,6 +315,39 @@ test(switch_as_keyed_replace_delta_sql_route_change_log) :-
     once(sub_atom(SelectSql, _, _, _, 'json_valid("route_id")')),
     once(sub_atom(SelectSql, _, _, _, 'AS "route_id"')).
 
+test(latest_edge_sample_reads_base_table_in_both_sql_families) :-
+    lowered_for('engine_core.pl', marker_stops_backlog_replay, Lowered),
+    Lowered = lowered(_, _, _, EdgeStatements, _, _, _, _),
+    EdgeStatements = [
+        edgestmt(
+            sent/2,
+            change_ev/1,
+            [client, item],
+            [],
+            'SELECT b0."client" AS "client", ?1 AS "item" FROM "subscriber" b0',
+            _,
+            'SELECT b0."client" AS "client", d0."item" AS "item" FROM "__frontier_change_ev" d0, "subscriber" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"')
+    ].
+
+test(latest_keyed_sample_is_one_edge_arm_with_key_predicates) :-
+    lowered_for('shell_stream.pl', identical_demand_dedups, Lowered),
+    Lowered = lowered(_, _, _, EdgeStatements, _, _, _, _),
+    findall(
+        EdgeStatement,
+        (member(EdgeStatement, EdgeStatements),
+         EdgeStatement = edgestmt(_, fill/3, _, _, _, _, _)),
+        SampledEdgeStatements),
+    SampledEdgeStatements = [
+        edgestmt(
+            response/3,
+            fill/3,
+            [args, salt, payload],
+            [],
+            'SELECT ?1 AS "args", ?2 AS "salt", ?3 AS "payload" FROM "demand" b0 WHERE b0."args" = ?1 AND b0."salt" = ?2',
+            _,
+            'SELECT d0."args" AS "args", d0."salt" AS "salt", d0."payload" AS "payload" FROM "__frontier_fill" d0, "demand" b0 WHERE d0."_phase" >= 0 AND b0."args" = d0."args" AND b0."salt" = d0."salt" ORDER BY d0."_phase", d0."_sequence"')
+    ].
+
 :- end_tests(sql_text_snapshots).
 
 :- begin_tests(incremental_mode).
@@ -443,6 +476,32 @@ test(rejects_guard_under_negation,
 % from the unmarked-conjunction shape this ruling widened.
 test(rejects_edge_body_with_extra_goal, [throws(unsupported_construct(edge_body_needs_negation(_)))]) :-
     Prog = prog([keyed(scope/1, [1])], [ (scope(X) <+ (open(X), not(closed(X)))) ]),
+    check_supported_subset(Prog).
+
+% FAIL-FIRST RECEIPT: latest/1 in an edge body.
+%
+% RED:
+%   [21/73] latest_edge_sample_reads_base_table_in_both_sql_families
+%     unsupported_construct(edge_body_with_latest(...))
+%   [35/73] accepts_latest_plain_rel_sample_in_edge_body
+%     unsupported_construct(edge_body_with_latest(...))
+% GREEN:
+%   73/73 passed before the statement-count assertion above was added.
+test(accepts_latest_plain_rel_sample_in_edge_body) :-
+    Prog = prog(
+        [kind(change_ev/1, log), keep(change_ev/1, all),
+         kind(subscriber/1, log), keep(subscriber/1, all),
+         kind(sent/2, log), keep(sent/2, all)],
+        [(sent(Client, Item) <+ change_ev(Item), latest(subscriber(Client)))]),
+    check_supported_subset(Prog).
+
+test(rejects_latest_wrapped_conjunction_in_edge_body,
+     [throws(unsupported_construct(edge_body_with_latest(_)))]) :-
+    Prog = prog(
+        [kind(change_ev/1, log), keep(change_ev/1, all),
+         kind(sent/2, log), keep(sent/2, all)],
+        [(sent(Client, Item) <+
+            change_ev(Item), latest((subscriber(Client), enabled(Client))))]),
     check_supported_subset(Prog).
 
 % FAIL-FIRST RECEIPTS: silent-inert level-rule forms.

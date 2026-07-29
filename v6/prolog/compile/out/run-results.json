@@ -98,6 +98,13 @@
     "finalDetail": ""
   },
   {
+    "name": "marker_stops_backlog_replay",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "unmarked_edge_replays_backlog",
     "bucket": "identical",
     "detail": "",
@@ -308,6 +315,13 @@
     "finalDetail": ""
   },
   {
+    "name": "completion_propagation_lattice_tick",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "fill_as_cache_update_swr",
     "bucket": "identical",
     "detail": "",
@@ -330,6 +344,13 @@
   },
   {
     "name": "zombie_scope_negative_case_a2b",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "identical_demand_dedups",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",

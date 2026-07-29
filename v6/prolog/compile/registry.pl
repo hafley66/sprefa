@@ -15,6 +15,9 @@
             bind_definition/2
           ]).
 
+% Contextual gate: live around one plain relation atom in an edge body;
+% analyze.pl retains latest_in_level_rule and edge_body_with_latest for the
+% wider placements.
 surface(latest/1,       sample,    refs_of_arg(1, pos, sampled), wrapper(rel_atom, lower),              live).
 surface(finalize/1,     time,      refs_of_arg(1, pos, trigger), wrapper(rel_atom, refuse(goal)),       refused).
 surface(next/1,         time,      splice_bare,                  wrapper(rel_atom, lower),              live).

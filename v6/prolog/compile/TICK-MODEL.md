@@ -76,7 +76,7 @@ coercion operators are:
 
 | operator | coercion | status |
 |---|---|---|
-| latest(Atom) | N -> (0 or 1) per tick (sample) | edge-body lowering owed (review B1); in level rules it is the identity on B and therefore REFUSED (latest_in_level_rule) |
+| latest(Atom) | N -> (0 or 1) per tick (sample) | lowered for a plain sampled atom in edge bodies; in level rules it is the identity on B and therefore REFUSED (latest_in_level_rule) |
 | not(Atom) | the 0-test | lowered (NOT EXISTS) |
 | keyed decl | per-key B at boundaries | landed incl world-fed arrivals (keyed-divergence fix) |
 | retention keep(count) | bounds the N accumulation | lowered (match lane) |
