@@ -54,14 +54,13 @@ surface(count/1,        aggregate, no_refs,                      head(lower),   
 surface(sum/1,          aggregate, no_refs,                      head(lower),                           live).
 surface(min/1,          aggregate, no_refs,                      head(lower),                           live).
 surface(max/1,          aggregate, no_refs,                      head(lower),                           live).
-% json_array/json_object stay REFUSED and the crack is named, not papered
-% over: a Prolog list value renders through the SHARED tick-log encoder
-% (ticklog.pl term_text/2) as right-nested cons text --
-% [|](4,[|](4,[|](9,[]))) -- and json_object as obj([|](-(k,v),[])). That is
-% not json_group_array/json_group_object's own output text, so those two
-% sqlite builtins do not reach byte identity no matter how their ORDER BY is
-% pinned. Same encoding gap braces_in_head_position already fails on in the
-% final-state leg, which predates this arc.
+% json_array/json_object stay REFUSED per ruling json_ticklog_encoding:
+% the oracle tick-log and final-state encoders now emit canonical JSON text
+% for JSON values, with sorted object keys and no whitespace, while plain
+% compounds keep canonical term text. The compiler-side aggregate heads
+% remain refused until a later arc supplies matching json_group_array/
+% json_group_object lowering and byte-identity coverage. The refusal itself
+% does not depend on the old cons-term rendering argument.
 surface(json_array/1,   aggregate, no_refs,                      head(refuse(aggregate)),               refused).
 surface(json_object/2,  aggregate, no_refs,                      head(refuse(aggregate)),               refused).
 

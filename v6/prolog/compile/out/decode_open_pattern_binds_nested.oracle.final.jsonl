@@ -1,1 +1,1 @@
-{"final":{"raw_doc":[["{}(,(:(name,cli),,(:(owner,{}(:(login,octo))),:(langs,[|](go,[|](rust,[]))))))"]],"repo_name":[["cli"]],"repo_owner":[["octo"]]}}
+{"final":{"raw_doc":[[{"langs":["go","rust"],"name":"cli","owner":{"login":"octo"}}]],"repo_name":[["cli"]],"repo_owner":[["octo"]]}}
