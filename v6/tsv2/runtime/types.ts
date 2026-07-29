@@ -123,6 +123,18 @@ export interface IIncrementalRelationPlan {
   readonly arrivalAddSql: string | null;
   readonly arrivalDelSql: string | null;
   readonly boundarySql: string;
+  /**
+   * The DEPARTURE frontier: last tick's net -delta rows of this rel, waiting
+   * to fire the arms that bind it with `finalize/1` (engine.pl:tick/7's
+   * `DepartureCarry`, gated by `listened_departure_refs/2` -- a departure is a
+   * NEXT-TICK occurrence, update-arm verdict). Present ONLY on a rel some rule
+   * actually listens to that way, which is what keeps every other relation's
+   * DDL and statement text byte-identical to a program with no `finalize` in
+   * it at all. Its own DDL and SELECT shape are the same `_phase` / `_sequence`
+   * / columns the arrival frontier uses, so the arm's projectSql is the same
+   * text with one table name swapped.
+   */
+  readonly departureFrontierTableName?: string;
 }
 
 export interface IIncrementalEdgeStatement {
@@ -240,6 +252,11 @@ export interface IIncrementalRuntime {
     seam: ISqlSeam,
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<readonly IRelDelta[]>;
+  stageDepartures(
+    seam: ISqlSeam,
+    relations: readonly IIncrementalRelationPlan[],
+    deltas: readonly IRelDelta[],
+  ): Observable<void>;
   promoteFrontiers(
     seam: ISqlSeam,
     relations: readonly IIncrementalRelationPlan[],

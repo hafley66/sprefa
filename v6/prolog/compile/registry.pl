@@ -30,7 +30,11 @@
 % analyze.pl retains latest_in_level_rule and edge_body_with_latest for the
 % wider placements.
 surface(latest/1,       sample,    refs_of_arg(1, pos, sampled), wrapper(rel_atom, lower),              live).
-surface(finalize/1,     time,      refs_of_arg(1, pos, trigger), wrapper(rel_atom, refuse(goal)),       refused).
+% Contextual gate like latest/1: live around one plain relation atom in an
+% EDGE body, where it is the departure trigger (the arm reads the rel's
+% departure frontier -- last tick's net -delta rows). analyze.pl retains
+% finalize_in_level_rule and edge_body_with_finalize for the wider placements.
+surface(finalize/1,     time,      refs_of_arg(1, pos, trigger), wrapper(rel_atom, lower),              live).
 surface(next/1,         time,      splice_bare,                  wrapper(rel_atom, lower),              live).
 surface(combine/variadic, join,    splice_bare,                  wrapper(atom_list, lower),             live).
 surface(zip/2,          join,      splice_bare,                  wrapper(atom_list, refuse(functor)),   reserved).

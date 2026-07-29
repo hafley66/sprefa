@@ -34,6 +34,12 @@
             % copy of the latest/1 and pre/1 scans, so the test that pins them
             % equal has to reach both sides by name.
             level_body_latest_ref/2, level_body_pre_ref/2,
+            % The compiler's copy of engine.pl:listened_departure_refs/2 --
+            % the rels some rule binds with finalize/1, which are exactly the
+            % rels that owe a departure frontier. lower.pl and emit_ts.pl both
+            % read it; the departure_ref_parity plunit unit pins it equal to
+            % the oracle's.
+            listened_departure_refs/2,
             reserved_construct_in_body/2, body_forbidden_goal/2 ]).
 
 :- use_module(library(lists)).
@@ -693,9 +699,31 @@ column_source_args(_Rules, _Initial, Schedule, Ref, Args) :-
 % Everything else names the SPECIFIC blocking construct instead of a
 % blanket edge_body_shape reason, so the scoreboard's per-construct tally
 % stays precise as this widens further.
+%   departure_trigger(FinalizeAtom, OtherAtoms, SampleAtoms, NegAtoms,
+%     GuardGoals) -- the body binds exactly one rel atom with finalize/1.
+%     THAT is the only occurrence source, and it fires the tick AFTER the row
+%     left (engine.pl tick/7's DepartureCarry; update-arm verdict "departure =
+%     next-tick occurrence"). Every OTHER positive atom is a plain join
+%     against the current store, NOT a trigger, and that is faithful rather
+%     than a narrowing: engine.pl DOES also raise an arrival item for each of
+%     them, but such an occurrence leaves finalize/1 standing in the body and
+%     `solve(finalize(_), _) :- !, fail` (body.pl:113) makes that arm derive
+%     nothing, always. The update arm
+%     `changed(K,Old,New) <+ finalize(r(K,Old)), r(K,New)` is exactly this
+%     shape: one departure arm, `r(K,New)` joined.
 edge_trigger_shape(Body, unsupported(Reason)) :-
     conjunction_goals(Body, Goals),
     edge_registered_refusal(Body, Goals, Reason), !.
+edge_trigger_shape(Body,
+                   departure_trigger(FinalizeAtom, OtherAtoms, SampleAtoms,
+                                     NegAtoms, GuardGoals)) :-
+    conjunction_goals(Body, Goals),
+    edge_departure_goals(Goals, FinalizeAtoms, OtherAtoms, SampleAtoms,
+                         NegAtoms, GuardGoals),
+    FinalizeAtoms \== [],
+    !,
+    ( FinalizeAtoms = [FinalizeAtom] -> true
+    ; throw(unsupported_construct(edge_body_multiple_finalize(Body))) ).
 edge_trigger_shape(Body, unmarked_conjunction(Atoms)) :-
     conjunction_goals(Body, Goals),
     maplist(plain_positive_atom, Goals),
@@ -732,6 +760,27 @@ edge_sampled_goals([Atom | Rest], [Atom | TriggerAtoms], SampleAtoms, NegAtoms,
     plain_positive_atom(Atom),
     edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals).
 
+% The same split with a fourth bucket in front: finalize/1 around a plain rel
+% atom. Disjoint by construction for the same reason edge_sampled_goals/5 is,
+% and it delegates the other three buckets to that predicate rather than
+% restating them.
+edge_departure_goals([], [], [], [], [], []).
+edge_departure_goals([finalize(Atom) | Rest], [Atom | FinalizeAtoms], OtherAtoms,
+                     SampleAtoms, NegAtoms, GuardGoals) :-
+    plain_positive_rel_atom(Atom), !,
+    edge_departure_goals(Rest, FinalizeAtoms, OtherAtoms, SampleAtoms, NegAtoms,
+                         GuardGoals).
+edge_departure_goals([Goal | Rest], FinalizeAtoms, OtherAtoms, SampleAtoms,
+                     NegAtoms, GuardGoals) :-
+    edge_sampled_goals([Goal], GoalTriggers, GoalSamples, GoalNegs, GoalGuards),
+    !,
+    edge_departure_goals(Rest, FinalizeAtoms, RestOthers, RestSamples, RestNegs,
+                         RestGuards),
+    append(GoalTriggers, RestOthers, OtherAtoms),
+    append(GoalSamples, RestSamples, SampleAtoms),
+    append(GoalNegs, RestNegs, NegAtoms),
+    append(GoalGuards, RestGuards, GuardGoals).
+
 edge_registered_refusal(Body, Goals, Reason) :-
     findall(Priority-Candidate,
             ( member(Goal, Goals),
@@ -742,23 +791,15 @@ edge_registered_refusal(Body, Goals, Reason) :-
 
 edge_goal_refusal(latest(Atom), Body, 1, edge_body_with_latest(Body)) :-
     \+ plain_positive_rel_atom(Atom).
-% finalize/1 needs a DEPARTURE STREAM the emitted runtime does not have, and
-% that stream is runtime-owned, not emitter-owned. engine.pl turns a -delta of
-% a listened rel into a T+1 occurrence (tick/7's DepartureCarry, gated by
-% listened_departure_refs/2), while 1_incremental.ts:stageEvents/4 copies ONLY
-% `event.sign === 1` rows into __frontier_/__next_frontier_, whose DDL carries
-% _phase and _sequence and no sign at all. So a departure can never reach an
-% arm. The naive path is further off: triggerOccurrences reads the arrivals
-% BATCH and filters sign === "add", and it holds no cross-tick state to carry
-% a departure into the next tick with.
-% What the seam owes, exactly: a signed (or separate) frontier stream, staged
-% for the refs some rule binds with finalize/1, promoted and counted in
-% carryPending the way additions are. The emitter's half (departure DDL, the
-% arm's DeltaProjectSql, and a per-relation "departure listened" flag) is
-% small and rides on top of it.
-edge_goal_refusal(Goal, Body, 2, edge_body_needs_finalize(Body)) :-
-    body_surface_for_term(Goal, _, time, refs_of_arg(_, pos, trigger),
-                          wrapper(rel_atom, refuse(goal)), refused).
+% finalize/1 IS a departure trigger now (TICK PHASE ALIGNMENT target 2): the
+% runtime carries the tick's net -delta rows of every LISTENED rel into a
+% per-rel departure frontier, and the arm reads that table exactly the way an
+% arrival arm reads __frontier_. What stays refused is finalize around
+% anything but ONE plain rel atom -- a conjunction, an expression, a nested
+% wrapper -- because occurrence_trigger/4 unifies the departed ROW against the
+% finalize argument, and there is no row shape for those.
+edge_goal_refusal(finalize(Atom), Body, 2, edge_body_with_finalize(Body)) :-
+    \+ plain_positive_rel_atom(Atom).
 % pre/1 is NOT a wider arm, which is why the edge-body arc widened everything
 % around it and left this one standing. engine.pl fires occurrences ONE AT A
 % TIME and pre(Atom) reads the store as the writes so far THIS TICK left it
@@ -831,6 +872,11 @@ shape_trigger_refs(unmarked_conjunction(Atoms), Refs) :-
 shape_trigger_refs(sampled_conjunction(TriggerAtoms, _, _, _), Refs) :-
     findall(Ref, ( member(Atom, TriggerAtoms), rel_ref(Atom, Ref) ), Refs0),
     sort(Refs0, Refs).
+% One source, the finalize'd rel: the joined atoms are read, never fired from
+% (see the shape's own note -- an arrival occurrence on one of them leaves
+% finalize standing and body.pl's solve/2 fails it).
+shape_trigger_refs(departure_trigger(FinalizeAtom, _, _, _, _), [Ref]) :-
+    rel_ref(FinalizeAtom, Ref).
 
 % ═══ edge head column-type consistency (PHASE C2 RULING 1 x RULING 2) ═══════
 % A real gap the unmarked-trigger widening surfaced, not present in the
@@ -863,6 +909,11 @@ check_edge_head_column_types_for_rule(RelPlans, (Head <+ Body)) :-
     % column types cannot be the source of a head column's value.
     ; Shape = sampled_conjunction(TriggerAtoms, SampleAtoms, _, _)
       -> append(TriggerAtoms, SampleAtoms, BodyAtoms)
+    % The departed row's own columns feed the head exactly as a trigger row's
+    % do (the departure frontier carries the rel's declared columns), so the
+    % finalize'd atom belongs in this list beside the joins and samples.
+    ; Shape = departure_trigger(FinalizeAtom, OtherAtoms, SampleAtoms, _, _)
+      -> append([[FinalizeAtom], OtherAtoms, SampleAtoms], BodyAtoms)
     ; BodyAtoms = []
     ),
     rel_ref(Head, HeadRef),
@@ -933,6 +984,23 @@ check_supported_subset_expanded(Program) :-
     forall(( member(Rule, Rules), rule_reserved_construct(Rule, Construct) ),
            throw(unsupported_construct(Construct))),
     shared_refusal(Program, [ log_on_level_headed_rel,
+                              % TICK PHASE ALIGNMENT target 2 closed a hole
+                              % this list did not have to cover before: while
+                              % finalize/1 was a REFUSED registry row, a
+                              % finalize in a level body was caught by
+                              % check_level_rule_shape's generic refused-goal
+                              % path, which reported the enclosing head
+                              % (level_body_goal) where the oracle reported
+                              % finalize_in_level_rule -- the drift the
+                              % cross_plane_check_parity unit recorded. The row
+                              % is live now, that path is gone, and without
+                              % this entry the compiler would ACCEPT a program
+                              % the oracle rejects (measured). Placed where
+                              % engine.pl's own engine_check_order/1 places it,
+                              % ahead of latest/pre, so the two doors also
+                              % agree on WHICH class a program violating
+                              % several of them reports.
+                              finalize_in_level_rule,
                               latest_in_level_rule,
                               pre_in_level_rule,
                               keep_on_non_log_rel,
@@ -963,6 +1031,7 @@ compiler_refusal(keyed_level_head,        Ref, keyed_level_head(Ref)).
 compiler_refusal(keyed_log_rel,   Ref-Positions, keyed_log_rel(Ref, Positions)).
 compiler_refusal(log_on_level_headed_rel, Ref, log_on_level_headed_rel(Ref)).
 compiler_refusal(keep_on_non_log_rel,     Ref, keep_on_non_log_rel(Ref)).
+compiler_refusal(finalize_in_level_rule,  Ref, finalize_in_level_rule(Ref)).
 compiler_refusal(latest_in_level_rule,    Ref, latest_in_level_rule(Ref)).
 compiler_refusal(pre_in_level_rule,       Ref, pre_in_level_rule(Ref)).
 compiler_refusal(missing_retention,       Ref, missing_retention(Ref)).
@@ -985,6 +1054,25 @@ level_body_latest_ref(Body, Ref) :-
 level_body_pre_ref(Body, Ref) :-
     body_wrapper_refs(Body, pre,
                       walk_policy(descend_not(true), splice_bare(false)),
+                      Ref).
+
+% engine.pl:listened_departure_refs/2, clause for clause: the rels some EDGE
+% rule binds with finalize/1, sorted. The policy is the oracle's own --
+% descend_not(false), because a NEGATED finalize is not a departure the engine
+% listens for (and the compiler refuses it separately as
+% edge_body_with_negation, since not/1 accepts one plain rel atom only).
+% Only these rels get a departure frontier table; every other rel's emitted
+% text is unchanged by the existence of this feature.
+listened_departure_refs(Rules, Refs) :-
+    findall(Ref,
+            ( member(Rule, Rules), rule_is_edge(Rule), rule_body(Rule, Body),
+              body_finalize_ref(Body, Ref) ),
+            Refs0),
+    sort(Refs0, Refs).
+
+body_finalize_ref(Body, Ref) :-
+    body_wrapper_refs(Body, finalize,
+                      walk_policy(descend_not(false), splice_bare(false)),
                       Ref).
 
 check_edge_rule_shape((Head <+ Body)) :-

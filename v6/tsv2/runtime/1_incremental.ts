@@ -918,15 +918,80 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     );
   },
 
+  /**
+   * The DEPARTURE half of engine.pl's carry-out. `tick/7` turns each -delta of
+   * a LISTENED rel into a `dep(Row)` occurrence at T+1:
+   *
+   *   findall(dep(Row), ( member(-Row, Deltas), memberchk(DepRef, DepartureRefs) ), ...)
+   *
+   * so the source is the tick's BOUNDARY delta, never the raw staged events: a
+   * row removed and re-added inside one tick nets to zero and is not a
+   * departure. That is why this runs on `readBoundary`'s own result rather
+   * than reading the delta tables again -- the net is already computed, and no
+   * statement is spent recomputing it.
+   *
+   * A SEPARATE table per listened rel, not a `_sign` column on the shared
+   * frontier: a sign column changes the DDL, the promote column list and the
+   * merge column list of EVERY relation, including the ones no rule listens
+   * to. This way a program with no `finalize` in it emits exactly the text it
+   * emitted before this existed.
+   *
+   * Cleared and refilled here, at the END of the tick, NOT in `prepareTick`:
+   * during a tick the table still holds the PREVIOUS tick's departures, which
+   * is what the arms are reading.
+   *
+   * Log rels never reach this: `boundaryDelta` fills `del` for `kind === "set"`
+   * only, mirroring engine.pl's `delta_ref_is_set/2`. `finalize` over a Log rel
+   * is silently dead in both implementations (update-arm verdict U5,
+   * SLOT-LOG-FINALIZE-REFUSAL, unruled).
+   */
+  stageDepartures(
+    seam: ISqlSeam,
+    relations: readonly IIncrementalRelationPlan[],
+    deltas: readonly IRelDelta[],
+  ): Observable<void> {
+    const listening = relations.filter(
+      (relation) => relation.departureFrontierTableName !== undefined,
+    );
+    if (listening.length === 0) return of(undefined);
+    const deltaByRel = new Map(deltas.map((delta) => [delta.rel, delta]));
+    const statements = listening.flatMap((relation): SqlStatement[] => {
+      const table = quoteIdentifier(relation.departureFrontierTableName!);
+      const clear: SqlStatement = { sql: `DELETE FROM ${table}`, args: [] };
+      const departed = deltaByRel.get(relation.rel)?.del ?? [];
+      if (departed.length === 0) return [clear];
+      const columns = ["_phase", "_sequence", ...relation.columns].map(quoteIdentifier);
+      const valueExpressions = columns.map(
+        (_column, index) => `json_extract(value, '$[${index}]')`,
+      );
+      const encoded = departed.map((row, sequence) => [0, sequence, ...row]);
+      return [
+        clear,
+        {
+          sql: `INSERT INTO ${table} (${columns.join(", ")}) SELECT ${valueExpressions.join(", ")} FROM json_each(?)`,
+          args: [JSON.stringify(encoded)],
+        },
+      ];
+    });
+    return seam.runner.batch(seam.db, statements).pipe(map(() => undefined));
+  },
+
   promoteFrontiers(
     seam: ISqlSeam,
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<boolean> {
     if (relations.length === 0) return of(false);
-    const carryTerms = relations.map(
-      (relation) =>
-        `EXISTS (SELECT 1 FROM ${quoteIdentifier(relation.nextFrontierTableName)} LIMIT 1)`,
-    );
+    const carryTerms = relations.flatMap((relation) => [
+      `EXISTS (SELECT 1 FROM ${quoteIdentifier(relation.nextFrontierTableName)} LIMIT 1)`,
+      // A staged departure is carry exactly the way a staged addition is:
+      // engine.pl appends DepartureCarry to ArrivalCarry in one CarryOut list,
+      // and a non-empty CarryOut is what mints the drain tick. Leaving it out
+      // makes the drain boundary lie -- the arm would be waiting on a tick
+      // that never runs.
+      ...(relation.departureFrontierTableName === undefined
+        ? []
+        : [`EXISTS (SELECT 1 FROM ${quoteIdentifier(relation.departureFrontierTableName)} LIMIT 1)`]),
+    ]);
     const carrySql = `SELECT CASE WHEN ${carryTerms.join(" OR ")} THEN 1 ELSE 0 END AS carry_pending`;
     const promoteSql = relations
       .flatMap((relation) => {

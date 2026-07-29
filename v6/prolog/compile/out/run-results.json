@@ -86,7 +86,7 @@
   {
     "name": "log_retraction_rejected",
     "bucket": "run_error",
-    "detail": "retract from log rel 'event'",
+    "detail": "log_retraction_rejected: retract from log rel 'event' (engine.pl retract_from_log)",
     "finalBucket": "final_wrong",
     "finalDetail": "run threw before the final state could be read"
   },
@@ -127,6 +127,20 @@
   },
   {
     "name": "retraction_only_tick_retracts_level_view",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "departed_fires_next_tick_on_retraction",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "keyed_replace_departs_the_old_row",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
