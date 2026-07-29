@@ -53,12 +53,14 @@
  *   - there is no null and no "kind" column: presence rides the delta sign,
  *     which is the language's own lifecycle decomposition (TICK-MODEL.md §3).
  *
- * KNOWN GAP, stated not hidden: the `-` row needs the digest that was there, so
- * the runner can only retract paths IT has emitted. A file deleted after a
- * server restart, having never been touched while this process watched, leaves
- * its row behind. The fix is feeding the boot file set (the `enumerate` host's
- * answer) into `lastDigest` at subscribe; that crosses the push/demand line the
- * A12 finding drew, so it is named here rather than smuggled in.
+ * BOOT RECONCILE, the sanctioned resolution of extraction ambiguity A12
+ * (plans/2026-07-29-watch-boot-reconcile-brief.md): once per watched glob at
+ * subscribe, read the engine's durable watch rows and compare them with the
+ * tracked worktree set from `git ls-files`. Their difference is one arrival
+ * batch, and the reconciled rows seed `lastDigest`. This is the named one-shot
+ * crossing of A12's push/demand line; after boot, the live path remains bare
+ * paths from the watch source, sign from digest comparison, and `bufferTime`
+ * coalescing.
  *
  * COALESCE WINDOW = 100ms by default (`IServeConfig.watchCoalesceMs`), on the
  * injected scheduler so a test drives it on virtual time. `bufferTime` and not
@@ -67,6 +69,7 @@
  * is ~20 ticks rather than one per file, and no burst can starve the engine.
  */
 
+import { spawnSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import * as path from "node:path";
 import { watch as watchDirectory } from "node:fs/promises";
@@ -89,6 +92,7 @@ import {
   map,
   merge,
   mergeMap,
+  scan,
   take,
   throwError,
 } from "rxjs";
@@ -101,6 +105,7 @@ import type {
   IIntervalBindRunner,
   ILiveEngine,
   IRowValue,
+  IRow,
   IWatchBindRunner,
   IWatchFired,
   IWatchSource,
@@ -232,6 +237,22 @@ function digestOf(absolutePath: string): string | null {
   }
 }
 
+/** The enumerate host's standing file-set decision, used here at boot without
+ *  introducing another walker or ignore vocabulary: tracked worktree paths
+ *  selected by the glob as a git pathspec. NUL framing preserves every path
+ *  git permits. A non-repository root has the empty tracked set, which keeps
+ *  injected filesystem tests independent of git while retaining the same
+ *  tracked-only contract. */
+function trackedPaths(root: string, glob: string): readonly string[] {
+  const result = spawnSync("git", ["ls-files", "-z", "--", glob], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) return [];
+  return result.stdout.split("\0").filter((entry) => entry.length > 0);
+}
+
 /** One watched glob's own bookkeeping: the digest this runner last PUBLISHED
  *  per path, which is what makes a retraction possible (the `-` arrival needs
  *  the exact row that is there) and what makes an unchanged save free. */
@@ -243,6 +264,44 @@ class GlobWatch {
     private readonly rel: string,
     private readonly root: string,
   ) {}
+
+  /** Durable engine rows versus the tracked worktree at subscribe. The map is
+   *  replaced with the reconciled state before the batch is returned, so an
+   *  empty difference still seeds later live deletions. */
+  bootBatch(storedRows: readonly IRow[]): IArrivalBatch {
+    const stored = new Map<string, string>();
+    for (const row of storedRows) {
+      if (row[0] !== this.glob) continue;
+      stored.set(String(row[1] ?? ""), String(row[2] ?? ""));
+    }
+
+    const disk = new Map<string, string>();
+    for (const relativePath of trackedPaths(this.root, this.glob)) {
+      const digest = digestOf(path.resolve(this.root, relativePath));
+      if (digest !== null) disk.set(relativePath, digest);
+    }
+
+    const arrivals: IArrivalRow[] = [];
+    this.lastDigest.clear();
+    for (const [relativePath, previous] of [...stored].sort(([left], [right]) => left.localeCompare(right))) {
+      const current = disk.get(relativePath);
+      if (current === previous) {
+        this.lastDigest.set(relativePath, current);
+      } else {
+        arrivals.push({ rel: this.rel, sign: "del", row: [this.glob, relativePath, previous] });
+        if (current !== undefined) {
+          arrivals.push({ rel: this.rel, sign: "add", row: [this.glob, relativePath, current] });
+          this.lastDigest.set(relativePath, current);
+        }
+      }
+      disk.delete(relativePath);
+    }
+    for (const [relativePath, current] of [...disk].sort(([left], [right]) => left.localeCompare(right))) {
+      arrivals.push({ rel: this.rel, sign: "add", row: [this.glob, relativePath, current] });
+      this.lastDigest.set(relativePath, current);
+    }
+    return arrivals;
+  }
 
   /** One coalesce window's paths -> the arrival batch it owes. Duplicated paths
    *  inside the window collapse first (a save is several fs events), so a file
@@ -291,20 +350,54 @@ export class WatchBindRunner implements IWatchBindRunner {
       return plan.literals.map((literal) => {
         const glob = String(literal);
         const state = new GlobWatch(glob, plan.name, options.root);
-        return options.source.watch(watchRootOf(options.root, glob)).pipe(
+        const commit = (batch: IArrivalBatch) =>
+          engine.submit(batch).pipe(
+            take(1),
+            map((outcome): IWatchFired => {
+              const added = batch.filter((arrival) => arrival.sign === "add").length;
+              ServeTrace.watch(plan.name, glob, added, batch.length - added);
+              return { rel: plan.name, glob, added, removed: batch.length - added, tick: outcome.tick };
+            }),
+          );
+        const boot = defer(() => engine.rows(plan.name)).pipe(
+          map((rows) => ({ kind: "boot" as const, batch: state.bootBatch(rows) })),
+        );
+        const liveWindows = options.source.watch(watchRootOf(options.root, glob)).pipe(
           bufferTime(options.coalesceMs, options.scheduler),
-          map((paths) => state.batchFor(paths)),
-          filter((batch) => batch.length > 0),
-          concatMap((batch) =>
-            engine.submit(batch).pipe(
-              take(1),
-              map((outcome): IWatchFired => {
-                const added = batch.filter((arrival) => arrival.sign === "add").length;
-                ServeTrace.watch(plan.name, glob, added, batch.length - added);
-                return { rel: plan.name, glob, added, removed: batch.length - added, tick: outcome.tick };
-              }),
-            ),
+          filter((paths) => paths.length > 0),
+          map((paths) => ({ kind: "paths" as const, paths })),
+        );
+        return merge(liveWindows, boot).pipe(
+          scan(
+            (
+              folded: {
+                readonly booted: boolean;
+                readonly pending: readonly (readonly string[])[];
+                readonly batches: readonly IArrivalBatch[];
+              },
+              input,
+            ) => {
+              if (input.kind === "paths" && !folded.booted) {
+                return { booted: false, pending: [...folded.pending, input.paths], batches: [] };
+              }
+              if (input.kind === "boot") {
+                return {
+                  booted: true,
+                  pending: [],
+                  batches: [input.batch, ...folded.pending.map((paths) => state.batchFor(paths))],
+                };
+              }
+              return { booted: true, pending: [], batches: [state.batchFor(input.paths)] };
+            },
+            { booted: false, pending: [], batches: [] } as {
+              readonly booted: boolean;
+              readonly pending: readonly (readonly string[])[];
+              readonly batches: readonly IArrivalBatch[];
+            },
           ),
+          concatMap((folded) => from(folded.batches)),
+          filter((batch) => batch.length > 0),
+          concatMap(commit),
         );
       });
     });
