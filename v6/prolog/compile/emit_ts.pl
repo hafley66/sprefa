@@ -34,7 +34,7 @@
 % off the Lowered term this module already renders -- reused, not
 % reimplemented.
 :- use_module(lower, [ relplan_kind/3 ]).
-:- use_module(analyze, [ body_ref_uses/2, rule_head_ref/2 ]).
+:- use_module(analyze, [ body_ref_uses/2, derived_refs/2, rule_head_ref/2 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -780,7 +780,7 @@ incremental_carry_expr(EdgeStatements, Expr) :-
            '[~w].includes(delta.rel) && (delta.add.length > 0 || delta.del.length > 0)',
            [NamesText]).
 
-run_incremental_tick_fn_lines(EdgeStatements, Lines) :-
+run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired, Lines) :-
     ( EdgeStatements == []
     -> MergeLine = '    concatMap(() => of(undefined)),',
        PostEdgeLevelLine = '    concatMap(() => of(undefined)),'
@@ -788,6 +788,7 @@ run_incremental_tick_fn_lines(EdgeStatements, Lines) :-
        PostEdgeLevelLine = '    concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),'
     ),
     RecomputeLine = '    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK)),',
+    run_tick_dispatch_lines(DerivedEdgeCarryRequired, DispatchLines),
     Lines =
     [ 'function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
       '  return IncrementalRuntime.prepareTick(seam, INCREMENTAL_RELATIONS).pipe(',
@@ -803,14 +804,32 @@ run_incremental_tick_fn_lines(EdgeStatements, Lines) :-
       '    )),',
       '  );',
       '}',
-      '',
-      'function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
+      ''
+    | DispatchLines ].
+
+run_tick_dispatch_lines(true,
+    [ 'function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
+      '  // Derived edge triggers consume the P1 current/next frontier, including drain carry.',
+      '  return runIncrementalTick(seam, arrivals);',
+      '}'
+    ]).
+run_tick_dispatch_lines(false,
+    [ 'function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
       '  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {',
       '    return runNaiveTick(seam, arrivals);',
       '  }',
       '  return runIncrementalTick(seam, arrivals);',
       '}'
-    ].
+    ]).
+
+derived_edge_carry_required(
+        plan(_, prog(_, Rules), _, _, _, _), EdgeStatements, Required) :-
+    derived_refs(Rules, DerivedRefs),
+    ( member(edgestmt(_, TriggerRef, _, _, _, _, _), EdgeStatements),
+      memberchk(TriggerRef, DerivedRefs)
+    -> Required = true
+    ;  Required = false
+    ).
 
 incremental_program_safe(plan(_, prog(_, Rules), _, _, _, _),
                          _EdgeStatements, _LevelStatements, Safe) :-
@@ -899,10 +918,12 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     run_naive_tick_fn_lines(Name, EdgeStatements, RunNaiveTickFnLines),
     incremental_program_safe(Plan, EdgeStatements, LevelStatements, IncrementalSafe),
     reconcile_every_tick(Plan, ReconcileEveryTick),
+    derived_edge_carry_required(Plan, EdgeStatements, DerivedEdgeCarryRequired),
     retraction_guard(Plan, RetractionGuard),
     incremental_mode_lines(IncrementalSafe, ReconcileEveryTick,
                            IncrementalModeLines),
-    run_incremental_tick_fn_lines(EdgeStatements, RunIncrementalTickFnLines),
+    run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
+                                  RunIncrementalTickFnLines),
     incremental_plan_export_lines(RetractionGuard, IncrementalPlanExportLines),
     program_export_lines(Name, ProgramExportLines),
     Sections0 =

@@ -709,8 +709,6 @@ check_supported_subset_expanded(prog(Decls, Rules)) :-
            throw(unsupported_construct(Construct))),
     forall(( member(Rule, Rules), rule_is_edge(Rule) ), check_edge_rule_shape(Rule)),
     forall(( member(Rule, Rules), rule_is_level(Rule) ), check_level_rule_shape(Rule)),
-    derived_refs(Rules, DerivedRefs),
-    forall(( member(Rule, Rules), rule_is_edge(Rule) ), check_edge_body_refs_not_derived(Rule, DerivedRefs)),
     check_no_edge_head_conflict_risk(Decls, Rules),
     forall(( member(keyed(Ref, Positions), Decls), rel_kind(Decls, Ref, log) ),
            throw(unsupported_construct(keyed_log_rel(Ref, Positions)))).
@@ -741,47 +739,6 @@ reserved_construct_in_body(Term, Construct) :-
 reserved_construct_name(wrapper(_, refuse(lifecycle)), Functor,
                         lifecycle_arm(Functor)) :- !.
 reserved_construct_name(_, Functor, Functor).
-
-% A trigger firing off a DERIVED ref (edge-headed OR level-headed --
-% analyze.pl:derived_refs/2 unions both) is a genuine gap in BOTH shapes,
-% not attempted, for two INDEPENDENT reasons this compiler's pipeline
-% cannot currently close:
-%   (a) level-headed trigger: a newly-true level row is ALSO a valid
-%       trigger occurrence in engine.pl (LevelOccs, tick/7:286-290), and a
-%       level-headed ref's CURRENT table state during edge-write resolution
-%       (which this compiler's pipeline runs BEFORE recomputeLevels --
-%       run_tick_fn_lines) reflects the PREVIOUS tick's level rows, not
-%       MidLevel (the post-arrival, pre-write snapshot engine.pl's Visible
-%       actually reads).
-%   (b) edge-headed trigger: engine.pl threads a THIS-tick edge write
-%       forward as a genuine CarryIn occurrence for T+1 (tick/7:299-312,
-%       "carry-out is boundary-observable writes only"; process_occurrences
-%       fires it exactly like any other occurrence next tick). This
-%       compiler's `triggerOccurrences` (emit_ts.pl) only ever reads the
-%       tick's OWN `arrivals` parameter -- IGenProgram's `tick(seam,
-%       arrivals)` carries no slot for "rows an edge rule wrote last tick"
-%       at all (round 2's own note: no tick number, no carry value, reaches
-%       tick() in the real seam). A drain tick's `arrivals` is always `[]`,
-%       so a marked_single or unmarked_conjunction trigger firing off
-%       ANOTHER edge rule's head can never see it -- confirmed WRONG, not
-%       theorized: engine_core.pl's edge_chain_hops_tick_per_stage
-%       (`stage_two(Item) <+ stage_one(Item)`, stage_one itself
-%       `<+ source_ev(Item)`) compiled clean and produced an empty tick 2
-%       where the oracle shows `+stage_two(alpha)`, once PHASE C2 RULING 2
-%       lifted the unmarked-shape refusal that had masked this the whole
-%       time (no fixture with an all-marked_single/unmarked, no-extra-guard
-%       edge CHAIN had ever reached compilation before). Fixing this is a
-%       real IGenProgram/tickLoop.ts change (threading carry occurrences
-%       into the next tick call) -- STOP-AND-REPORT per the phase C2
-%       contract, not attempted here; refused by name.
-check_edge_body_refs_not_derived((_Head <+ Body), DerivedRefs) :-
-    edge_trigger_shape(Body, Shape),
-    ( Shape = unsupported(_)
-    -> true  % already refused earlier in check_edge_rule_shape
-    ;  shape_trigger_refs(Shape, TriggerRefs),
-       forall(( member(Ref, TriggerRefs), memberchk(Ref, DerivedRefs) ),
-              throw(unsupported_construct(edge_trigger_is_derived(Ref))))
-    ).
 
 % engine.pl's check_occurrence_conflicts (called once per OCCURRENCE, across
 % every rule in the program) throws keyed_conflict/3 when the SAME occurrence
