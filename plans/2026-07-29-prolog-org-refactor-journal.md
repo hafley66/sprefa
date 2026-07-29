@@ -495,3 +495,74 @@ note that it mixes syntax normalization with world-plan extraction.
 conformance 137/0, plunit 112/112 (+7), roundtrip ALL PASS,
 TEXT_DOOR 72/72/0, sweep 137/72 RUN identical=70 wrong=0 with a clean artifact
 diff, prolog-lint 10/10 OK.
+
+---
+
+## R5: expression operator inventory
+
+Landed. `expression/5` is a SECOND table in `registry.pl`, deliberately not a
+widening of `surface/5`.
+
+```prolog
+expression(Operator/Arity, Family, PrintPrecedence, SqlRendering, TypeRule).
+```
+
+| Field | Values |
+|---|---|
+| Family | `arithmetic`, `ordered_comparison`, `identity_comparison` |
+| PrintPrecedence | printer binding tightness; comparisons carry 0 because that path never prints them |
+| SqlRendering | `infix(SqlOperator)`, or a named template |
+| TypeRule | `both_int` (the Int-only law) or `same_type` |
+
+Eleven rows: five arithmetic, four ordered comparisons, two identity
+comparisons.
+
+Keeping the axes apart was the review's own recommendation and it holds up:
+putting precedence and SQL text on `surface/5` would attach rendering metadata
+to rows like `not/1` and `match/2` that have no rendering. The two tables
+overlap on exactly the eleven operator functors, and
+`expression_table_agrees_with_surface_rows` asserts they never disagree about
+which of those exist.
+
+`mod` is the row that justifies `SqlRendering` being more than an operator
+atom: SQLite's `%` takes the sign of the dividend while this language's `mod`
+follows the divisor, so it renders through `sign_corrected_modulo`.
+
+### The five lists it replaced
+
+| Site | Was |
+|---|---|
+| `body.pl:comparison_goal/1` | six clauses, one per comparison |
+| `lower.pl:arithmetic_expr/4` | `memberchk` over five atoms |
+| `lower.pl:comparison_operator_sql/5` | two `memberchk` lists plus `ordered_operator_sql/2` and `identity_operator_sql/2` |
+| `print_dl.pl:arith_op/2` | five facts carrying precedence |
+| `analyze.pl` | two `memberchk` lists, in `arithmetic_expression/3` and `contains_arithmetic_functor/2` |
+
+`body.pl:solve_comparison/1` deliberately stays a clause per operator: those
+clauses are EXECUTION and differ in kind, the ordered four going through
+`eval_int2` and the identity two through `eval_expr` then term identity. Same
+for `eval_expr`'s arithmetic clauses.
+
+### Seven totality tests
+
+The inventory written out longhand (so a row appearing or disappearing is a
+visible edit), agreement with `surface/5`, the oracle's recognizer accepting
+exactly the comparison rows and rejecting the arithmetic ones, every
+arithmetic row lowering to SQL, the modulo template, every comparison row
+lowering to the SQL operator its row declares, and printer parenthesization
+following the table's precedence in both nesting directions.
+
+### The gate did its job on my own work
+
+Those tests added five private cross-module calls
+(`lower:compile_expr/4`, `lower:compile_comparison/3`,
+`print_dl:print_term/5`) and `just prolog-lint` went red at findings=15
+against baseline=10. Following R8's rule rather than baselining them, the
+three predicates are exported as the named expression-lowering seam and the
+gate is back to 10/10.
+
+### Receipts
+
+conformance 137/0, plunit 119/119 (+7), roundtrip ALL PASS,
+TEXT_DOOR 72/72/0, sweep 137/72 RUN identical=70 wrong=0 with a clean artifact
+diff, prolog-lint 10/10 OK.

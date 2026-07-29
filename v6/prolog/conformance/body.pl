@@ -11,6 +11,7 @@
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
 :- use_module('../0_body_walk', [body_conjunction_goals/3]).
+:- use_module('../compile/registry', [expression/5]).
 
 :- op(700, xfx, :=).
 
@@ -43,8 +44,17 @@ eval_int2(Left, Right, LeftV, RightV) :-
 text_piece(Value, Value) :- atomic(Value), !.
 text_piece(Value, _) :- throw(non_display_in_concat(Value)).
 
-comparison_goal(_ < _). comparison_goal(_ =< _). comparison_goal(_ > _).
-comparison_goal(_ >= _). comparison_goal(_ == _). comparison_goal(_ \== _).
+% The six comparison functors come from registry.pl's expression/5 (rank R5 of
+% plans/2026-07-29-prolog-org-review.md), which is also where the compiler's
+% lowering reads them. solve_comparison/1 below stays a clause per operator,
+% because those clauses are EXECUTION and differ in kind: the ordered four
+% evaluate through eval_int2 and enforce the Int-only law, while ==/\== use
+% eval_expr and then term identity.
+comparison_goal(Goal) :-
+    nonvar(Goal),
+    functor(Goal, Name, 2),
+    expression(Name/2, Family, _, _, _),
+    memberchk(Family, [ordered_comparison, identity_comparison]).
 
 solve_comparison(Left < Right)   :- eval_int2(Left, Right, LeftV, RightV), LeftV < RightV.
 solve_comparison(Left =< Right)  :- eval_int2(Left, Right, LeftV, RightV), LeftV =< RightV.

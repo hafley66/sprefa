@@ -15,13 +15,15 @@
 :- use_module(library(apply)).
 :- use_module('../compile', [ read_fixture_term/4, program_plan/2 ]).
 :- use_module('../strat', [ stratum_groups/2 ]).
-:- use_module('../lower', [ lower_program/2 ]).
+:- use_module('../lower',
+              [ lower_program/2, compile_expr/4, compile_comparison/3 ]).
 :- use_module('../analyze', [ check_supported_subset/1 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
 :- use_module('../../1_expansion', [ expansion_phase/3, expand_program/3 ]).
 :- use_module('../parse_dl', [ parse_dl/4 ]).
-:- use_module('../print_dl', [ print_dl_program/3 ]).
+:- use_module('../print_dl', [ print_dl_program/3, print_term/5 ]).
+:- use_module('../registry', [ surface/5, expression/5 ]).
 :- use_module('../../1_host_expand',
               [ prepare_program/5, compile_host_decl/2, compile_ts_query/2 ]).
 :- use_module('../emit_ts', [ emit_program/5 ]).
@@ -41,7 +43,7 @@
                 body_latest_ref/2, body_pre_ref/2,
                 check_program/1 ]).
 :- use_module('../../conformance/level_eval', [ goal_rel_refs/3 ]).
-:- use_module('../../conformance/body', [ body_atoms/2 ]).
+:- use_module('../../conformance/body', [ body_atoms/2, comparison_goal/1 ]).
 :- use_module('../../1_host_expand', [ body_goals/2 ]).
 
 % Resolved relative to this file's own load-time directory (mirrors
@@ -1721,3 +1723,95 @@ test(driver_expands_enum_and_match_together) :-
     \+ member(match(_, _), Rules).
 
 :- end_tests(expansion_order).
+
+% ═══════════════════════════════════════════════════════════════════════════
+% EXPRESSION OPERATOR INVENTORY (rank R5)
+%
+% The eleven arithmetic and comparison operators were listed in five places:
+% body.pl's comparison_goal/1, lower.pl's arithmetic_expr/4 and
+% comparison_operator_sql/5, print_dl.pl's arith_op/2, and two memberchk lists
+% in analyze.pl. registry.pl's expression/5 is now the inventory, and these
+% tests are its totality check: every row is reachable from every consumer
+% that has an opinion about it, and no consumer knows an operator the table
+% does not.
+
+:- begin_tests(expression_inventory).
+
+% The full inventory, written out rather than derived, so a row appearing or
+% disappearing is a visible edit here.
+expected_row('+'/2,    arithmetic,          1, infix('+'),            both_int).
+expected_row('-'/2,    arithmetic,          1, infix('-'),            both_int).
+expected_row('*'/2,    arithmetic,          2, infix('*'),            both_int).
+expected_row('/'/2,    arithmetic,          2, infix('/'),            both_int).
+expected_row(mod/2,    arithmetic,          2, sign_corrected_modulo, both_int).
+expected_row('<'/2,    ordered_comparison,  0, infix('<'),            both_int).
+expected_row('=<'/2,   ordered_comparison,  0, infix('<='),           both_int).
+expected_row('>'/2,    ordered_comparison,  0, infix('>'),            both_int).
+expected_row('>='/2,   ordered_comparison,  0, infix('>='),           both_int).
+expected_row('=='/2,   identity_comparison, 0, infix('='),            same_type).
+expected_row('\\=='/2, identity_comparison, 0, infix('<>'),           same_type).
+
+test(inventory_is_exactly_the_expected_rows) :-
+    findall(Signature-Family-Precedence-Sql-Type,
+            expression(Signature, Family, Precedence, Sql, Type), Actual),
+    findall(Signature-Family-Precedence-Sql-Type,
+            expected_row(Signature, Family, Precedence, Sql, Type), Expected),
+    msort(Actual, SortedActual),
+    msort(Expected, SortedExpected),
+    SortedActual == SortedExpected.
+
+% Every comparison row must ALSO be a registry surface row in the guard axis,
+% and every surface guard row that is an infix operator must have an
+% expression row. The two tables share these eleven functors and must not
+% disagree about which ones exist.
+test(expression_table_agrees_with_surface_rows) :-
+    findall(Signature,
+            ( expression(Signature, Family, _, _, _),
+              memberchk(Family, [ordered_comparison, identity_comparison]) ),
+            ComparisonRows),
+    findall(Signature,
+            surface(Signature, guard, no_refs, infix(_), _),
+            SurfaceGuardRows),
+    msort(ComparisonRows, SortedComparisons),
+    msort(SurfaceGuardRows, SortedSurface),
+    SortedComparisons == SortedSurface.
+
+% The oracle's comparison_goal/1 recognizes exactly the comparison rows.
+test(oracle_comparison_recognizer_is_total) :-
+    forall(( expression(Name/2, Family, _, _, _),
+             memberchk(Family, [ordered_comparison, identity_comparison]) ),
+           ( Goal =.. [Name, 1, 2], comparison_goal(Goal) )),
+    forall(( expression(Name/2, arithmetic, _, _, _) ),
+           ( Goal =.. [Name, 1, 2], \+ comparison_goal(Goal) )).
+
+% Every arithmetic row lowers to SQL, and mod's sign-corrected template is
+% distinguishable from a plain infix rendering.
+test(every_arithmetic_row_lowers_to_sql) :-
+    forall(expression(Name/2, arithmetic, _, _, _),
+           ( Expr =.. [Name, 1, 2],
+             compile_expr(Expr, [], Sql, Type),
+             Type == int,
+             atom(Sql) )).
+
+test(modulo_lowers_sign_corrected) :-
+    compile_expr(mod(7, 3), [], Sql, _),
+    Sql == '(((7 % 3) + 3) % 3)'.
+
+% Every comparison row lowers to its declared SQL operator.
+test(every_comparison_row_lowers_to_its_sql_operator) :-
+    forall(( expression(Name/2, Family, _, infix(SqlOperator), _),
+             memberchk(Family, [ordered_comparison, identity_comparison]) ),
+           ( Goal =.. [Name, 1, 2],
+             compile_comparison(Goal, [], Text),
+             atomic_list_concat(['(1 ', SqlOperator, ' 2)'], Expected),
+             Text == Expected )).
+
+% The printer parenthesizes by the table's precedence: a tighter operator
+% nested inside a looser one needs no parens, the reverse does.
+test(printer_precedence_comes_from_the_table) :-
+    print_term((1 + 2) * 3, [], 0, top, Tight),
+    Tight == '(1 + 2) * 3',
+    print_term(1 + 2 * 3, [], 0, top, Loose),
+    Loose == '1 + 2 * 3'.
+
+:- end_tests(expression_inventory).

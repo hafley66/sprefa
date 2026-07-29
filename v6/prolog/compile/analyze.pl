@@ -47,7 +47,8 @@
 :- use_module('../conformance/body', [rel_ref/2]).
 :- use_module(registry,
               [ surface_for_term/6,
-                body_surface_for_term/6
+                body_surface_for_term/6,
+                expression/5
               ]).
 
 :- op(1150, xfx, <-).
@@ -556,9 +557,11 @@ expression_type(Expr, Environment, Type) :-
     ( ( LeftType == text ; RightType == text ) -> Type = text ; Type = int ).
 expression_type(_, _, text).
 
+% Operator inventory from registry.pl's expression/5 (rank R5 of
+% plans/2026-07-29-prolog-org-review.md), not a local list.
 arithmetic_expression(Expr, Left, Right) :-
     compound(Expr), Expr =.. [Functor, Left, Right],
-    memberchk(Functor, ['+', '-', '*', '/', mod]).
+    expression(Functor/2, arithmetic, _, _, _).
 
 % Positionwise combine, only where the seed is open/1: text dominates, then
 % int, then none. A frozen(Type) position is returned unchanged.
@@ -994,9 +997,12 @@ head_arithmetic_shape(Head, ArithExpr) :-
     member(Arg, Args),
     contains_arithmetic_functor(Arg, ArithExpr).
 
+% Same inventory as arithmetic_expression/3 above. The arity test stays
+% separate: this one looks for an arithmetic FUNCTOR anywhere in a head
+% argument, including inside a deeper compound.
 contains_arithmetic_functor(Arg, Arg) :-
     compound(Arg), Arg =.. [Functor | SubArgs], SubArgs \== [],
-    memberchk(Functor, ['+', '-', '*', '/', mod]), !.
+    expression(Functor/2, arithmetic, _, _, _), !.
 contains_arithmetic_functor(Arg, Found) :-
     compound(Arg), Arg =.. [_ | SubArgs], member(SubArg, SubArgs), contains_arithmetic_functor(SubArg, Found).
 

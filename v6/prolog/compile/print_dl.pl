@@ -19,7 +19,12 @@
 % `rel Name(cols[: type]) log [keep(...)] [key(...)].`.
 
 :- module(print_dl, [ print_dl_program/3, print_dl_to_file/3,
-                      augmented_decls/6, print_dl_program_with_edb_types/7
+                      augmented_decls/6, print_dl_program_with_edb_types/7,
+                      % The term renderer, exported for the
+                      % expression_inventory unit (rank R5): it checks that
+                      % parenthesization follows registry.pl expression/5's
+                      % precedence field rather than a local operator list.
+                      print_term/5
                     ]).
 
 :- use_module(library(lists)).
@@ -27,7 +32,8 @@
 :- use_module(analyze, [ rel_columns/5, declared_refs/2 ]).
 :- use_module(registry,
               [ body_surface_for_term/6,
-                wrapper_lower_role/3
+                wrapper_lower_role/3,
+                expression/5
               ]).
 
 :- op(1150, xfx, <-).
@@ -416,7 +422,11 @@ print_term(Term, Bindings, ParentPrec, Side, Text) :-
 
 print_arg(Bindings, Arg, Text) :- print_term(Arg, Bindings, 0, top, Text).
 
-arith_op(+, 1). arith_op(-, 1). arith_op(*, 2). arith_op(/, 2). arith_op(mod, 2).
+% Precedence comes from registry.pl's expression/5 (rank R5 of
+% plans/2026-07-29-prolog-org-review.md), where it sits beside the SQL
+% rendering and the type rule for the same operator.
+arith_op(Operator, Precedence) :-
+    expression(Operator/2, arithmetic, Precedence, _, _).
 
 needs_parens(MyPrec, _, ParentPrec) :- MyPrec < ParentPrec, !.
 needs_parens(MyPrec, right, ParentPrec) :- MyPrec =:= ParentPrec, !.
