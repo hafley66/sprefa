@@ -18,7 +18,13 @@
 % with no body binding fails emission (unsafe rule), same check the SQL
 % lowering does.
 
-:- module(emit_ts, [emit/2, emit/3, go/0]).
+% The module name says which engine seam this targets. `compile/emit_ts.pl` is
+% the tsv2 backend and owns the plain `emit_ts` name; both files declaring it
+% made an all-files load impossible ("No permission to redefine module
+% emit_ts"). `just prolog-lint` is the gate that now refuses a re-collision.
+% The file path is unchanged, so `-l v6/prolog/src/emit_ts.pl -g emit(...)`
+% callers such as bench/engines/swi_emit.sh are unaffected.
+:- module(emit_ts_engine_v1, [emit/2, emit/3, go/0]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).

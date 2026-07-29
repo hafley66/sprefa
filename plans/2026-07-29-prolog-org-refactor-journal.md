@@ -92,3 +92,76 @@ exit 1
 The ratchet fails in both directions: a new finding fails, and a baseline
 entry that disappears also fails with a prune instruction. That keeps the
 baseline from rotting while R7 and R8 shrink it.
+
+---
+
+## R6: `emit_ts` module collision
+
+Landed. `v6/prolog/src/emit_ts.pl` declares module `emit_ts_engine_v1`; the
+file path is unchanged, and `compile/emit_ts.pl` keeps the plain `emit_ts`
+name because it is the live tsv2 backend.
+
+The name says which engine seam the file targets. `src/emit_ts.pl` is the
+engine-v1 experiment (prolog terms rendered as literal TypeScript through
+`ast.ts` constructor helpers, run by `evalProgramSql`), which `ARCH.pl`
+already records as superseded by the tsv2 rows.
+
+### Red-then-green receipt
+
+Loading both emitter files in one SWI process, before the rename:
+
+```
+ERROR: -g both: module/2: No permission to redefine module `emit_ts'
+       (Already loaded from .../v6/prolog/src/emit_ts.pl)
+```
+
+After the rename:
+
+```
+BOTH EMITTERS LOADED
+```
+
+And the gate installed by R10, which was RED at the previous commit:
+
+```
+PROLOG_LINT findings=9 baseline=9 OK
+```
+
+### Callers, checked before renaming
+
+The review predicted the importers were the `src/` cluster and the
+`examples/ghcacher.pl` chain. Measured, they are neither:
+
+| Caller | Names the module? | Action |
+|---|---|---|
+| `v6/sprefa-store/bench/engines/swi_emit.sh` | No, `-l <path> -g "emit(...)"` | none needed |
+| `v6/sprefa-store/bench/v1-scale-gen.pl` | Yes, 3 qualified calls | 3 qualifiers updated |
+| `v6/prolog/examples/ghcacher.pl` | No, imports `kernel`/`checks`/`grader` | none needed |
+| `v6/prolog/ARCH.pl` | No, cites file paths as text | none needed |
+| `v6/prolog/src/{checks,grader,kernel}.pl` | No | none needed |
+
+Output equality receipts across the rename:
+
+- `bench/v1-scale-gen.pl` `write_program(s2, ...)`: byte-identical.
+- `-l v6/prolog/src/emit_ts.pl -g "emit(reach, ...)"`: byte-identical to the
+  checked-in `v6/sprefa-store/js/src/gen/reach.gen.ts`.
+- `examples/ghcacher.pl` loads clean, `just arch` unchanged.
+
+### OWNERSHIP DEVIATION, disclosed
+
+`v6/sprefa-store/bench/v1-scale-gen.pl` is outside this arc's declared file
+ownership (`v6/prolog/**` plus the justfile recipe). Three module qualifiers
+in it were changed anyway, because the alternative was landing a rename that
+breaks a file in the same commit. The edit is mechanical: `emit_ts:decl_ts`,
+`emit_ts:rule_ts`, `emit_ts:used_helpers` gain the new module prefix. Nothing
+else in that file or that directory was touched, and its output is proven
+byte-identical above.
+
+### Side finding, unowned
+
+Those same three call sites are private cross-module calls (`decl_ts/2`,
+`rule_ts/3`, `used_helpers/2` are not in the module's export list, which is
+`emit/2, emit/3, go/0`). They are a 10th private-call site that the lint gate
+cannot see, because `v6/sprefa-store/bench/` is not one of the two clusters
+the gate loads. Widening the gate to a bench cluster is a follow-up, not part
+of this arc.
