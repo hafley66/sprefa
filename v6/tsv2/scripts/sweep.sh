@@ -36,16 +36,12 @@ compiled_names=$(node -e '
   const manifest = JSON.parse(fs.readFileSync("'"$COMPILE_OUT"'/manifest.json", "utf8"));
   for (const entry of manifest) if (entry.bucket === "compiled") console.log(entry.name);
 ')
-# gen_emitted/ is entirely compiler output (the hand-carved phase-A
-# exemplars live in gen/, a separate, untouched directory) -- clear it
-# first so a fixture that FELL OUT of the compiled set (e.g. a widening
-# that turned a silent-wrong compile into a clean refusal) does not leave
-# a stale, no-longer-regenerated module behind for tsgo/node --test to
-# trip over.
-rm -f gen_emitted/*.ts
+# gen_emitted/ can also contain checked-in modules that are not fixture
+# outputs. Remove only the fixture module immediately before rewriting it.
 while IFS= read -r name; do
   [ -z "$name" ] && continue
-  cp "$COMPILE_OUT/$name.ts" "gen_emitted/$name.ts"
+  rm -f "gen_emitted/$name.ts"
+  cp -f "$COMPILE_OUT/$name.ts" "gen_emitted/$name.ts"
 done <<< "$compiled_names"
 
 node --experimental-transform-types scripts/sweep.ts

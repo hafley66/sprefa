@@ -119,6 +119,7 @@ export interface IIncrementalRelationPlan {
   readonly frontierTableName: string;
   readonly nextFrontierTableName: string;
   readonly columns: readonly string[];
+  readonly keyIndices?: readonly number[];
   readonly arrivalAddSql: string | null;
   readonly arrivalDelSql: string | null;
   readonly boundarySql: string;

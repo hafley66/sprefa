@@ -1,0 +1,3 @@
+rel derived_event(item) log keep(all).
+
+derived_event(Item) <- source_item(Item).

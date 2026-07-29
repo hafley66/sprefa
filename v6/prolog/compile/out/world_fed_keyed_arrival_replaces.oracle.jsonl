@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"world_mode":{"add":[[1,"a"]],"del":[]}}}
+{"tick":2,"deltas":{"world_mode":{"add":[[1,"b"]],"del":[[1,"a"]]}}}

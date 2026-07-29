@@ -119,7 +119,7 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "typed_input", kind: "set", tableName: "typed_input", deltaTableName: "__delta_typed_input", frontierTableName: "__frontier_typed_input", nextFrontierTableName: "__next_frontier_typed_input", columns: ["value"], arrivalAddSql: `INSERT OR IGNORE INTO "typed_input" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrivalDelSql: `DELETE FROM "typed_input" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundarySql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_typed_input" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"` },
+  { rel: "typed_input", kind: "set", tableName: "typed_input", deltaTableName: "__delta_typed_input", frontierTableName: "__frontier_typed_input", nextFrontierTableName: "__next_frontier_typed_input", columns: ["value"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "typed_input" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrivalDelSql: `DELETE FROM "typed_input" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundarySql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_typed_input" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

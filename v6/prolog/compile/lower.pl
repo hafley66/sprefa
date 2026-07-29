@@ -106,16 +106,14 @@
 % either; this compiler keeps json1 (more general: no per-functor constant
 % baked into the matching SQL, verified working with sqlite3 3.43.2).
 %
-% ── keyed replace only binds edge writes, never arrivals ────────────────────
-% engine.pl absorb_arrivals/8 never consults decl_key/1: an OUTSIDE arrival
-% into a keyed Set rel is plain exact-row add/remove, same as an unkeyed Set
-% rel. Only apply_edge_writes/6 does delete-old-then-insert-new BY KEY. So a
-% table backing a keyed rel gets PRIMARY KEY over ALL declared columns
-% (WITHOUT ROWID, exact-row identity, matching srow(Row) membership) --
-% never PRIMARY KEY(key columns), which would conflate the two write paths
-% onto one schema-level constraint. Key uniqueness for an edge-headed rel is
-% enforced procedurally by the UPSERT's ON CONFLICT clause, never by the
-% table schema.
+% ── keyed replace applies to edge writes and outside arrivals ───────────────
+% engine.pl absorb_set_arrival/5 consults decl_key/3. A changed outside
+% arrival into a keyed Set removes the old row with that key and adds the new
+% row. The boundary therefore contains -Old followed by +New. A table backing
+% a keyed arrival target uses PRIMARY KEY over the key columns, and both
+% arrival execution families use a replace insert. The incremental family
+% reads the rows at those keys before the write so it can stage the explicit
+% minus rows required by the boundary log.
 %
 % ── acyclic-by-construction level recompute (UNCHANGED from round 1) ───────
 % engine.pl re-derives a whole stratum GROUP to a joint fixpoint because
@@ -510,19 +508,14 @@ alias_select_expr(Expr, Alias, AliasedExpr) :- format(atom(AliasedExpr), '~w AS 
 
 % ═══ DDL (round 2: no stamp columns, no __prev tables) ══════════════════════
 %
-% rel_ddl/3's third argument is the set of edge-headed refs. An edge-headed
-% keyed rel's UPSERT (edge_statement/3's UpsertSql) targets `ON
-% CONFLICT(<key columns>)`, and SQLite requires that clause to name a REAL
-% constraint on EXACTLY that column set -- "ON CONFLICT clause does not
-% match any PRIMARY KEY or UNIQUE constraint" is a genuine runtime error,
-% caught running the emitted program against the real seam (reconciliation
-% round 2), not a static analysis finding. A non-edge-headed Set rel (an
-% arrival-target only, keyed or not) still gets PK = ALL columns: outside
-% arrivals never consult decl_key/1 (absorb_arrivals/8 treats every Set rel
-% as exact-row membership, matching srow(Row)), so an all-column PK is the
-% right invariant there, and no ON CONFLICT clause ever targets it.
+% rel_ddl/5 receives the edge-headed, arrival-target, and level-headed refs.
+% An edge-headed keyed rel's UPSERT targets `ON CONFLICT(<key columns>)`, and
+% SQLite requires that clause to name a constraint on exactly that column
+% set. A keyed arrival target needs the same key constraint because
+% absorb_set_arrival/5 replaces by key. An unkeyed arrival target retains the
+% all-column primary key used for exact-row Set membership.
 
-rel_ddl(_, _, relplan(Ref, log, Columns, _, ColumnTypes), [Ddl]) :- !,
+rel_ddl(_, _, _, relplan(Ref, log, Columns, _, ColumnTypes), [Ddl]) :- !,
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     maplist(column_def, QuotedColumns, ColumnTypes, ColumnDefs),
@@ -531,13 +524,14 @@ rel_ddl(_, _, relplan(Ref, log, Columns, _, ColumnTypes), [Ddl]) :- !,
     % are distinct occurrences (engine.pl q1) and must physically coexist as
     % separate rows for multisetDiff to count them correctly.
     format(atom(Ddl), 'CREATE TABLE ~w (~w)', [QuotedTable, ColumnsSql]).
-rel_ddl(EdgeHeadedRefs, LevelHeadedRefs,
+rel_ddl(EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
         relplan(Ref, set, Columns, KeyOrNone, ColumnTypes), [Ddl]) :-
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     maplist(column_def, QuotedColumns, ColumnTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
-    ( memberchk(Ref, EdgeHeadedRefs), KeyOrNone = key(KeyPositions)
+    ( ( memberchk(Ref, EdgeHeadedRefs) ; memberchk(Ref, ArrivalTargetRefs) ),
+      KeyOrNone = key(KeyPositions)
     -> nth1_list(KeyPositions, Columns, KeyColumns),
        maplist(quote_ident, KeyColumns, QuotedKeyColumns),
        atomic_list_concat(QuotedKeyColumns, ', ', PkSql)
@@ -569,20 +563,22 @@ arrival_statement(relplan(Ref, log, Columns, _, _),
     length(Columns, N), placeholders(N, Placeholders),
     atomic_list_concat(Placeholders, ', ', PlaceholdersSql),
     format(atom(AddSql), 'INSERT INTO ~w (~w) VALUES (~w)', [QuotedTable, ColumnsSql, PlaceholdersSql]),
-    incremental_arrival_add_sql(log, QuotedTable, ColumnsSql, QuotedColumns,
+    incremental_arrival_add_sql('INSERT INTO', QuotedTable, ColumnsSql, QuotedColumns,
                                 IncrementalAddSql).
-arrival_statement(relplan(Ref, set, Columns, _, _),
+arrival_statement(relplan(Ref, set, Columns, KeyOrNone, _),
                   arrivalstmt(Ref, set, AddSql, DelSql, IncrementalAddSql, IncrementalDelSql)) :-
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
     length(Columns, N), placeholders(N, Placeholders),
     atomic_list_concat(Placeholders, ', ', PlaceholdersSql),
-    format(atom(AddSql), 'INSERT OR IGNORE INTO ~w (~w) VALUES (~w)', [QuotedTable, ColumnsSql, PlaceholdersSql]),
+    set_arrival_insert(KeyOrNone, Insert),
+    format(atom(AddSql), '~w ~w (~w) VALUES (~w)',
+           [Insert, QuotedTable, ColumnsSql, PlaceholdersSql]),
     maplist(eq_placeholder, QuotedColumns, EqParts),
     atomic_list_concat(EqParts, ' AND ', WhereSql),
     format(atom(DelSql), 'DELETE FROM ~w WHERE ~w', [QuotedTable, WhereSql]),
-    incremental_arrival_add_sql(set, QuotedTable, ColumnsSql, QuotedColumns,
+    incremental_arrival_add_sql(Insert, QuotedTable, ColumnsSql, QuotedColumns,
                                 IncrementalAddSql),
     incremental_json_select_exprs(QuotedColumns, 0, DeleteSelectExprs),
     atomic_list_concat(DeleteSelectExprs, ', ', DeleteSelectSql),
@@ -590,10 +586,12 @@ arrival_statement(relplan(Ref, set, Columns, _, _),
            'DELETE FROM ~w WHERE (~w) IN (SELECT ~w FROM json_each(?)) RETURNING ~w',
            [QuotedTable, ColumnsSql, DeleteSelectSql, ColumnsSql]).
 
-incremental_arrival_add_sql(Kind, QuotedTable, ColumnsSql, QuotedColumns, Sql) :-
+set_arrival_insert(key(_), 'INSERT OR REPLACE INTO') :- !.
+set_arrival_insert(none, 'INSERT OR IGNORE INTO').
+
+incremental_arrival_add_sql(Insert, QuotedTable, ColumnsSql, QuotedColumns, Sql) :-
     incremental_json_select_exprs(QuotedColumns, 0, SelectExprs),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
-    ( Kind == log -> Insert = 'INSERT INTO' ; Insert = 'INSERT OR IGNORE INTO' ),
     format(atom(Sql),
            '~w ~w (~w) SELECT ~w FROM json_each(?) RETURNING ~w',
            [Insert, QuotedTable, ColumnsSql, SelectSql, ColumnsSql]).
@@ -1523,7 +1521,8 @@ lower_program(plan(Name, prog(Decls, _Rules), RelPlans, ArrivalTargets, RuleOrde
     findall(LevelHeadedRef,
             ( member(LevelRule, RuleOrder), rule_head_ref(LevelRule, LevelHeadedRef) ),
             LevelHeadedRefs),
-    maplist(rel_ddl(EdgeHeadedRefs, LevelHeadedRefs), RelPlans, RelationDdlGroups),
+    maplist(rel_ddl(EdgeHeadedRefs, ArrivalTargets, LevelHeadedRefs),
+            RelPlans, RelationDdlGroups),
     maplist(delta_ddl, RelPlans, DeltaDdlGroups),
     append(RelationDdlGroups, RelationDdl),
     append(DeltaDdlGroups, DeltaDdl),

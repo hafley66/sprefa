@@ -495,8 +495,13 @@ incremental_relation_entry_line(RelPlans, ArrivalStatements,
         deltastmt(Ref, _SelectSql, DeltaTable, BoundarySql), Line) :-
     ref_name(Ref, Name),
     relplan_kind(RelPlans, Ref, Kind),
-    memberchk(relplan(Ref, _, Columns, _, _), RelPlans),
+    memberchk(relplan(Ref, _, Columns, KeyOrNone, _), RelPlans),
     quoted_string_array_text(Columns, ColumnsText),
+    ( KeyOrNone = key(KeyPositions)
+    -> maplist(position_index, KeyPositions, KeyIndices)
+    ;  KeyIndices = []
+    ),
+    atomic_list_concat(KeyIndices, ', ', KeyIndicesText),
     ( memberchk(arrivalstmt(Ref, _, _, _, ArrivalAddSql, _), ArrivalStatements)
     -> js_template(ArrivalAddSql, ArrivalAddTemplate)
     ; ArrivalAddTemplate = null
@@ -510,10 +515,12 @@ incremental_relation_entry_line(RelPlans, ArrivalStatements,
     format(atom(FrontierTable), '__frontier_~w', [Name]),
     format(atom(NextFrontierTable), '__next_frontier_~w', [Name]),
     format(atom(Line),
-           '  { rel: "~w", kind: "~w", tableName: "~w", deltaTableName: "~w", frontierTableName: "~w", nextFrontierTableName: "~w", columns: ~w, arrivalAddSql: ~w, arrivalDelSql: ~w, boundarySql: ~w },',
+           '  { rel: "~w", kind: "~w", tableName: "~w", deltaTableName: "~w", frontierTableName: "~w", nextFrontierTableName: "~w", columns: ~w, keyIndices: [~w], arrivalAddSql: ~w, arrivalDelSql: ~w, boundarySql: ~w },',
            [Name, Kind, Name, DeltaTable, FrontierTable, NextFrontierTable,
-            ColumnsText, ArrivalAddTemplate, ArrivalDelTemplate,
+            ColumnsText, KeyIndicesText, ArrivalAddTemplate, ArrivalDelTemplate,
             BoundaryTemplate]).
+
+position_index(Position, Index) :- Index is Position - 1.
 
 incremental_edge_statement_lines(EdgeStatements, RelPlans, Lines) :-
     maplist(incremental_edge_statement_entry_line(RelPlans), EdgeStatements, EntryLines),

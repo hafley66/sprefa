@@ -42,6 +42,25 @@ function valuesSql(rowCount: number, columnCount: number): string {
   return Array.from({ length: rowCount }, () => row).join(", ");
 }
 
+function keyedArrivalRowsStatement(
+  relation: IIncrementalRelationPlan,
+  entries: readonly { readonly row: IRow }[],
+  keyIndices: readonly number[],
+): SqlStatement {
+  const columns = relation.columns.map(quoteIdentifier);
+  const keyColumns = keyIndices.map((index) => columns[index]!);
+  const distinctKeys = new Map<string, IRow>();
+  for (const entry of entries) {
+    const keyValues = keyIndices.map((index) => entry.row[index]!) as IRow;
+    distinctKeys.set(JSON.stringify(keyValues), keyValues);
+  }
+  const keys = [...distinctKeys.values()];
+  return {
+    sql: `SELECT ${columns.join(", ")} FROM ${quoteIdentifier(relation.tableName)} WHERE (${keyColumns.join(", ")}) IN (${valuesSql(keys.length, keyColumns.length)})`,
+    args: keys.flatMap(bindArgs),
+  };
+}
+
 function boundaryStageStatement(
   relation: IIncrementalRelationPlan,
   events: readonly DeltaEvent[],
@@ -508,15 +527,61 @@ export const IncrementalRuntime: IIncrementalRuntime = {
         groupedArrivals.push({ relation, sign, entries: [entry] });
       }
     }
-    const statements = groupedArrivals.map(({ relation, sign, entries }): SqlStatement => ({
-      sql: (sign === 1 ? relation.arrivalAddSql : relation.arrivalDelSql)!,
-      args: [JSON.stringify(entries.map((entry) => entry.row))],
-    }));
-    return seam.runner.batch(seam.db, statements).pipe(
-      concatMap((results) => {
-        const events: DeltaEvent[] = [];
-        for (const [groupIndex, result] of results.entries()) {
-          const { relation, sign, entries } = groupedArrivals[groupIndex]!;
+    return sequenceWork(groupedArrivals, ({ relation, sign, entries }) => {
+      const sql = (sign === 1 ? relation.arrivalAddSql : relation.arrivalDelSql)!;
+      const writeStatement: SqlStatement = {
+        sql,
+        args: [JSON.stringify(entries.map((entry) => entry.row))],
+      };
+      const keyIndices = relation.keyIndices ?? [];
+      if (relation.kind === "set" && sign === 1 && keyIndices.length > 0) {
+        return seam.runner
+          .execute(seam.db, keyedArrivalRowsStatement(relation, entries, keyIndices))
+          .pipe(
+            concatMap((beforeResult) => {
+              const currentByKey = new Map(
+                resultRows(beforeResult, relation.columns).map((row) => [
+                  rowKey(row, keyIndices),
+                  row,
+                ]),
+              );
+              const events: DeltaEvent[] = [];
+              for (const entry of entries) {
+                const key = rowKey(entry.row, keyIndices);
+                const before = currentByKey.get(key);
+                if (before !== undefined && rowsEqual(before, entry.row)) continue;
+                if (before !== undefined) {
+                  events.push({
+                    rel: relation.rel,
+                    sign: -1,
+                    sequence: entry.sequence * 2,
+                    row: before,
+                  });
+                }
+                events.push({
+                  rel: relation.rel,
+                  sign: 1,
+                  sequence: entry.sequence * 2 + 1,
+                  row: entry.row,
+                });
+                currentByKey.set(key, entry.row);
+              }
+              return seam.runner.execute(seam.db, writeStatement).pipe(
+                concatMap(() =>
+                  stageEvents(
+                    seam,
+                    relations,
+                    events,
+                    [{ tableName: (plan) => plan.frontierTableName, phase: 1 }],
+                  )
+                ),
+              );
+            }),
+          );
+      }
+      return seam.runner.execute(seam.db, writeStatement).pipe(
+        concatMap((result) => {
+          const events: DeltaEvent[] = [];
           if (relation.kind === "log" && sign === 1) {
             for (const entry of entries) {
               events.push({
@@ -526,16 +591,21 @@ export const IncrementalRuntime: IIncrementalRuntime = {
                 row: entry.row,
               });
             }
-            continue;
+            return stageEvents(
+              seam,
+              relations,
+              events,
+              [{ tableName: (plan) => plan.frontierTableName, phase: 1 }],
+            );
           }
-          const insertedKeys = new Set(
+          const changedRows = new Set(
             resultRows(result, relation.columns).map((row) => JSON.stringify(row)),
           );
-          const stagedKeys = new Set<string>();
+          const stagedRows = new Set<string>();
           for (const entry of entries) {
-            const key = JSON.stringify(entry.row);
-            if (!insertedKeys.has(key) || stagedKeys.has(key)) continue;
-            stagedKeys.add(key);
+            const row = JSON.stringify(entry.row);
+            if (!changedRows.has(row) || stagedRows.has(row)) continue;
+            stagedRows.add(row);
             events.push({
               rel: relation.rel,
               sign,
@@ -543,15 +613,15 @@ export const IncrementalRuntime: IIncrementalRuntime = {
               row: entry.row,
             });
           }
-        }
-        return stageEvents(
-          seam,
-          relations,
-          events,
-          [{ tableName: (relation) => relation.frontierTableName, phase: 1 }],
-        );
-      }),
-    );
+          return stageEvents(
+            seam,
+            relations,
+            events,
+            [{ tableName: (plan) => plan.frontierTableName, phase: 1 }],
+          );
+        }),
+      );
+    });
   },
 
   applyEdges(

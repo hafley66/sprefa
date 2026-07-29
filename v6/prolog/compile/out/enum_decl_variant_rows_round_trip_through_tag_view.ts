@@ -60,8 +60,8 @@ function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "body_page" ("id" INTEGER NOT NULL, "view" INTEGER NOT NULL, PRIMARY KEY ("id", "view")) WITHOUT ROWID`,
-  `CREATE TABLE "body_redirect" ("id" INTEGER NOT NULL, "to" TEXT NOT NULL, PRIMARY KEY ("id", "to")) WITHOUT ROWID`,
+  `CREATE TABLE "body_page" ("id" INTEGER NOT NULL, "view" INTEGER NOT NULL, PRIMARY KEY ("view")) WITHOUT ROWID`,
+  `CREATE TABLE "body_redirect" ("id" INTEGER NOT NULL, "to" TEXT NOT NULL, PRIMARY KEY ("to")) WITHOUT ROWID`,
   `CREATE TABLE "body_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_body_page" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "view" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_body_page_sign" ON "__delta_body_page" ("_sign")`,
@@ -119,8 +119,8 @@ const finalSelect: Record<string, string> = {
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  body_page: { kind: "set", addSql: `INSERT OR IGNORE INTO "body_page" ("id", "view") VALUES (?, ?)`, delSql: `DELETE FROM "body_page" WHERE "id" = ? AND "view" = ?` },
-  body_redirect: { kind: "set", addSql: `INSERT OR IGNORE INTO "body_redirect" ("id", "to") VALUES (?, ?)`, delSql: `DELETE FROM "body_redirect" WHERE "id" = ? AND "to" = ?` },
+  body_page: { kind: "set", addSql: `INSERT OR REPLACE INTO "body_page" ("id", "view") VALUES (?, ?)`, delSql: `DELETE FROM "body_page" WHERE "id" = ? AND "view" = ?` },
+  body_redirect: { kind: "set", addSql: `INSERT OR REPLACE INTO "body_redirect" ("id", "to") VALUES (?, ?)`, delSql: `DELETE FROM "body_redirect" WHERE "id" = ? AND "to" = ?` },
 };
 
 function arrivalStatement(arrival: IArrivalRow): SqlStatement {
@@ -146,9 +146,9 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "body_page", kind: "set", tableName: "body_page", deltaTableName: "__delta_body_page", frontierTableName: "__frontier_body_page", nextFrontierTableName: "__next_frontier_body_page", columns: ["id", "view"], arrivalAddSql: `INSERT OR IGNORE INTO "body_page" ("id", "view") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "view"`, arrivalDelSql: `DELETE FROM "body_page" WHERE ("id", "view") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "view"`, boundarySql: `SELECT "id", "view", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_page" WHERE "_sign" IN (-1, 1) GROUP BY "id", "view", "_sign"` },
-  { rel: "body_redirect", kind: "set", tableName: "body_redirect", deltaTableName: "__delta_body_redirect", frontierTableName: "__frontier_body_redirect", nextFrontierTableName: "__next_frontier_body_redirect", columns: ["id", "to"], arrivalAddSql: `INSERT OR IGNORE INTO "body_redirect" ("id", "to") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "to"`, arrivalDelSql: `DELETE FROM "body_redirect" WHERE ("id", "to") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "to"`, boundarySql: `SELECT "id", CASE WHEN json_valid("to") AND json_type("to") = 'object' THEN json_extract("to", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to", '$.args')) || ')' ELSE "to" END AS "to", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_redirect" WHERE "_sign" IN (-1, 1) GROUP BY "id", "to", "_sign"` },
-  { rel: "body_tag", kind: "set", tableName: "body_tag", deltaTableName: "__delta_body_tag", frontierTableName: "__frontier_body_tag", nextFrontierTableName: "__next_frontier_body_tag", columns: ["id", "tag"], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"` },
+  { rel: "body_page", kind: "set", tableName: "body_page", deltaTableName: "__delta_body_page", frontierTableName: "__frontier_body_page", nextFrontierTableName: "__next_frontier_body_page", columns: ["id", "view"], keyIndices: [1], arrivalAddSql: `INSERT OR REPLACE INTO "body_page" ("id", "view") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "view"`, arrivalDelSql: `DELETE FROM "body_page" WHERE ("id", "view") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "view"`, boundarySql: `SELECT "id", "view", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_page" WHERE "_sign" IN (-1, 1) GROUP BY "id", "view", "_sign"` },
+  { rel: "body_redirect", kind: "set", tableName: "body_redirect", deltaTableName: "__delta_body_redirect", frontierTableName: "__frontier_body_redirect", nextFrontierTableName: "__next_frontier_body_redirect", columns: ["id", "to"], keyIndices: [1], arrivalAddSql: `INSERT OR REPLACE INTO "body_redirect" ("id", "to") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "to"`, arrivalDelSql: `DELETE FROM "body_redirect" WHERE ("id", "to") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "to"`, boundarySql: `SELECT "id", CASE WHEN json_valid("to") AND json_type("to") = 'object' THEN json_extract("to", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to", '$.args')) || ')' ELSE "to" END AS "to", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_redirect" WHERE "_sign" IN (-1, 1) GROUP BY "id", "to", "_sign"` },
+  { rel: "body_tag", kind: "set", tableName: "body_tag", deltaTableName: "__delta_body_tag", frontierTableName: "__frontier_body_tag", nextFrontierTableName: "__next_frontier_body_tag", columns: ["id", "tag"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
