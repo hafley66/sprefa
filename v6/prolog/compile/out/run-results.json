@@ -100,7 +100,7 @@
   {
     "name": "log_retraction_rejected",
     "bucket": "run_error",
-    "detail": "log_retraction_rejected: retract from log rel 'event' (engine.pl retract_from_log)",
+    "detail": "retract from log rel 'event'",
     "finalBucket": "final_wrong",
     "finalDetail": "run threw before the final state could be read"
   },

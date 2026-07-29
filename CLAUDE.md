@@ -1438,3 +1438,20 @@ justfile: lsp-diags recipe in green-all. PHASE 4 OF THE GOLDEN
 PLAN IS COMPLETE (CLI + LSP). Golden-plan alpha spine now P0-P4
 DONE; phase 5 (type pass float/REAL+avg, clock checker, ingest
 commit_ms) is the remaining leg, all rows priced in ARCH.
+NIGHT CLOSE-OUT: first merged-main green-all tripped on a STALE
+target/release/dl (Jul 20 build; receipt scripts build only if
+missing -- binary flavor of the staleness class, noted on the
+gen_staleness_gate row); coordinator rebuilt from current source.
+FINAL RECEIPT, merged main, coordinator's own run: `just green-all`
+EXIT 0 -- END GOAL HOLDS, ENDURANCE HOLDS, MEMORY SOAK HOLDS,
+EXTRACTION LIVE HOLDS, ENUMERATE HOLD, FLAGSHIP GRADED
+0-unclassified, LSP DIAGS HOLDS, sweep 87/85/0-wrong. Overnight
+totals: 7 arcs landed+merged (org refactor 10 ranks, memory soak,
+watcher research, phase 2 extraction live, phase 3 edge-body +
+tick alignment + flagship, phase 4 bop + LSP), conformance
+136 -> 139, sweep identical 70 -> 85, plunit 75 -> 137, tsv2 tests
+21 -> 56, every fork/decision in ARCH fork/5, every open defect a
+priced ARCH row. AWAITING USER: push main + v6.2.0 tag (bop gate
+satisfied); decode/encoding ruling (15 fixtures); flow-interproc
+extractor-scope call; @parcel/watcher dep word; phase 5 go-ahead;
+the standing v5 pile.
