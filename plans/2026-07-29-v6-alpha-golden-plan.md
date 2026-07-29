@@ -55,6 +55,14 @@ grading.
   redesign, no new extraction tooling research.
 - Program-declared file sets: the worktree-default enumeration host
   (no "WORK" atom, ruled) replacing push-only /edb/file_changed.
+- REV SHAPE DECIDED (user + records 2026-07-29): no null exists
+  (SYNTAX.md term table) and optionality is spelled as variant
+  decls per the enum ruling -- TWO hosts, `enumerate(glob)`
+  (worktree, unmarked) and `enumerate_at(rev, glob)` (pinned,
+  marked); programs union them like enum variant rels. Cache split
+  falls out: rev-pinned probes cache forever (rev = pin data),
+  worktree freshness rides the watcher salt. No sentinel values,
+  no nullable column.
 Exit receipt: sg-rail-class diag rail runs end to end on v6 with a
 real file edit triggering the retick.
 
