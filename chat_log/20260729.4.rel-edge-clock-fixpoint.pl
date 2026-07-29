@@ -199,3 +199,12 @@ verification(existing_target_identity_sweep_runtime,
                     'compiled, identical, expected old relation-value oracle disagreements, recorded run errors')).
 next_action(1,
             'extend the same identity binding to direct triggers, then test automatic target-match injection separately from world-arrival assertion').
+
+observed(direct_trigger_identity_prototype,
+         'an arrival trigger that is itself a referenced public relation now samples that current row by its trigger fields and projects the joined __id').
+observed(direct_trigger_identity_cost,
+         'one indexed equality join to the target table in edge projection; departure triggers retain occurrence-only semantics and do not join absent membership').
+verification(direct_trigger_identity_context_lab, passed(8)).
+verification(direct_trigger_identity_plunit, passed(147)).
+next_action(1,
+            'lab automatic target-match injection for a relation-shaped head term lacking an explicit target atom, including recursive level fixpoint timing').

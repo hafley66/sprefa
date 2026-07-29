@@ -1095,6 +1095,8 @@ edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms, GuardGo
     TriggerAtom =.. [_ | TriggerArgs],
     relplan_column_types(RelPlans, TriggerRef, TriggerBoundColumnTypes),
     compile_trigger_bound(TriggerArgs, TriggerBoundColumnTypes, TriggerBound),
+    reference_trigger_samples(RelPlans, TriggerKind, TriggerAtom,
+                              OtherAtoms, IdentityOtherAtoms),
     % maplist, NEVER findall (analyze.pl:ref_occurrence_args/3's own
     % comment names this exact hazard): findall copies its template per
     % solution, which would sever OtherArgs from the SAME variable
@@ -1103,7 +1105,7 @@ edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms, GuardGo
     % the variables genuinely ARE bound (confirmed empirically: this
     % bug shipped in an earlier draft and unmarked_edge_replays_backlog
     % is the fixture that caught it).
-    maplist(other_atom_use, OtherAtoms, OtherUses),
+    maplist(other_atom_use, IdentityOtherAtoms, OtherUses),
     compile_positive_uses(RelPlans, OtherUses, TriggerBound, PositiveBound,
                           FromParts, PositiveWhereTexts),
     compile_guard_goals(GuardGoals, PositiveBound, Bound, GuardWhereTexts),
@@ -1134,7 +1136,7 @@ edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms, GuardGo
     -> format(atom(ProjectSql), 'SELECT ~w FROM ~w', [SelectSql, FromSql])
     ; format(atom(ProjectSql), 'SELECT ~w FROM ~w WHERE ~w', [SelectSql, FromSql, WhereSql])
     ),
-    edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms,
+    edge_delta_project_sql(RelPlans, Head, TriggerAtom, IdentityOtherAtoms, NegAtoms,
                            GuardGoals, HeadColumns, TriggerKind, DeltaProjectSql),
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
@@ -1163,6 +1165,28 @@ edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms, GuardGo
        format(atom(WriteSql), 'INSERT INTO ~w (~w) VALUES (~w) ~w',
               [QuotedHeadTable, HeadColumnsSql, ValuePlaceholdersSql, ConflictClause])
     ).
+
+% Per-arrival edge projection starts from parameter placeholders rather than
+% the target table alias. When the trigger relation is itself a referenced
+% entity, sample its current public row as an ordinary positive use. That
+% indexed equality join supplies the same __id binding as a non-trigger body
+% atom. Departure triggers stay row occurrences after the target has gone and
+% therefore cannot take this current-membership join.
+reference_trigger_samples(RelPlans, arrival, TriggerAtom,
+                          OtherAtoms, IdentityOtherAtoms) :-
+    rel_ref(TriggerAtom, TriggerRef),
+    reference_target_ref(RelPlans, TriggerRef),
+    \+ member_same_term(TriggerAtom, OtherAtoms),
+    !,
+    IdentityOtherAtoms = [TriggerAtom | OtherAtoms].
+reference_trigger_samples(_, _, _, OtherAtoms, OtherAtoms).
+
+reference_target_ref(RelPlans, Name/_Arity) :-
+    member(relplan(_, _, _, _, ColumnTypes), RelPlans),
+    memberchk(ref(Name), ColumnTypes).
+
+member_same_term(Term, [Candidate | _]) :- Term == Candidate, !.
+member_same_term(Term, [_ | Rest]) :- member_same_term(Term, Rest).
 
 edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms, GuardGoals,
                        HeadColumns, TriggerKind, DeltaProjectSql) :-

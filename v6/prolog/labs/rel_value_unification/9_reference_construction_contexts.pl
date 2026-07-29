@@ -46,14 +46,15 @@ check(existing_target_constructor_projects_available_id_without_json,
         sub_atom(Sql, _, _, _, 'b1."__id"'),
         \+ sub_atom(Sql, _, _, _, 'json_object') )).
 
-check(direct_target_edge_trigger_still_has_no_identity_binding,
+check(direct_target_edge_trigger_projects_joined_identity,
       ( Text = "rel user(id: int, name: text) key(1).\nrel post(author: user) key(1).\npost(user(Id, Name)) <+ user(Id, Name).\n",
         lower_text(direct_target_trigger, Text, [], _,
                    lowered(_, _, _, Edges, _, _, _, _)),
         member(edgestmt(post/1, user/2, _, _, ProjectSql, _, _, _),
                Edges),
-        sub_atom(ProjectSql, _, _, _, 'json_object'),
-        \+ sub_atom(ProjectSql, _, _, _, '"__id"') )).
+        sub_atom(ProjectSql, _, _, _, 'b0."__id"'),
+        sub_atom(ProjectSql, _, _, _, 'FROM "user" b0'),
+        \+ sub_atom(ProjectSql, _, _, _, 'json_object') )).
 
 check(missing_target_constructor_currently_has_no_existence_join,
       ( Text = "rel user(id: int, name: text) key(1).\nrel post(author: user).\nrel source(id: int, name: text).\npost(user(Id, Name)) <- source(Id, Name).\n",
