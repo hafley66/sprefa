@@ -129,7 +129,10 @@ Exit receipt: flagship rail byte-graded vs v5 on a pinned corpus.
 
 rust backend (designed endgame, parked per user "calm down");
 spreading wiring (lab verdict banked); openapi/json-schema import
-(design sketched, gated on hosts phase 2 + type rulings); channel
+(design sketched, gated on hosts phase 2 + type rulings; user
+2026-07-29: BIDIRECTIONAL -- rel decls are types, so decls export
+TO json-schema as well as import FROM it, one mapping table both
+directions); channel
 checker (gated on arms-lab SLOT rulings); per-key retention spelling
 (design review B6, needs a ruling); daemon verb parity; multi-repo
 config surface.
