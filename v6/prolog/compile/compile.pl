@@ -34,6 +34,7 @@
 
 :- use_module(library(lists)).
 :- use_module('../0_match_expand', [expand_match_program/2]).
+:- use_module('../1_host_expand', [prepare_program/5]).
 :- use_module(analyze).
 :- use_module(strat).
 :- use_module(lower).
@@ -89,7 +90,8 @@ find_fixture(Stream, Name, Term, Bindings) :-
 %              per target fixture this is a formality kept for generality).
 
 program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindings, Plan) :-
-    expand_match_program(SugaredProg, Prog),
+    prepare_program(SugaredProg, HostProg, _, _, _),
+    expand_match_program(HostProg, Prog),
     Prog = prog(Decls, Rules),
     check_supported_subset(Prog),
     % Union rule-derived refs with EVERY declared ref (analyze.pl:

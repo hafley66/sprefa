@@ -35,6 +35,7 @@
 % reimplemented.
 :- use_module(lower, [ relplan_kind/3 ]).
 :- use_module(analyze, [ body_ref_uses/2, derived_refs/2, rule_head_ref/2 ]).
+:- use_module('../1_host_expand', [compile_host_decl/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -49,7 +50,30 @@ js_template(SqlText, JsLiteral) :-
     re_replace("\\$\\{"/g, "\\${", SqlString1, SqlString2),
     format(atom(JsLiteral), '`~w`', [SqlString2]).
 
-js_string(Atom, JsLiteral) :- format(atom(JsLiteral), '"~w"', [Atom]).
+js_string(Value, JsLiteral) :-
+    ( atom(Value) -> atom_codes(Value, Codes) ; string_codes(Value, Codes) ),
+    js_string_codes(Codes, Escaped),
+    atom_codes(Body, Escaped),
+    format(atom(JsLiteral), '"~w"', [Body]).
+
+js_string_codes([], []).
+js_string_codes([0'" | Rest], [0'\\, 0'" | More]) :-
+    !,
+    js_string_codes(Rest, More).
+js_string_codes([0'\\ | Rest], [0'\\, 0'\\ | More]) :-
+    !,
+    js_string_codes(Rest, More).
+js_string_codes([0'\n | Rest], [0'\\, 0'n | More]) :-
+    !,
+    js_string_codes(Rest, More).
+js_string_codes([0'\r | Rest], [0'\\, 0'r | More]) :-
+    !,
+    js_string_codes(Rest, More).
+js_string_codes([0'\t | Rest], [0'\\, 0't | More]) :-
+    !,
+    js_string_codes(Rest, More).
+js_string_codes([Code | Rest], [Code | More]) :-
+    js_string_codes(Rest, More).
 
 ref_name(Name/_Arity, Name).
 
@@ -163,13 +187,98 @@ imports_lines(_HasEdgeRules, HasRetention, Lines) :-
 % ═══ local supporting types ══════════════════════════════════════════════════
 
 local_types_lines(
-    [ 'interface IBootStatement {',
+    [ 'interface IHostColumnPlan { readonly name: string; readonly type: "int" | "text" | "json" }',
+      'interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }',
+      'interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly execution: string }',
+      'interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }',
+      '',
+      'interface IBootStatement {',
       '  sql: string;',
       '  params: readonly (string | number)[];',
       '}',
       '',
-      'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };'
+      'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };'
     ]).
+
+world_plan_lines(plan(_, prog(Decls, _), _, _, _, _), Lines) :-
+    findall(HostPlan,
+            ( member(Decl, Decls),
+              Decl = sh_decl(_, _, _, _),
+              compile_host_decl(Decl, HostPlan)
+            ),
+            HostPlans),
+    findall(bind_plan(Name, Columns),
+            member(bind_decl(Name, Columns), Decls),
+            BindPlans),
+    findall(query_plan(Name/Arity, snapshot(current)),
+            ( member(query(Atom), Decls),
+              functor(Atom, Name, Arity)
+            ),
+            QueryPlans),
+    maplist(host_plan_json, HostPlans, HostRows),
+    maplist(bind_plan_json, BindPlans, BindRows),
+    maplist(query_plan_json, QueryPlans, QueryRows),
+    maplist(host_refusal_text, HostPlans, HostRefusals),
+    maplist(bind_refusal_text, BindPlans, BindRefusals),
+    append(HostRefusals, BindRefusals, Refusals),
+    array_const_line('export const hostPlans: readonly IHostPlanData[]', HostRows,
+                     HostLine),
+    array_const_line('export const bindPlans: readonly IBindPlanData[]', BindRows,
+                     BindLine),
+    array_const_line('export const queryPlans: readonly IQueryPlanData[]', QueryRows,
+                     QueryLine),
+    array_const_line('export const unsupportedExecution: readonly string[]',
+                     Refusals, RefusalLine),
+    Lines = [HostLine, BindLine, QueryLine, RefusalLine].
+
+array_const_line(Prefix, Rows, Line) :-
+    atomic_list_concat(Rows, ', ', Body),
+    format(atom(Line), '~w = [~w];', [Prefix, Body]).
+
+host_plan_json(
+    host_plan(Name, Inputs, Outputs, template(Template),
+              demand_ref(DemandName), response_ref(ResponseName)),
+    Json) :-
+    js_string(Name, NameJson),
+    host_columns_json(Inputs, InputsJson),
+    host_columns_json(Outputs, OutputsJson),
+    js_string(Template, TemplateJson),
+    js_string(DemandName, DemandJson),
+    js_string(ResponseName, ResponseJson),
+    format(atom(Json),
+           '{ name: ~w, inputs: ~w, outputs: ~w, template: ~w, demandRel: ~w, responseRel: ~w, execution: "unsupported_host_execution_phase_2" }',
+           [NameJson, InputsJson, OutputsJson, TemplateJson,
+            DemandJson, ResponseJson]).
+
+bind_plan_json(bind_plan(Name, Columns), Json) :-
+    js_string(Name, NameJson),
+    host_columns_json(Columns, ColumnsJson),
+    format(atom(Json),
+           '{ name: ~w, columns: ~w, execution: "unsupported_bind_execution_phase_2" }',
+           [NameJson, ColumnsJson]).
+
+query_plan_json(query_plan(Name/Arity, snapshot(current)), Json) :-
+    js_string(Name, NameJson),
+    format(atom(Json), '{ rel: ~w, arity: ~w, snapshot: "current" }',
+           [NameJson, Arity]).
+
+host_columns_json(Columns, Json) :-
+    maplist(host_column_json, Columns, Rows),
+    atomic_list_concat(Rows, ', ', Body),
+    format(atom(Json), '[~w]', [Body]).
+
+host_column_json(col(Name, Type), Json) :-
+    js_string(Name, NameJson),
+    js_string(Type, TypeJson),
+    format(atom(Json), '{ name: ~w, type: ~w }', [NameJson, TypeJson]).
+
+host_refusal_text(host_plan(Name, _, _, _, _, _), Text) :-
+    format(atom(Refusal), 'unsupported_host_execution_phase_2(~w)', [Name]),
+    js_string(Refusal, Text).
+
+bind_refusal_text(bind_plan(Name, _), Text) :-
+    format(atom(Refusal), 'unsupported_bind_execution_phase_2(~w)', [Name]),
+    js_string(Refusal, Text).
 
 % ═══ integer bind helper (phase C sweep finding) ═══════════════════════════
 % @libsql/client binds a JS `number` parameter as SQLite REAL, not INTEGER --
@@ -959,6 +1068,10 @@ program_export_lines(Name,
       '  arrivalTargets,',
       '  boot,',
       '  finalSelect,',
+      '  hostPlans,',
+      '  bindPlans,',
+      '  queryPlans,',
+      '  unsupportedExecution,',
       '  tick: runTick,',
       '};'
     ]) :-
@@ -975,6 +1088,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     ( RetentionStatements == [] -> HasRetention = false ; HasRetention = true ),
     imports_lines(HasEdgeRules, HasRetention, ImportLines),
     local_types_lines(LocalTypeLines),
+    world_plan_lines(Plan, WorldPlanLines),
     bind_args_helper_lines(BindArgsHelperLines),
     ( EdgeStatements == [] -> TriggerOccurrencesHelperLines = [] ; trigger_occurrences_helper_lines(TriggerOccurrencesHelperLines) ),
     ddl_lines(Ddl, DdlLines),
@@ -1013,7 +1127,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
                                   IncrementalPlanExportLines),
     program_export_lines(Name, ProgramExportLines),
     Sections0 =
-    [ HeaderLines, ImportLines, LocalTypeLines, BindArgsHelperLines, TriggerOccurrencesHelperLines,
+    [ HeaderLines, ImportLines, LocalTypeLines, WorldPlanLines,
+      BindArgsHelperLines, TriggerOccurrencesHelperLines,
       DdlLines, RelColumnsLines, ArrivalTargetsLines,
       BootLines, SnapshotTypeLines, ReadSnapshotFnLines, FinalSelectLines,
       ArrivalStatementsLines, ArrivalStatementFnLines,

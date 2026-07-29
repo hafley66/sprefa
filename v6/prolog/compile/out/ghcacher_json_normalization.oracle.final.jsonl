@@ -1,0 +1,1 @@
+{"final":{"current_body":[["pulls","[|]({}(,(:(number,7),,(:(title,seven),,(:(state,open),:(user,{}(:(login,octo))))))),[|]({}(,(:(number,8),,(:(title,eight),,(:(state,closed),:(user,{}(:(login,hub))))))),[]))"],["repo","{}(,(:(full_name,cli),:(stargazers_count,17)))"]],"pull_request":[["pulls",7,"seven","open","octo"],["pulls",8,"eight","closed","hub"]],"stars":[["repo",17]]}}

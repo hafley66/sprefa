@@ -1,0 +1,1 @@
+[[{"rel":"__host_response_sg","sign":"add","row":["witness|sg|file_digest:text=d1|query_digest:text=q_calls","d1","q_calls","foo","bar",0,3]}],[{"rel":"file","sign":"del","row":["a","d1"]},{"rel":"file","sign":"add","row":["a","d3"]},{"rel":"__host_response_sg","sign":"add","row":["witness|sg|file_digest:text=d3|query_digest:text=q_calls","d3","q_calls","foo","zap",0,3]}]]

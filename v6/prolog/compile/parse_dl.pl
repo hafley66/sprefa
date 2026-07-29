@@ -62,12 +62,16 @@
 
 :- dynamic(finding_fact/1).
 :- dynamic(rel_column_order_fact/2).
+:- dynamic(host_signature_fact/3).
 
 record_finding(F) :- assertz(finding_fact(F)).
 record_column_order(Name, Cols) :-
     retractall(rel_column_order_fact(Name, _)),
     assertz(rel_column_order_fact(Name, Cols)).
 lookup_column_order(Name, Cols) :- rel_column_order_fact(Name, Cols).
+record_host_signature(Name, Inputs, Outputs) :-
+    retractall(host_signature_fact(Name, _, _)),
+    assertz(host_signature_fact(Name, Inputs, Outputs)).
 
 % ═══ entry points ════════════════════════════════════════════════════════════
 
@@ -75,14 +79,21 @@ parse_dl_file(FilePath, Prog, Bindings, Findings) :-
     read_file_to_codes(FilePath, Codes, []),
     parse_dl(Codes, Prog, Bindings, Findings).
 
-parse_dl(Codes, prog(Decls, Rules), Bindings, Findings) :-
+parse_dl(Codes, Prog, Bindings, Findings) :-
     retractall(finding_fact(_)),
     retractall(rel_column_order_fact(_, _)),
-    statements(Codes, Left, [], VarsFinal, Decls, Rules),
+    retractall(host_signature_fact(_, _, _)),
+    statements(Codes, Left, [], VarsFinal, Decls, Rules, Queries),
     ( Left == [] -> true ; throw(dl_parse_error(trailing_input(Left))) ),
     maplist(swap_pair, VarsFinal, BindingsRev),
     reverse(BindingsRev, Bindings),
-    findall(F, finding_fact(F), Findings).
+    findall(F, finding_fact(F), Findings),
+    ( Queries == [],
+      \+ member(sh_decl(_, _, _, _), Decls),
+      \+ member(bind_decl(_, _), Decls)
+    -> Prog = prog(Decls, Rules)
+    ; Prog = program(Decls, Rules, Queries)
+    ).
 
 swap_pair(Name-Var, Name=Var).
 
@@ -91,15 +102,16 @@ swap_pair(Name-Var, Name=Var).
 % read_term call gets for free); Decls/Rules accumulate as the recursion
 % unwinds, splicing in each decl_list statement's whole list at once ═══════
 
-statements(S0, S, Vars0, Vars, Decls, Rules) :-
+statements(S0, S, Vars0, Vars, Decls, Rules, Queries) :-
     skip_ws(S0, S1),
     ( S1 == []
-    -> Decls = [], Rules = [], Vars = Vars0, S = S1
+    -> Decls = [], Rules = [], Queries = [], Vars = Vars0, S = S1
     ; ( statement(Kind, Item, Vars0, Vars1, S1, S2) -> true ; throw(dl_parse_error(statement, S1)) ),
-      statements(S2, S, Vars1, Vars, Decls1, Rules1),
-      ( Kind == decl_list -> append(Item, Decls1, Decls), Rules = Rules1
-      ; Kind == rule -> Decls = Decls1, Rules = [Item | Rules1]
-      ; Kind == skip -> Decls = Decls1, Rules = Rules1
+      statements(S2, S, Vars1, Vars, Decls1, Rules1, Queries1),
+      ( Kind == decl_list -> append(Item, Decls1, Decls), Rules = Rules1, Queries = Queries1
+      ; Kind == rule -> Decls = Decls1, Rules = [Item | Rules1], Queries = Queries1
+      ; Kind == query -> Decls = Decls1, Rules = Rules1, Queries = [Item | Queries1]
+      ; Kind == skip -> Decls = Decls1, Rules = Rules1, Queries = Queries1
       )
     ).
 
@@ -207,10 +219,11 @@ get_or_make_var(Name, Vars0, Var, Vars) :-
 
 statement(Kind, Item, Vars0, Vars, S0, S) :-
     skip_ws(S0, S1),
-    ( decl_a_stmt(Item0, S1, S2) -> Kind = decl_list, Item = Item0, Vars = Vars0, S = S2
+    ( bind_decl_stmt(Item0, S1, S2) -> Kind = decl_list, Item = [Item0], Vars = Vars0, S = S2
+    ; decl_a_stmt(Item0, S1, S2) -> Kind = decl_list, Item = Item0, Vars = Vars0, S = S2
     ; decl_b_stmt(Item0, S1, S2) -> Kind = decl_list, Item = Item0, Vars = Vars0, S = S2
-    ; sh_decl_stmt(S1, S2) -> Kind = skip, Item = [], Vars = Vars0, S = S2
-    ; query_stmt(S1, S2) -> Kind = skip, Item = [], Vars = Vars0, S = S2
+    ; sh_decl_stmt(Item0, S1, S2) -> Kind = decl_list, Item = [Item0], Vars = Vars0, S = S2
+    ; query_stmt(Item0, Vars0, Vars1, S1, S2) -> Kind = query, Item = Item0, Vars = Vars1, S = S2
     ; match_stmt(Item0, Vars0, Vars1, S1, S2) -> Kind = rule, Item = Item0, Vars = Vars1, S = S2
     ; rule_stmt(Item0, Vars0, Vars1, S1, S2) -> Kind = rule, Item = Item0, Vars = Vars1, S = S2
     ).
@@ -289,7 +302,8 @@ decl_a_column(column(Name, Type), S0, S) :-
     ).
 
 typed_column_type(int, S0, S) :- word(`int`, S0, S), !.
-typed_column_type(text, S0, S) :- word(`text`, S0, S).
+typed_column_type(text, S0, S) :- word(`text`, S0, S), !.
+typed_column_type(json, S0, S) :- word(`json`, S0, S).
 
 enum_decl_variants((First ; Rest), S0, S) :-
     enum_decl_variant(First, S0, S1),
@@ -431,6 +445,7 @@ decl_b_columns(RelName, [column(ColName, Type) | Rest], S0, S) :-
 
 decl_b_column_type(_, _, int, S0, S) :- word(`int`, S0, S), !.
 decl_b_column_type(_, _, text, S0, S) :- word(`text`, S0, S), !.
+decl_b_column_type(_, _, json, S0, S) :- word(`json`, S0, S), !.
 decl_b_column_type(RelName, ColName, none, S0, S) :-
     coltype(Wrapper, S0, S),
     record_finding(unsupported_surface(column_type_wrapper(RelName, ColName, Wrapper))).
@@ -443,53 +458,104 @@ coltype(Wrapper, S0, S) :-
     ws0(S1, S2), lit_dcg(`(`, S2, S3), ws0(S3, S4), ident(_, S4, S5), ws0(S5, S6), lit_dcg(`)`, S6, S).
 coltype(none, S0, S) :- ident(_, S0, S).
 
-% ═══ `sh` host decl : unsupported_surface, no term-form shape holds it ═════
+% ═══ selected world declarations ════════════════════════════════════════════
 
-sh_decl_stmt(S0, S) :-
+bind_decl_stmt(bind_decl(Name, Columns), S0, S) :-
+    word(`bind`, S0, S1),
+    ws0(S1, S2),
+    ident(Name, S2, S3),
+    ws0(S3, S4),
+    lit_dcg(`(`, S4, S5),
+    decl_b_columns(Name, Specs, S5, S6),
+    ws0(S6, S7),
+    lit_dcg(`)`, S7, S8),
+    ws0(S8, S9),
+    lit_dcg(`.`, S9, S),
+    specs_to_columns(Specs, Columns),
+    column_spec_names(Specs, Names),
+    record_column_order(Name, Names).
+
+sh_decl_stmt(sh_decl(Name, Inputs, Outputs, template(Template)), S0, S) :-
     word(`sh`, S0, S1),
     ws0(S1, S2),
     ident(Name, S2, S3),
     ws0(S3, S4),
     lit_dcg(`(`, S4, S5),
-    decl_b_columns(Name, Cols, S5, S6),
+    decl_b_columns(Name, InputSpecs, S5, S6),
+    ws0(S6, S7),
+    lit_dcg(`)`, S7, S8),
+    ws0(S8, S9),
+    lit_dcg(`->`, S9, S10),
+    ws0(S10, S11),
+    lit_dcg(`(`, S11, S12),
+    decl_b_columns(Name, OutputSpecs, S12, S13),
+    ws0(S13, S14),
+    lit_dcg(`)`, S14, S15),
+    ws0(S15, S16),
+    lit_dcg(`=`, S16, S17),
+    ws0(S17, S18),
+    template_lit(Template, S18, S19),
+    ws0(S19, S20),
+    lit_dcg(`.`, S20, S),
+    specs_to_columns(InputSpecs, Inputs),
+    specs_to_columns(OutputSpecs, Outputs),
+    append(InputSpecs, OutputSpecs, Specs),
+    column_spec_names(Specs, Names),
+    record_column_order(Name, Names),
+    record_host_signature(Name, Inputs, Outputs).
+sh_decl_stmt(unsupported_host_decl(Name, Columns), S0, S) :-
+    word(`sh`, S0, S1),
+    ws0(S1, S2),
+    ident(Name, S2, S3),
+    ws0(S3, S4),
+    lit_dcg(`(`, S4, S5),
+    decl_b_columns(Name, Specs, S5, S6),
     ws0(S6, S7),
     lit_dcg(`)`, S7, S8),
     ws0(S8, S9),
     lit_dcg(`=`, S9, S10),
     ws0(S10, S11),
-    template_lit(S11, S12),
+    template_lit(_, S11, S12),
     ws0(S12, S13),
     lit_dcg(`.`, S13, S),
-    length(Cols, Arity),
-    record_column_order(Name, Cols),
-    record_finding(unsupported_surface(host_decl(Name/Arity))).
+    specs_to_columns(Specs, Columns),
+    length(Columns, Arity),
+    column_spec_names(Specs, Names),
+    record_column_order(Name, Names),
+    record_finding(unsupported_surface(host_decl_inferred(Name/Arity))).
 
-template_lit(S0, S) :-
+specs_to_columns([], []).
+specs_to_columns([column(Name, Type) | Rest], [col(Name, Type) | Columns]) :-
+    specs_to_columns(Rest, Columns).
+
+template_lit(Template, S0, S) :-
     S0 = [0'` | S1], !,
-    skip_backtick_body(S1, S).
-skip_backtick_body([0'` | S], S) :- !.
-skip_backtick_body([_ | Rest], S) :- skip_backtick_body(Rest, S).
+    template_codes(S1, Codes, S),
+    string_codes(Template, Codes).
 
-% ═══ `?` query line : unsupported_surface, no term-form shape holds it ═════
+template_codes([0'` | S], [], S) :- !.
+template_codes([0'\\, 0'` | Rest], [0'` | Codes], S) :- !,
+    template_codes(Rest, Codes, S).
+template_codes([0'\\, 0'\\ | Rest], [0'\\ | Codes], S) :- !,
+    template_codes(Rest, Codes, S).
+template_codes([Code | Rest], [Code | Codes], S) :-
+    template_codes(Rest, Codes, S).
 
-query_stmt(S0, S) :-
+% ═══ `?` query line ═════════════════════════════════════════════════════════
+
+query_stmt(query(Atom), Vars0, Vars, S0, S) :-
     lit_dcg(`?`, S0, S1),
     ws0(S1, S2),
     ident(Name, S2, S3),
     ws0(S3, S4),
     lit_dcg(`(`, S4, S5),
-    query_args(Args, [], _, S5, S6),
+    head_args(Args, Vars0, Vars, S5, S6),
     ws0(S6, S7),
     lit_dcg(`)`, S7, S8),
     ws0(S8, S9),
     lit_dcg(`.`, S9, S),
-    length(Args, Arity),
-    record_finding(unsupported_surface(query(Name/Arity))).
-
-query_args([], Vars, Vars, S0, S) :- ws0(S0, S1), peek(0'), S1, S), !.
-query_args([Arg | Rest], Vars0, Vars, S0, S) :-
-    ws0(S0, S1), atom_arg(Arg, Vars0, Vars1, S1, S2), ws0(S2, S3),
-    ( lit_dcg(`,`, S3, S4) -> query_args(Rest, Vars1, Vars, S4, S) ; Rest = [], Vars = Vars1, S = S3 ).
+    resolve_named_args(head, Name, Args, Positional),
+    Atom =.. [Name | Positional].
 
 % ═══ rule / fact: `HeadAtom (<- | <+) Body.` or `HeadAtom.` (bare fact) ══════
 
@@ -553,7 +619,7 @@ head_atom(Term, Vars0, Vars, S0, S) :-
     head_args(Args, Vars0, Vars, S3, S4),
     ws0(S4, S5),
     lit_dcg(`)`, S5, S),
-    resolve_named_args(Name, Args, PositionalArgs),
+    resolve_named_args(head, Name, Args, PositionalArgs),
     Term =.. [Name | PositionalArgs].
 
 head_args([], Vars, Vars, S0, S) :- ws0(S0, S1), peek(0'), S1, S), !.
@@ -585,12 +651,15 @@ atom_arg(pos(Value), Vars0, Vars, S0, S) :-
 % column by name first, then the positional args fill whatever columns are
 % left, in the order they were written.
 
-resolve_named_args(_, [], []) :- !.
-resolve_named_args(RelName, Args, Positional) :-
+resolve_named_args(_, _, [], []) :- !.
+resolve_named_args(_, _, Args, Positional) :-
     ( forall(member(A, Args), A = pos(_))
     -> maplist(arg_value, Args, Positional)
-    ; lookup_column_order(RelName, Cols)
-    -> resolve_mixed_args(Args, Cols, Positional)
+    ),
+    !.
+resolve_named_args(Mode, RelName, Args, Positional) :-
+    ( lookup_column_order(RelName, Cols)
+    -> resolve_mixed_args(Mode, RelName, Args, Cols, Positional)
     ; record_finding(unsupported_surface(named_args_unresolved(RelName))),
       maplist(arg_value, Args, Positional)
     ).
@@ -613,14 +682,29 @@ arg_value(named(_, V), V).
 % rule), so var(Slot) cannot distinguish "not yet placed" from "placed with
 % a variable" -- confirmed the hard way, it collapsed both cases to "free"
 % and re-filled an already-named slot with a positional value.
-resolve_mixed_args(Args, Cols, Positional) :-
+resolve_mixed_args(Mode, RelName, Args, Cols, Positional) :-
     length(Cols, N),
     length(Positional, N),
+    validate_named_columns(RelName, Args, Cols),
     place_named(Cols, 1, Args, Positional),
     findall(ColName, member(named(ColName, _), Args), NamedCols),
     findall(Idx, ( nth1(Idx, Cols, ColName), \+ memberchk(ColName, NamedCols) ), FreeIdxs),
     findall(V, member(pos(V), Args), PosValues),
-    fill_free_slots(FreeIdxs, PosValues, Positional).
+    fill_partial_slots(Mode, RelName, N, FreeIdxs, PosValues, Positional).
+
+validate_named_columns(RelName, Args, Cols) :-
+    findall(Name, member(named(Name, _), Args), Names),
+    ( member(Name, Names), \+ memberchk(Name, Cols)
+    -> record_finding(unsupported_surface(unknown_named_arg(RelName, Name)))
+    ; duplicate_name(Names, Duplicate)
+    -> record_finding(unsupported_surface(duplicate_named_arg(RelName, Duplicate)))
+    ; true
+    ).
+
+duplicate_name(Names, Name) :-
+    select(Name, Names, Rest),
+    memberchk(Name, Rest),
+    !.
 
 place_named([], _, _, _).
 place_named([ColName | Cols], Idx, Args, Positional) :-
@@ -632,6 +716,27 @@ fill_free_slots([], [], _).
 fill_free_slots([Idx | Idxs], [V | Vs], Positional) :-
     nth1(Idx, Positional, V),
     fill_free_slots(Idxs, Vs, Positional).
+
+fill_partial_slots(Mode, RelName, Arity, FreeIdxs, PosValues, Positional) :-
+    length(PosValues, PosCount),
+    length(FilledIdxs, PosCount),
+    append(FilledIdxs, OmittedIdxs, FreeIdxs),
+    fill_free_slots(FilledIdxs, PosValues, Positional),
+    finish_omitted_slots(Mode, RelName/Arity, OmittedIdxs, Positional).
+
+finish_omitted_slots(body, _, Idxs, Positional) :-
+    fill_anonymous_slots(Idxs, Positional).
+finish_omitted_slots(head, Ref, Idxs, Positional) :-
+    ( Idxs == []
+    -> true
+    ; record_finding(unsupported_surface(partial_head(Ref))),
+      fill_anonymous_slots(Idxs, Positional)
+    ).
+
+fill_anonymous_slots([], _).
+fill_anonymous_slots([Idx | Rest], Positional) :-
+    nth1(Idx, Positional, _),
+    fill_anonymous_slots(Rest, Positional).
 
 % ═══ body : comma-conjunction of body items, optional surrounding parens ════
 
@@ -674,6 +779,9 @@ body_item(not(Atom), Vars0, Vars, S0, S) :-
     lit_dcg(`!`, S0, S1), ident(Name, S1, S2), ws0(S2, S3), lit_dcg(`(`, S3, S4),
     args_positional(Args, Vars0, Vars, S4, S5), ws0(S5, S6), lit_dcg(`)`, S6, S), !,
     Atom =.. [Name | Args].
+body_item(Probe, Vars0, Vars, S0, S) :-
+    probe_item(Probe, Vars0, Vars, S0, S),
+    !.
 body_item(Item, Vars0, Vars, S0, S) :-
     relatom_item(Item, Vars0, Vars, S0, S).
 
@@ -811,21 +919,66 @@ operator_codes(Codes, S0, S) :-
 
 % ═══ plain / probe / mutation relation atom ═════════════════════════════════
 
+probe_item(Probe, Vars0, Vars, S0, S) :-
+    lit_dcg(`?`, S0, S1),
+    ws0(S1, S2),
+    ident(Name, S2, S3),
+    ws0(S3, S4),
+    lit_dcg(`(`, S4, S5),
+    head_args(Args, Vars0, Vars1, S5, S6),
+    ws0(S6, S7),
+    lit_dcg(`)`, S7, S8),
+    probe_salts(Salts, Vars1, Vars, S8, S),
+    resolve_named_args(body, Name, Args, Values),
+    probe_from_values(Name, Values, Salts, Probe).
+
+probe_salts([Salt | Rest], Vars0, Vars, S0, S) :-
+    ws0(S0, S1),
+    lit_dcg(`@`, S1, S2),
+    ws0(S2, S3),
+    word(`salt`, S3, S4),
+    ws0(S4, S5),
+    lit_dcg(`(`, S5, S6),
+    ws0(S6, S7),
+    ident(Name, S7, S8),
+    ws0(S8, S9),
+    lit_dcg(`:`, S9, S10),
+    ws0(S10, S11),
+    expr(Value, Vars0, Vars1, S11, S12),
+    ws0(S12, S13),
+    lit_dcg(`)`, S13, S14),
+    Salt = salt(Name, Value),
+    probe_salts(Rest, Vars1, Vars, S14, S).
+probe_salts([], Vars, Vars, S, S).
+
+probe_from_values(Name, Values, Salts,
+                  probe(Name, InputValues, OutputValues, Salts)) :-
+    host_signature_fact(Name, Inputs, Outputs),
+    length(Inputs, InputCount),
+    length(InputValues, InputCount),
+    append(InputValues, OutputValues, Values),
+    same_length(Outputs, OutputValues),
+    !.
+probe_from_values(Name, Values, _, _) :-
+    length(Values, Arity),
+    record_finding(unsupported_surface(probe_signature_unresolved(Name/Arity))),
+    fail.
+
 relatom_item(Item, Vars0, Vars, S0, S) :-
     ident(Name, S0, S1), ws0(S1, S2),
     ( peek(0'?, S2, S2)
     -> lit_dcg(`?`, S2, S2a), ws0(S2a, S3), lit_dcg(`(`, S3, S4),
        head_args(Args, Vars0, Vars, S4, S5), ws0(S5, S6), lit_dcg(`)`, S6, S),
-       length(Args, Arity), record_finding(unsupported_surface(probe(Name/Arity))),
-       resolve_named_args(Name, Args, Positional), Item =.. [Name | Positional]
+       resolve_named_args(body, Name, Args, Positional),
+       probe_from_values(Name, Positional, [], Item)
     ; peek(0'!, S2, S2)
     -> lit_dcg(`!`, S2, S2a), ws0(S2a, S3), lit_dcg(`(`, S3, S4),
        head_args(Args, Vars0, Vars, S4, S5), ws0(S5, S6), lit_dcg(`)`, S6, S),
        length(Args, Arity), record_finding(unsupported_surface(mutation(Name/Arity))),
-       resolve_named_args(Name, Args, Positional), Item =.. [Name | Positional]
+       resolve_named_args(body, Name, Args, Positional), Item =.. [Name | Positional]
     ; lit_dcg(`(`, S2, S3),
       head_args(Args, Vars0, Vars, S3, S4), ws0(S4, S5), lit_dcg(`)`, S5, S),
-      resolve_named_args(Name, Args, Positional), Item =.. [Name | Positional]
+      resolve_named_args(body, Name, Args, Positional), Item =.. [Name | Positional]
     ).
 
 % ═══ expressions : add/sub over mul/div/mod over parenthesized/atomic

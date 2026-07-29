@@ -11,7 +11,8 @@
           [ surface/5,
             surface_for_term/6,
             body_surface_for_term/6,
-            wrapper_lower_role/3
+            wrapper_lower_role/3,
+            bind_definition/2
           ]).
 
 surface(latest/1,       sample,    refs_of_arg(1, pos, sampled), wrapper(rel_atom, lower),              live).
@@ -69,6 +70,12 @@ surface(';' /2,          decl,      no_refs,                      decl(enum_vari
 surface(col_type/3,      decl,      no_refs,                      decl(column_type),                      live).
 surface(set/0,           decl,      no_refs,                      decl(refuse(removed_word)),            refused).
 surface(match/2,         sugar,     no_refs,                      block(match_arms),                      live).
+surface(sh_decl/4,       world,     no_refs,                      decl(host_plan),                        live).
+surface(probe/4,         world,     no_refs,                      wrapper(host_probe, lower),             live).
+surface(bind_decl/2,     world,     no_refs,                      decl(bind_plan),                        live).
+surface(query/1,         read,      no_refs,                      decl(query_plan),                       live).
+
+bind_definition(interval, [col(period, int), col(bucket, int)]).
 
 surface_for_term(Term, Functor/Arity, Axis, AnalyzeRole, LowerRole, Status) :-
     nonvar(Term),

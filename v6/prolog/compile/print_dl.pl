@@ -36,21 +36,31 @@
 
 % ═══ entry points ════════════════════════════════════════════════════════════
 
-print_dl_to_file(prog(Decls, Rules), Bindings, FilePath) :-
-    print_dl_program(prog(Decls, Rules), Bindings, Text),
+print_dl_to_file(Prog, Bindings, FilePath) :-
+    print_dl_program(Prog, Bindings, Text),
     setup_call_cleanup(
         open(FilePath, write, Stream),
         format(Stream, "~w", [Text]),
         close(Stream)).
 
 print_dl_program(prog(Decls, Rules), Bindings, Text) :-
+    print_dl_parts(Decls, Rules, [], Bindings, Text).
+print_dl_program(program(Decls, Rules, Queries), Bindings, Text) :-
+    print_dl_parts(Decls, Rules, Queries, Bindings, Text).
+
+print_dl_parts(Decls, Rules, Queries, Bindings, Text) :-
     decl_ref_order(Decls, DeclItems),
     maplist(decl_line(Decls, Rules, Bindings), DeclItems, DeclLines),
     maplist(rule_line(Bindings), Rules, RuleLines),
+    maplist(query_line(Bindings), Queries, QueryLines),
     ( DeclLines == [] -> DeclBlock = "" ; atomic_list_concat(DeclLines, DeclBlock) ),
     ( RuleLines == [] -> RuleBlock = "" ; atomic_list_concat(RuleLines, RuleBlock) ),
-    ( Rules == [] -> Sep = "" ; DeclLines == [] -> Sep = "" ; Sep = "\n" ),
-    format(atom(Text), "~w~w~w", [DeclBlock, Sep, RuleBlock]).
+    ( QueryLines == [] -> QueryBlock = "" ; atomic_list_concat(QueryLines, QueryBlock) ),
+    join_program_blocks([DeclBlock, RuleBlock, QueryBlock], Text).
+
+join_program_blocks(Blocks, Text) :-
+    exclude(==(""), Blocks, Present),
+    atomic_list_concat(Present, "\n", Text).
 
 % ═══ EDB decl synthesis (the text-door fix) ══════════════════════════════════
 %
@@ -177,6 +187,8 @@ decl_ref_order(Decls, Order) :-
     dedup_preserve_order(Refs0, Order).
 
 decl_order_item(enum_decl(Name, Variants), enum_decl(Name, Variants)).
+decl_order_item(Decl, Decl) :- Decl = sh_decl(_, _, _, _).
+decl_order_item(Decl, Decl) :- Decl = bind_decl(_, _).
 decl_order_item(kind(Ref, log), Ref).
 decl_order_item(keyed(Ref, _), Ref).
 decl_order_item(keep(Ref, _), Ref).
@@ -202,6 +214,20 @@ decl_line(_, _, _, enum_decl(Name, Variants), Line) :-
     !,
     print_enum_variants(Variants, VariantsText),
     format(atom(Line), "rel ~w(~w).~n", [Name, VariantsText]).
+decl_line(_, _, _, sh_decl(Name, Inputs, Outputs, template(Template)), Line) :-
+    !,
+    maplist(print_host_column, Inputs, InputTexts),
+    maplist(print_host_column, Outputs, OutputTexts),
+    atomic_list_concat(InputTexts, ', ', InputsText),
+    atomic_list_concat(OutputTexts, ', ', OutputsText),
+    quote_template(Template, TemplateText),
+    format(atom(Line), "sh ~w(~w) -> (~w) = `~w`.~n",
+           [Name, InputsText, OutputsText, TemplateText]).
+decl_line(_, _, _, bind_decl(Name, Columns), Line) :-
+    !,
+    maplist(print_host_column, Columns, ColumnTexts),
+    atomic_list_concat(ColumnTexts, ', ', ColumnsText),
+    format(atom(Line), "bind ~w(~w).~n", [Name, ColumnsText]).
 decl_line(Decls, Rules, Bindings, Ref, Line) :-
     Ref = Name/_Arity,
     rel_columns(Decls, Rules, Bindings, Ref, Columns),
@@ -214,6 +240,24 @@ decl_line(Decls, Rules, Bindings, Ref, Line) :-
     ; atomic_list_concat(ModifierTexts, ' ', ModifiersText), Sep = ' '
     ),
     format(atom(Line), "rel ~w(~w)~w~w.~n", [Name, ColsText, Sep, ModifiersText]).
+
+print_host_column(col(Name, Type), Text) :-
+    format(atom(Text), "~w: ~w", [Name, Type]).
+
+quote_template(Template, Text) :-
+    string_codes(Template, Codes),
+    escape_template_codes(Codes, Escaped),
+    atom_codes(Text, Escaped).
+
+escape_template_codes([], []).
+escape_template_codes([0'` | Rest], [0'\\, 0'` | More]) :-
+    !,
+    escape_template_codes(Rest, More).
+escape_template_codes([0'\\ | Rest], [0'\\, 0'\\ | More]) :-
+    !,
+    escape_template_codes(Rest, More).
+escape_template_codes([Code | Rest], [Code | More]) :-
+    escape_template_codes(Rest, More).
 
 decl_is_modifier(kind(Ref, log), Ref).
 decl_is_modifier(keep(Ref, _), Ref).
@@ -268,6 +312,10 @@ rule_line(Bindings, (Head <+ Body), Line) :- !,
     print_body(Body, Bindings, BodyText),
     format(atom(Line), "~w <+ ~w.~n", [HeadText, BodyText]).
 
+query_line(Bindings, query(Atom), Line) :-
+    print_term(Atom, Bindings, 0, top, AtomText),
+    format(atom(Line), "? ~w.~n", [AtomText]).
+
 match_arm_terms((Left ; Right), Arms) :-
     !,
     match_arm_terms(Left, LeftArms),
@@ -295,6 +343,19 @@ print_body(Item, Bindings, Text) :-
     print_body_item(Item, Bindings, Text).
 
 print_body_item(Term, Bindings, Text) :-
+    Term = probe(Name, Inputs, Outputs, Salts),
+    !,
+    append(Inputs, Outputs, Values),
+    maplist(print_arg(Bindings), Values, ValueTexts),
+    atomic_list_concat(ValueTexts, ', ', ValuesText),
+    maplist(print_salt(Bindings), Salts, SaltTexts),
+    ( SaltTexts == []
+    -> SaltText = ""
+    ; atomic_list_concat(SaltTexts, ' ', JoinedSalts),
+      format(atom(SaltText), " ~w", [JoinedSalts])
+    ),
+    format(atom(Text), "? ~w(~w)~w", [Name, ValuesText, SaltText]).
+print_body_item(Term, Bindings, Text) :-
     body_surface_for_term(Term, _, _, _, LowerRole, _), !,
     print_surface_body_item(LowerRole, Term, Bindings, Text).
 print_body_item(Term, Bindings, Text) :-
@@ -318,6 +379,10 @@ print_surface_wrapper_args(body_item, [Inner], Bindings, [InnerText]) :- !,
     print_body_item(Inner, Bindings, InnerText).
 print_surface_wrapper_args(_, Args, Bindings, ArgTexts) :-
     maplist(print_arg(Bindings), Args, ArgTexts).
+
+print_salt(Bindings, salt(Name, Value), Text) :-
+    print_arg(Bindings, Value, ValueText),
+    format(atom(Text), "@ salt(~w: ~w)", [Name, ValueText]).
 
 % ═══ general term printer : var (via Bindings) | int | atom (single-quoted)
 % | string (double-quoted) | '{}'(Pairs) braces | list | arithmetic (infix,

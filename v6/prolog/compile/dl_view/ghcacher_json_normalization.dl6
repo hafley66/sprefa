@@ -1,0 +1,2 @@
+stars(Ep, N) <- current_body(Ep, Body), decode(Body, {stargazers_count: N}).
+pull_request(Ep, Num, Title, State, Author) <- current_body(Ep, Body), json_each(Body, Item), decode(Item, {number: Num, title: Title, state: State, user: {login: Author}}).

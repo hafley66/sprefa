@@ -65,6 +65,7 @@
 :- use_module(library(ordsets)).
 :- use_module(library(pairs)).
 :- use_module('../0_match_expand', [expand_match_program/2]).
+:- use_module('../1_host_expand', [prepare_program/5]).
 :- use_module(rulings).
 :- use_module(body).
 :- use_module(level_eval).
@@ -188,10 +189,10 @@ absorb_arrivals(Prog, Tick, [Signed | Rest], Store0, Seq0, Store, Seq, Occurrenc
         ->  Store1 = [lrow(st(Tick, Seq0), Row) | Store0],
             Seq1 is Seq0 + 1,
             Occurrences = [occ(st(Tick, Seq0), Row) | More]
-        ;   ( memberchk(srow(Row), Store0)
-            -> Store1 = Store0, Occurrences = More, Seq1 = Seq0
-            ;  Store1 = [srow(Row) | Store0],
-               Seq1 is Seq0 + 1,
+        ;   absorb_set_arrival(Decls, Row, Store0, Store1, Changed),
+            ( Changed == false
+            -> Occurrences = More, Seq1 = Seq0
+            ;  Seq1 is Seq0 + 1,
                Occurrences = [occ(st(Tick, Seq0), Row) | More] ) )
     ;   Signed = -Row,
         rel_ref(Row, Ref),
@@ -201,6 +202,19 @@ absorb_arrivals(Prog, Tick, [Signed | Rest], Store0, Seq0, Store, Seq, Occurrenc
         Seq1 = Seq0, Occurrences = More
     ),
     absorb_arrivals(Prog, Tick, Rest, Store1, Seq1, Store, Seq, More).
+
+absorb_set_arrival(_, Row, Store, Store, false) :-
+    memberchk(srow(Row), Store),
+    !.
+absorb_set_arrival(Decls, Row, Store0, [srow(Row) | Kept], true) :-
+    rel_ref(Row, Ref),
+    decl_key(Decls, Ref, Positions),
+    key_of(Positions, Row, Key),
+    select(srow(Old), Store0, Kept),
+    rel_ref(Old, Ref),
+    key_of(Positions, Old, Key),
+    !.
+absorb_set_arrival(_, Row, Store, [srow(Row) | Store], true).
 
 % ═══ edge firing, one occurrence at a time ══════════════════════════════════
 
@@ -346,7 +360,8 @@ delta_ref_is_set(Decls, Rules, Row) :-
 % ═══ the run loop, engine-owned drains (q5) ═════════════════════════════════
 
 run_program(SugaredProg, Initial, Schedule, FinalAll, DeltaTicks) :-
-    expand_match_program(SugaredProg, Prog),
+    prepare_program(SugaredProg, HostProg, _, _, _),
+    expand_match_program(HostProg, Prog),
     check_program(Prog),
     seed_store(Prog, Initial, Store0),
     Prog = prog(_, Rules),

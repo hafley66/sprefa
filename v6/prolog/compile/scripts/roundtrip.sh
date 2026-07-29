@@ -191,9 +191,10 @@ g2 :-
 g2_one(Label, Path) :-
     format("~n--- G2 ~w ---~n", [Label]),
     catch(
-        ( parse_dl_file(Path, prog(Decls, Rules), _Bindings, Findings),
-          length(Decls, DeclCount), length(Rules, RuleCount),
-          format("  Decls: ~w  Rules: ~w~n", [DeclCount, RuleCount]),
+        ( parse_dl_file(Path, Parsed, _Bindings, Findings),
+          parsed_counts(Parsed, DeclCount, RuleCount, QueryCount),
+          format("  Decls: ~w  Rules: ~w  Queries: ~w~n",
+                 [DeclCount, RuleCount, QueryCount]),
           ( Findings == []
           -> format("  Findings: none~n")
           ; length(Findings, FindingCount),
@@ -204,6 +205,14 @@ g2_one(Label, Path) :-
         Err,
         ( assertz(g2_failed_flag), format("  PARSE ERROR: ~q~n", [Err]) )
     ).
+
+parsed_counts(prog(Decls, Rules), DeclCount, RuleCount, 0) :-
+    length(Decls, DeclCount),
+    length(Rules, RuleCount).
+parsed_counts(program(Decls, Rules, Queries), DeclCount, RuleCount, QueryCount) :-
+    length(Decls, DeclCount),
+    length(Rules, RuleCount),
+    length(Queries, QueryCount).
 
 main :-
     format("=== G1 ROUND-TRIP ===~n"),

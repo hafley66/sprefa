@@ -21,6 +21,10 @@
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
 :- use_module('../parse_dl', [ parse_dl/4 ]).
 :- use_module('../print_dl', [ print_dl_program/3 ]).
+:- use_module('../../1_host_expand',
+              [ prepare_program/5, compile_host_decl/2, compile_ts_query/2 ]).
+:- use_module('../emit_ts', [ emit_program/5 ]).
+:- use_module('../lower', [ boot_statements/4 ]).
 
 % Resolved relative to this file's own load-time directory (mirrors
 % sweep.pl's compile_dir/1 pattern -- prolog_load_context/2 only answers
@@ -705,3 +709,149 @@ test(retention_count_is_one_set_based_delete_statement) :-
         LevelStatements).
 
 :- end_tests(match_block).
+
+:- begin_tests(hosts_wiring).
+
+test(selected_surface_round_trips) :-
+    string_codes(
+      "sh fetch(ep: text) -> (status: int) = `run {ep}`.\nresult(Status) <- input(Ep), ? fetch(Ep, Status) @ salt(bucket: 3).\n? result(Status).\n",
+      Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    Program = program(
+                [sh_decl(fetch, [col(ep, text)], [col(status, int)],
+                         template("run {ep}"))],
+                [(_ <- (_, probe(fetch, [_], [_], [salt(bucket, 3)])))],
+                [query(result(_))]),
+    print_dl_program(Program, Bindings, Printed),
+    atom_codes(Printed, PrintedCodes),
+    parse_dl(PrintedCodes, Reparsed, _, []),
+    Program =@= Reparsed.
+
+test(named_body_omissions_are_fresh) :-
+    string_codes(
+      "rel source(a: text, b: text, c: text).\nout(X) <- source(a: X).\n",
+      Codes),
+    parse_dl(Codes, prog(_, [(_ <- source(X, OmittedB, OmittedC))]), _, []),
+    var(X),
+    var(OmittedB),
+    var(OmittedC),
+    OmittedB \== OmittedC,
+    X \== OmittedB,
+    X \== OmittedC.
+
+test(named_partial_head_is_refused) :-
+    string_codes(
+      "rel source(a: text, b: text, c: text).\nsource(a: X) <- seed(X).\n",
+      Codes),
+    parse_dl(Codes, _, _,
+             [unsupported_surface(partial_head(source/3))]).
+
+test(host_unreferenced_input_refusal,
+     [throws(template_mismatch(unreferenced_input(prev)))]) :-
+    compile_host_decl(
+      sh_decl(fetch,
+              [col(ep, text), col(prev, text)],
+              [col(status, int)],
+              template("{ep}")),
+      _).
+
+test(host_output_reference_refusal,
+     [throws(template_mismatch(output_used_as_input(status)))]) :-
+    compile_host_decl(
+      sh_decl(fetch,
+              [col(ep, text)],
+              [col(status, int)],
+              template("{ep} $status")),
+      _).
+
+test(host_unknown_column_refusal,
+     [throws(template_mismatch(unknown_column(missing)))]) :-
+    compile_host_decl(
+      sh_decl(fetch,
+              [col(ep, text)],
+              [col(status, int)],
+              template("{ep} {missing}")),
+      _).
+
+test(host_shell_local_dollar_name_is_not_a_column) :-
+    compile_host_decl(
+      sh_decl(fetch,
+              [col(ep, text), col(prev, text)],
+              [col(status, int)],
+              template("R={ep}; P=$prev; printf '%s' \"$R\"")),
+      _).
+
+test(host_overlap_refusal,
+     [throws(column_mismatch(input_output_overlap(ep)))]) :-
+    compile_host_decl(
+      sh_decl(fetch,
+              [col(ep, text)],
+              [col(ep, text)],
+              template("{ep}")),
+      _).
+
+test(host_duplicate_column_refusal,
+     [throws(column_mismatch(input, duplicate(ep)))]) :-
+    compile_host_decl(
+      sh_decl(fetch,
+              [col(ep, text), col(ep, text)],
+              [col(status, int)],
+              template("{ep}")),
+      _).
+
+test(probe_arity_refusal,
+     [throws(probe_mismatch(probe(fetch, [repo], [], [])))]) :-
+    prepare_program(
+      program(
+        [sh_decl(fetch, [col(ep, text)], [col(status, int)],
+                 template("{ep}"))],
+        [(result(_Status) <- probe(fetch, [repo], [], []))],
+        []),
+      _, _, _, _).
+
+test(bind_and_rule_head_refusal,
+     [throws(bind_and_rule_head(interval))]) :-
+    prepare_program(
+      program(
+        [bind_decl(interval, [col(period, int), col(bucket, int)])],
+        [(interval(Period, Bucket) <- seed(Period, Bucket))],
+        []),
+      _, _, _, _).
+
+test(native_ts_query_exact_text) :-
+    compile_ts_query(
+      ts_query(
+        [ group(
+            node(call_expression,
+                 [field(function,
+                        capture(callee, node(identifier, [])))]),
+            [predicate(eq, capture_ref(callee), string("fetch"))]),
+          quant(optional, node(comment, [])),
+          quant(zero_or_more, wildcard)
+        ]),
+      Text),
+    Text ==
+      "((call_expression function: (identifier) @callee) (#eq? @callee \"fetch\"))\n(comment)?\n_*".
+
+test(emitter_carries_world_plans_and_demand_sql) :-
+    fixture_file('2_hosts_wiring.pl', File),
+    read_fixture_term(File, native_ts_query_term, Term, Bindings),
+    program_plan(Term-Bindings, Plan),
+    lower_program(Plan, Lowered),
+    Term = fixture(_, _, Initial, _, _),
+    Plan = plan(_, _, RelPlans, _, _, _),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    boot_statements(RelPlans, Initial, LevelStatements, Boot),
+    emit_program(native_ts_query_term, Plan, Lowered, Boot, Text),
+    once(sub_atom(Text, _, _, _, 'export const hostPlans')),
+    once(sub_atom(Text, _, _, _,
+                  'unsupported_host_execution_phase_2(tree_sitter)')),
+    once(sub_atom(Text, _, _, _,
+                  'unsupported_bind_execution_phase_2(interval)')),
+    once(sub_atom(Text, _, _, _,
+                  'CREATE TABLE "__host_demand_tree_sitter"')),
+    once(sub_atom(Text, _, _, _,
+                  'CREATE TABLE "__host_response_tree_sitter"')),
+    !.
+
+:- end_tests(hosts_wiring).

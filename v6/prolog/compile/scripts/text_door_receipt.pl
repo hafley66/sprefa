@@ -183,14 +183,14 @@ grade_text_door(Name, Term, Bindings, OutDir, Status) :-
     format(atom(TextFile), '~w/~w.dl6', [OutDir, Name]),
     catch(
         ( Term = fixture(Name, Prog, Initial, Schedule, _Expectations),
-          Prog = prog(RawDecls, RawRules),
+          raw_program_parts(Prog, RawDecls, RawRules, Queries),
           program_plan(fixture(Name, Prog, Initial, Schedule, [])-Bindings, Plan),
           Plan = plan(_, ExpandedProg, RelPlans, ArrivalTargets, _, _),
           ExpandedProg = prog(ExpandedDecls, _),
           witnessed_refs(Initial, Schedule, WitnessedRefs),
           augmented_decls(RawDecls, ExpandedDecls, RelPlans, ArrivalTargets, WitnessedRefs,
                           AugmentedDecls),
-          AugmentedProg = prog(AugmentedDecls, RawRules),
+          rebuild_program(Queries, AugmentedDecls, RawRules, AugmentedProg),
           print_dl_program(AugmentedProg, Bindings, Text),
           write_text(TextFile, Text),
           quiet(compile_program(Name, fixture(Name, AugmentedProg, [], [], []), Bindings,
@@ -206,6 +206,12 @@ grade_text_door(Name, Term, Bindings, OutDir, Status) :-
         TextDoorError,
         Status = failure(Name, TextDoorError)
     ).
+
+raw_program_parts(prog(Decls, Rules), Decls, Rules, none).
+raw_program_parts(program(Decls, Rules, Queries), Decls, Rules, some(Queries)).
+
+rebuild_program(none, Decls, Rules, prog(Decls, Rules)).
+rebuild_program(some(Queries), Decls, Rules, program(Decls, Rules, Queries)).
 
 % witnessed_refs(Initial, Schedule, Refs): every Ref = Name/Arity that has
 % at least one row, addition or retraction alike, in Initial or any
