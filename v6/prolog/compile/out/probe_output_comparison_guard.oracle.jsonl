@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"__host_response_score":{"add":[["witness|score|path:text=a",0,"a",12]],"del":[]},"accepted":{"add":[["a",12]],"del":[]}}}
+{"tick":2,"deltas":{"__host_response_score":{"add":[["witness|score|path:text=a",1,"a",8]],"del":[]}}}

@@ -323,17 +323,18 @@ expand_probe_rules([Rule | Rest], HostPlans, RawDecls,
 expand_probe_rule((Head <- Body), HostPlans, RawDecls,
                   [DemandRule, (Head <- JoinedBody)], Decls) :-
     body_goals(Body, Goals),
-    select(Probe, Goals, RemainingGoals),
+    append(BeforeProbe, [Probe | AfterProbe], Goals),
     Probe = probe(_, _, _, _),
     !,
+    append(BeforeProbe, AfterProbe, RemainingGoals),
     ( member(OtherProbe, RemainingGoals), OtherProbe = probe(_, _, _, _)
     -> throw(probe_mismatch(multiple_probes(Body)))
     ; true
     ),
     expand_probe(Probe, HostPlans, RawDecls,
                  DemandAtom, WitnessBind, ResponseAtom, Decls),
-    body_from_list(RemainingGoals, DemandBody),
-    append(RemainingGoals, [WitnessBind, ResponseAtom], JoinedGoals),
+    body_from_list(BeforeProbe, DemandBody),
+    append([BeforeProbe, [WitnessBind, ResponseAtom], AfterProbe], JoinedGoals),
     body_from_list(JoinedGoals, JoinedBody),
     DemandRule = (DemandAtom <- DemandBody).
 expand_probe_rule(Rule, _, _, [Rule], []).

@@ -1,0 +1,1 @@
+{"final":{"__host_demand_score":[["identity|score|path:text=a","witness|score|path:text=a","a"]],"__host_response_score":[["witness|score|path:text=a",0,"a",12],["witness|score|path:text=a",1,"a",8]],"accepted":[["a",12]],"input":[["a"]]}}

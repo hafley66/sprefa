@@ -139,13 +139,12 @@ program_violation(pre_in_level_rule, prog(_, Rules), Ref) :-
                       walk_policy(descend_not(true), splice_bare(false)), Ref).
 
 % finalize/1 is a departure occurrence; a level rule has no occurrences.
-% Does NOT descend not/1, matching both doors before this file existed: a
-% negated finalize is opaque on both sides, which the
-% nested_not_finalize_is_opaque_to_both_doors test pins.
+% Descends not/1 like the latest/pre checks: negation does not supply a
+% departure occurrence to the level plane.
 program_violation(finalize_in_level_rule, prog(_, Rules), Ref) :-
     member((_ <- Body), Rules),
     body_wrapper_refs(Body, finalize,
-                      walk_policy(descend_not(false), splice_bare(false)),
+                      walk_policy(descend_not(true), splice_bare(false)),
                       Ref).
 
 % ── the value plane (STRUCT-AS-ROWS) ─────────────────────────────────────────

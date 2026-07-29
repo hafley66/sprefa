@@ -124,6 +124,11 @@ goal_rel_refs((Left, Right), Pos, Neg) :- !,
 goal_rel_refs(not(Goal), [], Neg) :- !,
     goal_rel_refs(Goal, InnerPos, InnerNeg),
     append(InnerPos, InnerNeg, Neg).
+goal_rel_refs(Goal, Pos, Neg) :-
+    surface_for_term(Goal, _, _, splice_bare, _, _),
+    !,
+    Goal =.. [_ | Atoms],
+    goal_list_rel_refs(Atoms, Pos, Neg).
 goal_rel_refs(latest(Atom), [Ref], []) :- !, rel_ref(Atom, Ref).
 goal_rel_refs(finalize(_), [], []) :- !.
 goal_rel_refs(pre(_), [], []) :- !.
@@ -135,6 +140,13 @@ goal_rel_refs(decode(_, _), [], []) :- !.
 goal_rel_refs(json_each(_, _), [], []) :- !.
 goal_rel_refs(Goal, [], []) :- comparison_goal(Goal), !.
 goal_rel_refs(Atom, [Ref], []) :- rel_ref(Atom, Ref).
+
+goal_list_rel_refs([], [], []).
+goal_list_rel_refs([Goal | Rest], Pos, Neg) :-
+    goal_rel_refs(Goal, GoalPos, GoalNeg),
+    goal_list_rel_refs(Rest, RestPos, RestNeg),
+    append(GoalPos, RestPos, Pos),
+    append(GoalNeg, RestNeg, Neg).
 
 relax_strata(Constraints, Cap, Strata0, Strata) :-
     findall(changed,

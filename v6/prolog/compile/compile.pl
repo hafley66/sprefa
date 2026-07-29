@@ -33,6 +33,7 @@
           ]).
 
 :- use_module(library(lists)).
+:- use_module('../0_refusal_messages', []).
 :- use_module('../1_expansion', [expand_program/3]).
 :- use_module('../1_host_expand', [prepare_program/5]).
 :- use_module(analyze).

@@ -187,47 +187,25 @@ log_stamps(Store, Ref, Stamps) :-
 % plans/2026-07-29-prolog-org-review.md); the classification stays here,
 % because it is NOT the registry's.
 %
-% silent_trigger_form/1 below is the list this file has always carried, kept
-% exactly as it was. It is a strict SUBSET of the registry's body rows: next/1,
-% variadic combine, zip/2, the four reserved lifecycle wrappers and the six
-% comparison operators are absent from it, so each of those becomes an
-% arrival(Wrapper) here. The `mixed` and `comparison` goldens in the
-% body_walk_characterization unit pin exactly that. Those items are inert,
-% because occurrence_trigger/4 unifies an arrival against a real stored row and
-% none of those shapes can match one, but the classification is wrong at the
-% source and widening it is a semantics change owed a fixture, not a cleanup.
-%
 % The walk must NOT descend not/1 and must NOT splice next/1 or combine: a
-% negated atom is not a trigger, and splicing would turn the inert
-% arrival(next(...)) into a live trigger on the spliced atom.
+% negated atom is not a trigger, and next/1 or combine remain wrappers rather
+% than becoming live triggers on their spliced atoms.
 trigger_items(Body, Items) :-
     walk_body(Body, walk_policy(descend_not(false), splice_bare(false)),
               Events),
     trigger_items_(Events, Items).
 
 trigger_items_([], []).
-trigger_items_([event(_, _, _, Term) | Rest], Items) :-
+trigger_items_([event(_, _, Surface, Term) | Rest], Items) :-
     (   nonvar(Term), Term = finalize(Atom)
     ->  Items = [departure(Atom) | RestItems]
-    ;   silent_trigger_form(Term)
-    ->  Items = RestItems
     % Bound directly out of the walked body, NEVER copied: a copy would sever
     % the trigger atom from the body and let solve rejoin over the whole store.
-    ;   Items = [arrival(Term) | RestItems]
+    ;   Surface == plain_atom
+    ->  Items = [arrival(Term) | RestItems]
+    ;   Items = RestItems
     ),
     trigger_items_(Rest, RestItems).
-
-silent_trigger_form(Term) :- nonvar(Term), silent_trigger_shape(Term).
-
-silent_trigger_shape(latest(_)).
-silent_trigger_shape(not(_)).
-silent_trigger_shape(pre(_)).
-silent_trigger_shape(now(_)).
-silent_trigger_shape(true).
-silent_trigger_shape(_ := _).
-silent_trigger_shape(_ is _).
-silent_trigger_shape(decode(_, _)).
-silent_trigger_shape(json_each(_, _)).
 
 wrap_arrival(Atom, arrival(Atom)).
 

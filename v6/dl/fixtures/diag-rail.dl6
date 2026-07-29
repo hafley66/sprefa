@@ -35,21 +35,9 @@
 # a computed line -- there is no line math anywhere in this file or in the
 # bridge, in or out of the engine.
 #
-# `0 + 0`, NOT bare `0`, IS A NAMED COMPILER-BUG WORKAROUND, not a spelling
-# preference. A bare integer literal head column reaches the emitted
-# support-count recompute's `GROUP BY` verbatim (emit_ts.pl), and SQLite reads
-# a bare-integer-literal GROUP BY term as a 1-based POSITIONAL column
-# reference into its own SELECT list, not a constant -- four `0` columns here
-# throws `SQLITE_ERROR: 2nd GROUP BY term out of range` at the very first
-# insert (reproduced, receipt in the arc's final report: a one-rel probe
-# program with a bare `0` head column fails the identical way; wrapping it
-# `0 + 0` compiles to a parenthesized SQL expression, `(0 + 0)`, which SQLite
-# does NOT treat positionally, and the same probe then runs clean). This is a
-# real defect in the tsv2 emitter's GROUP BY codegen (any rule with two or
-# more bare-integer-literal head columns hits it, whole-file diagnostics
-# being the first program to have four), not owned by this arc (v6/prolog/
-# compile/emit_ts.pl is outside FILES YOU OWN for this brief) -- flagged here
-# for the emitter's own owner, worked around in-language in the meantime.
+# Bare integer head columns are intentional. The compiler wraps integer
+# literals only in support-count GROUP BY expressions so SQLite cannot read
+# them as positional SELECT-list references.
 #
 # ZERO NEW CONSTRUCTS. Every host/bind/probe/rule shape below already has a
 # graded fixture; see the two rails named above for each one's own header and
@@ -106,10 +94,10 @@ unused(name) <- def(_, name), not(call(_, name)).
 rel diag_v5(path: text, line: int, col: int, end_line: int, end_col: int,
             severity: text, code: text, msg: text, hint: text).
 
-diag_v5(path, 0 + 0, 0 + 0, 0 + 0, 0 + 0, 'error', 'no-eval',
+diag_v5(path, 0, 0, 0, 0, 'error', 'no-eval',
         'eval() is banned; use a safe alternative', '') <-
   call(path, callee), callee == 'eval'.
 
-diag_v5(path, 0 + 0, 0 + 0, 0 + 0, 0 + 0, 'warn', 'unused-def',
+diag_v5(path, 0, 0, 0, 0, 'warn', 'unused-def',
         'function defined but never called anywhere in the watched file set', '') <-
   def(path, name), unused(name).

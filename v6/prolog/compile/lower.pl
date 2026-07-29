@@ -1561,7 +1561,7 @@ level_support_arm(RelPlans, Rule, SupportArm) :-
     atomic_list_concat(FromParts, ', ', FromSql),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     head_select_list(Head, Bound, HeadColumns, AliasedSelectExprs),
-    head_select_list(Head, Bound, none, GroupExprs),
+    support_group_exprs(Head, Bound, GroupExprs),
     atomic_list_concat(AliasedSelectExprs, ', ', SelectSql),
     atomic_list_concat(GroupExprs, ', ', GroupSql),
     ( AllWhereTexts == []
@@ -1572,6 +1572,22 @@ level_support_arm(RelPlans, Rule, SupportArm) :-
        format(atom(SupportArm),
               'SELECT ~w, count(*) AS "__support_count" FROM ~w WHERE ~w GROUP BY ~w',
               [SelectSql, FromSql, WhereSql, GroupSql])
+    ).
+
+% SQLite treats a bare integer in GROUP BY as a one-based SELECT-list
+% position, including when the integer is parenthesized. Adding zero makes it
+% an expression while preserving its value, so only literal integer head
+% columns need a different spelling from head_select_list/4. Every variable,
+% atom, and compound head expression retains its existing emitted SQL bytes.
+support_group_exprs(Head, Bound, GroupExprs) :-
+    Head =.. [_ | Args],
+    maplist(support_group_expr(Bound), Args, GroupExprs).
+
+support_group_expr(Bound, Arg, GroupExpr) :-
+    compile_expr(Arg, Bound, Sql, _Type),
+    ( integer(Arg)
+    -> format(atom(GroupExpr), '(~w + 0)', [Sql])
+    ;  GroupExpr = Sql
     ).
 
 qualified_equalities([], _, _, []).
