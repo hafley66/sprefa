@@ -42,6 +42,10 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `decision` plans/2026-07-20-typed-template-bootstrap-lab.md:705 — Select the embedded relation storage strategy after measuring Vec-plus-indexes against a Rust Datalog crate on the fixed fact vocabulary.
 - `decision` plans/2026-07-20-typed-template-bootstrap-lab.md:711 — Decide whether repeated named slots mean equality constraints or duplicate-binding errors after matcher ambiguity tests exist.
 - `decision` plans/2026-07-25-analysis-engine-bakeoff-labs.md:118 — per-candidate verdict at the human gate — adopt-as-engine / adopt-as-oracle / read-only / discard
+- `decision` plans/2026-07-29-clock-checker-proof-payoff.md:243 — D1 requires user selection among labelled dependency inference, more named refusals, clocks only, rings only, or runtime receipts only
+- `decision` plans/2026-07-29-clock-checker-proof-payoff.md:257 — D2 requires user selection for monotone positive zero-grade recursion and the current SQL backend boundary
+- `decision` plans/2026-07-29-clock-checker-proof-payoff.md:273 — D3 remains gated on the active relation-edge lifecycle lab and requires user selection only after its missing-target and retraction receipts
+- `decision` plans/2026-07-29-clock-checker-proof-payoff.md:286 — D4 requires user selection for the boundary of the clock theorem around external provider liveness
 - `decision` plans/2026-07-29-file-identity-span-spine.md:363 — Confirm the proposed semantic names File, Blob, RevFile, and FileSpan before any declaration spelling or migration lands.
 - `decision` plans/2026-07-29-file-identity-span-spine.md:366 — Choose whether work revisions retain one stable rev_id while rev_file rows change, or mint a new observation revision per accepted watcher batch.
 - `decision` plans/2026-07-29-file-identity-span-spine.md:370 — Choose the user-visible declaration spelling for standard library value views separately from their rel declarations. No spelling is introduced by this plan.
@@ -262,6 +266,10 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-25-analysis-engine-bakeoff-labs.md:117 `perf` — RAM budget per lab declared BEFORE its first C2 run — exceeding = fail (30GB lesson)
 - plans/2026-07-25-analysis-engine-bakeoff-labs.md:118 `decision` — per-candidate verdict at the human gate — adopt-as-engine / adopt-as-oracle / read-only / discard
 - plans/2026-07-25-analysis-engine-bakeoff-labs.md:119 `docs` — scale matrix committed to labs/bakeoff/MATRIX.md (tool × Q1–Q10 × C0–C3 × wall/RSS/LOC/cold-start)
+- plans/2026-07-29-clock-checker-proof-payoff.md:243 `decision` — D1 requires user selection among labelled dependency inference, more named refusals, clocks only, rings only, or runtime receipts only
+- plans/2026-07-29-clock-checker-proof-payoff.md:257 `decision` — D2 requires user selection for monotone positive zero-grade recursion and the current SQL backend boundary
+- plans/2026-07-29-clock-checker-proof-payoff.md:273 `decision` — D3 remains gated on the active relation-edge lifecycle lab and requires user selection only after its missing-target and retraction receipts
+- plans/2026-07-29-clock-checker-proof-payoff.md:286 `decision` — D4 requires user selection for the boundary of the clock theorem around external provider liveness
 - plans/2026-07-29-file-identity-span-spine.md:363 `decision` — Confirm the proposed semantic names File, Blob, RevFile, and FileSpan before any declaration spelling or migration lands.
 - plans/2026-07-29-file-identity-span-spine.md:366 `decision` — Choose whether work revisions retain one stable rev_id while rev_file rows change, or mint a new observation revision per accepted watcher batch.
 - plans/2026-07-29-file-identity-span-spine.md:370 `decision` — Choose the user-visible declaration spelling for standard library value views separately from their rel declarations. No spelling is introduced by this plan.

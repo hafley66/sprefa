@@ -15,6 +15,7 @@
 :- discontiguous verification/2.
 :- discontiguous next_action/2.
 :- discontiguous locked/2.
+:- discontiguous leading_hypothesis/2.
 
 session(id, '20260729.4').
 session(date, '2026-07-29').
