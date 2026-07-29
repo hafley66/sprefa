@@ -1,4 +1,4 @@
-rel open_feed(session_id, target) key(1).
+rel open_feed(session_id: text, target: text) key(1).
 
 demanded(Target, SessionId) <- open_feed(SessionId, Target).
 effect_call(Target) <- demanded(Target, _).

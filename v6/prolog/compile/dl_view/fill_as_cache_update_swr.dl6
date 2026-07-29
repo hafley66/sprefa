@@ -1,5 +1,5 @@
-rel fill_arrived(target, body) log keep(all).
-rel open_feed(session_id, target) key(1).
+rel fill_arrived(target: text, body: text) log keep(all).
+rel open_feed(session_id: text, target: text) key(1).
 rel cache_row(target, body) key(1).
 
 demanded(Target, SessionId) <- open_feed(SessionId, Target).

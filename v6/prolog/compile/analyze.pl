@@ -18,7 +18,7 @@
 :- module(analyze,
           [ rel_kind/3, decl_key/3, decl_keep/3, declared_refs/2,
             program_refs/2, arrival_target_refs/2, derived_refs/2,
-            edge_headed_refs/2, level_headed_refs/2,
+            edge_headed_refs/2, level_headed_refs/2, seeded_refs/2,
             rule_head_ref/2, rule_is_edge/1, rule_is_level/1,
             body_ref_uses/2, rel_columns/4, rel_columns/5,
             rel_column_types/5, rel_column_types/7, snake_name/2,
@@ -222,6 +222,18 @@ program_uses_tick(prog(_, Rules), UsesTick) :-
 % intentionally never read by any rule -- comment: "REJECTED READING
 % dropped on purpose"). Scanning only kind/2 missed it, and its Schedule
 % arrival then hit the emitted program's "arrival for undeclared rel" guard.
+% Every ref an Initial row seeds, declared or not. engine.pl:seed_store/3
+% stores EVERY Initial row (rel_kind/3's own fallback makes an undeclared ref
+% a Set rel), so such a ref is part of the oracle's final state whether or not
+% any rule or decl mentions it. Without this the emitted program has no table
+% for it, no boot seed, and no finalSelect entry -- the run grades identical
+% (nothing ever writes it) while the FINAL state silently drops the rows.
+% Caught by spine_semantics.pl:xref_rev_is_pin_data_not_live_head, whose
+% Initial carries a known_repo(2) row its own rules never read.
+seeded_refs(Initial, Refs) :-
+    findall(Ref, ( member(Row, Initial), rel_ref(Row, Ref) ), Refs0),
+    sort(Refs0, Refs).
+
 declared_refs(Decls, Refs) :-
     findall(Ref,
             ( member(Decl, Decls),
@@ -388,9 +400,16 @@ column_type_at(Rules, Initial, Schedule, Ref, Position, Type) :-
 % compares TEXT affinity against an integer literal. That is fail-first check
 % (a), the TEXT-collapse class, and this pass is the fix.
 %
-% One fixpoint over LEVEL rule heads only (edge heads keep the literal-
-% witness-only rule this arc did not touch, so check_edge_head_column_types/2
-% keeps refusing the same two fixtures):
+% One fixpoint over EVERY rule head, level and edge alike. Edge heads used to
+% be excluded, on the literal-witness-only rule, and check_edge_head_column_
+% types/2 refused the resulting mismatches by name
+% (edge_head_column_type_mismatch) rather than resolving them. That refusal is
+% the "real fix, out of this ruling's scope" the C2 comment below names, and
+% this is that fix: an edge head's column inherits its type from the body
+% variable that feeds it, exactly the way a level head's does. The
+% cross-check itself stays -- it now fires only where two DIFFERENT body atoms
+% feed one head column with genuinely disagreeing types, which is a real
+% program defect rather than an artefact of where the fixpoint stopped.
 %   1. seed every column from its literal witnesses, keeping "no witness"
 %      DISTINCT from "text witness" (contribution `none` vs `text`);
 %   2. for each level rule, build a variable -> type environment from its
@@ -413,8 +432,7 @@ program_column_types(Decls, Rules, Initial, Schedule, Bindings, Refs, RefTypes) 
               seed_column_contributions(Decls, Rules, Initial, Schedule, Ref,
                                         Columns, Seeds) ),
             SeedMap),
-    include(rule_is_level, Rules, LevelRules),
-    column_type_fixpoint(LevelRules, RefColumns, SeedMap, SeedMap, Settled),
+    column_type_fixpoint(Rules, RefColumns, SeedMap, SeedMap, Settled),
     findall(Ref-Types,
             ( member(Ref-Contributions, Settled),
               maplist(contribution_to_type, Contributions, Types) ),
@@ -495,30 +513,32 @@ now_bound_head_position(Rules, Ref, Position) :-
 % timeless_rail fixtures out with comparison_operand_not_int. `none` means
 % "contributes nothing" all the way to the end; only contribution_to_type/2,
 % after the fixpoint, turns a still-unknown column into TEXT.
-column_type_fixpoint(LevelRules, RefColumns, SeedMap, Current, Settled) :-
+column_type_fixpoint(Rules, RefColumns, SeedMap, Current, Settled) :-
     findall(Ref-TypeList,
             ( member(Ref-Contributions, Current),
               maplist(raw_contribution, Contributions, TypeList) ),
             TypeMap),
     findall(Ref-Merged,
             ( member(Ref-Seeds, SeedMap),
-              rule_head_contributions(LevelRules, RefColumns, TypeMap, Ref,
+              rule_head_contributions(Rules, RefColumns, TypeMap, Ref,
                                       RuleContributions),
               merge_contribution_lists(Seeds, RuleContributions, Merged) ),
             Next),
     ( Next == Current
     -> Settled = Current
-    ;  column_type_fixpoint(LevelRules, RefColumns, SeedMap, Next, Settled)
+    ;  column_type_fixpoint(Rules, RefColumns, SeedMap, Next, Settled)
     ).
 
-rule_head_contributions(LevelRules, RefColumns, TypeMap, Ref, Contributions) :-
+rule_head_contributions(Rules, RefColumns, TypeMap, Ref, Contributions) :-
     findall(HeadTypes,
-            ( member(Rule, LevelRules),
+            ( member(Rule, Rules),
               rule_head_ref(Rule, Ref),
               rule_head_contribution(RefColumns, TypeMap, Rule, HeadTypes) ),
             Contributions).
 
-rule_head_contribution(RefColumns, TypeMap, (Head <- Body), HeadTypes) :-
+rule_head_contribution(RefColumns, TypeMap, Rule, HeadTypes) :-
+    rule_head(Rule, Head),
+    rule_body(Rule, Body),
     body_type_environment(RefColumns, TypeMap, Body, Environment),
     Head =.. [_ | Args],
     maplist(head_arg_contribution(Environment), Args, HeadTypes).
@@ -823,6 +843,76 @@ check_edge_head_column_types_for_rule(RelPlans, (Head <+ Body)) :-
              BodyColumnType \== HeadColumnType ),
            throw(unsupported_construct(edge_head_column_type_mismatch(HeadRef, HeadPosition, BodyColumnType, HeadColumnType)))).
 
+% ═══ mid-tick level state on the non-trigger side of an edge arm ═══════════
+% A RUNTIME-SEAM PLACEHOLDER, not a language decision. Remove it with the
+% runtime fix; the fixture that pins it is check_eventing.pl's
+% clock_rel_join_storms, which the oracle runs correctly.
+%
+% engine.pl freezes MidLevel = level_closure over the store AFTER arrivals are
+% absorbed and BEFORE any edge write (tick/7, frozen(MidLevel, PrevLevel)), so
+% a level row an arrival RETRACTED this tick is already gone from the Visible
+% an edge body reads. The emitted runtime's mid-tick level maintenance is
+% insert-only: 1_incremental.ts applyLevelStatement/5 runs insertSql and stages
+% sign=1 events, and the retraction half lives in recomputeLevelsAfterEdges,
+% which runs AFTER applyEdges. The naive path has the same order
+% (recomputeLevels sits after the edge batch). So a retracted level row is
+% still in its table when a NON-TRIGGER atom joins it.
+%
+% MEASURED on clock_rel_join_storms (`diag_seen(Path,Line,Code,At) <+
+% diagnostic(Path,Line,Code,_), tick_rel(At)`, where diagnostic is level-headed
+% off the arrival-fed file_line): at tick 3, two file_line rows flip to `none`
+% and tick_rel(3) arrives. The tick_rel arm joins diagnostic and gets THREE
+% rows (lines 3, 5, 7) where the oracle derives ONE (line 5) -- the two
+% retracted diagnostics are still in the table.
+%
+% The condition is narrow on purpose:
+%   - only a NON-TRIGGER read. When the level rel is the trigger, the arm reads
+%     its frontier (a delta stream) and the stale table never enters, which is
+%     why diag_scenario_seven_ticks_end_to_end (one trigger, now/1 beside it)
+%     grades identical.
+%   - only a level rel that arrivals can move. exhaust_policy reads
+%     not(live_tab(...)), and live_tab derives from open_tab and closed, BOTH
+%     edge-written, so no arrival can retract it before the edges run. It stays
+%     compiled and identical.
+% Anything wider would refuse the dataflow shape the flagship needs (an edge
+% rule joining an extraction-fed level view), which is the argument for fixing
+% the runtime rather than widening this.
+check_no_edge_joins_arrival_fed_level(Rules) :-
+    level_headed_refs(Rules, LevelRefs),
+    derived_refs(Rules, DerivedRefs),
+    forall(( member(Rule, Rules), rule_is_edge(Rule),
+             rule_body(Rule, Body),
+             edge_trigger_shape(Body, Shape),
+             shape_joined_ref(Shape, JoinedRef),
+             memberchk(JoinedRef, LevelRefs),
+             level_ref_reads_arrival(Rules, DerivedRefs, JoinedRef, []) ),
+           throw(unsupported_construct(edge_body_joins_arrival_fed_level(JoinedRef)))).
+
+% Every ref an arm reads WITHOUT firing from it: the other trigger atoms of an
+% unmarked conjunction (each arm joins the ones it does not fire from), the
+% latest() samples, and the negated atoms.
+shape_joined_ref(unmarked_conjunction(Atoms), Ref) :-
+    length(Atoms, Count), Count > 1,
+    member(Atom, Atoms), rel_ref(Atom, Ref).
+shape_joined_ref(sampled_conjunction(TriggerAtoms, SampleAtoms, NegAtoms, _), Ref) :-
+    ( length(TriggerAtoms, Count), Count > 1, member(Atom, TriggerAtoms)
+    ; member(Atom, SampleAtoms)
+    ; member(Atom, NegAtoms)
+    ),
+    rel_ref(Atom, Ref).
+
+% Does this level rel's derivation reach a rel no rule heads (an EDB rel an
+% arrival can write)? Seen/1 stops the walk on a recursive level rel.
+level_ref_reads_arrival(Rules, DerivedRefs, Ref, Seen) :-
+    \+ memberchk(Ref, Seen),
+    member(Rule, Rules), rule_is_level(Rule), rule_head_ref(Rule, Ref),
+    rule_body(Rule, Body), body_ref_uses(Body, Uses),
+    member(use(BodyRef, _, _, _), Uses),
+    (   \+ memberchk(BodyRef, DerivedRefs)
+    ->  true
+    ;   level_ref_reads_arrival(Rules, DerivedRefs, BodyRef, [Ref | Seen])
+    ).
+
 % ═══ supported-subset gate ═══════════════════════════════════════════════════
 % Refuses (with a specific term, not a generic failure) any construct wider
 % than what lower.pl knows how to emit: an edge rule body must classify as
@@ -879,6 +969,7 @@ check_supported_subset_expanded(Program) :-
                               aggregate_in_edge_head ]),
     forall(( member(Rule, Rules), rule_is_edge(Rule) ), check_edge_rule_shape(Rule)),
     forall(( member(Rule, Rules), rule_is_level(Rule) ), check_level_rule_shape(Rule)),
+    check_no_edge_joins_arrival_fed_level(Rules),
     check_no_edge_head_conflict_risk(Decls, Rules),
     shared_refusal(Program, [ keyed_level_head, keyed_log_rel ]).
 

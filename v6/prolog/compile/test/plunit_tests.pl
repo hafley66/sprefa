@@ -564,6 +564,59 @@ test(rejects_now_in_level_rule,
     Prog = prog([], [ (stamped(Name, Tick) <- ping(Name), now(Tick)) ]),
     check_supported_subset(Prog).
 
+% FAIL-FIRST RECEIPT: an edge head's column type now comes from the body
+% variable that feeds it, not from that head's own literal occurrences.
+%
+% RED (before the fixpoint took edge rules):
+%   accepts_edge_head_column_typed_from_its_body
+%     unsupported_construct(edge_head_column_type_mismatch(xref/2,1,int,text))
+% GREEN below. pin_extracted's span id has integer literals in the schedule;
+% xref/2 is edge-headed and has none of its own, so the old literal-witness-
+% only rule stored an integer in a TEXT column and refused rather than
+% resolving it.
+test(accepts_edge_head_column_typed_from_its_body) :-
+    Prog = prog([kind(pin_extracted/2, log), keep(pin_extracted/2, all),
+                 keyed(xref/2, [1])],
+                [ (xref(SpanId, Kind) <+ pin_extracted(SpanId, Kind)) ]),
+    program_plan(fixture(edge_head_typing, Prog, [pin_extracted(20, doc_link)],
+                         [], [])-[], Plan),
+    lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+    memberchk('CREATE TABLE "xref" ("col1" INTEGER NOT NULL, "col2" TEXT NOT NULL, PRIMARY KEY ("col1")) WITHOUT ROWID', Ddl).
+
+% A ref that ONLY an Initial row mentions still gets a table: engine.pl's
+% seed_store/3 stores it, so it is part of the oracle's final state.
+test(initial_only_ref_still_gets_a_table) :-
+    Prog = prog([kind(ping/1, log), keep(ping/1, all)], []),
+    program_plan(fixture(seeded, Prog, [known_repo(2)], [], [])-[], Plan),
+    lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+    memberchk('CREATE TABLE "known_repo" ("col1" INTEGER NOT NULL, PRIMARY KEY ("col1")) WITHOUT ROWID', Ddl).
+
+% RUNTIME-SEAM PLACEHOLDER (analyze.pl:check_no_edge_joins_arrival_fed_level/1).
+% The oracle runs this program; the emitted runtime's mid-tick level plane is
+% insert-only, so a level row an arrival retracted this tick is still in its
+% table when a non-trigger atom joins it. Remove with the runtime fix.
+test(rejects_edge_join_against_an_arrival_fed_level_rel,
+     [throws(unsupported_construct(edge_body_joins_arrival_fed_level(diagnostic/2)))]) :-
+    Prog = prog([kind(tick_rel/1, log), keep(tick_rel/1, all),
+                 kind(seen/2, log), keep(seen/2, all)],
+                [ (diagnostic(Path, Code) <- file_line(Path, Code)),
+                  (seen(Path, At) <+ diagnostic(Path, _), tick_rel(At)) ]),
+    check_supported_subset(Prog).
+
+% The narrowing that keeps exhaust_policy compiled: a level rel whose own
+% derivation reads only EDGE-WRITTEN rels cannot be moved by an arrival before
+% the edges run, so joining it mid-tick is safe.
+test(accepts_edge_join_against_an_edge_fed_level_rel) :-
+    Prog = prog([kind(open_request/2, log), keep(open_request/2, all),
+                 kind(closed/2, log), keep(closed/2, all),
+                 keyed(open_tab/2, [1])],
+                [ (open_tab(SessionId, TabId) <+ open_request(SessionId, TabId),
+                                                 not(live_tab(SessionId, _))),
+                  (closed(SessionId, TabId) <+ open_request(SessionId, TabId)),
+                  (live_tab(SessionId, TabId) <- open_tab(SessionId, TabId),
+                                                 not(closed(SessionId, TabId))) ]),
+    check_supported_subset(Prog).
+
 % The tick is an INTEGER witness. Without the seed in
 % analyze.pl:seed_column_contribution/8 this column takes the C2 "no witness
 % -> text" default and the emitted DDL says TEXT, which prints the tick

@@ -1,3 +1,3 @@
-rel line(_stream_id, path, _name) log keep(all).
+rel line(_stream_id: int, path: text, _name: text) log keep(all).
 
 seen(Path) <- line(_StreamId, Path, _Name).

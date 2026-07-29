@@ -1,6 +1,7 @@
-rel ratchet(code, allowed) key(1).
-rel hook_window(turn, since) key(1).
+rel ratchet(code: text, allowed: int) key(1).
+rel hook_window(turn: text, since: int) key(1).
 rel diag_history(path, line, code, opened_at) log keep(all).
+rel file_line(path: text, line: int, code: text).
 
 diagnostic(Path, Line, Code, 'warning') <- file_line(Path, Line, Code), Code \== 'none'.
 lint_count(Code, count(hit(Path, Line))) <- diagnostic(Path, Line, Code, _).

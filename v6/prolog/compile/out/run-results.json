@@ -63,6 +63,13 @@
     "finalDetail": ""
   },
   {
+    "name": "diag_scenario_seven_ticks_end_to_end",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "retention_count_prunes_oldest",
     "bucket": "identical",
     "detail": "",
@@ -434,6 +441,20 @@
     "finalDetail": ""
   },
   {
+    "name": "pin_to_unknown_repo_derives_repo_candidate",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "xref_rev_is_pin_data_not_live_head",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "changed_since_spans_two_turns",
     "bucket": "identical",
     "detail": "",
@@ -442,6 +463,20 @@
   },
   {
     "name": "changed_since_ignores_events_before_turn",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "two_pins_dedup_to_one_demand_row",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "rev_fill_not_behind_keeps_stale_pin_empty",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",

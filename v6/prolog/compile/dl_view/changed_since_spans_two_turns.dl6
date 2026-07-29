@@ -1,6 +1,6 @@
-rel worktree_edit(path, digest) log keep(all).
+rel worktree_edit(path: text, digest: text) log keep(all).
 rel change_event(path, digest, tick) log keep(all).
-rel turn_marker(turn_id) log keep(all).
+rel turn_marker(turn_id: text) log keep(all).
 rel agent_turn(turn_id, tick) log keep(all).
 
 change_event(Path, Digest, Tick) <+ worktree_edit(Path, Digest), now(Tick).

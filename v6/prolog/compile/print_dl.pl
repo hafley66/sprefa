@@ -156,9 +156,29 @@ join_program_blocks(Blocks, Text) :-
 % in the current corpus exercises this; a future one that does is a real
 % finding, not a silent gap.
 
+% DECLARED BUT UNTYPED is its own case, and it stayed invisible until an edge
+% head's column type started flowing from its body: `kind(rev_fill/4, log)`
+% covers the ref for declared_refs/2 while saying nothing about its columns,
+% so the printed text carried a decl line with no types and the text door read
+% every column as TEXT. The term door reads the fixture's Schedule literals
+% and calls them int, the edge head downstream inherits int, and the two doors
+% disagreed (comparison_operand_not_int on rev_status' `Behind > 0`).
+% The extra candidates are restricted to refs the RAW program declares:
+% expansion-GENERATED decls (enum variant rels) must keep printing exactly as
+% the sugar implies, never as synthesized typed decls.
 augmented_decls(RawDecls, ExpandedDecls, RelPlans, ArrivalTargets, WitnessedRefs, AugmentedDecls) :-
     declared_refs(ExpandedDecls, CoveredRefs),
-    subtract(ArrivalTargets, CoveredRefs, NeedsDeclCandidates),
+    subtract(ArrivalTargets, CoveredRefs, UndeclaredCandidates),
+    findall(Ref, member(col_type(Ref, _, _), ExpandedDecls), TypedRefs0),
+    sort(TypedRefs0, TypedRefs),
+    declared_refs(RawDecls, RawDeclaredRefs),
+    findall(Ref,
+            ( member(Ref, ArrivalTargets),
+              memberchk(Ref, RawDeclaredRefs),
+              \+ memberchk(Ref, TypedRefs) ),
+            UntypedCandidates),
+    append(UndeclaredCandidates, UntypedCandidates, Candidates0),
+    sort(Candidates0, NeedsDeclCandidates),
     intersection(NeedsDeclCandidates, WitnessedRefs, NeedsDeclRefs),
     findall(col_type(Ref, Column, Type),
             ( member(Ref, NeedsDeclRefs),
