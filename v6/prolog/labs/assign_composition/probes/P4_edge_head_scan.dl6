@@ -1,0 +1,3 @@
+rel increment(name: text, tag: text).
+
+counter(Name, Total + 1) <+ increment(Name, _), pre(counter(Name, Total)).

@@ -1,0 +1,7 @@
+rel df_edge(path: text, from_start: int, from_end: int, to_start: int, to_end: int).
+rel df_direct(from: text, to: text).
+
+df_direct(From, To) <-
+  df_edge(Path, FromStart, FromEnd, ToStart, ToEnd),
+  From := concat([Path, ':', FromStart, ':', FromEnd]),
+  To := concat([Path, ':', ToStart, ':', ToEnd]).

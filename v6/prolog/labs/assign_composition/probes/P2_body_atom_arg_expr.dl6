@@ -1,0 +1,4 @@
+rel seen(name: text, base: int, tag: text).
+rel over_ten(value: int).
+
+flagged(Name) <- seen(Name, Base, _), over_ten(Base + 1).

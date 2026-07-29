@@ -1,0 +1,3 @@
+rel reading(name: text, value: int).
+
+doubled(Name, Out) <- reading(Name, Value), Out = Value * 2.

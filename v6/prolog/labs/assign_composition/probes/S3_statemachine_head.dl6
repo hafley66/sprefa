@@ -1,0 +1,10 @@
+rel poll_due(endpoint: text) log keep(all).
+rel fetch_result(endpoint: text, outcome: text) log keep(all).
+rel phase(endpoint: text, state: text) key(1).
+rel retries(endpoint: text, next: int) key(1).
+
+phase(Endpoint, 'fetching') <+ poll_due(Endpoint), pre(phase(Endpoint, 'idle')).
+phase(Endpoint, 'idle') <+ fetch_result(Endpoint, 'error'), pre(phase(Endpoint, 'fetching')).
+retries(Endpoint, SoFar + 1) <+ fetch_result(Endpoint, 'error'), pre(retries(Endpoint, SoFar)).
+retries(Endpoint, 0) <+ fetch_result(Endpoint, 'fresh').
+gave_up(Endpoint) <- retries(Endpoint, Count), Count >= 2.

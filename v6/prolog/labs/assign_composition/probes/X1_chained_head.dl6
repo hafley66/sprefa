@@ -1,0 +1,4 @@
+rel reading(name: text, value: int).
+rel scaled(name: text, out: int).
+
+scaled(Name, (Value + 1) * 2) <- reading(Name, Value).

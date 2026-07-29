@@ -1,0 +1,4 @@
+rel reading(name: text, value: int).
+rel flagged(name: text).
+
+flagged(Name) <- reading(Name, Value), Out = Value * 2.

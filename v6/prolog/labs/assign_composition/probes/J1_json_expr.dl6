@@ -1,0 +1,4 @@
+rel lang_list(name: text, langs: text).
+rel lang_doc(name: text, doc: text).
+
+lang_doc(Name, {langs: Langs}) <- lang_list(Name, Langs).

@@ -1,0 +1,3 @@
+rel reading(name: text, value: int).
+
+doubled(Name, Value * 2) <- reading(Name, Value), Value >= 10.

@@ -1,0 +1,5 @@
+rel bump(name: text, extra: int).
+rel seen(name: text, base: int, tag: text).
+rel over_budget(name: text, sum: int).
+
+over_budget(Name, Sum) <- seen(Name, Base, _), bump(Name, Extra), Sum := Base + Extra, Sum > 10.

@@ -1,0 +1,5 @@
+[
+  [ {"rel":"queue_next","sign":"add","row":["s1",0]}, {"rel":"live_tab","sign":"add","row":["s1","t0"]} ],
+  [ {"rel":"open_request","sign":"add","row":["s1","t1"]} ],
+  [ {"rel":"open_request","sign":"add","row":["s1","t2"]}, {"rel":"open_request","sign":"add","row":["s1","t3"]} ]
+]
