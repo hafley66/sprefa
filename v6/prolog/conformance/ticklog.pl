@@ -11,10 +11,16 @@
 % deltas still emits its line with "deltas":{}; rows are JSON arrays of
 % column values in the row's own argument order (an atom's arity IS its
 % declared column order — Prolog terms carry no separate column-name
-% metadata); integers as JSON numbers, atoms and canonicalized compound-term
-% text both as JSON strings; add/del each sorted lexicographically by their
-% own JSON text; no spaces, LF line endings (format's ~n), no trailing
-% whitespace.
+% metadata). A json value is a value produced by body.pl's JSON semantics:
+% decode/2 and json_each/2 yield canonical JSON scalars, lists, or obj(Pairs),
+% braces literals yield the same canonical forms, json_array/1 yields a list,
+% and json_object/2 yields obj(Pairs). Lists, raw braces literals, and
+% obj(Pairs) are encoded as JSON recursively.
+% Their canonical text has no whitespace, object keys in sorted order, and
+% array elements in their semantic order. Integers remain JSON numbers. Plain
+% compound terms keep canonical term text as JSON strings.
+% add/del each sorted lexicographically by their own JSON text; no spaces, LF
+% line endings (format's ~n), no trailing whitespace.
 %
 % Usage:
 %   swipl -q -l v6/prolog/conformance/ticklog.pl \
@@ -23,7 +29,7 @@
 %         -g "emit_perturbed(demand_laziness_effect_rows)" -g halt
 
 :- ensure_loaded(go).   % pulls in engine.pl + every fixtures/*.pl, unedited
-:- use_module(body, [rel_ref/2]).   % read-only reuse; body.pl is untouched
+:- use_module(body, [json_canon/2, rel_ref/2]).   % read-only reuse; body.pl is untouched
 
 % ═══ perturbed schedules (HARD RULE receipt: proves the tsv2 side computes
 % deltas from the rules rather than replaying the fixture's own expected
@@ -102,8 +108,35 @@ row_json(Row, Json) :-
     format(atom(Json), '[~w]', [Inner]).
 
 value_json(Value, Json) :- integer(Value), !, format(atom(Json), '~w', [Value]).
+value_json(Value, Json) :- json_value_term(Value), !, json_value_json(Value, Json).
 value_json(Value, Json) :- compound(Value), !, term_text(Value, Text), string_json(Text, Json).
 value_json(Value, Json) :- string_json(Value, Json).
+
+% The forms below are the landed JSON representation from body.pl: lists for
+% arrays and obj(SortedPairs) for objects. A braces literal is still written
+% as {}(Fields) in raw fixture/host rows and is canonicalized here before
+% rendering. A plain compound term reaches the following term_text/2 clause.
+json_value_term(Value) :- Value = {}(_), !.
+json_value_term(Value) :- is_list(Value), !.
+json_value_term(obj(Pairs)) :- is_list(Pairs).
+
+json_value_json({}(Fields), Json) :- !,
+    json_canon({}(Fields), Canon),
+    json_value_json(Canon, Json).
+json_value_json(List, Json) :- is_list(List), !,
+    maplist(value_json, List, Values),
+    atomic_list_concat(Values, ',', Inner),
+    format(atom(Json), '[~w]', [Inner]).
+json_value_json(obj(Pairs), Json) :-
+    keysort(Pairs, SortedPairs),
+    maplist(json_object_entry, SortedPairs, Entries),
+    atomic_list_concat(Entries, ',', Inner),
+    format(atom(Json), '{~w}', [Inner]).
+
+json_object_entry(Key-Value, Json) :-
+    string_json(Key, KeyJson),
+    value_json(Value, ValueJson),
+    format(atom(Json), '~w:~w', [KeyJson, ValueJson]).
 
 % A compound term's canonical prolog text form, e.g. route_data(settings) ->
 % 'route_data(settings)'. Recurses so a deeper compound argument (not
