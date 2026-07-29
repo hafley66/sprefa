@@ -5,18 +5,23 @@
   "type": "module",
   "description": "tsv2 compile-target arc, phase A (plans/2026-07-27-tsv2-compile-target-header.md): the hand-carved static runtime + two by-hand generated program files a future prolog emitter must reproduce byte-for-byte. Grading loop: v6/prolog/conformance/ticklog.pl prints the oracle tick log; scripts/run-fixture.ts prints the tsv2 tick log; DONE = diff is empty.",
   "packageManager": "pnpm@11.10.0",
+  "bin": {
+    "bop": "./cli/bop.ts"
+  },
   "scripts": {
     "typecheck": "tsgo --noEmit",
     "test": "node --test --experimental-transform-types",
     "check-imports": "bash scripts/check-imports.sh",
     "run-fixture": "node --experimental-transform-types scripts/run-fixture.ts",
     "serve": "node --experimental-transform-types serve/main.ts",
+    "bop": "node --experimental-transform-types cli/bop.ts",
     "leak-soak": "bash scripts/leak-soak.sh",
     "endurance": "bash scripts/endurance.sh"
   },
   "dependencies": {
     "@libsql/client": "^0.17.4",
     "@noble/hashes": "2.0.1",
+    "commander": "^15.0.0",
     "pino": "10.3.1",
     "rxjs": "^7.8.2",
     "sprefa-store-engine": "link:../sprefa-store/js"

@@ -9,7 +9,7 @@
             emit_dl6_grammar/0
           ]).
 
-:- use_module(registry, [surface/5]).
+:- use_module(registry, [surface/5, cli_command/3]).
 :- use_module(library(lists)).
 
 :- dynamic(compile_dir_fact/1).
@@ -18,12 +18,19 @@
 begin_marker("<!-- BEGIN GENERATED surface/5 TABLE -->").
 end_marker("<!-- END GENERATED surface/5 TABLE -->").
 
+cli_begin_marker("<!-- BEGIN GENERATED cli_command/3 TABLE -->").
+cli_end_marker("<!-- END GENERATED cli_command/3 TABLE -->").
+
 emit_registry_docs :-
     compile_dir_fact(CompileDir),
     atomic_list_concat([CompileDir, '/SYNTAX.md'], SyntaxPath),
     read_file_to_string(SyntaxPath, Existing, []),
     generated_table(Table),
-    replace_generated_section(Existing, Table, Updated),
+    begin_marker(BeginMarker), end_marker(EndMarker),
+    replace_generated_section(Existing, BeginMarker, EndMarker, Table, Updated0),
+    generated_cli_table(CliTable),
+    cli_begin_marker(CliBeginMarker), cli_end_marker(CliEndMarker),
+    replace_generated_section(Updated0, CliBeginMarker, CliEndMarker, CliTable, Updated),
     setup_call_cleanup(
         open(SyntaxPath, write, Stream),
         format(Stream, '~s', [Updated]),
@@ -210,9 +217,26 @@ registry_row(Line, Functor/Arity, Axis, AnalyzeRole, LowerRole, Status) :-
     format(atom(Line), '| `~w` | `~w` | `~w` | `~w` | `~w` |~n',
            [SignatureText, Axis, AnalyzeText, LowerText, Status]).
 
-replace_generated_section(Existing, Table, Updated) :-
-    begin_marker(BeginMarker),
-    end_marker(EndMarker),
+% Generated from registry.pl's cli_command/3 rows -- see that predicate's own
+% header for why this is a second table rather than a widened surface/5: a
+% CLI verb has no AnalyzeRole/LowerRole, it is not body syntax at all.
+generated_cli_table(Table) :-
+    findall(Line,
+            ( cli_command(Verb, ArgSpec, Summary),
+              cli_command_row(Line, Verb, ArgSpec, Summary)
+            ),
+            RowLines),
+    atomic_list_concat(
+        [ '| verb | args | summary |\n',
+          '|---|---|---|\n'
+        | RowLines
+        ],
+        Table).
+
+cli_command_row(Line, Verb, ArgSpec, Summary) :-
+    format(atom(Line), '| `bop ~w` | `~w` | ~w |~n', [Verb, ArgSpec, Summary]).
+
+replace_generated_section(Existing, BeginMarker, EndMarker, Table, Updated) :-
     string_length(BeginMarker, BeginLength),
     sub_string(Existing, BeginAt, BeginLength, _, BeginMarker),
     PrefixLength is BeginAt + BeginLength,

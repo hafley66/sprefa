@@ -14,6 +14,9 @@ importers:
       '@noble/hashes':
         specifier: 2.0.1
         version: 2.0.1
+      commander:
+        specifier: ^15.0.0
+        version: 15.0.0
       pino:
         specifier: 10.3.1
         version: 10.3.1
@@ -156,6 +159,10 @@ packages:
   atomic-sleep@1.0.0:
     resolution: {integrity: sha512-kNOjDqAh7px0XWNI+4QbzoiR/nTkHAWNud2uvnJquD1/x5a7EQZMJT0AczqK0Qn67oY/TTQ1LbUKajZpp3I9tQ==}
     engines: {node: '>=8.0.0'}
+
+  commander@15.0.0:
+    resolution: {integrity: sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==}
+    engines: {node: '>=22.12.0'}
 
   detect-libc@2.0.2:
     resolution: {integrity: sha512-UX6sGumvvqSaXgdKGUsgZWqcUyIXZ/vZTrlRT/iobiKhGL0zL4d3osHj3uqllWJK+i+sixDS/3COVEOFbupFyw==}
@@ -341,6 +348,8 @@ snapshots:
       '@typescript/native-preview-win32-x64': 7.0.0-dev.20260707.2
 
   atomic-sleep@1.0.0: {}
+
+  commander@15.0.0: {}
 
   detect-libc@2.0.2: {}
 

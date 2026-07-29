@@ -23,7 +23,8 @@
             bind_definition/2,
             bind_executor/2,
             expression/5,
-            expression_for_term/5
+            expression_for_term/5,
+            cli_command/3
           ]).
 
 % Contextual gate: live around one plain relation atom in an edge body;
@@ -179,3 +180,35 @@ body_lower_role(word(_)).
 body_lower_role(infix(_)).
 
 wrapper_lower_role(wrapper(Shape, GateRole), Shape, GateRole).
+
+% ═══ CLI ("the bop") command table ═══════════════════════════════════════════
+%
+% cli_command(Verb, ArgSpec, Summary)
+%
+% The single source of the verb inventory (user directive 2026-07-29 late:
+% "registry.pl grows a cli command table"). ArgSpec mirrors how the row reads
+% as a usage line, not a formal grammar -- <required>, [--flag <value>] for an
+% option that takes a value, [--flag] for a boolean switch. The TS side
+% (v6/tsv2/cli/bop.ts) wires the identical five verbs through commander;
+% tests/bopCommandInventory.test.ts asserts the two inventories agree on verb
+% NAMES by grepping this file's cli_command/3 rows and bop.ts's own
+% `.command(...)` lines rather than sharing a generated manifest file -- the
+% simpler of the two mechanisms the brief offered (JSON manifest export vs a
+% grep-style cross-check), chosen because the TS side has no consult-time
+% access to this table and a manifest step would be one more artifact to keep
+% in sync for five rows that rename rarely.
+%
+% run/check boot the served tsv2 engine IN-PROCESS (server-calls-itself,
+% no daemon concept -- the same user directive). serve is the long-running
+% entry; run and check are one-shot processes that start their own server,
+% use it, and exit.
+cli_command(serve, '[--port <port>] [--db <url>]',
+            'boot the served tsv2 engine and keep it running (exactly serve/main.ts).').
+cli_command(run,   '<file.dl6> [--ticks <n>] [--port <port>]',
+            'compile + load a program on an in-process ephemeral server, stream ticks to stdout until quiescent or --ticks fires, then shut down cleanly.').
+cli_command(check, '<file.dl6>',
+            'validate a program through the text door; no server boots. Exit 0 clean, 2 named-refusal findings, 1 broken (parse/compile error).').
+cli_command(load,  '<file.dl6> [--port <port>]',
+            'POST a compiled program to an already-running bop serve; exit 1 if nothing is listening.').
+cli_command(q,     '<rel> [--port <port>] [--json]',
+            'read one rel''s current rows from a running bop serve.').
