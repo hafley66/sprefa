@@ -9,7 +9,8 @@
 # is the in-tree RELEASE build of v6/sprefa-extract, and every row below came
 # out of SQLite through the program's own emitted decode SELECT.
 #
-# Five phases, each an assertion:
+# Eight phases, each an assertion. 1-5 are the live loop, 6-8 the endurance law
+# applied to a real in-flight extraction:
 #
 #   1  write a.ts with an eval() call   -> banned_call gains (a.ts, eval)
 #   2  ATOMIC SAVE of a.ts (write temp, rename over) with the eval gone
@@ -23,6 +24,14 @@
 #   4  write b.ts with an eval() call   -> banned_call gains (b.ts, eval)
 #   5  rm b.ts                          -> banned_call LOSES the row (the `-`
 #      arrival's refCount retraction runs through the real emitted SQL)
+#   6  restart on the same file db       -> ZERO re-extractions. Demand rows are
+#      durable and deltas are not, so boot replays every demand row;
+#      `__host_witness` is what makes an ANSWERED one a no-op. Exactly-once.
+#   7  kill -9 MID-EXTRACTION of c.ts    -> the demand row is durable, its answer
+#      is not (the shim sleeps, so the window is real, not simulated)
+#   8  restart                           -> the unanswered witness re-runs ONCE
+#      and its finding lands. At-least-once for the unanswered half; the killed
+#      spawn already counted, which is the honest boundary goal-endurance states.
 #
 # SABOTAGE RECEIPT (run 2026-07-29, reverted): dropping the `del` half of
 # GlobWatch.batchFor (serve/2_binds.ts) -- emitting only `add` rows -- passes
@@ -78,6 +87,27 @@ resolve_extract_bin() {
   say "extract bin: $DL_EXTRACT_BIN (in-tree release)"
 }
 
+# A SHIM AROUND THE REAL BINARY, so the endurance phases can count invocations
+# and make one of them slow WITHOUT putting test scaffolding in the rail
+# program. The .dl6 says `"$DL_EXTRACT_BIN" --family call {path}` and nothing
+# else; which binary that names is the environment's business, which is the
+# whole point of resolving it out here.
+install_extract_shim() {
+  REAL_EXTRACT_BIN="$DL_EXTRACT_BIN"
+  MARKS="$WORK/extract-marks"
+  : >"$MARKS"
+  cat >"$WORK/extract-shim" <<SHIM
+#!/bin/sh
+printf 'x\n' >>"$MARKS"
+[ "\${TSV2_EXTRACT_SLOW:-0}" = "0" ] || sleep "\$TSV2_EXTRACT_SLOW"
+exec "$REAL_EXTRACT_BIN" "\$@"
+SHIM
+  chmod +x "$WORK/extract-shim"
+  export DL_EXTRACT_BIN="$WORK/extract-shim"
+}
+
+marks_count() { grep -c . "$MARKS" 2>/dev/null || echo 0; }
+
 # THE SERVED PROCESS'S CWD IS THE ROOT, the same convention v6/dl states as
 # `DL_ROOT = process.cwd()`. Watch globs resolve against it, emitted paths are
 # relative to it, and an `sh` host's child inherits it -- which is what lets the
@@ -86,8 +116,8 @@ resolve_extract_bin() {
 # absolute, so moving the cwd moves only the corpus.
 start_server() {
   TSV2_DB="$DB" TSV2_PORT="$PORT" TSV2_WATCH_COALESCE_MS=60 \
-    DL_EXTRACT_BIN="$DL_EXTRACT_BIN" \
-    node --experimental-transform-types "$SERVE_MAIN" >"$WORK/server.log" 2>&1 &
+    DL_EXTRACT_BIN="$DL_EXTRACT_BIN" TSV2_EXTRACT_SLOW="${1:-0}" \
+    node --experimental-transform-types "$SERVE_MAIN" >>"$WORK/server.log" 2>&1 &
   SERVER_PID=$!
   for _ in $(seq 1 60); do
     curl -s -o /dev/null "$BASE/ticks" 2>/dev/null && return
@@ -116,6 +146,7 @@ await_rows() {
 }
 
 resolve_extract_bin
+install_extract_shim
 start_server
 
 status="$(curl -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
@@ -181,6 +212,58 @@ case "$sites" in *eval*) fail "call_site still carries an eval row after both re
 # the receipt for that (tests/hostDecode.test.ts covers the same seam directly).
 case "$sites" in *'""'*) fail "call_site carries an empty-callee row: the JSONL projection let a non-site record through: $sites";; esac
 say "PASS  call_site carries exactly the surviving file's real extractor output, no empty projections"
+
+# ── phase 6: an ANSWERED extraction does not re-run across a restart ────────
+# The demand rows are durable SQLite rows and the deltas are not, so boot
+# replays every live demand row; `__host_witness` is what turns the already
+# answered ones into no-ops. Marks count SPAWNS, so "flat across a restart" is
+# exactly the exactly-once half of the endurance law.
+before_restart="$(marks_count)"
+[ "$before_restart" -ge 3 ] || fail "expected at least 3 extractions before the restart, counted $before_restart"
+stop_server
+start_server 0
+status="$(curl -s -o "$WORK/load2.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
+[ "$status" = "200" ] || fail "phase 6: program reload returned $status: $(cat "$WORK/load2.json")"
+sleep 3
+after_restart="$(marks_count)"
+[ "$after_restart" = "$before_restart" ] \
+  || fail "phase 6: boot replay re-ran $((after_restart - before_restart)) answered extraction(s); answered is exactly-once"
+say "PASS  phase 6  restart on the same db -> 0 re-extractions (answered witnesses stay answered, marks $after_restart)"
+
+# ── phase 7: kill -9 MID-EXTRACTION; the unanswered witness finishes later ──
+# The shim sleeps, so there is a real window in which the demand row is durable
+# and its answer is not. Killing there is the endurance law's own scenario:
+# at-least-once for the unanswered witness (its killed spawn already counted),
+# and the finding must still land after the restart.
+stop_server
+start_server 6
+status="$(curl -s -o "$WORK/load3.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
+[ "$status" = "200" ] || fail "phase 7: program reload returned $status: $(cat "$WORK/load3.json")"
+before_kill="$(marks_count)"
+cat >"$CORPUS/c.ts" <<'EOF'
+export const late = (code: string): unknown => eval(code);
+EOF
+deadline=$((SECONDS + 30))
+while [ "$(marks_count)" = "$before_kill" ]; do
+  [ "$SECONDS" -ge "$deadline" ] && fail "phase 7: the slow extraction never started (marks $(marks_count))"
+  sleep 0.3
+done
+mid_kill="$(marks_count)"
+kill -9 "$SERVER_PID" 2>/dev/null
+wait "$SERVER_PID" 2>/dev/null
+SERVER_PID=""
+say "PASS  phase 7  killed -9 mid-extraction with c.ts demanded and unanswered (marks $mid_kill)"
+
+# ── phase 8: the crashed extraction re-runs and its finding lands ───────────
+start_server 0
+status="$(curl -s -o "$WORK/load4.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
+[ "$status" = "200" ] || fail "phase 8: program reload returned $status: $(cat "$WORK/load4.json")"
+await_rows banned_call '"c.ts","eval"' present \
+  || fail "phase 8: the crashed extraction never finished (rows: $(rows_of banned_call), marks $(marks_count))"
+final_marks="$(marks_count)"
+[ "$final_marks" = "$((mid_kill + 1))" ] \
+  || fail "phase 8: expected exactly one re-run of the unanswered witness (marks $mid_kill -> $final_marks)"
+say "PASS  phase 8  restart -> the unanswered witness re-ran ONCE and its finding landed (marks $final_marks)"
 
 stop_server
 say "EXTRACTION LIVE HOLDS"
