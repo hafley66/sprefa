@@ -48,6 +48,11 @@ grading.
 - sg / tree-sitter / span extraction hosts executing (the fork
   verdict's HOST shape; term forms landed phase 1; sidecar or
   in-process per the UDF lab receipts).
+- EXTRACTOR IS FIXED (user 2026-07-29: "what we have with
+  scip/ast-grep in that sprefa-extract is what we got, we are not
+  relitigating that one right now"): phase 2 wires the EXISTING
+  v6/sprefa-extract binary's output through hosts; no extractor
+  redesign, no new extraction tooling research.
 - Program-declared file sets: the worktree-default enumeration host
   (no "WORK" atom, ruled) replacing push-only /edb/file_changed.
 Exit receipt: sg-rail-class diag rail runs end to end on v6 with a
