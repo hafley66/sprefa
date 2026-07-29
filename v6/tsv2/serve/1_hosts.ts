@@ -193,11 +193,12 @@ function coerce(host: string, column: IHostColumnPlan, raw: unknown): IRowValue 
     }
     return value;
   }
+  // Every non-int host value crosses the arrival seam as text. For json and
+  // declared struct columns, object stdout becomes JSON text here; the emitted
+  // ref-column map tells StructPlane which values to parse and intern.
   if (typeof raw === "string") return raw;
   if (raw === null || raw === undefined) return "";
   if (typeof raw === "number" || typeof raw === "boolean") return String(raw);
-  // A json-typed column keeps the document as its canonical text: the emitted
-  // SQL reads json columns through json1, so the value must stay parseable.
   return JSON.stringify(raw);
 }
 

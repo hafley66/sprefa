@@ -411,7 +411,9 @@ export interface ITickLogEmitter {
 /** One declared world column, exactly as emit_ts.pl writes it. */
 export interface IHostColumnPlan {
   readonly name: string;
-  readonly type: "int" | "text" | "json";
+  /** Primitive storage name or a declared struct type name. The compiler's
+   * shared type-plane check refuses every other spelling before emission. */
+  readonly type: string;
 }
 
 /**

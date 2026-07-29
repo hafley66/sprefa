@@ -133,6 +133,13 @@
     "finalDetail": ""
   },
   {
+    "name": "struct_host_output_schedule_answer_interned",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "struct_shared_child_survives_one_release",
     "bucket": "identical",
     "detail": "",

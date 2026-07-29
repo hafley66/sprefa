@@ -524,7 +524,7 @@ sh_decl_stmt(sh_decl(Name, Inputs, Outputs, template(Template)), S0, S) :-
     lit_dcg(`->`, S9, S10),
     ws0(S10, S11),
     lit_dcg(`(`, S11, S12),
-    decl_b_columns(Name, OutputSpecs, S12, S13),
+    host_output_columns(Name, OutputSpecs, S12, S13),
     ws0(S13, S14),
     lit_dcg(`)`, S14, S15),
     ws0(S15, S16),
@@ -539,6 +539,7 @@ sh_decl_stmt(sh_decl(Name, Inputs, Outputs, template(Template)), S0, S) :-
     column_spec_names(Specs, Names),
     record_column_order(Name, Names),
     record_host_signature(Name, Inputs, Outputs).
+
 sh_decl_stmt(unsupported_host_decl(Name, Columns), S0, S) :-
     word(`sh`, S0, S1),
     ws0(S1, S2),
@@ -559,6 +560,28 @@ sh_decl_stmt(unsupported_host_decl(Name, Columns), S0, S) :-
     column_spec_names(Specs, Names),
     record_column_order(Name, Names),
     record_finding(unsupported_surface(host_decl_inferred(Name/Arity))).
+
+host_output_columns(_, [], S0, S) :- ws0(S0, S1), peek(0'), S1, S), !.
+host_output_columns(RelName, [column(ColName, Type) | Rest], S0, S) :-
+    ws0(S0, S1), ident(ColName, S1, S2), ws0(S2, S3), lit_dcg(`:`, S3, S4),
+    ws0(S4, S5), host_output_column_type(RelName, ColName, Type, S5, S6),
+    ws0(S6, S7),
+    ( lit_dcg(`,`, S7, S8)
+    -> host_output_columns(RelName, Rest, S8, S)
+    ; Rest = [], S = S7
+    ).
+
+host_output_column_type(RelName, ColName, none, S0, S) :-
+    coltype(Wrapper, S0, S),
+    Wrapper \== none,
+    record_finding(
+      unsupported_surface(column_type_wrapper(RelName, ColName, Wrapper))).
+% STRUCT-AS-ROWS: a bare host OUTPUT type identifier survives into col_type/3
+% so the shared type-plane check resolves a declared struct name or refuses an
+% unknown spelling by name. Host inputs and bind columns retain decl-B's
+% primitive-only surface.
+host_output_column_type(_, _, Type, S0, S) :-
+    typed_column_type(Type, S0, S).
 
 specs_to_columns([], []).
 specs_to_columns([column(Name, Type) | Rest], [col(Name, Type) | Columns]) :-
