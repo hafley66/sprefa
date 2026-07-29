@@ -395,6 +395,24 @@ compiler sources). Dogfooding our own compiler sources with comment facts is a
 ## Lab death
 
 Lab files deleted in the landing commit. The last full copy of
-`v6/prolog/labs/comment_node/` (cn.py, both `.dl6` programs, the four fixture
-candidates, and all six receipt scripts) is at commit **`24f7cc7c`**; recover
-any file with `git show 24f7cc7c:v6/prolog/labs/comment_node/<file>`.
+`v6/prolog/labs/comment_node/` is at commit **`9b5ba958`**; recover any file
+with `git show 9b5ba958:v6/prolog/labs/comment_node/<file>`.
+
+The 18 files, so a recoverer knows what to ask for:
+
+| file | what it is |
+|---|---|
+| `cn.py` | the policy-free helper: `comments` (v5's `comment_node` row from the cst family) and `lines` (the generic byte-span flattener) |
+| `programs/suppress-rail.dl6` | receipt program 1, techniques 2 + 7, compiles through the text door |
+| `programs/arch-rail.dl6` | receipt program 2, technique 1 |
+| `programs/dogfood-comments.dl6` | the repo-scale program over our own compiler sources |
+| `fixtures.pl` | the four graded fixture/5 candidates + their sabotage receipts |
+| `grade_fixtures.pl` | runs them through the real oracle without touching the promoted corpus |
+| `receipt.sh` | the 7-phase live served-engine receipt |
+| `receipt-scale.sh` | the 58-file statement-count receipt |
+| `parity.sh` + `parity_project.py` + `parity_classify.py` | the v5-vs-v6 rig |
+| `route-cost.sh` + `slice_comments.py` | the four-route pricing table |
+| `string-safety.sh` + `comment_lines.py` | the false-positive witness |
+| `gap-inventory.sh` | the 57-call-site vs 0-expression count |
+| `marker-price.sh` | SLOT-MARKER-CAPTURE's numbers |
+| `probes/p1_struct_host_output.dl6` + `probes/arch_template.sh` | the struct-seam refusal receipt and the ARCH template |
