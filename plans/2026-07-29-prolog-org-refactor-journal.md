@@ -751,3 +751,77 @@ classification. `=@=` is the right operator and the comment says so.
 conformance 137/0, plunit 124/124 (+5), roundtrip ALL PASS,
 TEXT_DOOR 72/72/0, sweep 137/72 RUN identical=70 wrong=0 with a clean artifact
 diff, prolog-lint findings=1 baseline=1 OK.
+
+---
+
+## Arc summary
+
+All ten ranks landed. Eleven commits on base `5a9bfdd8`.
+
+| Rank | Status | Commit |
+|---|---|---|
+| R10 lint gate | landed | `eccfd8d6` |
+| R6 emit_ts collision | landed | `86a2cfb8` |
+| R1 shared body walker | landed | `82a076d8` test, `1a0492b0` refactor |
+| R2 shared cross-plane checks | landed | `40f07659` |
+| R3 expansion driver | landed | `082a44d1` |
+| R4 oracle aggregate classification | landed | `ba51aae9` |
+| R5 expression inventory | landed | `92fd713b` |
+| R9 shared declaration queries | landed | `4d4ff0e1` |
+| R7 unused-export classification | landed | `d37c6137` |
+| R8 private call sites | landed | `24f501a0` |
+
+Nothing was skipped.
+
+### Movement
+
+| Measure | Base | Now |
+|---|---:|---:|
+| conformance | 136 / 0 | 137 / 0 |
+| plunit | 75 | 124 |
+| sweep compiled | 73 | 72 |
+| sweep identical | 70 | 70 |
+| sweep wrong | 0 | 0 |
+| sweep no_oracle_log | 1 | 0 |
+| TEXT_DOOR | 73 / 73 / 0 | 72 / 72 / 0 |
+| prolog-lint findings | 10 (9 private + 1 duplicate module) | 1 |
+| `.pl` files | 47 | 51 |
+
+The one `compiled` drop and the matching TEXT_DOOR drop are the same fixture,
+`log_without_retention_rejected`, which was being fake-compiled against an
+oracle that rejects it. `identical` and `wrong` never moved.
+
+### New shared modules
+
+| File | Lines | Owns |
+|---|---:|---|
+| `0_body_walk.pl` | 176 | one registry-driven body traversal |
+| `0_program_check.pl` | 158 | one trigger per invalid-program class, plus the declaration queries |
+| `1_expansion.pl` | 82 | the declared expansion phase order |
+| `tools/prolog_lint.pl` | 244 | the organization gate |
+
+### Cross-cutting findings banked rather than fixed
+
+1. `engine:trigger_items/2` and `body:body_atoms/2` classify `next/1`,
+   variadic `combine`, `zip/2`, the four reserved lifecycle wrappers and the
+   six comparison operators as relation atoms. Inert downstream, wrong at the
+   source, pinned by goldens.
+2. `level_eval:goal_rel_refs/3` reports `next/1` and `combine/2` as positive
+   relation references, so stratification carries constraints naming relations
+   that cannot exist.
+3. `finalize_in_level_rule` is named differently by the two doors, and neither
+   door's finalize scan descends `not/1`, so `not(finalize(...))` in a level
+   rule is accepted by both. Both pinned by tests.
+4. `v6/sprefa-store/bench/v1-scale-gen.pl` makes three private cross-module
+   calls into the older emitter that the gate cannot see, because that
+   directory is not one of the two clusters it loads.
+
+### Recurring hazard worth a standing note
+
+`findall/3` copies its template. It bit this arc TWICE, in ranks R1 and R4,
+both times producing failures whose message pointed nowhere near the cause. In
+R1 it severed every `use/4`'s arguments from the body's own variables and
+turned 27 tests red at once; in R4 it made a test compare a rule against a
+variant of itself. `engine.pl` already carried a comment warning about exactly
+this for trigger items, and that comment is what named the cause in one read
+the first time.
