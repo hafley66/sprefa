@@ -71,6 +71,7 @@
             type_topological_order/2,
             type_cycle_witness/2,
             type_shape_error/4,
+            world_row_shape_violation/3,
             type_canonical_json/4,
             type_field_values/4,
             type_ref_columns/3,
@@ -173,8 +174,25 @@ settled_prefix(Types, Pending, Acc, Settled) :-
 % a storage one; SLOT-TERM-STRUCT names it and this arc leaves the functor
 % form on the untyped inline path exactly as it is today.
 
+%
+% SLOT-ARRIVAL-CANONICAL-ORDER, decided: a struct-typed arrival value's object
+% keys must ALREADY be in canonical (sorted) order. The reason is a real
+% divergence, not tidiness: the oracle stores world values as TERMS and its Set
+% membership is term identity, so `obj([start-1,end-2])` and
+% `obj([end-2,start-1])` are two rows there while the emitted side interns both
+% to ONE dictionary row -- same canonical content, same semantic key. Two
+% spellings of one value would then produce two `add` entries on one side and
+% one on the other. Refusing the non-canonical spelling makes the divergence
+% unreachable without touching absorb_arrivals. Removing this strictness means
+% canonicalizing struct arrivals INSIDE the oracle's absorb path, which is an
+% oracle semantics change and therefore a user/coordinator ruling, not an
+% implementation choice.
+
 type_shape_error(Types, TypeName, Value, Reason) :-
-    (   json_object_value(Value, Pairs)
+    (   raw_object_keys(Value, RawKeys), msort(RawKeys, SortedKeys),
+        RawKeys \== SortedKeys
+    ->  Reason = keys_not_sorted(TypeName, RawKeys)
+    ;   json_object_value(Value, Pairs)
     ->  type_definition(Types, TypeName, Columns, ColumnTypes),
         (   member(Column, Columns), \+ memberchk(Column-_, Pairs)
         ->  Reason = missing_key(TypeName, Column)
@@ -208,6 +226,68 @@ json_object_value(Value, Pairs) :-
     ;   Value = {}(_)
     ->  json_canon(Value, obj(Pairs))
     ).
+
+% The keys AS WRITTEN, before any sorting -- the only thing that can tell a
+% canonical spelling from a non-canonical one.
+raw_object_keys(Value, Keys) :-
+    nonvar(Value),
+    (   Value = obj(RawPairs)
+    ->  is_list(RawPairs), findall(Key, member(Key-_, RawPairs), Keys)
+    ;   Value = {}(Fields)
+    ->  braces_field_keys(Fields, Keys)
+    ).
+
+braces_field_keys((Left, Right), Keys) :- !,
+    braces_field_keys(Left, LeftKeys),
+    braces_field_keys(Right, RightKeys),
+    append(LeftKeys, RightKeys, Keys).
+braces_field_keys(Key: _, [Key]).
+
+% Every world row a program seeds or a schedule delivers, checked against the
+% declared shape of the column it lands in. Rows is a flat list of signed or
+% bare row terms; the sign wrapper is stripped here so both doors hand over
+% whatever they already have.
+%
+% This is a decl-driven refusal, not an execution change: a row that passes
+% behaves exactly as it did before the type existed. It runs where the data
+% is static (fixture Initial + Schedule on both doors); the emitted runtime
+% repeats it at intern time, where the data is not.
+world_row_shape_violation(Decls, Rows, mismatch(Ref, Column, TypeName, Reason)) :-
+    type_definitions(Decls, Types),
+    Types \== [],
+    member(SignedRow, Rows),
+    bare_row(SignedRow, Row),
+    compound(Row),
+    functor(Row, Name, Arity),
+    Ref = Name/Arity,
+    ref_column_names(Decls, Ref, Arity, Columns),
+    nth1(Position, Columns, Column),
+    memberchk(col_type(Ref, Column, TypeName), Decls),
+    declared_type_name(Types, TypeName),
+    arg(Position, Row, Value),
+    nonvar(Value),
+    type_shape_error(Types, TypeName, Value, Reason),
+    !.
+
+bare_row(+(Row), Row) :- !.
+bare_row(-(Row), Row) :- !.
+bare_row(Row, Row).
+
+% Column names for a ref, in declared order, and ONLY when the col_type/3
+% entries cover every argument position. analyze.pl:rel_columns/5 is the
+% general answer, but it needs the surface variable Bindings, which the
+% oracle door does not have -- so this door reads position from declaration
+% order and refuses to guess when the declaration is partial.
+%
+% NAMED CRACK: a rel whose columns are only PARTIALLY typed gets no arrival
+% shape check here at all (position would be mis-located), so a malformed
+% struct value in such a rel is caught later, at intern time in the emitted
+% runtime, rather than at load. Fully-typed decls are what the corpus writes
+% and what the printer synthesizes; the partial case is silent by choice, not
+% by accident.
+ref_column_names(Decls, Ref, Arity, Columns) :-
+    findall(Column, member(col_type(Ref, Column, _), Decls), Columns),
+    length(Columns, Arity).
 
 % ── decomposition and rendering ──────────────────────────────────────────────
 

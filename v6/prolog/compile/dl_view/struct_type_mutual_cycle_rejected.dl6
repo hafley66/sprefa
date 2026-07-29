@@ -1,0 +1,2 @@
+type left(other: right).
+type right(other: left).

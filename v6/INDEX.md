@@ -50,7 +50,7 @@
 | [prolog/LANG.md](prolog/LANG.md) | 95 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
 | [prolog/compile/PIPELINE.md](prolog/compile/PIPELINE.md) | 153 | The tsv2 compiler pipeline, stage by stage |
 | [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 354 | TSV2 Phase C scoreboard |
-| [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 240 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
+| [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 243 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
 | [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 115 | TICK MODEL: the semiring/grading semantics behind the clock checker |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
@@ -749,14 +749,14 @@
 7:## Ruling that reframes this whole document (relayed mid-flight)
 21:## The central superseding decision: bare identifier = variable, always
 45:## Construct table
-103:## CLI ("the bop")
-126:### Context status
-136:### Core grammar and input aliases
-176:### Legacy surface: parsed, then refused
-187:### World term lowering rows
-205:## Round-trip design note (why decl lines are exact, not fallback-merged)
-220:## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
-231:## What `dl_view/*.dl6` is
+104:## CLI ("the bop")
+127:### Context status
+137:### Core grammar and input aliases
+179:### Legacy surface: parsed, then refused
+190:### World term lowering rows
+208:## Round-trip design note (why decl lines are exact, not fallback-merged)
+223:## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
+234:## What `dl_view/*.dl6` is
 ```
 
 ### prolog/compile/TICK-MODEL.md

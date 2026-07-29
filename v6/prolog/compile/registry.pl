@@ -89,6 +89,12 @@ surface(json_object/2,  aggregate, no_refs,                      head(refuse(agg
 surface(enum_decl/2,     decl,      no_refs,                      decl(enum_variants),                    live).
 surface(';' /2,          decl,      no_refs,                      decl(enum_variant_separator),           live).
 surface(col_type/3,      decl,      no_refs,                      decl(column_type),                      live).
+% STRUCT-AS-ROWS (ruling compound_storage = struct_as_rows). A declared
+% struct type. Its values live in a storage-plane dictionary keyed on
+% canonical content; a column typed with the name stores the ref. The
+% dictionary is deliberately NOT a rel: it never appears in relColumns, in a
+% boundary read or in the tick log (arc header Edge 2).
+surface(type_decl/2,     decl,      no_refs,                      decl(struct_type),                      live).
 surface(set/0,           decl,      no_refs,                      decl(refuse(removed_word)),            refused).
 surface(match/2,         sugar,     no_refs,                      block(match_arms),                      live).
 surface(sh_decl/4,       world,     no_refs,                      decl(host_plan),                        live).

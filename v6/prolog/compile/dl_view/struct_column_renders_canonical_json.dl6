@@ -1,0 +1,5 @@
+type span(start: int, end: int).
+rel finding(path: text, at: span).
+rel touched(path: text).
+
+touched(Path) <- finding(Path, _At).

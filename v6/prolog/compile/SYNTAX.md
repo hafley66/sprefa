@@ -90,6 +90,7 @@ Level-rule use remains `latest_in_level_rule`; wider edge arguments remain
 | `enum_decl/2` | `decl` | `no_refs` | `decl(enum_variants)` | `live` |
 | `;/2` | `decl` | `no_refs` | `decl(enum_variant_separator)` | `live` |
 | `col_type/3` | `decl` | `no_refs` | `decl(column_type)` | `live` |
+| `type_decl/2` | `decl` | `no_refs` | `decl(struct_type)` | `live` |
 | `set/0` | `decl` | `no_refs` | `decl(refuse(removed_word))` | `refused` |
 | `match/2` | `sugar` | `no_refs` | `block(match_arms)` | `live` |
 | `sh_decl/4` | `world` | `no_refs` | `decl(host_plan)` | `live` |
@@ -142,6 +143,8 @@ construct inventory.
 |---|---|---|
 | `kind(Ref, log)` | `log` after columns | declaration modifier |
 | `col_type(Ref, Column, Type)` | `Column: int` / `Column: text` | typed declaration entry; source order is preserved |
+| `type_decl(Name, [col(Column, Type), ...])` | `type name(column: type, ...).` | declared struct type; values are storage-plane dictionary rows keyed on canonical content |
+| `col_type(Ref, Column, TypeName)` | `Column: span` | ref column; stores the dictionary id, renders the value at the boundary |
 | removed `set` word | `set` after columns | `unsupported_surface(removed_word(set))` |
 | `keep(Ref, all\|count(N))` | `keep(all)` / `keep(count(N))` | declaration modifier |
 | `keyed(Ref, Positions)` | `key(P, P, ...)` | declaration modifier |
