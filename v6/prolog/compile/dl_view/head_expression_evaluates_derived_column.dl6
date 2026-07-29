@@ -1,1 +1,4 @@
+rel callee_set_size(left: text, left_size: int).
+rel shared_count(left: text, right: text, shared: int).
+
 union_size(Left, Right, LeftSize + RightSize - Shared) <- callee_set_size(Left, LeftSize), callee_set_size(Right, RightSize), shared_count(Left, Right, Shared).
