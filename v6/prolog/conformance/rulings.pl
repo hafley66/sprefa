@@ -319,3 +319,22 @@ ruling(host_residency, rows_stay_in_sqlite_host_sees_deltas, user,
 % the incremental emitter is now an arc, not a hazard.
 ruling(expression_residency, fuse_to_sql_deltas_ts_deopt_last, user,
        'user 2026-07-29: "we can deopt into typescript but only if we have to otherwise we fuse it to sql deltas in rx"').
+
+% 2026-07-29 (multiple-choice round, user tired but explicit). The
+% tick log renders json values as CANONICAL JSON TEXT, not prolog
+% cons-term text. Consequence: json_array/json_object aggregate
+% heads become emittable (json_group_array/json_group_object +
+% ORDER BY reproducing msort/keysort); the oracle's tick-log encoder
+% changes once and affected fixtures regrade once. Supersedes the
+% [|](...) rendering for json-typed values only; plain compounds
+% keep canonical term text.
+ruling(json_ticklog_encoding, canonical_json_text, user,
+       'user 2026-07-29: chose "Canonical JSON in tick log" from the multiple-choice round').
+
+% 2026-07-29. UDF residency for tsv2: STAY on @libsql (which has no
+% registration API, proven empirically in the udf lab); coverage =
+% core-SQL fusion where semantics match, TS deopt over DELTA ROWS
+% ONLY otherwise (regex via the JS-compatible subset), emit-time for
+% constants. Driver swap / rust sidecar deferred to the rust return.
+ruling(udf_residency, libsql_fuse_and_delta_deopt, user,
+       'user 2026-07-29: "there is truly no other way in ts" -- accepted stay-libsql from the multiple-choice round').

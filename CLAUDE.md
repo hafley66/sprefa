@@ -745,6 +745,53 @@ fix: typed decls in the view text compile clean through the door
 (hand receipt in chat). Fix = synthesize inferred colon-typed decls
 into dl_view emission + dynamic receipt gate. Dispatched in the
 3-lane blast.
+3-LANE BLAST LANDED same sitting (all base 622dda3e, all re-verified
+by coordinator in-worktree AND on merged main -- final merged
+battery: conformance 120/0, roundtrip ALL PASS, TEXT_DOOR 62/62/0
+exit 0, sweep both modes 62 compiled/59 identical/0 wrong (final 58
+identical/3 pre-existing), plunit 47/47, tsv2 12/12 + gate, dl 96/96
+(+1 soak skip under plain npm test), store 74/74, leak-soak 5
+receipts green):
+(1) TEXT-DOOR FIX (sonnet, merge after 394aacbe): print_dl
+synthesizes colon-typed decls for WITNESSED undeclared EDB refs
+(witness-less refs excluded -- freezing analyze's open(none) into
+text broke 9 timeless_rail fixtures, found empirically); receipt
+gate now dynamic (all term-door-compiled must pass text door),
+two-stage grading replaces the silent skip reclassification;
+sabotage receipt in header. Crack: witness check is ref-granular
+not column-granular (noted in print_dl.pl header).
+(2) EDGE-CARRY SEAM (codex sol, merge 78919aea):
+edge_trigger_is_derived refusal REMOVED; derived edge triggers read
+P1 frontier tables via the incremental dispatch; door program
+byte-identical oracle-vs-tsv2 ticks 1/2/3 -- THE ENUM STATE MACHINE
+IDIOM NOW COMPILES. Promoted edge_chain_hops_tick_per_stage +
+demand_view_fires_its_consumer_once. Carry counts flat 100 vs 10k
+rows, indexed frontier SEARCHes. Named crack: derived-trigger
+programs use the incremental path even under
+SPREFA_TSV2_EMITTER_MODE=naive (snapshot path has no delta stream).
+MATCH BLOCK NOW UNBLOCKED per the user-agreed order.
+(3) ENDURANCE GATE + NO-LEAK SOAK (codex luna, merge 9c1ffb4b):
+green-all now includes endurance + leak-soak; leak-soak.sh = 20
+swap/commit/SSE cycles then 5 receipts (handles/resources flat by
+type via getActiveResourcesInfo, RSS bounded post-warmup +25%,
+stmts-per-tick 10==10 via DL_PERF_LOG, SSE inner subs 0, bind
+Timeout 1==1 across swaps); sabotage receipt in header; the three
+law-debt soft spots (commits$/reportsSubject, server.close/readBody
+wrappers, HostRunner boot replay) all CLEAR under soak.
+ALSO FIXED on main pre-blast-merge (394aacbe): dl6-door rename had
+broken 5 fixture paths in v6/dl tests/golden (dl suite was 89/96 on
+main since the door merge, caught by the soak lane's baseline; the
+door-arc merged-tree re-verify hadn't included the dl suite).
+RULED (rulings.pl tail): json_ticklog_encoding = canonical_json_text
+(json agg heads become emittable; oracle encoder change + one-time
+regrade = the follow-up arc); udf_residency =
+libsql_fuse_and_delta_deopt. STILL AWAITING USER (re-asked with
+explanations): keyed-on-level-head refuse-vs-define, keep(count)
+lowering choice.
+RECURRING FOOTGUN, unowned: sweep regen DELETES non-fixture modules
+from gen_emitted/ (door-handwritten.ts dropped twice this sitting,
+restored both times); fix is sweep.ts leaving unknown files alone
+or door-handwritten becoming a fixture.
 
 ### Hands-on findings 2026-07-29 (coordinator wrote+ran a cold program; scratch fixture, receipts in chat)
 - **keyed() on a level-rule head is SILENTLY INERT** (F8/retention-inert
