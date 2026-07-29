@@ -1,4 +1,4 @@
-rel ping(name) log keep(all).
+rel ping(name: text) log keep(all).
 rel seen_at(name, tick) log keep(all).
 
 seen_at(Name, Tick) <+ ping(Name), now(Tick).

@@ -46,7 +46,9 @@
 % off the Lowered term this module already renders -- reused, not
 % reimplemented.
 :- use_module(lower, [ relplan_kind/3 ]).
-:- use_module(analyze, [ body_ref_uses/2, derived_refs/2, rule_head_ref/2 ]).
+:- use_module(analyze,
+              [ body_ref_uses/2, derived_refs/2, rule_head_ref/2,
+                program_uses_tick/2 ]).
 :- use_module('../1_host_expand', [compile_host_decl/2]).
 :- use_module(registry, [bind_executor/2]).
 
@@ -938,13 +940,16 @@ naive_retention_fn_lines(_RetentionStatements,
       '}'
     ]).
 
-run_naive_tick_fn_lines(Name, [], HasRetention, Lines) :- !,
+run_naive_tick_fn_lines(Name, [], HasRetention, UsesTick, Lines) :- !,
     format(atom(NameCommentLine), '  // ~w: no edge rules -- absorb arrivals, recompute levels, diff.', [Name]),
     retention_tick_lines(HasRetention, RetentionLines),
+    advance_tick_naive_line(UsesTick, AdvanceTickLines),
     append(
     [ [ 'function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
-        '  return readSnapshot(seam).pipe(',
-        '    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),',
+        '  return readSnapshot(seam).pipe('
+      ],
+      AdvanceTickLines,
+      [ '    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),',
         '    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),'
       ],
       RetentionLines,
@@ -954,8 +959,9 @@ run_naive_tick_fn_lines(Name, [], HasRetention, Lines) :- !,
         '}'
       ]
     ], Lines).
-run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, Lines) :-
+run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick, Lines) :-
     EdgeStatements \== [],
+    advance_tick_naive_line(UsesTick, AdvanceTickLines),
     edge_resolve_call_exprs(EdgeStatements, ResolveCallExprs),
     ( ResolveCallExprs = [SingleCall]
     -> format(atom(EdgeWritesExpr), '~w', [SingleCall])
@@ -967,8 +973,10 @@ run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, Lines) :-
     retention_tick_lines(HasRetention, RetentionLines),
     append(
     [ [ 'function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
-      '  return readSnapshot(seam).pipe(',
-      '    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),',
+      '  return readSnapshot(seam).pipe('
+      ],
+      AdvanceTickLines,
+      [ '    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),',
       '    concatMap((before) =>',
       EdgeWritesLine,
       '        concatMap((statements) => seam.runner.batch(seam.db, statements)),',
@@ -1032,8 +1040,29 @@ incremental_carry_expr(EdgeStatements, Expr) :-
            '[~w].includes(delta.rel) && (delta.add.length > 0 || delta.del.length > 0)',
            [NamesText]).
 
+% now/1's kernel tick, emitted only for programs that read it (every other
+% module's text is unchanged). engine.pl:run_ticks/7 counts from 1, so the
+% counter is seeded at 0 by the DDL and advanced at the HEAD of each tick,
+% before any arrival is absorbed or any arm projects -- the same place the
+% oracle fixes Tick for the whole tick. One statement per tick, flat.
+advance_tick_fn_lines(false, []) :- !.
+advance_tick_fn_lines(true,
+    [ 'function advanceTick(seam: ISqlSeam): Observable<void> {',
+      '  return seam.runner.execute(seam.db, `UPDATE "__tick" SET "n" = "n" + 1`).pipe(map(() => undefined));',
+      '}'
+    ]).
+
+advance_tick_pipeline_line(false, []) :- !.
+advance_tick_pipeline_line(true,
+    ['    concatMap(() => advanceTick(seam)),']).
+
+advance_tick_naive_line(false, []) :- !.
+advance_tick_naive_line(true,
+    ['    concatMap((before) => advanceTick(seam).pipe(map(() => before))),']).
+
 run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
-                              HasRetention, Lines) :-
+                              HasRetention, UsesTick, Lines) :-
+    advance_tick_pipeline_line(UsesTick, AdvanceTickLines),
     ( EdgeStatements == []
     -> MergeLine = '    concatMap(() => of(undefined)),',
        PostEdgeLevelLine = '    concatMap(() => of(undefined)),'
@@ -1049,8 +1078,10 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
     ),
     append(
     [ [ 'function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
-      '  return IncrementalRuntime.prepareTick(seam, INCREMENTAL_RELATIONS).pipe(',
-      '    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, INCREMENTAL_RELATIONS)),',
+      '  return IncrementalRuntime.prepareTick(seam, INCREMENTAL_RELATIONS).pipe('
+      ],
+      AdvanceTickLines,
+      [ '    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, INCREMENTAL_RELATIONS)),',
       '    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),',
       '    concatMap(() => IncrementalRuntime.applyEdges(seam, INCREMENTAL_EDGE_STATEMENTS, INCREMENTAL_RELATIONS)),',
       MergeLine,
@@ -1190,7 +1221,10 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     naive_retention_fn_lines(RetentionStatements, NaiveRetentionFnLines),
     build_deltas_fn_lines(RelPlans, EdgeStatements, RetentionStatements,
                           BuildDeltasFnLines),
-    run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention,
+    Plan = plan(_, TickProg, _, _, _, _),
+    program_uses_tick(TickProg, UsesTick),
+    advance_tick_fn_lines(UsesTick, AdvanceTickFnLines),
+    run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick,
                             RunNaiveTickFnLines),
     incremental_program_safe(Plan, EdgeStatements, RuleLevelStatements, IncrementalSafe),
     reconcile_every_tick(Plan, ReconcileEveryTick),
@@ -1199,7 +1233,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     incremental_mode_lines(IncrementalSafe, ReconcileEveryTick,
                            IncrementalModeLines),
     run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
-                                  HasRetention, RunIncrementalTickFnLines),
+                                  HasRetention, UsesTick,
+                                  RunIncrementalTickFnLines),
     incremental_plan_export_lines(RetractionGuard, HasRetention,
                                   IncrementalPlanExportLines),
     program_export_lines(Name, ProgramExportLines),
@@ -1213,7 +1248,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
       IncrementalLevelStatementLines, IncrementalRetentionStatementLines,
       EdgeConstLines, EdgeFnLines,
       RecomputeLevelsFnLines, NaiveRetentionFnLines, BuildDeltasFnLines,
-      RunNaiveTickFnLines,
+      AdvanceTickFnLines, RunNaiveTickFnLines,
       IncrementalModeLines, RunIncrementalTickFnLines, IncrementalPlanExportLines,
       ProgramExportLines
     ],

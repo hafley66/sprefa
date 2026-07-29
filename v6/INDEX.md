@@ -49,15 +49,14 @@
 | [plans/2026-07-25-sql-builder-build-vs-buy.md](plans/2026-07-25-sql-builder-build-vs-buy.md) | 322 | SQL query-builder / templating: build-vs-buy for `lowerSql.ts` |
 | [prolog/LANG.md](prolog/LANG.md) | 95 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
 | [prolog/compile/PIPELINE.md](prolog/compile/PIPELINE.md) | 153 | The tsv2 compiler pipeline, stage by stage |
-| [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 724 | TSV2 Phase C scoreboard |
-| [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 213 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
+| [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 755 | TSV2 Phase C scoreboard |
+| [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 217 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
 | [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 115 | TICK MODEL: the semiring/grading semantics behind the clock checker |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-extract/AGENTS.md](sprefa-extract/AGENTS.md) | 66 | sprefa-extract — Agent Guidance |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 167 | v6 store — retraction perf & completeness report |
-| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
 | [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
 
 ## Full header index
@@ -733,13 +732,14 @@
 ```
 1:# TSV2 Phase C scoreboard
 15:## Totals (current)
-37:### The UNSUPPORTED bucket, by named reason (65)
-59:### The final-state leg (new, and it changes how to read this table)
-117:## Per-fixture table: compiled (60)
-185:## Per-construct blocked tally (UNSUPPORTED, ranked)
-216:## EXPRESSION + AGGREGATE LIFT (2026-07-29)
-266:## Widening / fix history (chronological, each transition measured)
-483:## Findings
+38:### The UNSUPPORTED bucket, by named reason (55)
+55:### `edge_body_needs_pre`: why it is not a widening
+84:### The final-state leg (new, and it changes how to read this table)
+148:## Per-fixture table: compiled (60)
+216:## Per-construct blocked tally (UNSUPPORTED, ranked)
+247:## EXPRESSION + AGGREGATE LIFT (2026-07-29)
+297:## Widening / fix history (chronological, each transition measured)
+514:## Findings
 ```
 
 ### prolog/compile/SYNTAX.md
@@ -749,12 +749,12 @@
 21:## The central superseding decision: bare identifier = variable, always
 45:## Construct table
 103:### Context status
-109:### Core grammar and input aliases
-149:### Legacy surface: parsed, then refused
-160:### World term lowering rows
-178:## Round-trip design note (why decl lines are exact, not fallback-merged)
-193:## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
-204:## What `dl_view/*.dl6` is
+113:### Core grammar and input aliases
+153:### Legacy surface: parsed, then refused
+164:### World term lowering rows
+182:## Round-trip design note (why decl lines are exact, not fallback-merged)
+197:## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
+208:## What `dl_view/*.dl6` is
 ```
 
 ### prolog/compile/TICK-MODEL.md
@@ -821,14 +821,6 @@
 130:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
 143:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
 156:## Breakpoint ramp — tight gun 700 MB
-```
-
-### sprefa-store/bench/out/REPORT.md
-```
-1:# Z-set / IVM head-to-head — feasibility lab
-15:## Charts
-22:## Data
-43:## Takeaways (derived)
 ```
 
 ### tsv2/SCALE.md

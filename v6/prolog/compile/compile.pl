@@ -102,10 +102,13 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     % Union rule-derived refs with EVERY declared ref (analyze.pl:
     % declared_refs/2's header comment) -- a kind(Ref, _) decl that no rule
     % ever mentions is still a real rel a schedule can write, and must still
-    % get a table + arrival handling in the emitted program.
+    % get a table + arrival handling in the emitted program -- and with every
+    % ref an Initial row seeds (analyze.pl:seeded_refs/2), which the oracle
+    % stores whether or not anything declares it.
     program_refs(Rules, RuleRefs),
     declared_refs(Decls, DeclaredRefs),
-    append(RuleRefs, DeclaredRefs, AllRefs0), sort(AllRefs0, AllRefs),
+    seeded_refs(Initial, SeededRefs),
+    append([RuleRefs, DeclaredRefs, SeededRefs], AllRefs0), sort(AllRefs0, AllRefs),
     derived_refs(Rules, DerivedRefs),
     subtract(AllRefs, DerivedRefs, ArrivalTargets),
     % EXPRESSION + AGGREGATE LIFT: one program-wide typing fixpoint replaces

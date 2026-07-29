@@ -72,11 +72,11 @@
     },
     "live-keywords": {
       "name": "keyword.control.dl6",
-      "match": "\\b(bind_decl|combine|count|is|latest|match|max|min|next|not|probe|query|sh_decl|sum|true|ts_query)\\b"
+      "match": "\\b(bind_decl|combine|count|is|latest|match|max|min|next|not|now|probe|query|sh_decl|sum|true|ts_query)\\b"
     },
     "reserved-keywords": {
       "name": "invalid.illegal.reserved.dl6",
-      "match": "\\b(complete|decode|error|finalize|json_array|json_each|json_object|now|pre|set|sg_pattern|subscribe|unsubscribe|zip)\\b"
+      "match": "\\b(complete|decode|error|finalize|json_array|json_each|json_object|pre|set|sg_pattern|subscribe|unsubscribe|zip)\\b"
     },
     "relation-call": {
       "name": "entity.name.function.dl6",

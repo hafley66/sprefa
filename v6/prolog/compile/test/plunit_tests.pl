@@ -496,14 +496,142 @@ test(rejects_guard_under_negation,
     Prog = prog([], [ (flagged(Name) <- item(Name, Size), not((budget(Name, Cap), Size > Cap))) ]),
     check_supported_subset(Prog).
 
-% PHASE C2 RULING 2 renamed this refusal from the blanket edge_body_shape to
-% the precise edge_body_needs_negation (analyze.pl:edge_trigger_shape/2):
-% a marked-single trigger with any extra body goal is the OUT-OF-SCOPE
-% "marked + extra guard" bucket (SCOREBOARD.md's 9-fixture tally), distinct
-% from the unmarked-conjunction shape this ruling widened.
-test(rejects_edge_body_with_extra_goal, [throws(unsupported_construct(edge_body_needs_negation(_)))]) :-
+% FAIL-FIRST RECEIPT: not/1 in an edge body.
+%
+% This test read `throws(unsupported_construct(edge_body_needs_negation(_)))`
+% until the edge-body negation lowering landed, and that refusal is what went
+% RED first:
+%   RED (before the lowering, this exact clause as an acceptance test):
+%     [.../125] accepts_negated_atom_in_edge_body
+%       unsupported_construct(edge_body_needs_negation((open(_),not(closed(_)))))
+%   RED (after the lowering, the old refusal clause left in place):
+%     ERROR: test supported_subset_gate:rejects_edge_body_with_extra_goal:
+%            no_exception
+%   GREEN: both directions below.
+% engine.pl solves not(Goal) as \+ solve(Goal, Ctx) against the SAME Visible
+% the positive atoms read, so NOT EXISTS over the negated rel's current table
+% is the lowering; scopes.pl:exhaust_policy is the fixture.
+test(accepts_negated_atom_in_edge_body) :-
     Prog = prog([keyed(scope/1, [1])], [ (scope(X) <+ (open(X), not(closed(X)))) ]),
     check_supported_subset(Prog).
+
+% not/1 around anything but ONE plain relation atom stays refused:
+% compile_negative_uses/4 renders rel atoms only, so a nested comparison
+% would vanish from the emitted condition instead of being refused.
+test(rejects_negated_conjunction_in_edge_body,
+     [throws(unsupported_construct(edge_body_with_negation(_)))]) :-
+    Prog = prog([keyed(scope/1, [1])],
+                [ (scope(X) <+ (open(X), not((closed(X), budget(X))))) ]),
+    check_supported_subset(Prog).
+
+% Comparisons and `:=` binds in an edge body were their own named refusals
+% (edge_body_needs_comparison / edge_body_needs_bind) until this arc; they now
+% ride the same guard fold a level body uses.
+test(accepts_comparison_and_bind_in_edge_body) :-
+    Prog = prog([kind(hit/2, log), keep(hit/2, all),
+                 kind(loud/2, log), keep(loud/2, all)],
+                [ (loud(Name, Doubled) <+ hit(Name, Score), Score > 10,
+                                          Doubled := Score * 2) ]),
+    check_supported_subset(Prog).
+
+% FAIL-FIRST RECEIPT: now/1 in an edge body.
+%
+% RED (before the __tick lowering):
+%   accepts_now_in_edge_body
+%     unsupported_construct(edge_body_needs_now((ping(_),now(_))))
+% GREEN: all four below.
+% engine.pl step 8: "now(Tick) is a kernel read of the current tick (R3),
+% never an arrival"; engine_core.pl:now_reads_the_tick is the fixture.
+test(accepts_now_in_edge_body) :-
+    Prog = prog([kind(ping/1, log), keep(ping/1, all),
+                 kind(seen_at/2, log), keep(seen_at/2, all)],
+                [ (seen_at(Name, Tick) <+ ping(Name), now(Tick)) ]),
+    check_supported_subset(Prog).
+
+% now/1 around anything but a variable is a MATCH against the tick, which
+% engine.pl's solve/2 permits by unification and this lowering cannot express.
+test(rejects_now_with_non_variable_argument,
+     [throws(unsupported_construct(edge_body_with_now(_)))]) :-
+    Prog = prog([kind(ping/1, log), keep(ping/1, all),
+                 kind(seen_at/2, log), keep(seen_at/2, all)],
+                [ (seen_at(Name, 7) <+ ping(Name), now(7)) ]),
+    check_supported_subset(Prog).
+
+% Compiler-only refusal (0_program_check.pl and engine.pl are deliberately
+% untouched): a level body has no tick in its emitted DELETE/INSERT pair.
+test(rejects_now_in_level_rule,
+     [throws(unsupported_construct(now_in_level_rule(_, _)))]) :-
+    Prog = prog([], [ (stamped(Name, Tick) <- ping(Name), now(Tick)) ]),
+    check_supported_subset(Prog).
+
+% FAIL-FIRST RECEIPT: an edge head's column type now comes from the body
+% variable that feeds it, not from that head's own literal occurrences.
+%
+% RED (before the fixpoint took edge rules):
+%   accepts_edge_head_column_typed_from_its_body
+%     unsupported_construct(edge_head_column_type_mismatch(xref/2,1,int,text))
+% GREEN below. pin_extracted's span id has integer literals in the schedule;
+% xref/2 is edge-headed and has none of its own, so the old literal-witness-
+% only rule stored an integer in a TEXT column and refused rather than
+% resolving it.
+test(accepts_edge_head_column_typed_from_its_body) :-
+    Prog = prog([kind(pin_extracted/2, log), keep(pin_extracted/2, all),
+                 keyed(xref/2, [1])],
+                [ (xref(SpanId, Kind) <+ pin_extracted(SpanId, Kind)) ]),
+    program_plan(fixture(edge_head_typing, Prog, [pin_extracted(20, doc_link)],
+                         [], [])-[], Plan),
+    lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+    memberchk('CREATE TABLE "xref" ("col1" INTEGER NOT NULL, "col2" TEXT NOT NULL, PRIMARY KEY ("col1")) WITHOUT ROWID', Ddl).
+
+% A ref that ONLY an Initial row mentions still gets a table: engine.pl's
+% seed_store/3 stores it, so it is part of the oracle's final state.
+test(initial_only_ref_still_gets_a_table) :-
+    Prog = prog([kind(ping/1, log), keep(ping/1, all)], []),
+    program_plan(fixture(seeded, Prog, [known_repo(2)], [], [])-[], Plan),
+    lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+    memberchk('CREATE TABLE "known_repo" ("col1" INTEGER NOT NULL, PRIMARY KEY ("col1")) WITHOUT ROWID', Ddl).
+
+% RUNTIME-SEAM PLACEHOLDER (analyze.pl:check_no_edge_joins_arrival_fed_level/1).
+% The oracle runs this program; the emitted runtime's mid-tick level plane is
+% insert-only, so a level row an arrival retracted this tick is still in its
+% table when a non-trigger atom joins it. Remove with the runtime fix.
+test(rejects_edge_join_against_an_arrival_fed_level_rel,
+     [throws(unsupported_construct(edge_body_joins_arrival_fed_level(diagnostic/2)))]) :-
+    Prog = prog([kind(tick_rel/1, log), keep(tick_rel/1, all),
+                 kind(seen/2, log), keep(seen/2, all)],
+                [ (diagnostic(Path, Code) <- file_line(Path, Code)),
+                  (seen(Path, At) <+ diagnostic(Path, _), tick_rel(At)) ]),
+    check_supported_subset(Prog).
+
+% The narrowing that keeps exhaust_policy compiled: a level rel whose own
+% derivation reads only EDGE-WRITTEN rels cannot be moved by an arrival before
+% the edges run, so joining it mid-tick is safe.
+test(accepts_edge_join_against_an_edge_fed_level_rel) :-
+    Prog = prog([kind(open_request/2, log), keep(open_request/2, all),
+                 kind(closed/2, log), keep(closed/2, all),
+                 keyed(open_tab/2, [1])],
+                [ (open_tab(SessionId, TabId) <+ open_request(SessionId, TabId),
+                                                 not(live_tab(SessionId, _))),
+                  (closed(SessionId, TabId) <+ open_request(SessionId, TabId)),
+                  (live_tab(SessionId, TabId) <- open_tab(SessionId, TabId),
+                                                 not(closed(SessionId, TabId))) ]),
+    check_supported_subset(Prog).
+
+% The tick is an INTEGER witness. Without the seed in
+% analyze.pl:seed_column_contribution/8 this column takes the C2 "no witness
+% -> text" default and the emitted DDL says TEXT, which prints the tick
+% quoted where the oracle prints it bare.
+test(now_bound_head_column_is_integer_storage) :-
+    Prog = prog([kind(ping/1, log), keep(ping/1, all),
+                 kind(seen_at/2, log), keep(seen_at/2, all)],
+                [ (seen_at(Name, Tick) <+ ping(Name), now(Tick)) ]),
+    program_plan(fixture(now_typing, Prog, [], [], [])-[], Plan),
+    lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+    % Column NAMES are col1/col2 here: surface names come from the fixture
+    % file's variable bindings, and this program is built in Prolog with an
+    % empty Bindings list. The TYPES are the point.
+    memberchk('CREATE TABLE "seen_at" ("col1" TEXT NOT NULL, "col2" INTEGER NOT NULL)', Ddl),
+    memberchk('CREATE TABLE "__tick" ("n" INTEGER NOT NULL)', Ddl).
 
 % FAIL-FIRST RECEIPT: latest/1 in an edge body.
 %

@@ -1,1 +1,1 @@
-rel event(col1) log keep(count(2)).
+rel event(col1: text) log keep(count(2)).

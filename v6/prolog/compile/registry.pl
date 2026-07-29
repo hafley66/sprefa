@@ -42,7 +42,10 @@ surface(error/1,        time,      refs_of_arg(1, pos, trigger), wrapper(rel_ato
 
 surface(not/1,          sign,      arm(neg),                     wrapper(body_item, lower),             live).
 surface(pre/1,          sample,    refs_of_arg(1, pos, sampled), wrapper(rel_atom, refuse(goal)),       refused).
-surface(now/1,          time,      no_refs,                      wrapper(expr, refuse(goal)),           refused).
+% Contextual gate, same shape as latest/1: live around a plain VARIABLE in an
+% edge body (lowered to a read of the emitted __tick counter); analyze.pl
+% keeps now_in_level_rule and edge_body_with_now for the wider placements.
+surface(now/1,          time,      no_refs,                      wrapper(expr, lower),                  live).
 surface(decode/2,       guard,     no_refs,                      wrapper(expr_pair, refuse(goal)),      refused).
 surface(json_each/2,    guard,     no_refs,                      wrapper(expr_pair, refuse(goal)),      refused).
 surface(true/0,         guard,     no_refs,                      word(lower),                           live).

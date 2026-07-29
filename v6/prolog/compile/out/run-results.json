@@ -63,6 +63,13 @@
     "finalDetail": ""
   },
   {
+    "name": "diag_scenario_seven_ticks_end_to_end",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "retention_count_prunes_oldest",
     "bucket": "identical",
     "detail": "",
@@ -78,6 +85,13 @@
   },
   {
     "name": "world_fed_keyed_arrival_replaces",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "now_reads_the_tick",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -280,6 +294,13 @@
     "finalDetail": ""
   },
   {
+    "name": "repeat_is_a_self_carry_chain",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "fork_join_is_a_conjunctive_body",
     "bucket": "identical",
     "detail": "",
@@ -302,6 +323,13 @@
   },
   {
     "name": "merge_policy",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "exhaust_policy",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -407,6 +435,48 @@
   },
   {
     "name": "head_move_flips_current_tree_in_one_tick",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "pin_to_unknown_repo_derives_repo_candidate",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "xref_rev_is_pin_data_not_live_head",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "changed_since_spans_two_turns",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "changed_since_ignores_events_before_turn",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "two_pins_dedup_to_one_demand_row",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "rev_fill_not_behind_keeps_stale_pin_empty",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",

@@ -69,7 +69,7 @@ Level-rule use remains `latest_in_level_rule`; wider edge arguments remain
 | `error/1` | `time` | `refs_of_arg(1,pos,trigger)` | `wrapper(rel_atom,refuse(lifecycle))` | `reserved` |
 | `not/1` | `sign` | `arm(neg)` | `wrapper(body_item,lower)` | `live` |
 | `pre/1` | `sample` | `refs_of_arg(1,pos,sampled)` | `wrapper(rel_atom,refuse(goal))` | `refused` |
-| `now/1` | `time` | `no_refs` | `wrapper(expr,refuse(goal))` | `refused` |
+| `now/1` | `time` | `no_refs` | `wrapper(expr,lower)` | `live` |
 | `decode/2` | `guard` | `no_refs` | `wrapper(expr_pair,refuse(goal))` | `refused` |
 | `json_each/2` | `guard` | `no_refs` | `wrapper(expr_pair,refuse(goal))` | `refused` |
 | `true/0` | `guard` | `no_refs` | `word(lower)` | `live` |
@@ -104,7 +104,11 @@ Level-rule use remains `latest_in_level_rule`; wider edge arguments remain
 
 | construct | level body | edge body |
 |---|---|---|
-| `latest/1` | refused as `latest_in_level_rule(Ref)` | refused as `edge_body_with_latest(Body)` pending the concurrent edge-lowering lane; this tree still refuses it |
+| `latest/1` | refused as `latest_in_level_rule(Ref)` | live around ONE plain relation atom (sampled base-table read, never a trigger); wider arguments refused as `edge_body_with_latest(Body)` |
+| `not/1` | live (NOT EXISTS), a guard nested inside it refused as `negated_guard_goal(Head, Goal)` | live around ONE plain relation atom; wider arguments refused as `edge_body_with_negation(Body)` |
+| `now/1` | refused as `now_in_level_rule(Head, Goal)` -- compiler-only, the oracle solves it there | live around a plain VARIABLE (reads the emitted `__tick` counter); a non-variable argument refused as `edge_body_with_now(Body)` |
+| `pre/1` | refused as `pre_in_level_rule(Ref)` | refused as `edge_body_needs_pre(Body)` -- the fold is occurrence-ordered and cross-arm; see the "pre" note in SCOREBOARD.md |
+| comparisons, `:=`, `is` | live (WHERE / SELECT expressions) | live, same three compilers, folded after the positive atoms |
 
 ### Core grammar and input aliases
 

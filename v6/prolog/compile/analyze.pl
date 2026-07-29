@@ -18,7 +18,7 @@
 :- module(analyze,
           [ rel_kind/3, decl_key/3, decl_keep/3, declared_refs/2,
             program_refs/2, arrival_target_refs/2, derived_refs/2,
-            edge_headed_refs/2, level_headed_refs/2,
+            edge_headed_refs/2, level_headed_refs/2, seeded_refs/2,
             rule_head_ref/2, rule_is_edge/1, rule_is_level/1,
             body_ref_uses/2, rel_columns/4, rel_columns/5,
             rel_column_types/5, rel_column_types/7, snake_name/2,
@@ -26,7 +26,8 @@
             edge_trigger_shape/2,
             conjunction_goals/2, check_edge_head_column_types/2,
             aggregate_head_template/2, rule_is_aggregate/1,
-            body_guard_goals/2, guard_goal/1, bind_goal/3,
+            body_guard_goals/2, guard_goal/1, bind_goal/3, tick_goal/2,
+            program_uses_tick/2,
             program_column_types/7,
             % Body traversals, exported as the characterization seam for the
             % shared-walker consolidation (rank R1). The oracle ships its own
@@ -176,6 +177,30 @@ body_guard_goals(Body, Goals) :-
 guard_or_bind_goal(Goal) :- guard_goal(Goal), !.
 guard_or_bind_goal(Goal) :- bind_goal(Goal, _, _).
 
+% now/1 reads the kernel tick counter (engine.pl step 8: "now(Tick) is a
+% kernel read of the current tick (R3), never an arrival"). It binds like a
+% `:=` goal and contributes zero rel uses, which is why it rides the same
+% guard fold rather than a plane of its own; the argument must be a plain
+% variable, since the tick is produced, never matched.
+tick_goal(Goal, Variable) :-
+    body_surface_for_term(Goal, now/1, time, no_refs, wrapper(expr, _), _),
+    arg(1, Goal, Variable),
+    var(Variable).
+
+% Does any rule in this program read the tick? lower.pl only emits the
+% __tick counter table, and emit_ts.pl only emits the per-tick advance, for
+% programs that answer yes -- every other emitted module stays byte-identical
+% to what it was before now/1 was lowered.
+program_uses_tick(prog(_, Rules), UsesTick) :-
+    (   member(Rule, Rules),
+        rule_body(Rule, Body),
+        conjunction_goals(Body, Goals),
+        member(Goal, Goals),
+        tick_goal(Goal, _)
+    ->  UsesTick = true
+    ;   UsesTick = false
+    ).
+
 % ═══ program-wide ref inventory ═════════════════════════════════════════════
 % declared_refs/2: every kind(Ref, _) declaration, regardless of whether any
 % rule ever mentions Ref. Sweeping the full fixture corpus (phase C) turned
@@ -197,6 +222,18 @@ guard_or_bind_goal(Goal) :- bind_goal(Goal, _, _).
 % intentionally never read by any rule -- comment: "REJECTED READING
 % dropped on purpose"). Scanning only kind/2 missed it, and its Schedule
 % arrival then hit the emitted program's "arrival for undeclared rel" guard.
+% Every ref an Initial row seeds, declared or not. engine.pl:seed_store/3
+% stores EVERY Initial row (rel_kind/3's own fallback makes an undeclared ref
+% a Set rel), so such a ref is part of the oracle's final state whether or not
+% any rule or decl mentions it. Without this the emitted program has no table
+% for it, no boot seed, and no finalSelect entry -- the run grades identical
+% (nothing ever writes it) while the FINAL state silently drops the rows.
+% Caught by spine_semantics.pl:xref_rev_is_pin_data_not_live_head, whose
+% Initial carries a known_repo(2) row its own rules never read.
+seeded_refs(Initial, Refs) :-
+    findall(Ref, ( member(Row, Initial), rel_ref(Row, Ref) ), Refs0),
+    sort(Refs0, Refs).
+
 declared_refs(Decls, Refs) :-
     findall(Ref,
             ( member(Decl, Decls),
@@ -363,9 +400,16 @@ column_type_at(Rules, Initial, Schedule, Ref, Position, Type) :-
 % compares TEXT affinity against an integer literal. That is fail-first check
 % (a), the TEXT-collapse class, and this pass is the fix.
 %
-% One fixpoint over LEVEL rule heads only (edge heads keep the literal-
-% witness-only rule this arc did not touch, so check_edge_head_column_types/2
-% keeps refusing the same two fixtures):
+% One fixpoint over EVERY rule head, level and edge alike. Edge heads used to
+% be excluded, on the literal-witness-only rule, and check_edge_head_column_
+% types/2 refused the resulting mismatches by name
+% (edge_head_column_type_mismatch) rather than resolving them. That refusal is
+% the "real fix, out of this ruling's scope" the C2 comment below names, and
+% this is that fix: an edge head's column inherits its type from the body
+% variable that feeds it, exactly the way a level head's does. The
+% cross-check itself stays -- it now fires only where two DIFFERENT body atoms
+% feed one head column with genuinely disagreeing types, which is a real
+% program defect rather than an artefact of where the fixpoint stopped.
 %   1. seed every column from its literal witnesses, keeping "no witness"
 %      DISTINCT from "text witness" (contribution `none` vs `text`);
 %   2. for each level rule, build a variable -> type environment from its
@@ -388,8 +432,7 @@ program_column_types(Decls, Rules, Initial, Schedule, Bindings, Refs, RefTypes) 
               seed_column_contributions(Decls, Rules, Initial, Schedule, Ref,
                                         Columns, Seeds) ),
             SeedMap),
-    include(rule_is_level, Rules, LevelRules),
-    column_type_fixpoint(LevelRules, RefColumns, SeedMap, SeedMap, Settled),
+    column_type_fixpoint(Rules, RefColumns, SeedMap, SeedMap, Settled),
     findall(Ref-Types,
             ( member(Ref-Contributions, Settled),
               maplist(contribution_to_type, Contributions, Types) ),
@@ -421,7 +464,19 @@ seed_column_contribution(Decls, Rules, Initial, Schedule, Ref, Columns, Position
                ( column_source_args(Rules, Initial, Schedule, Ref, Args),
                  nth1(Position, Args, Witness),
                  atomic(Witness)
-               ), AtomicWitnesses),
+               ), LiteralWitnesses),
+       % now/1 is a witness the way a literal is: the kernel tick is an
+       % INTEGER (engine.pl run_ticks/7 counts from 1, step 8 "never an
+       % arrival"), so a head column fed only by now/1 -- which has no
+       % literal anywhere in the program, by construction -- would otherwise
+       % take C2's "zero witnesses -> text" default and store the tick as
+       % TEXT. Downstream that is either a named refusal
+       % (comparison_operand_not_int on `EventTick > TurnTick`) or an
+       % affinity comparison the oracle does not perform.
+       ( now_bound_head_position(Rules, Ref, Position)
+       -> AtomicWitnesses = [0 | LiteralWitnesses]
+       ;  AtomicWitnesses = LiteralWitnesses
+       ),
        ( AtomicWitnesses == []
        -> Seed = open(none)
        ;  forall(member(Witness, AtomicWitnesses), integer(Witness))
@@ -429,6 +484,23 @@ seed_column_contribution(Decls, Rules, Initial, Schedule, Ref, Columns, Position
        ;  Seed = open(text)
        )
     ).
+
+% A rule head position whose variable is exactly the one now/1 binds in that
+% same rule's body. Anything else -- the tick flowing through a `:=`, or
+% through another rel first -- is already covered by the normal contribution
+% path or by edge_head_column_type_mismatch.
+now_bound_head_position(Rules, Ref, Position) :-
+    member(Rule, Rules),
+    rule_head_ref(Rule, Ref),
+    rule_body(Rule, Body),
+    conjunction_goals(Body, Goals),
+    member(TickGoal, Goals),
+    tick_goal(TickGoal, TickVariable),
+    rule_head(Rule, Head),
+    Head =.. [_ | HeadArgs],
+    nth1(Position, HeadArgs, HeadArg),
+    HeadArg == TickVariable,
+    !.
 
 % TypeMap carries the RAW contribution per position (int | text | none), NOT
 % the resolved storage type. Resolving `none` to its TEXT default before the
@@ -441,30 +513,32 @@ seed_column_contribution(Decls, Rules, Initial, Schedule, Ref, Columns, Position
 % timeless_rail fixtures out with comparison_operand_not_int. `none` means
 % "contributes nothing" all the way to the end; only contribution_to_type/2,
 % after the fixpoint, turns a still-unknown column into TEXT.
-column_type_fixpoint(LevelRules, RefColumns, SeedMap, Current, Settled) :-
+column_type_fixpoint(Rules, RefColumns, SeedMap, Current, Settled) :-
     findall(Ref-TypeList,
             ( member(Ref-Contributions, Current),
               maplist(raw_contribution, Contributions, TypeList) ),
             TypeMap),
     findall(Ref-Merged,
             ( member(Ref-Seeds, SeedMap),
-              rule_head_contributions(LevelRules, RefColumns, TypeMap, Ref,
+              rule_head_contributions(Rules, RefColumns, TypeMap, Ref,
                                       RuleContributions),
               merge_contribution_lists(Seeds, RuleContributions, Merged) ),
             Next),
     ( Next == Current
     -> Settled = Current
-    ;  column_type_fixpoint(LevelRules, RefColumns, SeedMap, Next, Settled)
+    ;  column_type_fixpoint(Rules, RefColumns, SeedMap, Next, Settled)
     ).
 
-rule_head_contributions(LevelRules, RefColumns, TypeMap, Ref, Contributions) :-
+rule_head_contributions(Rules, RefColumns, TypeMap, Ref, Contributions) :-
     findall(HeadTypes,
-            ( member(Rule, LevelRules),
+            ( member(Rule, Rules),
               rule_head_ref(Rule, Ref),
               rule_head_contribution(RefColumns, TypeMap, Rule, HeadTypes) ),
             Contributions).
 
-rule_head_contribution(RefColumns, TypeMap, (Head <- Body), HeadTypes) :-
+rule_head_contribution(RefColumns, TypeMap, Rule, HeadTypes) :-
+    rule_head(Rule, Head),
+    rule_body(Rule, Body),
     body_type_environment(RefColumns, TypeMap, Body, Environment),
     Head =.. [_ | Args],
     maplist(head_arg_contribution(Environment), Args, HeadTypes).
@@ -607,10 +681,15 @@ column_source_args(_Rules, _Initial, Schedule, Ref, Args) :-
 %     body.pl:96-110). A single atom (N=1) is the degenerate case: no other
 %     atom to join, so lowering it is unchanged from marked_single except
 %     the trigger no longer needs the only/1 wrapper.
-%   sampled_conjunction(TriggerAtoms, SampleAtoms) -- the same positive
-%     conjunction with one or more latest(Atom) goals. TriggerAtoms remain
-%     the only occurrence sources; SampleAtoms are unwrapped plain rel atoms
-%     read from their current base tables by lower.pl.
+%   sampled_conjunction(TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals) --
+%     the same positive conjunction plus any mix of latest(Atom) samples,
+%     not(Atom) negations, and comparison/bind guards. TriggerAtoms remain
+%     the only occurrence sources. Everything past them is read against the
+%     CURRENT store exactly as engine.pl:solve/2 reads it once the firing
+%     atom's own arguments are bound: SampleAtoms and NegAtoms are unwrapped
+%     plain rel atoms (joined, or NOT EXISTS'd, by lower.pl), GuardGoals are
+%     the WHERE conditions and the `:=` bindings, folded left to right the
+%     way solve/2 resolves a conjunction.
 % Everything else names the SPECIFIC blocking construct instead of a
 % blanket edge_body_shape reason, so the scoreboard's per-construct tally
 % stays precise as this widens further.
@@ -621,21 +700,37 @@ edge_trigger_shape(Body, unmarked_conjunction(Atoms)) :-
     conjunction_goals(Body, Goals),
     maplist(plain_positive_atom, Goals),
     !, Atoms = Goals.
-edge_trigger_shape(Body, sampled_conjunction(TriggerAtoms, SampleAtoms)) :-
+edge_trigger_shape(Body,
+                   sampled_conjunction(TriggerAtoms, SampleAtoms, NegAtoms,
+                                       GuardGoals)) :-
     conjunction_goals(Body, Goals),
-    edge_sampled_goals(Goals, TriggerAtoms, SampleAtoms),
+    edge_sampled_goals(Goals, TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals),
     TriggerAtoms \== [],
-    SampleAtoms \== [],
+    ( SampleAtoms \== [] ; NegAtoms \== [] ; GuardGoals \== [] ),
     !.
 edge_trigger_shape(Body, unsupported(edge_body_shape(Body))).
 
-edge_sampled_goals([], [], []).
-edge_sampled_goals([latest(Atom) | Rest], TriggerAtoms, [Atom | SampleAtoms]) :-
-    plain_positive_rel_atom(Atom),
-    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms).
-edge_sampled_goals([Atom | Rest], [Atom | TriggerAtoms], SampleAtoms) :-
+% The four goal classes are disjoint by construction: plain_positive_atom/1
+% is exactly "no registry row", and latest/1, not/1 and every comparison or
+% bind operator each carry one. The cuts say so; without them a failure
+% deeper in the list would backtrack into a classification that cannot hold.
+edge_sampled_goals([], [], [], [], []).
+edge_sampled_goals([latest(Atom) | Rest], TriggerAtoms, [Atom | SampleAtoms],
+                   NegAtoms, GuardGoals) :-
+    plain_positive_rel_atom(Atom), !,
+    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals).
+edge_sampled_goals([not(Atom) | Rest], TriggerAtoms, SampleAtoms,
+                   [Atom | NegAtoms], GuardGoals) :-
+    plain_positive_rel_atom(Atom), !,
+    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals).
+edge_sampled_goals([Goal | Rest], TriggerAtoms, SampleAtoms, NegAtoms,
+                   [Goal | GuardGoals]) :-
+    ( guard_or_bind_goal(Goal) ; tick_goal(Goal, _) ), !,
+    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals).
+edge_sampled_goals([Atom | Rest], [Atom | TriggerAtoms], SampleAtoms, NegAtoms,
+                   GuardGoals) :-
     plain_positive_atom(Atom),
-    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms).
+    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals).
 
 edge_registered_refusal(Body, Goals, Reason) :-
     findall(Priority-Candidate,
@@ -647,28 +742,61 @@ edge_registered_refusal(Body, Goals, Reason) :-
 
 edge_goal_refusal(latest(Atom), Body, 1, edge_body_with_latest(Body)) :-
     \+ plain_positive_rel_atom(Atom).
+% finalize/1 needs a DEPARTURE STREAM the emitted runtime does not have, and
+% that stream is runtime-owned, not emitter-owned. engine.pl turns a -delta of
+% a listened rel into a T+1 occurrence (tick/7's DepartureCarry, gated by
+% listened_departure_refs/2), while 1_incremental.ts:stageEvents/4 copies ONLY
+% `event.sign === 1` rows into __frontier_/__next_frontier_, whose DDL carries
+% _phase and _sequence and no sign at all. So a departure can never reach an
+% arm. The naive path is further off: triggerOccurrences reads the arrivals
+% BATCH and filters sign === "add", and it holds no cross-tick state to carry
+% a departure into the next tick with.
+% What the seam owes, exactly: a signed (or separate) frontier stream, staged
+% for the refs some rule binds with finalize/1, promoted and counted in
+% carryPending the way additions are. The emitter's half (departure DDL, the
+% arm's DeltaProjectSql, and a per-relation "departure listened" flag) is
+% small and rides on top of it.
 edge_goal_refusal(Goal, Body, 2, edge_body_needs_finalize(Body)) :-
     body_surface_for_term(Goal, _, time, refs_of_arg(_, pos, trigger),
                           wrapper(rel_atom, refuse(goal)), refused).
+% pre/1 is NOT a wider arm, which is why the edge-body arc widened everything
+% around it and left this one standing. engine.pl fires occurrences ONE AT A
+% TIME and pre(Atom) reads the store as the writes so far THIS TICK left it
+% (engine.pl step 4), so two arrivals for one key fold 0 -> 1 -> 2. A sampled
+% base-table read -- the shape latest/1 got -- projects (clicks,1) twice and
+% lands 1 where the oracle pins 2 (receipt quoted in SCOREBOARD.md's
+% "edge_body_needs_pre" section, run against
+% merge_family.pl:batched_increments_both_count). The fold is also CROSS-ARM,
+% so no per-arm recursive CTE expresses it either. It needs an ordered
+% occurrence loop in the runtime; refused by name until that exists.
 edge_goal_refusal(Goal, Body, 3, edge_body_needs_pre(Body)) :-
     body_surface_for_term(Goal, _, sample, refs_of_arg(_, pos, sampled),
                           wrapper(rel_atom, refuse(goal)), refused).
-edge_goal_refusal(Goal, Body, 4, edge_body_needs_now(Body)) :-
-    body_surface_for_term(Goal, _, time, no_refs,
-                          wrapper(expr, refuse(goal)), refused).
-edge_goal_refusal(Goal, Body, 5, edge_body_needs_negation(Body)) :-
-    body_surface_for_term(Goal, _, sign, arm(neg),
-                          wrapper(body_item, lower), live).
-% Binds and comparisons are LIVE in a level body as of the expression lift,
-% and still refused in an EDGE body: an edge arm projects ONE arrival row
-% through numbered placeholders and joins the other atoms against their
-% current tables (edge_statement_single/5), a shape the guard walk has no
-% seam in yet. Refused by the precise name rather than falling through to the
-% blanket edge_body_shape, so the scoreboard tally stays readable.
-edge_goal_refusal(Goal, Body, 6, edge_body_needs_bind(Body)) :-
-    bind_goal(Goal, _, _).
-edge_goal_refusal(Goal, Body, 7, edge_body_needs_comparison(Body)) :-
-    guard_goal(Goal).
+% now/1 is lowered around a plain variable; `now(7)` or `now(f(X))` would be a
+% MATCH against the tick, which engine.pl's solve(now(Tick), ctx(_,_,Tick))
+% permits by unification and this lowering has no shape for.
+edge_goal_refusal(now(Argument), Body, 4, edge_body_with_now(Body)) :-
+    \+ var(Argument).
+% Negation is LIVE around ONE plain relation atom (lowered to NOT EXISTS
+% against that rel's current table, the same text compile_negative_uses/4
+% emits for a level body). not/1 around a conjunction, a comparison or
+% another wrapper stays refused: compile_negative_uses/4 walks rel atoms
+% only, and a nested guard would be silently dropped from the emitted
+% condition rather than refused.
+edge_goal_refusal(not(Atom), Body, 5, edge_body_with_negation(Body)) :-
+    \+ plain_positive_rel_atom(Atom).
+% decode/2 and json_each/2 are blocked BELOW the arm, on the value encoding,
+% which is why widening the arm did not reach them. A compound value that
+% ARRIVES is stored as canonical term text (`fresh(tag_w1,body1)` --
+% sweep.pl:term_text/2, mirroring ticklog.pl's own value_json/2), while
+% compile_pattern_arg/7's compound branch destructures the json1 tagged form
+% (`json_extract(Expr,'$.fn')` / `'$.args[N]'`) that the emitter writes for a
+% compound a HEAD expression produces. The two encodings do not meet, and that
+% mismatch is the one SCOREBOARD.md has carried since phase C ("compound
+% arrival text vs json1 match"). Lowering decode/2 on top of it would answer
+% zero rows where the oracle unifies. The object-pattern half (`{name: X}`)
+% needs a third shape again, and json_each/2 needs a table-valued read.
+% A decode arc owns the encoding decision first; the arm is not the blocker.
 edge_goal_refusal(Goal, Body, 8, edge_body_needs_json_destructure(Body)) :-
     body_surface_for_term(Goal, _, guard, no_refs,
                           wrapper(expr_pair, refuse(goal)), refused).
@@ -695,11 +823,12 @@ plain_positive_rel_atom(Goal) :-
 % Trigger refs a shape can fire from -- used by the same-key conflict-risk
 % check below. marked_single fires from exactly one ref; unmarked_conjunction
 % fires from ANY of its atoms' refs (engine.pl unmarked_items/2 wraps every
-% one independently). sampled_conjunction excludes its sampled atoms.
+% one independently). sampled_conjunction excludes its sampled, negated and
+% guard goals: none of them is an occurrence source.
 shape_trigger_refs(marked_single(Atom), [Ref]) :- rel_ref(Atom, Ref).
 shape_trigger_refs(unmarked_conjunction(Atoms), Refs) :-
     findall(Ref, ( member(Atom, Atoms), rel_ref(Atom, Ref) ), Refs0), sort(Refs0, Refs).
-shape_trigger_refs(sampled_conjunction(TriggerAtoms, _), Refs) :-
+shape_trigger_refs(sampled_conjunction(TriggerAtoms, _, _, _), Refs) :-
     findall(Ref, ( member(Atom, TriggerAtoms), rel_ref(Atom, Ref) ), Refs0),
     sort(Refs0, Refs).
 
@@ -729,7 +858,10 @@ check_edge_head_column_types_for_rule(RelPlans, (Head <+ Body)) :-
     edge_trigger_shape(Body, Shape),
     ( Shape = marked_single(TriggerAtom) -> BodyAtoms = [TriggerAtom]
     ; Shape = unmarked_conjunction(Atoms) -> BodyAtoms = Atoms
-    ; Shape = sampled_conjunction(TriggerAtoms, SampleAtoms)
+    % NegAtoms deliberately excluded: compile_negative_atom_args/6 runs in
+    % `check` mode and never binds a head variable, so a negated atom's
+    % column types cannot be the source of a head column's value.
+    ; Shape = sampled_conjunction(TriggerAtoms, SampleAtoms, _, _)
       -> append(TriggerAtoms, SampleAtoms, BodyAtoms)
     ; BodyAtoms = []
     ),
@@ -746,6 +878,76 @@ check_edge_head_column_types_for_rule(RelPlans, (Head <+ Body)) :-
              nth1(BodyPosition, BodyColumnTypes, BodyColumnType),
              BodyColumnType \== HeadColumnType ),
            throw(unsupported_construct(edge_head_column_type_mismatch(HeadRef, HeadPosition, BodyColumnType, HeadColumnType)))).
+
+% ═══ mid-tick level state on the non-trigger side of an edge arm ═══════════
+% A RUNTIME-SEAM PLACEHOLDER, not a language decision. Remove it with the
+% runtime fix; the fixture that pins it is check_eventing.pl's
+% clock_rel_join_storms, which the oracle runs correctly.
+%
+% engine.pl freezes MidLevel = level_closure over the store AFTER arrivals are
+% absorbed and BEFORE any edge write (tick/7, frozen(MidLevel, PrevLevel)), so
+% a level row an arrival RETRACTED this tick is already gone from the Visible
+% an edge body reads. The emitted runtime's mid-tick level maintenance is
+% insert-only: 1_incremental.ts applyLevelStatement/5 runs insertSql and stages
+% sign=1 events, and the retraction half lives in recomputeLevelsAfterEdges,
+% which runs AFTER applyEdges. The naive path has the same order
+% (recomputeLevels sits after the edge batch). So a retracted level row is
+% still in its table when a NON-TRIGGER atom joins it.
+%
+% MEASURED on clock_rel_join_storms (`diag_seen(Path,Line,Code,At) <+
+% diagnostic(Path,Line,Code,_), tick_rel(At)`, where diagnostic is level-headed
+% off the arrival-fed file_line): at tick 3, two file_line rows flip to `none`
+% and tick_rel(3) arrives. The tick_rel arm joins diagnostic and gets THREE
+% rows (lines 3, 5, 7) where the oracle derives ONE (line 5) -- the two
+% retracted diagnostics are still in the table.
+%
+% The condition is narrow on purpose:
+%   - only a NON-TRIGGER read. When the level rel is the trigger, the arm reads
+%     its frontier (a delta stream) and the stale table never enters, which is
+%     why diag_scenario_seven_ticks_end_to_end (one trigger, now/1 beside it)
+%     grades identical.
+%   - only a level rel that arrivals can move. exhaust_policy reads
+%     not(live_tab(...)), and live_tab derives from open_tab and closed, BOTH
+%     edge-written, so no arrival can retract it before the edges run. It stays
+%     compiled and identical.
+% Anything wider would refuse the dataflow shape the flagship needs (an edge
+% rule joining an extraction-fed level view), which is the argument for fixing
+% the runtime rather than widening this.
+check_no_edge_joins_arrival_fed_level(Rules) :-
+    level_headed_refs(Rules, LevelRefs),
+    derived_refs(Rules, DerivedRefs),
+    forall(( member(Rule, Rules), rule_is_edge(Rule),
+             rule_body(Rule, Body),
+             edge_trigger_shape(Body, Shape),
+             shape_joined_ref(Shape, JoinedRef),
+             memberchk(JoinedRef, LevelRefs),
+             level_ref_reads_arrival(Rules, DerivedRefs, JoinedRef, []) ),
+           throw(unsupported_construct(edge_body_joins_arrival_fed_level(JoinedRef)))).
+
+% Every ref an arm reads WITHOUT firing from it: the other trigger atoms of an
+% unmarked conjunction (each arm joins the ones it does not fire from), the
+% latest() samples, and the negated atoms.
+shape_joined_ref(unmarked_conjunction(Atoms), Ref) :-
+    length(Atoms, Count), Count > 1,
+    member(Atom, Atoms), rel_ref(Atom, Ref).
+shape_joined_ref(sampled_conjunction(TriggerAtoms, SampleAtoms, NegAtoms, _), Ref) :-
+    ( length(TriggerAtoms, Count), Count > 1, member(Atom, TriggerAtoms)
+    ; member(Atom, SampleAtoms)
+    ; member(Atom, NegAtoms)
+    ),
+    rel_ref(Atom, Ref).
+
+% Does this level rel's derivation reach a rel no rule heads (an EDB rel an
+% arrival can write)? Seen/1 stops the walk on a recursive level rel.
+level_ref_reads_arrival(Rules, DerivedRefs, Ref, Seen) :-
+    \+ memberchk(Ref, Seen),
+    member(Rule, Rules), rule_is_level(Rule), rule_head_ref(Rule, Ref),
+    rule_body(Rule, Body), body_ref_uses(Body, Uses),
+    member(use(BodyRef, _, _, _), Uses),
+    (   \+ memberchk(BodyRef, DerivedRefs)
+    ->  true
+    ;   level_ref_reads_arrival(Rules, DerivedRefs, BodyRef, [Ref | Seen])
+    ).
 
 % ═══ supported-subset gate ═══════════════════════════════════════════════════
 % Refuses (with a specific term, not a generic failure) any construct wider
@@ -803,6 +1005,7 @@ check_supported_subset_expanded(Program) :-
                               aggregate_in_edge_head ]),
     forall(( member(Rule, Rules), rule_is_edge(Rule) ), check_edge_rule_shape(Rule)),
     forall(( member(Rule, Rules), rule_is_level(Rule) ), check_level_rule_shape(Rule)),
+    check_no_edge_joins_arrival_fed_level(Rules),
     check_no_edge_head_conflict_risk(Decls, Rules),
     shared_refusal(Program, [ keyed_level_head, keyed_log_rel ]).
 
@@ -910,6 +1113,17 @@ check_level_rule_shape((Head <- Body)) :-
     ( body_forbidden_goal(Body, Forbidden)
     -> throw(unsupported_construct(level_body_goal(Head, Forbidden)))
     ; true ),
+    % COMPILER-ONLY refusal, deliberately NOT mirrored into 0_program_check.pl
+    % or engine.pl: the oracle DOES solve now/1 in a level body (solve/2 reads
+    % the tick straight out of ctx/3, and level_closure/5 is handed the same
+    % Tick), so this is a capability gap named precisely, not a semantics
+    % change. Lowering it would need the tick inside the level DELETE/INSERT
+    % pair as well as inside an edge arm, and no fixture writes one; leaving
+    % it to the guard fold, which never sees a level body's now/1, would drop
+    % the binding silently.
+    ( rule_body_tick_ref(Body, TickGoal)
+    -> throw(unsupported_construct(now_in_level_rule(Head, TickGoal)))
+    ; true ),
     ( negated_guard_goal(Body, NegatedGuard)
     -> throw(unsupported_construct(negated_guard_goal(Head, NegatedGuard)))
     ; true ),
@@ -929,6 +1143,14 @@ negated_guard_goal(Body, Goal) :-
     NegatedGoal = not(Inner),
     body_guard_goals(Inner, InnerGuards),
     InnerGuards = [Goal | _].
+
+% Any now/1 goal a level body reaches, negation included -- the refusal is
+% about the level plane having no tick source in its emitted SQL, and that is
+% true on either side of a not/1.
+rule_body_tick_ref(Body, Goal) :-
+    walk_body(Body, walk_policy(descend_not(true), splice_bare(true)), Events),
+    member(event(_, _, surface(now/1, _, _, _, _), Goal), Events),
+    !.
 
 % An aggregate head column whose body reads the head's OWN rel: engine.pl
 % stratifies an aggregate strictly above every rel its body reads

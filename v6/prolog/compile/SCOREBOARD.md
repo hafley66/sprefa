@@ -14,47 +14,72 @@ excerpt per compiled fixture).
 
 ## Totals (current)
 
-Refreshed by the RUNTIME BRIDGE arc (2026-07-29), which was the next
-sweep-touching arc after the expression + aggregate lift left these numbers at
-their 120-fixture values. The prose sections below this one are historical and
-were written against the 110-fixture corpus; the numbers here and in the two
-tables that follow come from `out/manifest.json` + `out/run-results.json`.
+Refreshed by the EDGE-BODY CONSTRUCT arc (2026-07-29, golden plan phase 3),
+which landed negation / comparisons / binds / `now` in edge bodies and made
+edge heads inherit their column types. The prose sections below this one are
+historical and were written against the 110-fixture corpus; the numbers here
+and in the two tables that follow come from `out/manifest.json` +
+`out/run-results.json`.
 
 | bucket | count |
 |---|---|
-| fixtures swept | 135 |
-| UNSUPPORTED (compiler refuses, named construct) | 65 |
-| compiled (lowering + emission succeeded) | 70 |
-| — of which IDENTICAL (tick log byte-identical to oracle) | 67 |
+| fixtures swept | 137 |
+| UNSUPPORTED (compiler refuses, named construct) | 55 |
+| compiled (lowering + emission succeeded) | 82 |
+| — of which IDENTICAL (tick log byte-identical to oracle) | 80 |
 | — of which WRONG (diff vs oracle) | 0 |
-| — of which run_error / no_oracle_log (rejection-path fixtures) | 3 |
+| — of which run_error / no_oracle_log (rejection-path fixtures) | 2 |
 
-IDENTICAL + run_error/no_oracle + UNSUPPORTED = 67 + 3 + 65 = 135.
+IDENTICAL + run_error/no_oracle + UNSUPPORTED = 80 + 2 + 55 = 137.
 
 Both emitter modes agree row for row: the incremental default and
-`SPREFA_TSV2_EMITTER_MODE=naive` produce the same 67/0/3.
+`SPREFA_TSV2_EMITTER_MODE=naive` produce the same 80/0/2.
 
-### The UNSUPPORTED bucket, by named reason (65)
+### The UNSUPPORTED bucket, by named reason (55)
 
 | reason | count |
 |---|---:|
-| `edge_body_needs_pre` | 12 |
-| `level_body_goal` | 6 |
-| `edge_body_with_latest` | 6 |
-| `edge_body_needs_negation` | 6 |
-| `edge_body_needs_json_destructure` | 6 |
-| `edge_body_needs_now` | 5 |
-| `aggregate_head` | 4 |
+| `edge_body_needs_pre` | 13 |
+| `edge_body_needs_json_destructure` | 9 |
+| `level_body_goal` (decode/json_each in a level body) | 6 |
+| `aggregate_head` (json_array / json_object) | 4 |
 | `edge_body_needs_finalize` | 2 |
 | `json_value_expression` | 2 |
-| `edge_head_column_type_mismatch` | 2 |
-| 12 more, one or two each (see `out/manifest.json`) | 14 |
+| 19 more, one each (see `out/manifest.json`) | 19 |
 
-`edge_body_with_latest` plus the level-rule refusal `latest_in_level_rule` is
-the open review finding A12/B1: `latest` has NO compiling form in either rule
-kind today. That is not only a fixture-bucket fact — it silently staled the
-checked-in `door-handwritten.dl6` program, which the runtime-bridge arc found
-and repaired.
+`edge_body_needs_pre` and the json family are what remain of the phase-3
+edge-body list. `edge_body_with_latest`, `edge_body_needs_negation`,
+`edge_body_needs_bind`, `edge_body_needs_comparison`, `edge_body_needs_now`
+and `edge_head_column_type_mismatch` are all gone.
+
+### `edge_body_needs_pre`: why it is not a widening
+
+The other edge-body buckets were arm-local: one more join, one more WHERE
+term, one more bound expression. `pre` is not. engine.pl processes
+occurrences ONE AT A TIME (`process_occurrences/7`) and `pre(Atom)` reads the
+store as the writes SO FAR THIS TICK left it (step 4: "First occurrence
+therefore reads T-1; later occurrences chain"). Every one of the 13 fixtures
+reads `pre` over an EDGE-HEADED rel, so the chaining is the point, not an
+incidental.
+
+MEASURED, against `merge_family.pl:batched_increments_both_count` (the arc's
+own central fixture: `counter(Name,Next) <+ increment(Name,_),
+pre(counter(Name,Total)), Next := Total + 1`, seeded `counter(clicks,0)`,
+tick 1 = `+increment(clicks,ev1), +increment(clicks,ev2)`). Lowering `pre` the
+way `latest` was lowered -- a sampled join against the base table -- and
+applying the projected rows the way `IncrementalRuntime.applyKeyedEdge` does:
+
+    pre-as-sampled arm projects: [["clicks",1],["clicks",1]]
+    counter after the tick:      [["clicks",1]]
+    oracle pins:                 [["clicks",2]]      (deltas -0 then +2)
+
+Two arrivals, one increment. The fold is also CROSS-ARM
+(`increment_decrement_same_tick_nets_zero` interleaves an increment rule and a
+decrement rule in arrival order, and each rule is a separate emitted
+statement), so no single recursive CTE per arm expresses it either. The
+faithful lowering is an ordered occurrence loop with writes applied between
+occurrences -- a new execution shape in the runtime, not a wider arm. The
+refusal stays until that shape exists.
 
 ### The final-state leg (new, and it changes how to read this table)
 
@@ -72,14 +97,20 @@ the gate, and the final-state bucket is reported beside it.
 
 | final bucket | count |
 |---|---|
-| final_identical | 67 |
+| final_identical | 80 |
 | final_wrong | 2 |
-| no_oracle_final | 1 |
+| no_oracle_final | 0 |
 
 Both remaining `final_wrong` rows are the rejection-path fixtures that throw
 before a final state exists (`log_retraction_rejected`,
 `fork_join_error_arm_is_a_value`). The third, `retention_count_prunes_oldest`,
 was closed when keep(count) was lowered.
+
+The leg earned its keep a second time in the edge-body arc: with edge heads
+inheriting body column types, `xref_rev_is_pin_data_not_live_head` compiled
+and graded IDENTICAL on the tick log while dropping `known_repo(2)` from its
+final state — a ref only an `Initial` row mentions, which the compiler's ref
+inventory did not carry (fixed as `analyze.pl:seeded_refs/2`).
 
 The leg earned its keep on its first run by catching
 `braces_in_head_position`, which this scoreboard had listed as

@@ -1,5 +1,5 @@
-rel event_a(item) log keep(all).
-rel event_b(item) log keep(all).
+rel event_a(item: text) log keep(all).
+rel event_b(item: text) log keep(all).
 rel out(item) log keep(all).
 
 out(Item) <+ event_a(Item).
