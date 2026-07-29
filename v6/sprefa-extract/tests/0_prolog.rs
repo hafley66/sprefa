@@ -117,12 +117,17 @@ fn prolog_parser_error_recovery_ledger_for_the_v6_corpus() {
         })
         .collect();
 
-    assert_eq!(files.len(), 37);
+    assert_eq!(files.len(), 53);
     assert_eq!(
         errors,
         [
+            "0_enum_expand.pl",
+            "0_match_expand.pl",
+            "0_program_check.pl",
+            "1_host_expand.pl",
             "compile/analyze.pl",
             "compile/compile.pl",
+            "compile/emit_ts.pl",
             "compile/lower.pl",
             "compile/parse_dl.pl",
             "compile/print_dl.pl",
@@ -132,6 +137,10 @@ fn prolog_parser_error_recovery_ledger_for_the_v6_corpus() {
             "compile/test/run_sql_check.pl",
             "conformance/body.pl",
             "conformance/engine.pl",
+            "conformance/fixtures/0_enum_variants.pl",
+            "conformance/fixtures/1_match_block.pl",
+            "conformance/fixtures/2_hosts_wiring.pl",
+            "conformance/fixtures/3_flagship_callgraph.pl",
             "conformance/fixtures/check_eventing.pl",
             "conformance/fixtures/engine_core.pl",
             "conformance/fixtures/expressions.pl",
@@ -147,6 +156,7 @@ fn prolog_parser_error_recovery_ledger_for_the_v6_corpus() {
             "conformance/fixtures/timeless_rail.pl",
             "conformance/go.pl",
             "conformance/level_eval.pl",
+            "conformance/ticklog.pl",
             "examples/ghcacher.pl",
             "src/checks.pl",
             "src/emit_ts.pl",
