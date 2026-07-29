@@ -1,0 +1,33 @@
+# served-host-clock.dl6 -- the served engine's receipt (b) program
+# (plans/2026-07-29-runtime-bridge-header.md scope 4b): one interval bind and
+# one sh host, both LIVE, nothing touching the network.
+#
+# The cadence is the literal `1` in poll's body: emit_ts.pl collects it into the
+# emitted bind plan's `periods`, and serve/2_binds.ts spins exactly that one rx
+# interval. Under test the interval runs on a TestScheduler, so no wall-clock
+# sleep is involved; the BUCKET VALUE stays real epoch time by the bucket law
+# (floor(epoch_secs / period), restart-stable), which is the one
+# non-deterministic column in this program's tick log.
+#
+# The host is hermetic: `printf` only, no network, no filesystem, and its output
+# does not depend on the bucket -- so the only non-determinism in `answered` is
+# the bucket column it inherits from the bind. The bucket enters the probe as a
+# SALT, not an input, so a new bucket mints a new witness (the effect refires
+# per cadence tick) while the shell line stays constant.
+
+# `seed` stays EDB and arrives over http rather than as a bare fact: a
+# top-level `seed("alpha").` is refused by the compiler
+# (level_rule_no_positive_body -- a bare fact lowers to a level rule over a
+# minted literal seed, which has no positive body). Noted, not worked around.
+rel seed(name: text).
+
+bind interval(period: int, bucket: int).
+
+sh answer(name: text) -> (value: text) = `printf '%s' "{name}-answered"`.
+
+rel poll(name: text, bucket: int).
+poll(name, bucket) <- seed(name), interval(1, bucket).
+
+rel answered(name: text, bucket: int, value: text).
+answered(name, bucket, value) <-
+  poll(name, bucket), ? answer(name, value) @ salt(bucket: bucket).

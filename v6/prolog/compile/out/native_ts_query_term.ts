@@ -40,7 +40,7 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: "int" | "text" | "json" }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly periods: readonly number[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
@@ -50,10 +50,10 @@ interface IBootStatement {
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [{ name: "tree_sitter", inputs: [{ name: "file_digest", type: "text" }, { name: "query", type: "text" }], outputs: [{ name: "capture", type: "text" }], template: "tree-sitter {file_digest} $query", demandRel: "__host_demand_tree_sitter", responseRel: "__host_response_tree_sitter", execution: "unsupported_host_execution_phase_2" }];
-export const bindPlans: readonly IBindPlanData[] = [{ name: "interval", columns: [{ name: "period", type: "int" }, { name: "bucket", type: "int" }], execution: "unsupported_bind_execution_phase_2" }];
+export const hostPlans: readonly IHostPlanData[] = [{ name: "tree_sitter", inputs: [{ name: "file_digest", type: "text" }, { name: "query", type: "text" }], outputs: [{ name: "capture", type: "text" }], template: "tree-sitter {file_digest} $query", demandRel: "__host_demand_tree_sitter", responseRel: "__host_response_tree_sitter", execution: "live_sh" }];
+export const bindPlans: readonly IBindPlanData[] = [{ name: "interval", columns: [{ name: "period", type: "int" }, { name: "bucket", type: "int" }], periods: [], execution: "live_interval" }];
 export const queryPlans: readonly IQueryPlanData[] = [{ rel: "captured", arity: 1, snapshot: "current" }];
-export const unsupportedExecution: readonly string[] = ["unsupported_host_execution_phase_2(tree_sitter)", "unsupported_bind_execution_phase_2(interval)"];
+export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));

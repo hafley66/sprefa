@@ -1,0 +1,22 @@
+# served-endurance.dl6 -- the served engine's endurance receipt program
+# (plans/2026-07-29-runtime-bridge-header.md scope 5), driven by
+# v6/tsv2/scripts/endurance.sh.
+#
+# The host writes ITS OWN TAG to a marks file BEFORE it sleeps, so the file
+# counts SPAWNS STARTED, not answers delivered. That ordering is deliberate: a
+# `kill -9` of the server does not kill the shell it already spawned, so a mark
+# written after the sleep would still land and the count would say nothing about
+# whether the restart refired anything.
+#
+# `$TSV2_MARKS` and `$TSV2_NAP` are ordinary environment references, inherited by
+# the spawned shell like any other process environment. The template's declared
+# input is `{tag}`; the compiler checks every declared input is referenced and
+# that no output is, and leaves environment names alone.
+
+rel seed(tag: text).
+
+sh nap(tag: text) -> (value: text) =
+  `printf '%s\n' "{tag}" >> "$TSV2_MARKS"; sleep "$TSV2_NAP"; printf '%s' "{tag}-woke"`.
+
+rel woke(tag: text, value: text).
+woke(tag, value) <- seed(tag), ? nap(tag, value).
