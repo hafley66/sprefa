@@ -40,7 +40,7 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: "int" | "text" | "json" }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly periods: readonly number[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
@@ -50,10 +50,10 @@ interface IBootStatement {
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [{ name: "span_scan", inputs: [{ name: "file_digest", type: "text" }, { name: "query_digest", type: "text" }], outputs: [{ name: "line", type: "int" }, { name: "text", type: "text" }], template: "span {file_digest} $query_digest", demandRel: "__host_demand_span_scan", responseRel: "__host_response_span_scan", execution: "unsupported_host_execution_phase_2" }];
+export const hostPlans: readonly IHostPlanData[] = [{ name: "span_scan", inputs: [{ name: "file_digest", type: "text" }, { name: "query_digest", type: "text" }], outputs: [{ name: "line", type: "int" }, { name: "text", type: "text" }], template: "span {file_digest} $query_digest", demandRel: "__host_demand_span_scan", responseRel: "__host_response_span_scan", execution: "live_sh" }];
 export const bindPlans: readonly IBindPlanData[] = [];
 export const queryPlans: readonly IQueryPlanData[] = [{ rel: "span_line", arity: 3, snapshot: "current" }];
-export const unsupportedExecution: readonly string[] = ["unsupported_host_execution_phase_2(span_scan)"];
+export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));

@@ -40,7 +40,7 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: "int" | "text" | "json" }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly periods: readonly number[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
@@ -50,10 +50,10 @@ interface IBootStatement {
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [{ name: "sg", inputs: [{ name: "file_digest", type: "text" }, { name: "query_digest", type: "text" }], outputs: [{ name: "caller", type: "text" }, { name: "callee", type: "text" }, { name: "start_byte", type: "int" }, { name: "end_byte", type: "int" }], template: "sg {file_digest} $query_digest", demandRel: "__host_demand_sg", responseRel: "__host_response_sg", execution: "unsupported_host_execution_phase_2" }];
+export const hostPlans: readonly IHostPlanData[] = [{ name: "sg", inputs: [{ name: "file_digest", type: "text" }, { name: "query_digest", type: "text" }], outputs: [{ name: "caller", type: "text" }, { name: "callee", type: "text" }, { name: "start_byte", type: "int" }, { name: "end_byte", type: "int" }], template: "sg {file_digest} $query_digest", demandRel: "__host_demand_sg", responseRel: "__host_response_sg", execution: "live_sh" }];
 export const bindPlans: readonly IBindPlanData[] = [];
 export const queryPlans: readonly IQueryPlanData[] = [{ rel: "call_edge", arity: 5, snapshot: "current" }];
-export const unsupportedExecution: readonly string[] = ["unsupported_host_execution_phase_2(sg)"];
+export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
