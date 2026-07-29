@@ -20,7 +20,7 @@ function sortedRows(rows: readonly Record<string, unknown>[]): unknown[] {
 }
 
 test("conformance.dl: every language case, asserted on the resulting sqlite", async () => {
-  const bridgeResult = bridge(readFixture("conformance.dl"), builtinRelsForTests());
+  const bridgeResult = bridge(readFixture("conformance.dl6"), builtinRelsForTests());
   assert.equal(bridgeResult.kind, "ok", JSON.stringify(bridgeResult, null, 2));
 
   const databasePath = freshDbPath();

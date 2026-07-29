@@ -117,7 +117,7 @@ test("clock bind: clock_bucket advances on its own, poll_due re-fires on SSE", a
   const sseEvents: string[] = [];
   let sseReq: http.ClientRequest | undefined;
   try {
-    await loadProgram(fixture.base, readFixture("clock-swr-demo.dl"));
+    await loadProgram(fixture.base, readFixture("clock-swr-demo.dl6"));
 
     // SSE on poll_due: every real re-derivation lands here as its own `data:` line,
     // independent of clock_bucket's own retention-1 snapshot.

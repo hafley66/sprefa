@@ -25,7 +25,7 @@ function assertOk(result: ReturnType<typeof bridge>): asserts result is BridgeOk
 }
 
 test("golden: fixtures/sg-rail.dl bridges to the pinned snapshot", () => {
-  const result = bridgeFixture("sg-rail.dl");
+  const result = bridgeFixture("sg-rail.dl6");
   assertOk(result);
   const actual = stableSerialize(result);
 
@@ -213,7 +213,7 @@ test("wildcard `_` parses as Wildcard, not as a Var named \"_\"", () => {
 });
 
 test("diag defaults: end_line/end_col reuse line/col; hint binds via a null-seeded __lit", () => {
-  const result = bridgeFixture("sg-rail.dl");
+  const result = bridgeFixture("sg-rail.dl6");
   assertOk(result);
   const diagRule = result.program.rules.find((rule) => rule.head === "diag");
   assert.ok(diagRule);
@@ -515,7 +515,7 @@ test("named args in a query atom", () => {
 });
 
 test("named HEAD arg whose value is an AggCall: hit_count(hits: count(path)) <- console_hit(path)", () => {
-  const result = bridgeFixture("sg-rail.dl");
+  const result = bridgeFixture("sg-rail.dl6");
   assertOk(result);
   const hitCountRule = result.program.rules.find((rule) => rule.head === "hit_count");
   assert.ok(hitCountRule);
@@ -555,7 +555,7 @@ test("comments: `#` line comments (own-line and trailing) parse identically to t
 // host (__resp/__req cols + text salt), and __lit (typeof value). The storage plane reads
 // this to declare affinity + decide which columns intern; a golden can't reach it.
 test("columnTypes: sg-rail rels resolve to correct per-column affinity", () => {
-  const result = bridgeFixture("sg-rail.dl");
+  const result = bridgeFixture("sg-rail.dl6");
   assertOk(result);
   const types = result.columnTypes;
   // Declared user rels win (peer ruling: declared, not inferred).

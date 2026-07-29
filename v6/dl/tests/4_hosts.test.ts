@@ -37,7 +37,7 @@ async function drain<T>(iterable: AsyncIterable<T>): Promise<T[]> {
 }
 
 test("sg? fires exactly once per distinct request row (the cache proves it)", async () => {
-  const bridgeOk = bridgeHostsFixture("sg-rail.dl");
+  const bridgeOk = bridgeHostsFixture("sg-rail.dl6");
   const fixture = await bootHostRunnerFixture(bridgeOk, [builtinSg]);
   try {
     // M8-alpha's file(path, content_hash) spine (2 cols): the committed row needs a

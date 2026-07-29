@@ -119,7 +119,7 @@ if [[ "$server_up" -ne 1 ]]; then
 fi
 
 # ── 2. load the program ───────────────────────────────────────────────────────
-PROGRAM_RESPONSE="$(curl -s -X POST "$BASE_URL/edb/program" --data-binary @"$FIXTURES_DIR/sg-rail.dl")"
+PROGRAM_RESPONSE="$(curl -s -X POST "$BASE_URL/edb/program" --data-binary @"$FIXTURES_DIR/sg-rail.dl6")"
 echo "$PROGRAM_RESPONSE" | jq -S . | append_section "POST /edb/program"
 
 # ── 3. tell it the file exists (console.log still present) ──────────────────
