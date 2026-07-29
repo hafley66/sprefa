@@ -128,7 +128,9 @@ key_of(Positions, Row, Key) :-
 % STRUCT-AS-ROWS (ruling compound_storage = struct_as_rows): the declared
 % value plane is checked first, ahead of every class that reads a column type,
 % and the compiler's gate opens with the same two.
-engine_check_order([ type_cycle,
+engine_check_order([ key_position_out_of_range,
+                     key_position_duplicate,
+                     type_cycle,
                      column_type_unknown,
                      keyed_level_head,
                      keyed_log_rel,
@@ -150,6 +152,8 @@ check_program(Program) :-
 
 engine_refusal(type_cycle,              Names, type_cycle(Names)).
 engine_refusal(column_type_unknown,     Name,  column_type_unknown(Name)).
+engine_refusal(key_position_out_of_range, Payload, Payload).
+engine_refusal(key_position_duplicate,    Payload, Payload).
 engine_refusal(keyed_level_head,        Ref,   keyed_level_head(Ref)).
 engine_refusal(keyed_log_rel,           Ref-_, keyed_log_rel(Ref)).
 engine_refusal(log_on_level_headed_rel, Ref,   log_on_level_headed_rel(Ref)).

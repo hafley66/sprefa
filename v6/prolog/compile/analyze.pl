@@ -1024,7 +1024,10 @@ check_supported_subset_expanded(Program) :-
     % anything else reads a column type -- every later check that asks a
     % column's storage kind would otherwise ask it of a type that does not
     % resolve.
-    shared_refusal(Program, [ type_cycle, column_type_unknown ]),
+    shared_refusal(Program, [ key_position_out_of_range,
+                              key_position_duplicate,
+                              type_cycle,
+                              column_type_unknown ]),
     forall(( member(Rule, Rules), rule_reserved_construct(Rule, Construct) ),
            throw(unsupported_construct(Construct))),
     shared_refusal(Program, [ log_on_level_headed_rel,
@@ -1071,6 +1074,8 @@ shared_refusal(Program, Order) :-
 
 compiler_refusal(type_cycle,            Names, type_cycle(Names)).
 compiler_refusal(column_type_unknown,    Name, column_type_unknown(Name)).
+compiler_refusal(key_position_out_of_range, Payload, Payload).
+compiler_refusal(key_position_duplicate,    Payload, Payload).
 compiler_refusal(keyed_level_head,        Ref, keyed_level_head(Ref)).
 % The only payload that differs from the oracle's: lowering needs the
 % positions to explain which key decl is at fault.

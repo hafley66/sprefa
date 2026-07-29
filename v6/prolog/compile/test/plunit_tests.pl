@@ -1033,6 +1033,21 @@ test(keyed_level_head_is_a_named_compile_refusal,
             [keyed(current/2, [1])],
             [(current(Key, Value) <- source(Key, Value))])).
 
+test(key_position_zero_is_a_named_compile_refusal,
+     [throws(unsupported_construct(
+                 key_position_out_of_range(current/2, 0, 2)))]) :-
+    check_supported_subset(prog([keyed(current/2, [0])], [])).
+
+test(key_position_above_arity_is_a_named_compile_refusal,
+     [throws(unsupported_construct(
+                 key_position_out_of_range(current/2, 3, 2)))]) :-
+    check_supported_subset(prog([keyed(current/2, [3])], [])).
+
+test(duplicate_key_position_is_a_named_compile_refusal,
+     [throws(unsupported_construct(
+                 key_position_duplicate(current/2, 1)))]) :-
+    check_supported_subset(prog([keyed(current/2, [1, 1])], [])).
+
 test(keyed_edge_head_remains_supported) :-
     check_supported_subset(
         prog(
@@ -1742,6 +1757,22 @@ door_verdict(compiler, Prog, Verdict) :-
     ).
 
 % ── the six mirrored classes ─────────────────────────────────────────────────
+
+test(key_position_out_of_range_both_doors) :-
+    Prog = prog([keyed(current/2, [3])], []),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == key_position_out_of_range(current/2, 3, 2),
+    CompilerVerdict ==
+        unsupported_construct(key_position_out_of_range(current/2, 3, 2)).
+
+test(key_position_duplicate_both_doors) :-
+    Prog = prog([keyed(current/2, [1, 1])], []),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == key_position_duplicate(current/2, 1),
+    CompilerVerdict ==
+        unsupported_construct(key_position_duplicate(current/2, 1)).
 
 test(keyed_level_head_both_doors) :-
     Prog = prog([ keyed(current/2, [1]) ], [ (current(Id, Tag) <- src(Id, Tag)) ]),

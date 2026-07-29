@@ -101,6 +101,24 @@ aggregate_argument(Arg) :-
 
 % ── the six mirrored trigger classes ─────────────────────────────────────────
 
+% Key positions are one-based relation columns. Invalid positions previously
+% survived planning and failed later while DDL selected key columns. Duplicate
+% positions produced a malformed repeated-column UNIQUE constraint.
+program_violation(key_position_out_of_range, prog(Decls, _),
+                  key_position_out_of_range(Ref, Position, Arity)) :-
+    member(keyed(Ref, Positions), Decls),
+    Ref = _/Arity,
+    member(Position, Positions),
+    ( Position < 1 ; Position > Arity ),
+    !.
+
+program_violation(key_position_duplicate, prog(Decls, _),
+                  key_position_duplicate(Ref, Position)) :-
+    member(keyed(Ref, Positions), Decls),
+    select(Position, Positions, Rest),
+    memberchk(Position, Rest),
+    !.
+
 % A keyed relation headed by a level rule. Keys only mean replace on an edge
 % write, so a level head silently accumulates instead of replacing.
 program_violation(keyed_level_head, prog(Decls, Rules), Ref) :-

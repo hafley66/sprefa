@@ -120,3 +120,22 @@ iteration_gate(2, replacement_retraction_clock,
 iteration_gate(2, constructor_conflict,
                'pin behavior when one key is constructed with non-key fields that disagree with the current target row').
 verification(key_edge_case_census, passed(12)).
+
+touched('v6/prolog/0_program_check.pl',
+        'shared key-position range and duplicate invariants').
+touched('v6/prolog/conformance/engine.pl',
+        'oracle refusal order and vocabulary for invalid key positions').
+touched('v6/prolog/compile/analyze.pl',
+        'compiler refusal order and vocabulary matching the oracle').
+touched('v6/prolog/compile/test/plunit_tests.pl',
+        'three compiler refusals and two cross-door parity receipts').
+
+closed(key_position_validation_hole,
+       'zero and above-arity positions now refuse as key_position_out_of_range; repeated positions refuse as key_position_duplicate before lowering').
+observed(key_validation_cost,
+         'two shared program invariants, two refusal mappings per door, and five unit receipts; no parser, SQL, runtime, or surface change').
+verification(key_validation_plunit, passed(147)).
+verification(key_validation_conformance, passed(163)).
+verification(key_validation_census, passed(12)).
+next_action(1,
+            'pin keyed replacement and exact-row retraction against current tick logs, including stale old-row removal after replacement').

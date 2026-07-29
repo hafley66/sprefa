@@ -97,29 +97,38 @@ check(keyed_mutual_cycle_is_currently_refused,
               Refused = yes),
         Refused == yes )).
 
-check(zero_key_position_is_not_rejected_at_plan_time,
+check(zero_key_position_is_rejected_before_lowering,
       ( Text = "rel user(id: int, name: text) key(0).\n",
-        plan_text(zero_key_position, Text,
-                  plan(_, _, RelPlans, _, _, _)),
-        memberchk(relplan(user/2, set, [id, name], key([0]),
-                          [int, text]),
-                  RelPlans) )).
+        parse_text(Text, Program, Bindings),
+        catch(program_plan(fixture(zero_key_position,
+                                   Program, [], [], [])-Bindings,
+                           _),
+              unsupported_construct(
+                  key_position_out_of_range(user/2, 0, 2)),
+              Refused = yes),
+        Refused == yes )).
 
-check(out_of_range_key_position_is_not_rejected_at_plan_time,
+check(out_of_range_key_position_is_rejected_before_lowering,
       ( Text = "rel user(id: int, name: text) key(3).\n",
-        plan_text(out_of_range_key_position, Text,
-                  plan(_, _, RelPlans, _, _, _)),
-        memberchk(relplan(user/2, set, [id, name], key([3]),
-                          [int, text]),
-                  RelPlans) )).
+        parse_text(Text, Program, Bindings),
+        catch(program_plan(fixture(out_of_range_key_position,
+                                   Program, [], [], [])-Bindings,
+                           _),
+              unsupported_construct(
+                  key_position_out_of_range(user/2, 3, 2)),
+              Refused = yes),
+        Refused == yes )).
 
-check(duplicate_key_positions_are_not_rejected_at_plan_time,
+check(duplicate_key_positions_are_rejected_before_lowering,
       ( Text = "rel user(id: int, name: text) key(1, 1).\n",
-        plan_text(duplicate_key_positions, Text,
-                  plan(_, _, RelPlans, _, _, _)),
-        memberchk(relplan(user/2, set, [id, name], key([1, 1]),
-                          [int, text]),
-                  RelPlans) )).
+        parse_text(Text, Program, Bindings),
+        catch(program_plan(fixture(duplicate_key_positions,
+                                   Program, [], [], [])-Bindings,
+                           _),
+              unsupported_construct(
+                  key_position_duplicate(user/2, 1)),
+              Refused = yes),
+        Refused == yes )).
 
 check(construction_still_uses_full_relation_arity_and_json,
       ( Text = "rel user(id: int, name: text) key(1).\nrel post(author: user).\npost(user(Id, Name)) <- user(Id, Name).\n",
