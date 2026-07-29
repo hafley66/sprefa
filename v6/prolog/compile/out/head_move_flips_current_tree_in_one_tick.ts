@@ -38,12 +38,22 @@ import type {
   SqlStatement,
 } from "../runtime/types.ts";
 
+interface IHostColumnPlan { readonly name: string; readonly type: "int" | "text" | "json" }
+interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
+
 interface IBootStatement {
   sql: string;
   params: readonly (string | number)[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string> };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
+
+export const hostPlans: readonly IHostPlanData[] = [];
+export const bindPlans: readonly IBindPlanData[] = [];
+export const queryPlans: readonly IQueryPlanData[] = [];
+export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
@@ -286,5 +296,9 @@ export const program: IGenProgramWithBoot = {
   arrivalTargets,
   boot,
   finalSelect,
+  hostPlans,
+  bindPlans,
+  queryPlans,
+  unsupportedExecution,
   tick: runTick,
 };

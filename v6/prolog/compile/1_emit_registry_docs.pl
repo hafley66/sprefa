@@ -56,6 +56,7 @@ dl6_grammar(Text) :-
     "main": {
       "patterns": [
         { "include": "#comment" },
+        { "include": "#template" },
         { "include": "#string" },
         { "include": "#atom" },
         { "include": "#number" },
@@ -73,6 +74,14 @@ dl6_grammar(Text) :-
     "comment": {
       "name": "comment.line.number-sign.dl6",
       "match": "#.*$"
+    },
+    "template": {
+      "name": "string.quoted.template.dl6",
+      "begin": "\\\\x60",
+      "end": "\\\\x60",
+      "patterns": [
+        { "name": "constant.character.escape.dl6", "match": "\\\\." }
+      ]
     },
     "string": {
       "name": "string.quoted.double.dl6",
@@ -96,7 +105,7 @@ dl6_grammar(Text) :-
     },
     "rule-arrow": {
       "name": "keyword.operator.arrow.dl6",
-      "match": "<-|<+"
+      "match": "<-|<+|->"
     },
     "semicolon": {
       "name": "punctuation.separator.enum.dl6",
@@ -108,7 +117,7 @@ dl6_grammar(Text) :-
     },
     "decl-words": {
       "name": "storage.type.declaration.dl6",
-      "match": "\\\\b(rel|log|keep|key|int|text)\\\\b"
+      "match": "\\\\b(rel|sh|bind|log|keep|key|int|text|json|salt)\\\\b"
     },
     "live-keywords": {
       "name": "keyword.control.dl6",

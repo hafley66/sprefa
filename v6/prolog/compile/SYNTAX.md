@@ -28,7 +28,7 @@ anywhere in the grammar (`ArgTerm := Var | Literal | Wildcard`,
 real `.dl6` files: grepped both, neither ever writes a bareword atom constant;
 every constant is a quoted string (`"repos/cli/cli"`) or an int (`200`).
 
-The 126-fixture term-form corpus needs the opposite in places: a bareword
+The term-form corpus needs the opposite in places: a bareword
 constant-tag match is a real, critical construct:
 `fixtures/state_machine.pl`'s `phase(Endpoint, fetching)` matches the exact
 atom `fetching`, not a fresh variable. Since this parser is now canonical
@@ -84,6 +84,10 @@ the compiler inventory order. Edit the registry, then run the emitter.
 | `col_type/3` | `decl` | `no_refs` | `decl(column_type)` | `live` |
 | `set/0` | `decl` | `no_refs` | `decl(refuse(removed_word))` | `refused` |
 | `match/2` | `sugar` | `no_refs` | `block(match_arms)` | `live` |
+| `sh_decl/4` | `world` | `no_refs` | `decl(host_plan)` | `live` |
+| `probe/4` | `world` | `no_refs` | `wrapper(host_probe,lower)` | `live` |
+| `bind_decl/2` | `world` | `no_refs` | `decl(bind_plan)` | `live` |
+| `query/1` | `read` | `no_refs` | `decl(query_plan)` | `live` |
 <!-- END GENERATED surface/5 TABLE -->
 
 ### Core grammar and input aliases
@@ -116,14 +120,33 @@ construct inventory.
 | string | `"text"` | SWI string |
 | integer | `123` / `-123` | integer |
 | named args | `col: val` | resolved to declared positional order |
-| probe | `rel?(args)` | `unsupported_surface(probe(Name/Arity))` |
+| body named args with omitted columns | `rel(first: Value)` | omitted declared columns become fresh anonymous variables; RX relation projection |
+| partial named head | `head(first: Value) <- ...` | `unsupported_surface(partial_head(Name/Arity))` |
+| shell host declaration | `sh name(in: type, ...) -> (out: type, ...) = \`template\`.` | `sh_decl(Name, Inputs, Outputs, template(Text))`; RX-H1 |
+| probe | `? name(inputs..., outputs...) @ salt(column: Value)` | `probe(Name, Inputs, Outputs, [salt(Column, Value)])`; RX-H2; zero or more salt riders |
+| bind declaration | `bind name(column: type, ...).` | `bind_decl(Name, Columns)`; RX-B1 |
+| query | `? name(args).` | `query(RelAtom)`; RX-Q1 |
 | mutation | `rel!(args)` | `unsupported_surface(mutation(Name/Arity))` |
-| host declaration | `sh name(cols) = \`template\`.` | `unsupported_surface(host_decl(Name/Arity))` |
-| query | `? name(args).` | `unsupported_surface(query(Name/Arity))` |
 | retention marker | `rel(N) Name(...)` | `unsupported_surface(retention_marker(Ref, N))` |
 | column wrapper | `Key(text)` / `Min(int)` / `Max(int)` | `unsupported_surface(column_type_wrapper(Ref, Column, Wrapper))` |
 | `true` / `false` as values | unavailable | bare identifiers remain variables in argument position |
 | `null` | unavailable | no term-form mapping |
+
+### World term lowering rows
+
+| term | rx lowering | phase-1 compiler result |
+|---|---|---|
+| `sh_decl(Name, Inputs, Outputs, template(Text))` | RX-H1: request rows group by witness, take one request, decode declared outputs, then commit an EDB arrival | emitted as a `hostPlans` data row; live host execution is named `unsupported_host_execution_phase_2(Name)` |
+| `probe(Name, Inputs, Outputs, Salts)` | RX-H2: mint identity from host plus inputs, mint witness from identity plus salts, deduplicate by witness, then demand the host | lowers to `__host_demand_Name` SQL and a join with keyed EDB relation `__host_response_Name` |
+| `bind_decl(interval, Columns)` | RX-B1: subscribe to the registered interval source while the program is active and commit each row as EDB | emitted as a `bindPlans` data row; schedule arrivals grade phase 1 and live bind execution is named `unsupported_bind_execution_phase_2(Name)` |
+| `query(RelAtom)` | RX-Q1: scan the current SQLite query plan and stream its rows | emitted as a `queryPlans` data row |
+
+The chosen salt spelling is `@ salt(column: Value)`. Printing and reparsing
+preserve the spelling exactly.
+
+File and content hosts use the current worktree when no revision is present.
+A pinned revision is written as a marked argument or a sibling host. There is
+no required source atom.
 
 ## Round-trip design note (why decl lines are exact, not fallback-merged)
 
@@ -142,19 +165,19 @@ every ref's name, arity, and column names via `analyze.pl:rel_columns/5`).
 
 ## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
 
-- **G1**: 126 / 126 fixtures round-trip (`parse_dl(print_dl(Term)) =@= Term`
+- **G1**: 131 / 131 fixtures round-trip (`parse_dl(print_dl(Term)) =@= Term`
   for every `fixture/5` in `v6/prolog/conformance/fixtures/*.pl`).
 - **G2**: both real files parse without error.
-  - `ghcacher.dl6`: Decls 16, Rules 9, 8 findings (3 host decls + 3 matching
-    probes + 2 query lines -- every one a genuine term-form GAP, not a
-    parser defect).
+  - `ghcacher.dl6`: Decls 19, Rules 9, Queries 2, 0 findings. The selected
+    host declarations, probes, and queries reduce the named finding count
+    from 8 to 0.
   - `conformance.dl6`: Decls 29, Rules 28, 0 findings (the named/positional
     mix resolves silently, per the construct table above).
-- **G3**: `v6/prolog/conformance/go.pl` unchanged, 126 pass / 0 fail.
+- **G3**: `v6/prolog/conformance/go.pl`, 131 pass / 0 fail.
 
 ## What `dl_view/*.dl6` is
 
-Every fixture in the 126-fixture corpus, printed as `.dl6` text by this
+Every fixture in the 131-fixture corpus, printed as `.dl6` text by this
 parser's own printer, committed under `v6/prolog/compile/dl_view/`. This is
 the "language you can see" deliverable: inspect any file there to read a
 conformance fixture's PROGRAM (not its test scaffolding -- `Initial`,
