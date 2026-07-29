@@ -484,6 +484,10 @@ fork('2026-07-29', watcher_first_impl, node_fs_watch_behind_bind_seam, parcel_wa
      "research verdict ranks @parcel/watcher first, but new deps get user approval (pino precedent) and the user is asleep; fs.watch is the verdict's own zero-dep fallback AND chokidar's mac/win backend; the bind seam makes the parcel upgrade a one-adapter swap on user word -- best of both worlds").
 fork('2026-07-29', phase2_agent_tier, opus_worktree, sonnet_with_detailed_header,
      "hosts phase 2 = live execution semantics + endurance + watcher, the same trade-off class as the phase-1 bridge which ran on opus; sparing-opus budget spent here deliberately").
+fork('2026-07-29', phase3_split, edge_body_arc_first_flagship_pick_deferred, dispatch_flagship_now,
+     "the edge-body construct buckets (pre 12, negation 6, now 5, finalize 2) gate what the flagship can express; picking flow-interproc vs a callgraph rail before those land risks picking blind; deferring the pick costs nothing and the golden plan already orders it this way").
+fork('2026-07-29', phase3_agent_tier, opus_worktree, sonnet_lane,
+     "edge-body lowering is the exact terrain of every silent-wrong cross-plane defect this project has logged; TICK-MODEL semantics + fail-first fixtures need mid-task judgment; third opus lane accepted knowingly against the sparingly word, reasoning recorded").
 
 % ═════════════════════════════════════════════════════════════════════════════
 % BUILD ORDER — task(Name, Status, Needs). `roadmap` topsorts it; learning
