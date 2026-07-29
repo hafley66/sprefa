@@ -154,6 +154,25 @@ u1_arm_fires_the_tick_after_the_replace :-
                [ [], [], [ +changed_value(cli, v1, v2) ], [] ]),
         ticks(4) ]).
 
+% U1 rider: the arm does NOT need the keyed decl. Any rel that emits a minus
+% delta and holds the successor at T+1 works, including a DERIVED level view
+% whose source row was swapped. keyed/2 is one way to produce the minus delta,
+% not a precondition of the arm.
+u1c_the_arm_works_over_a_derived_level_view :-
+    expect_run(
+      prog([ kind(changed_value/3, log), keep(changed_value/3, all) ],
+           [ (mirror_value(Key, Value) <- source_value(Key, Value)),
+             (changed_value(Key, OldValue, NewValue) <+
+                  finalize(mirror_value(Key, OldValue)),
+                  mirror_value(Key, NewValue)) ]),
+      [],
+      [ [ +source_value(cli, v1) ],
+        [ -source_value(cli, v1), +source_value(cli, v2) ] ],
+      [ final(changed_value/3, [ changed_value(cli, v1, v2) ]),
+        deltas(changed_value/3,
+               [ [], [], [ +changed_value(cli, v1, v2) ], [] ]),
+        ticks(4) ]).
+
 % ═══ U2 : plain insert, no prior row ════════════════════════════════════════
 
 u2_plain_insert_leaves_the_arm_silent :-
@@ -351,6 +370,8 @@ check(u1_keyed_replace_yields_one_pair,
       u1_keyed_replace_yields_one_pair).
 check(u1_arm_fires_the_tick_after_the_replace,
       u1_arm_fires_the_tick_after_the_replace).
+check(u1c_the_arm_works_over_a_derived_level_view,
+      u1c_the_arm_works_over_a_derived_level_view).
 check(u2_plain_insert_leaves_the_arm_silent,
       u2_plain_insert_leaves_the_arm_silent).
 check(u3_plain_delete_leaves_the_arm_silent,
