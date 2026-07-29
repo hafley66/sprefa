@@ -21,6 +21,7 @@ import { test } from "node:test";
 import { strict as assert } from "node:assert";
 import { createClient } from "@libsql/client";
 import { firstValueFrom } from "rxjs";
+import process from "node:process";
 
 import { cascade, reach, reconcile } from "../../src/engine/engine.ts";
 import { benchgraph, memcap } from "../../src/engine/measure.ts";
@@ -28,8 +29,29 @@ import { GraphNs, RelStore } from "../../src/engine/lib.ts";
 import { SqlRunner } from "../../src/engine/sqlRunner.ts";
 import { salsa } from "../../src/engine/oracle.ts";
 
+// =============================================================================
+// Golden-flake diagnostic (ARCH task golden_flake_hunt): this file has failed the whole
+// FILE (every named subtest green, no assertion printed) 2x under `just green`'s
+// full-parallel load and never in isolation (see docs/failure-modes.md incident notes).
+// Every `freshStore()`/`createClient` call below opens a NEW @libsql `:memory:` client
+// that this file never explicitly closes (~40+ per run) — a plausible resource-pressure
+// contributor when 3 copies of the whole suite run concurrently. Purely observational:
+// this hook changes NOTHING about pass/fail (no uncaughtException/unhandledRejection
+// listener is installed, so default crash semantics are untouched); it only prints
+// context if the process is about to exit non-zero, to catch the next occurrence.
+// =============================================================================
+let storesOpened = 0;
+process.on("exit", (code) => {
+  if (code !== 0) {
+    console.error(
+      `[golden.test.ts diagnostic] pid=${process.pid} exitCode=${code} rss=${process.memoryUsage().rss} storesOpened=${storesOpened}`,
+    );
+  }
+});
+
 /** A fresh in-memory store stamped with the default namespace. */
 async function freshStore(): Promise<RelStore> {
+  storesOpened++;
   return firstValueFrom(RelStore.attach(createClient({ url: ":memory:", intMode: "bigint" })));
 }
 
