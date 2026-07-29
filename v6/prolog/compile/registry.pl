@@ -21,6 +21,7 @@
             body_surface_for_term/6,
             wrapper_lower_role/3,
             bind_definition/2,
+            bind_executor/2,
             expression/5,
             expression_for_term/5
           ]).
@@ -129,7 +130,31 @@ expression_for_term(Term, Family, Precedence, SqlRendering, TypeRule) :-
     functor(Term, Name, Arity),
     expression(Name/Arity, Family, Precedence, SqlRendering, TypeRule).
 
+% ═══ world push sources (bind_decl) ═════════════════════════════════════════
+%
+% bind_definition(Name, Columns)  the row shape the served runtime pushes
+% bind_executor(Name, Executor)   the executor name emitted into the plan
+%
+% COLUMN 1 IS THE CONFIGURATION COLUMN, for every bind: the program's own rules
+% state which cadences / which file sets they consume as LITERALS in that
+% position (`interval(2, Bucket)`, `watch("src/**/*.ts", Path, Digest)`), and
+% emit_ts.pl's bind_read_literals/4 collects exactly those. A declared bind
+% whose rules read no literal gets an empty list and therefore no live source
+% at all -- an honest zero, never an invented default.
+%
+% `watch` is the file-watcher push bind (golden plan phase 2). Its row is
+% (glob, path, digest): the DIGEST is what makes it a freshness source rather
+% than a notification -- a save that does not change content re-emits an
+% identical row, which is zero delta at the rel boundary, so nothing
+% downstream re-derives (ruling salt_minting = content_addressed; the digest
+% IS the salt every demand host addresses its cache by). Presence and absence
+% ride the ARRIVAL SIGN, not a second column and not a null: a removed file is
+% a `-` arrival of the row that was there. See v6/tsv2/serve/2_binds.ts.
 bind_definition(interval, [col(period, int), col(bucket, int)]).
+bind_definition(watch,    [col(glob, text), col(path, text), col(digest, text)]).
+
+bind_executor(interval, live_interval).
+bind_executor(watch,    live_watch).
 
 surface_for_term(Term, Functor/Arity, Axis, AnalyzeRole, LowerRole, Status) :-
     nonvar(Term),

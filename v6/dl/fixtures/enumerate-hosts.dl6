@@ -1,0 +1,68 @@
+# enumerate-hosts.dl6 -- the FILE-SET FEED (golden plan phase 2).
+#
+# Two hosts, per the ruled rev shape: no null exists, and optionality is spelled
+# as variants, so "which revision" is not a nullable column -- it is two hosts.
+#
+#   enumerate(glob)          the WORKTREE, the UNMARKED default
+#   enumerate_at(rev, glob)  a PINNED revision, the marked case
+#
+# A program unions them the way it unions enum variant rels, which is what the
+# two `file(...)` rules below are.
+#
+# ZERO NEW CONSTRUCTS. Both are ordinary `sh` hosts written in program text,
+# which is ruling spine_residency taken literally: "the git/fs spine is HOSTED
+# IN THE LANGUAGE (stdlib rels + binds + salts over generic effect machinery),
+# never kernel". No `live_enumerate` executor exists in the runtime and none is
+# owed; the generic sh host, its content-addressed witness cache, and its named
+# output projection already are the machinery.
+#
+# IGNORE SEMANTICS (slot SLOT-P2-ENUMERATE-SCOPE) come from `git ls-files`, not
+# from a walker and not from an ignore list this project maintains: TRACKED
+# FILES ONLY. node_modules is untracked, so it is not enumerated -- there is no
+# ceiling to tune and no directory to skip, because the walk never happens. The
+# glob is a git PATHSPEC, and it is the host's demand column, which is the
+# landed lab answer to extraction ambiguity A1: it participates in the
+# content-addressed demand row and deduplicates across rules.
+#
+# rx lowering (RX-H2 for the demand, RX-H1 for the run):
+#   inputRows$.pipe(map(mintIdentityAndWitness), distinct(r => r.witnessDigest),
+#                   mergeMap(runShell), mergeMap(commitEdbArrival))
+#
+# CACHE LIFETIME, stated because the two hosts differ:
+#   enumerate_at  the rev pins the answer, so the witness caches FOREVER and
+#                 that is correct -- a revision's tree never changes.
+#   enumerate     the witness is the glob alone, so the answer caches for the
+#                 life of the db. Worktree FRESHNESS is the watcher's job
+#                 (`bind watch(...)`, fixtures/extraction-live.dl6): enumerate
+#                 answers "what is here now", the watcher answers "what changed
+#                 since". Asking enumerate again for the same glob without a
+#                 new salt returns the cached answer, by design and by ruling.
+
+# The worktree digest is `git hash-object` on the WORKING TREE file, not the
+# index entry, so an unstaged edit is visible. One process per file is the cost
+# of that honesty and is why this host is the boot feed rather than the steady
+# state; the watcher carries the steady state at zero processes.
+sh enumerate(glob: text) -> (path: text, digest: text) =
+  `git ls-files -- '{glob}' | while IFS= read -r entry; do printf '%s %s\n' "$entry" "$(git hash-object -- "$entry")"; done`.
+
+# The pinned twin. MEASURED, not assumed: `git ls-tree` does NOT accept glob
+# pathspecs -- `git ls-tree -r HEAD -- 'v6/**/*.ts'` returns zero rows and
+# `:(glob)` answers "pathspec magic not supported by this command". So the name
+# set comes from `ls-files --with-tree`, which is the same matcher the worktree
+# host uses, and the oid from `rev-parse <rev>:<path>`. The cost is the same
+# per-file process the worktree host pays; what the pin still buys is that no
+# file is READ or HASHED -- the digest comes out of the object database, and it
+# is stable forever, so this witness caches forever and correctly.
+#
+# `--with-tree` unions the tree with the index, so a path staged but absent at
+# that rev has no blob: `rev-parse` fails, the guard drops it, and it is no row
+# (absence is row absence, never an empty digest).
+sh enumerate_at(rev: text, glob: text) -> (path: text, digest: text) =
+  `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
+
+rel want(glob: text).
+rel want_at(rev: text, glob: text).
+
+rel file(path: text, digest: text).
+file(path, digest) <- want(glob), ? enumerate(glob, path, digest).
+file(path, digest) <- want_at(rev, glob), ? enumerate_at(rev, glob, path, digest).

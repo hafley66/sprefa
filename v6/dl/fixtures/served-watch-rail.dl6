@@ -1,0 +1,21 @@
+# served-watch-rail.dl6 -- the watch bind's own graded program (golden plan
+# phase 2). No subprocess, no extractor: this program exists so the WATCHER's
+# behaviour is what the tick log measures.
+#
+# The rail is deliberately trivial (every watched file is "seen") because the
+# interesting deltas are all upstream of it: a save that changed bytes is a
+# del+add pair, a save that did not is nothing at all, and a deletion is a bare
+# del. Those are the rows `seen` inherits, so its tick log IS the watcher's.
+#
+# rx lowering of the one bind line, per the snippet law:
+#   watchSource(root).pipe(
+#     bufferTime(coalesceMs, scheduler),
+#     map(window => diffAgainstLastDigest(window)),   // -> IArrivalRow[]
+#     filter(batch => batch.length > 0),
+#     concatMap(batch => engine.submit(batch)))
+# and of the rule: `watch$.pipe(map(({path, digest}) => ({path, digest})))`.
+
+bind watch(glob: text, path: text, digest: text).
+
+rel seen(path: text, digest: text).
+seen(path, digest) <- watch('**/*.ts', path, digest).

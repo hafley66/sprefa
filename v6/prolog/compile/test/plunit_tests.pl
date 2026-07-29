@@ -1014,11 +1014,11 @@ test(emitter_carries_world_plans_and_demand_sql) :-
     once(sub_atom(Text, _, _, _, 'export const hostPlans')),
     % PHASE 2 (runtime bridge arc): the two named refusals are gone; both world
     % terms now carry the executor the served runtime dispatches on. The bind's
-    % `periods` list is EMPTY for this fixture on purpose -- it declares
+    % `literals` list is EMPTY for this fixture on purpose -- it declares
     % `bind interval(...)` and seeds an `interval(300, 1)` Initial row, but no
     % RULE reads a literal period, so no timer is owed.
     once(sub_atom(Text, _, _, _, 'execution: "live_sh"')),
-    once(sub_atom(Text, _, _, _, 'periods: [], execution: "live_interval"')),
+    once(sub_atom(Text, _, _, _, 'literals: [], execution: "live_interval"')),
     once(sub_atom(Text, _, _, _,
                   'export const unsupportedExecution: readonly string[] = [];')),
     once(sub_atom(Text, _, _, _,

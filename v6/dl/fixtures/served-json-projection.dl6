@@ -1,0 +1,29 @@
+# served-json-projection.dl6 -- the sh host's NAMED PROJECTION over a
+# heterogeneous JSON-lines stream (golden plan phase 2).
+#
+# `sprefa-extract --family call` interleaves two record shapes on one stdout:
+#
+#   {"record":"node","family":"call","span":{...},"kind":"function","name":"f"}
+#   {"record":"site","family":"call","span":{...},"callee":"g","callee_path":null}
+#
+# A host declaring `-> (callee: text)` wants the `site` lines and only those, so
+# a line that does not carry every declared output column contributes NO ROW.
+# That is the ruled Option shape read at the world boundary: absence is row
+# absence, never a null column and never a positional guess at a neighbouring
+# field. This program reproduces exactly that stream with `printf` -- hermetic,
+# no extractor, no filesystem -- so the projection is what the tick log grades.
+#
+# rx lowering (RX-H1 with the decode named):
+#   demand$.pipe(
+#     groupBy(row => row.witnessDigest),
+#     mergeMap(g => g.pipe(take(1), mergeMap(runShell))),
+#     map(stdout => jsonLines(stdout).filter(carriesEveryColumn).map(project)),
+#     mergeMap(commitEdbArrival))
+
+rel seed(tag: text).
+
+sh mixed(tag: text) -> (callee: text) =
+  `printf '%s\n%s\n%s\n%s\n' '{"record":"node","kind":"function","name":"{tag}"}' '{"record":"site","callee":"{tag}_one","callee_path":null}' '{"record":"node","kind":"lambda","name":null}' '{"record":"site","callee":"{tag}_two","callee_path":null}'`.
+
+rel picked(tag: text, callee: text).
+picked(tag, callee) <- seed(tag), ? mixed(tag, callee).

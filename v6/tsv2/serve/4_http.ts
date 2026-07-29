@@ -73,7 +73,7 @@ import type {
 } from "../runtime/types.ts";
 import { ProgramCompiler } from "./0_compile.ts";
 import { ShHostRunner } from "./1_hosts.ts";
-import { IntervalBindRunner } from "./2_binds.ts";
+import { IntervalBindRunner, NodeWatchSource, WatchBindRunner, bindPlansFor } from "./2_binds.ts";
 import { LiveEngine, bootServedProgram } from "./3_engine.ts";
 
 export const ROUTE_LIST: readonly string[] = [
@@ -165,16 +165,22 @@ function runProgram$(state: ServerState, config: IServeConfig, load: ProgramLoad
           new ShHostRunner(engine, seam, load.program.hostPlans).effects$.pipe(
             map((done): IServeEvent => ({ kind: "effect", done })),
           ),
-          new IntervalBindRunner(engine, load.program.bindPlans, scheduler).firings$.pipe(
+          new IntervalBindRunner(engine, bindPlansFor(load.program.bindPlans, "live_interval"), scheduler).firings$.pipe(
             map((fired): IServeEvent => ({ kind: "bind", fired })),
           ),
+          new WatchBindRunner(engine, bindPlansFor(load.program.bindPlans, "live_watch"), {
+            root: config.watchRoot ?? process.cwd(),
+            coalesceMs: config.watchCoalesceMs ?? 100,
+            scheduler,
+            source: config.watchSource ?? new NodeWatchSource(),
+          }).firings$.pipe(map((fired): IServeEvent => ({ kind: "watch", fired }))),
           defer(() => {
             writeJson(load.response, 200, {
               loaded: true,
               rels: Object.keys(load.program.relColumns).sort(),
               arrivalTargets: load.program.arrivalTargets,
               hosts: load.program.hostPlans.map((plan) => plan.name),
-              binds: load.program.bindPlans.map((plan) => ({ name: plan.name, periods: plan.periods })),
+              binds: load.program.bindPlans.map((plan) => ({ name: plan.name, literals: plan.literals })),
             });
             return of<IServeEvent>({ kind: "loaded", program: load.program.name });
           }),

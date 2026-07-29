@@ -48,6 +48,7 @@
 :- use_module(lower, [ relplan_kind/3 ]).
 :- use_module(analyze, [ body_ref_uses/2, derived_refs/2, rule_head_ref/2 ]).
 :- use_module('../1_host_expand', [compile_host_decl/2]).
+:- use_module(registry, [bind_executor/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -201,7 +202,7 @@ imports_lines(_HasEdgeRules, HasRetention, Lines) :-
 local_types_lines(
     [ 'interface IHostColumnPlan { readonly name: string; readonly type: "int" | "text" | "json" }',
       'interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }',
-      'interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly periods: readonly number[]; readonly execution: string }',
+      'interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly (string | number)[]; readonly execution: string }',
       'interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }',
       '',
       'interface IBootStatement {',
@@ -219,9 +220,9 @@ world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _), Lines) :-
               compile_host_decl(Decl, HostPlan)
             ),
             HostPlans),
-    findall(bind_plan(Name, Columns, Periods),
+    findall(bind_plan(Name, Columns, Literals),
             ( member(bind_decl(Name, Columns), Decls),
-              bind_read_periods(Rules, Name, Columns, Periods)
+              bind_read_literals(Rules, Name, Columns, Literals)
             ),
             BindPlans),
     findall(query_plan(Name/Arity, snapshot(current)),
@@ -266,38 +267,63 @@ host_plan_json(
            [NameJson, InputsJson, OutputsJson, TemplateJson,
             DemandJson, ResponseJson]).
 
-bind_plan_json(bind_plan(Name, Columns, Periods), Json) :-
+bind_plan_json(bind_plan(Name, Columns, Literals), Json) :-
     js_string(Name, NameJson),
     host_columns_json(Columns, ColumnsJson),
-    atomic_list_concat(Periods, ', ', PeriodBody),
-    format(atom(PeriodsJson), '[~w]', [PeriodBody]),
+    maplist(bind_literal_json, Literals, LiteralRows),
+    atomic_list_concat(LiteralRows, ', ', LiteralBody),
+    format(atom(LiteralsJson), '[~w]', [LiteralBody]),
+    ( bind_executor(Name, Executor)
+    -> true
+    ; throw(bind_mismatch(Name, Columns))
+    ),
     format(atom(Json),
-           '{ name: ~w, columns: ~w, periods: ~w, execution: "live_interval" }',
-           [NameJson, ColumnsJson, PeriodsJson]).
+           '{ name: ~w, columns: ~w, literals: ~w, execution: "~w" }',
+           [NameJson, ColumnsJson, LiteralsJson, Executor]).
 
-% ═══ bind cadence values (phase 2, runtime bridge arc) ═══════════════════════
+bind_literal_json(Literal, Json) :-
+    ( integer(Literal) -> format(atom(Json), '~w', [Literal])
+    ; js_string(Literal, Json)
+    ).
+
+% ═══ bind configuration literals (phase 2) ═══════════════════════════════════
 % A bind declaration authorizes a world source; the PROGRAM'S OWN RULES say
-% which cadence values it consumes, as integer literals in the first column of
-% a body atom naming the bind (`interval(300, Bucket)`). Those literals are the
-% only statement anywhere in the program about how often the world should push,
-% so they are what the served runtime spins a timer for -- a program that
-% declares `bind interval(...)` and never reads a literal period gets no timer
-% at all, and says so by emitting an empty list.
+% which instances of it they consume, as LITERALS in the first column of a body
+% atom naming the bind. Column 1 is the configuration column for every bind
+% (registry.pl `bind_definition/2` header): `interval(300, Bucket)` asks for a
+% 300-second cadence, `watch("src/**/*.ts", Path, Digest)` asks for one watcher
+% over that glob. Those literals are the only statement anywhere in the program
+% about what the world should push, so they are exactly what the served runtime
+% starts -- a program that declares a bind and reads no literal gets no live
+% source at all, and says so by emitting an empty list.
+%
+% This was `bind_read_periods/4` while `interval` was the only bind; the shape
+% generalized when `watch` arrived (a glob is a string, not an integer), so the
+% type filter widened from integer/1 to "atomic and not a variable". Non-literal
+% first columns (a variable, a compound) contribute nothing: a program cannot
+% ask the world for a cadence it only computes.
 %
 % The scan is over the WHOLE rule term (head and body alike): a rule that heads
 % the bind rel is already refused at load (bind_and_rule_head), so every
 % occurrence reachable here is a read.
-bind_read_periods(Rules, Name, Columns, Periods) :-
+bind_read_literals(Rules, Name, Columns, Literals) :-
     length(Columns, Arity),
-    findall(Period,
+    findall(Literal,
             ( bind_subterm(Rules, Atom),
               compound(Atom),
               functor(Atom, Name, Arity),
-              arg(1, Atom, Period),
-              integer(Period)
+              arg(1, Atom, Literal),
+              bind_config_literal(Literal)
             ),
             Raw),
-    sort(Raw, Periods).
+    sort(Raw, Literals).
+
+bind_config_literal(Literal) :-
+    nonvar(Literal),
+    ( integer(Literal) -> true
+    ; string(Literal)  -> true
+    ; atom(Literal), Literal \== []
+    ).
 
 bind_subterm(Term, Term) :-
     nonvar(Term).

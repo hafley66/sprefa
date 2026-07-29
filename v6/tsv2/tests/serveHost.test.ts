@@ -71,12 +71,12 @@ test("receipt (b): live interval bind + live sh host, served, matches the oracle
     assert.equal(loaded.statusCode, 200, loaded.body);
     const plans = JSON.parse(loaded.body) as {
       readonly hosts: readonly string[];
-      readonly binds: readonly { readonly name: string; readonly periods: readonly number[] }[];
+      readonly binds: readonly { readonly name: string; readonly literals: readonly (string | number)[] }[];
       readonly arrivalTargets: readonly string[];
     };
     // The program's own rules said the cadence; nothing out here chose it.
     assert.deepEqual(plans.hosts, ["answer"]);
-    assert.deepEqual(plans.binds, [{ name: "interval", periods: [1] }]);
+    assert.deepEqual(plans.binds, [{ name: "interval", literals: [1] }]);
 
     await postArrivals(served.port, [{ rel: "seed", sign: "add", row: ["alpha"] }]);
 
