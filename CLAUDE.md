@@ -1140,3 +1140,23 @@ extractor-is-fixed. STILL RUNNING: runtime bridge (opus), latest()
 edge lowering (sol), doc-truth take 2 (luna, relaunched after a
 correct STOP -- dead spellings reclassify to a legacy SYNTAX
 section, never removed; G2 contract requires recognition).
+
+LATEST() EDGE SAMPLING LANDED (merge 066bf3c3, codex sol no-commit
+flow, coordinator re-ran in worktree AND merged main: conformance
+135/0, sweep both modes 73 compiled/70 identical/0 wrong, plunit
+74/74, TEXT_DOOR 73/73/0): the N->(0|1) coercion from TICK-MODEL.md
+section 4 is real -- latest(RelAtom) in edge bodies reads the BASE
+table (sampled, rx withLatestFrom; EXPLAIN receipts = PK/index
+SEARCHes), bare atoms stay triggers, latest((conj)) refused. THE
+INVERSION IS DEAD: marker_stops_backlog_replay (the correct
+no-backlog program) now compiles identical while the unmarked twin
+still replays per its own oracle. Movement: +3 identical
+(marker/completion_lattice/identical_demand_dedups), 3 fixtures
+moved to SHARPER named refusals the lowering uncovered
+(trigger_arg_not_var(done) on scope_done_three_spellings;
+edge_head_column_type_mismatch(demand_rev/2) on the two rev-pin
+fixtures -- real pre-existing fixture issues, not papered). Sweep
+footgun fix held: door-handwritten.ts survived the merged-main
+sweep untouched. TICK-MODEL.md section 4 status row updated in the
+same landing. Still running: runtime bridge (opus), doc-truth take
+2 (luna).
