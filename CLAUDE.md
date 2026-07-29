@@ -1203,3 +1203,21 @@ module predated the refusal; repaired to plain level rule --
 nothing gated checked-in gen modules, gap noted). PHASE 1 OF THE
 GOLDEN PLAN IS COMPLETE. Next: phase 2 extraction live (fixed
 extractor, watcher buy research, enumerate/enumerate_at hosts).
+
+### NEW DIRECTIVE (user 2026-07-29 late, pre-save): memory soak + sqlite stats
+Reactivity engine needs an interval-driven soak running a LOT of
+contrived sqlite (massive assert/retract churn) proving node memory
+pressure stays CONSTANT -- the serve-leak soak covers handles/RSS
+over swaps, this one covers sustained write churn on one program.
+Plus SQLITE STATS surfaced so behavior is characterizable across
+impls: tsv2 first; READ what the v5 rust side already exposes in
+src/db.rs (dbstat usage, sqlite3_status wrappers -- "a fuck load of
+code in here") before building anything. ARCH task row: memory_soak
+(unbuilt, after runtime_bridge_p1). Not dispatched yet.
+ARCH.pl made current this save (12 new task rows: incremental_emitter
+/expression_lift/hosts_wiring_p1/edge_carry_seam/match_block/
+latest_edge_sample/runtime_bridge_p1/tick_model done; clock_check/
+extraction_live_p2/memory_soak unbuilt; go ALL PASS). PROLOG ORG
+EVAL still running (codex sol, shell b92297c77, worktree
+../sprefa-codex-prologorg, base 15a25c08, analysis-only ->
+plans/2026-07-29-prolog-org-review.md).

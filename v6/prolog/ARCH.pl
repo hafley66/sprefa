@@ -500,6 +500,17 @@ task(clock_bind,          done,    []).                    % LANDED 2026-07-28 (
 task(sub_graph_disk,      unbuilt, [emit_ts_direct]).
 task(count_ivm_port,      unbuilt, [kernel_sql_lowering]).
 task(cost_model,          unbuilt, [pushdown_optimizer]). % perf rows feed plan choice
+task(incremental_emitter, done,    [tsv2_pipeline]).       % LANDED 2026-07-28/29 (P1 delta joins default -> P2 frontier -> P3 refCount retraction w/ cycle-guard reseed): 1M competition won on DAG (429ms vs rust 443), CYC correct; naive referee mode retained
+task(expression_lift,     done,    [tsv2_typed_columns]).  % LANDED 2026-07-29 (opus arc): comparisons/arith/binds/concat fused to SQL; aggregates count/sum accumulators + min/max group-scoped recompute; final-state grading leg; 3 miscompile classes caught incl cross-type join
+task(hosts_wiring_p1,     done,    [tsv2_pipeline]).       % LANDED 2026-07-29 (merge 60631393): sh_decl/probe/bind_decl/query/ts_query end to end, schedule-fed; ghcacher.dl6 G2 gaps 8 -> 0; execution = named phase-2 refusals
+task(edge_carry_seam,     done,    [tsv2_unmarked_trigger]). % LANDED 2026-07-29 (merge 78919aea): edge_trigger_is_derived refusal removed, derived edges read P1 frontier; enum state machine compiles; door receipt byte-identical
+task(match_block,         done,    [tsv2_pipeline]).       % LANDED 2026-07-29 (merge 05f8ad29): match/2 sugar via shared expand_match_program; keyed_level_head refusal; keep(count) lowered as DELETE..RETURNING
+task(latest_edge_sample,  done,    [edge_carry_seam]).     % LANDED 2026-07-29 (merge 066bf3c3): latest(Atom) = base-table sample in edge bodies (the N->(0|1) coercion, TICK-MODEL.md s4); backlog-replay inversion dead
+task(runtime_bridge_p1,   done,    [incremental_emitter, hosts_wiring_p1]). % LANDED 2026-07-29 (merge 22607c08): PATH A wrap, v6/tsv2/serve/ 7 files; graded engine served over HTTP byte-identical; live sh + interval binds; serve-endurance 4 generations; serve-leak 20 swaps
+task(tick_model,          done,    [tsv2_pipeline]).       % compile/TICK-MODEL.md: B/N/Z semirings + tick grading; 6 cross-plane refusals are its hand-proven theorems; clock_check implements it
+task(clock_check,         unbuilt, [tick_model]).          % phase-5 checker: registry ring/grade columns, N-B junction coercion refusals, derivable tick-offset tables
+task(extraction_live_p2,  unbuilt, [runtime_bridge_p1]).   % golden plan phase 2: FIXED scip/ast-grep extractor output through hosts, bought watcher, enumerate/enumerate_at pair
+task(memory_soak,         unbuilt, [runtime_bridge_p1]).   % user 2026-07-29 late: interval-driven contrived-sqlite churn soak (massive assert/retract), node RSS pressure must stay flat; sqlite stats surfaced in tsv2 (and read what rust src/db.rs already exposes) so behavior is characterizable across impls
 
 roadmap :-
     findall(Name-Needs, task(Name, _, Needs), Pairs),
