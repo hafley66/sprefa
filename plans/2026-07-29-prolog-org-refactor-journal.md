@@ -427,3 +427,71 @@ anything failing. It now names the shared predicate.
 conformance 137/0, plunit 105/105 (+2), roundtrip ALL PASS,
 TEXT_DOOR 72/72/0, sweep 137/72 RUN identical=70 wrong=0 with a clean artifact
 diff, prolog-lint 10/10 OK.
+
+---
+
+## R3: single expansion driver with declared phase order
+
+Landed. New module `v6/prolog/1_expansion.pl`.
+
+```prolog
+expansion_phase(10, enum,        enum_expand:expand_enum_in_context).
+expansion_phase(20, decl_spread, unwired).
+expansion_phase(30, row_spread,  unwired).
+expansion_phase(40, match,       match_expand:expand_match_program_in_context).
+
+expand_program(+SurfaceProgram, -ExpandedProgram, -ExpansionContext)
+```
+
+The two spread phases are placeholder rows with no expander, because spreading
+is a design record and is not wired. The order is stated once; inserting a
+spread expander later fills in one field instead of finding four call sites.
+
+### The trap, measured rather than assumed
+
+The spreading verdict forces enum before match, and moving the calls alone
+silently breaks match exhaustiveness. Receipt taken against the unmodified
+expanders, for a two-variant enum with a ONE-arm match:
+
+| Order | Result |
+|---|---|
+| `expand_match_program/2` (match then enum) | throws `unsupported_construct(match_nonexhaustive(body, redirect))` |
+| `expand_enum_program/2` then `expand_match_program/2` | SUCCEEDS |
+
+and for the exhaustive twin the two orders produced IDENTICAL expanded terms.
+So no output diff and no tick log could have caught the loss. Only the refusal
+disappears.
+
+Cause: `expand_enum_program/2` removes every `enum_decl/2` entry, and match
+coverage read `enum_decl/2` straight out of the declarations.
+
+### The fix
+
+`enum_context/2` computes enum metadata from the SURFACE declarations before
+any phase runs, and the driver hands it to whichever later phase needs it. It
+lives in `0_enum_expand.pl`, the file that owns variant naming, so the context
+cannot drift from what expansion produces.
+
+That also closed the review's duplicate-enum-walker finding:
+`0_match_expand.pl` carried its own `enum_variant_refs/3`, a second
+`enum_variant/2` semicolon walker, and `variant_name_arity/3`, all
+reimplementing the naming rule. All three deleted.
+
+### Order sites closed
+
+| Site | Before | After |
+|---|---|---|
+| `engine:run_program/5` | `prepare_program` then `expand_match_program` | `prepare_program` then `expand_program/3` |
+| `compile:program_plan/2` | same, then `check_supported_subset/1` which expanded AGAIN | `expand_program/3`, then `check_supported_subset_expanded/1` |
+| `match_expand:expand_match_program/2` | called enum itself | still does, as the legacy one-shot entry |
+| `analyze:check_supported_subset/1` | expanded | expands through the driver; the expanded entry is now public for callers that already did |
+
+The redundant expansion the review found is the `compile.pl` one, and it is
+gone. Host preparation stays a PRE-PASS on both doors, per the review's own
+note that it mixes syntax normalization with world-plan extraction.
+
+### Receipts
+
+conformance 137/0, plunit 112/112 (+7), roundtrip ALL PASS,
+TEXT_DOOR 72/72/0, sweep 137/72 RUN identical=70 wrong=0 with a clean artifact
+diff, prolog-lint 10/10 OK.

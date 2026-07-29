@@ -7,30 +7,46 @@
 %   ArmHead <- SourceAtom, Guards
 %   EdgeHead <+ SourceAtom, Guards
 
-:- module(match_expand, [ expand_match_program/2 ]).
+:- module(match_expand,
+          [ expand_match_program/2,
+            expand_match_program_in_context/3 ]).
 
 :- use_module(library(lists)).
-:- use_module('0_enum_expand', [expand_enum_program/2]).
+:- use_module('0_enum_expand', [expand_enum_program/2, enum_context/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
 
+% Legacy single-call entry: match arms first, then enum, with the enum context
+% read off the same sugared declarations. Kept because the expansion driver
+% (1_expansion.pl, rank R3 of plans/2026-07-29-prolog-org-review.md) is what
+% the doors call now, and this is the one-shot form the driver replaced.
 expand_match_program(prog(SugaredDecls, SugaredRules), ExpandedProgram) :-
-    expand_match_rules(SugaredDecls, SugaredRules, MatchExpandedRules),
-    expand_enum_program(prog(SugaredDecls, MatchExpandedRules), ExpandedProgram).
+    enum_context(SugaredDecls, Enums),
+    expand_match_rules(Enums, SugaredRules, MatchExpandedRules),
+    expand_enum_program(prog(SugaredDecls, MatchExpandedRules),
+                        ExpandedProgram).
+
+% Driver entry: arms only, no enum pass, coverage checked against a context
+% built from the SURFACE declarations. Enum expansion has already run and
+% erased the enum_decl/2 entries by the time this is called, which is exactly
+% why the context is a parameter and not something to re-derive here.
+expand_match_program_in_context(Enums, prog(Decls, Rules),
+                                prog(Decls, ExpandedRules)) :-
+    expand_match_rules(Enums, Rules, ExpandedRules).
 
 expand_match_rules(_, [], []).
-expand_match_rules(Decls, [match(SourceAtom, Arms) | Rest],
+expand_match_rules(Enums, [match(SourceAtom, Arms) | Rest],
                    ExpandedRules) :-
     !,
     validate_match_source(SourceAtom),
     match_arms(Arms, ArmList),
-    validate_match_coverage(Decls, ArmList),
+    validate_match_coverage(Enums, ArmList),
     maplist(expand_match_arm(SourceAtom), ArmList, ThisRules),
-    expand_match_rules(Decls, Rest, RestRules),
+    expand_match_rules(Enums, Rest, RestRules),
     append(ThisRules, RestRules, ExpandedRules).
-expand_match_rules(Decls, [Rule | Rest], [Rule | ExpandedRest]) :-
-    expand_match_rules(Decls, Rest, ExpandedRest).
+expand_match_rules(Enums, [Rule | Rest], [Rule | ExpandedRest]) :-
+    expand_match_rules(Enums, Rest, ExpandedRest).
 
 validate_match_source(SourceAtom) :-
     ( positive_rel_atom(SourceAtom)
@@ -95,9 +111,7 @@ validate_match_arm_head(ArmHead) :-
 conjoin_match_body(SourceAtom, true, SourceAtom) :- !.
 conjoin_match_body(SourceAtom, Guards, (SourceAtom, Guards)).
 
-validate_match_coverage(Decls, Arms) :-
-    findall(Enum-Variants, enum_variant_refs(Decls, Enum, Variants),
-            EnumVariants),
+validate_match_coverage(EnumVariants, Arms) :-
     findall(HeadRef, (member(Arm, Arms), arm_head_ref(Arm, HeadRef)), HeadRefs),
     ( member(Enum-VariantRefs, EnumVariants),
       HeadRefs \== [],
@@ -120,30 +134,7 @@ rel_ref_local(Atom, Name/Arity) :-
     positive_rel_atom(Atom),
     functor(Atom, Name, Arity).
 
-enum_variant_refs(Decls, Enum, VariantRefs) :-
-    member(enum_decl(Enum, VariantTerms), Decls),
-    findall(VariantRef-VariantName,
-            ( enum_variant(VariantTerms, VariantTerm),
-              variant_name_arity(VariantTerm, VariantName, ContentArity),
-              atomic_list_concat([Enum, VariantName], '_', VariantRelName),
-              VariantArity is ContentArity + 1,
-              VariantRef = VariantRelName/VariantArity
-            ),
-            VariantRefs).
-
-enum_variant((Left ; Right), VariantTerm) :-
-    !,
-    ( enum_variant(Left, VariantTerm)
-    ; enum_variant(Right, VariantTerm)
-    ).
-enum_variant(VariantTerm, VariantTerm).
-
-variant_name_arity(VariantTerm, VariantName, ContentArity) :-
-    compound(VariantTerm),
-    !,
-    functor(VariantTerm, VariantName, ContentArity).
-variant_name_arity(VariantName, VariantName, 0) :-
-    atom(VariantName),
-    !.
-variant_name_arity(VariantTerm, _, _) :-
-    throw(unsupported_construct(enum_variant_shape(VariantTerm))).
+% enum_variant_refs/3, a second enum_variant/2 semicolon walker and
+% variant_name_arity/3 used to sit here, duplicating 0_enum_expand.pl's naming
+% rule. They are gone: the enum metadata arrives as the context parameter, from
+% the one file that owns variant naming.

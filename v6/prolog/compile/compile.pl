@@ -33,7 +33,7 @@
           ]).
 
 :- use_module(library(lists)).
-:- use_module('../0_match_expand', [expand_match_program/2]).
+:- use_module('../1_expansion', [expand_program/3]).
 :- use_module('../1_host_expand', [prepare_program/5]).
 :- use_module(analyze).
 :- use_module(strat).
@@ -91,9 +91,14 @@ find_fixture(Stream, Name, Term, Bindings) :-
 
 program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindings, Plan) :-
     prepare_program(SugaredProg, HostProg, _, _, _),
-    expand_match_program(HostProg, Prog),
+    % Host preparation stays a PRE-PASS (see engine.pl); the sugar phases run
+    % in the order 1_expansion.pl declares.
+    expand_program(HostProg, Prog, _),
     Prog = prog(Decls, Rules),
-    check_supported_subset(Prog),
+    % ..._expanded/1, not check_supported_subset/1: Prog is ALREADY expanded
+    % here, and the sugared entry expands again. That second expansion was the
+    % redundant order site rank R3 removes.
+    check_supported_subset_expanded(Prog),
     % Union rule-derived refs with EVERY declared ref (analyze.pl:
     % declared_refs/2's header comment) -- a kind(Ref, _) decl that no rule
     % ever mentions is still a real rel a schedule can write, and must still

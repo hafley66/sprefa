@@ -19,6 +19,7 @@
 :- use_module('../analyze', [ check_supported_subset/1 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
+:- use_module('../../1_expansion', [ expansion_phase/3, expand_program/3 ]).
 :- use_module('../parse_dl', [ parse_dl/4 ]).
 :- use_module('../print_dl', [ print_dl_program/3 ]).
 :- use_module('../../1_host_expand',
@@ -1632,3 +1633,91 @@ test(decl_key_agrees_across_doors) :-
              CompilerPositions == Expected )).
 
 :- end_tests(declaration_query_parity).
+
+% ═══════════════════════════════════════════════════════════════════════════
+% EXPANSION ORDER (rank R3)
+%
+% The spreading verdict fixes the order as
+% enum -> declaration spread -> row spread -> match, which puts ENUM BEFORE
+% MATCH. The old single call ran match first, and moving the calls alone
+% silently breaks match exhaustiveness:
+%
+%   expand_enum_program/2 removes every enum_decl/2 entry, and match coverage
+%   used to read enum_decl/2 straight out of the declarations. Enum-first
+%   therefore left the coverage check looking at declarations that no longer
+%   mention any enum.
+%
+% RECEIPT taken against the unmodified expanders, before 1_expansion.pl
+% existed. For a two-variant enum with a ONE-arm match:
+%
+%   expand_match_program/2                    threw
+%     unsupported_construct(match_nonexhaustive(body, redirect))
+%   expand_enum_program/2 then
+%     expand_match_program/2                  SUCCEEDED
+%
+% and for the exhaustive twin the two orders produced IDENTICAL expanded
+% terms. So no output diff and no tick log could have caught the loss; only
+% the refusal disappears. That is what these tests hold onto.
+
+:- begin_tests(expansion_order).
+
+enum_program(Rules, prog([ enum_decl(body, (page(view:text)
+                                            ; redirect(to:text))) ], Rules)).
+
+exhaustive_match(Program) :-
+    enum_program([ match(resp(Id),
+                     ( (body_page(Id, v) <- true)
+                     ; (body_redirect(Id, t) <- true) )) ], Program).
+
+nonexhaustive_match(Program) :-
+    enum_program([ match(resp(Id), (body_page(Id, v) <- true)) ], Program).
+
+% The declared order is the spreading verdict's order, and the two spread
+% phases are placeholders with no expander until spreading is wired.
+test(declared_phase_order) :-
+    findall(Order-Name, expansion_phase(Order, Name, _), Unordered),
+    msort(Unordered, Ordered),
+    Ordered == [10-enum, 20-decl_spread, 30-row_spread, 40-match].
+
+test(spread_phases_are_placeholders) :-
+    expansion_phase(20, decl_spread, unwired),
+    expansion_phase(30, row_spread, unwired).
+
+% Enum-first through the driver produces exactly what match-first produced.
+test(enum_first_preserves_expanded_terms) :-
+    exhaustive_match(Program),
+    expand_match_program(Program, MatchFirst),
+    expand_program(Program, EnumFirst, _),
+    EnumFirst =@= MatchFirst.
+
+% The property the context exists to save.
+test(enum_first_still_refuses_nonexhaustive_match) :-
+    nonexhaustive_match(Program),
+    catch(expand_program(Program, _, _), Thrown, true),
+    Thrown == unsupported_construct(match_nonexhaustive(body, redirect)).
+
+% The context is computed from the SURFACE declarations, and it names the
+% generated variant relations rather than the surface variant terms, so a
+% later phase can check coverage against what enum expansion actually made.
+test(context_carries_generated_variant_refs) :-
+    exhaustive_match(Program),
+    expand_program(Program, _, Context),
+    Context == [ body-[ body_page/2-page, body_redirect/2-redirect ] ].
+
+% A program with no enum still expands, and its context is empty rather than
+% failing.
+test(program_without_enum_has_empty_context) :-
+    Program = prog([], [ (out(Item) <- src(Item)) ]),
+    expand_program(Program, Expanded, Context),
+    Context == [],
+    Expanded == Program.
+
+% The driver is the whole pipeline: a program with neither sugar comes back
+% unchanged, and one with both comes back fully desugared.
+test(driver_expands_enum_and_match_together) :-
+    exhaustive_match(Program),
+    expand_program(Program, prog(Decls, Rules), _),
+    \+ member(enum_decl(_, _), Decls),
+    \+ member(match(_, _), Rules).
+
+:- end_tests(expansion_order).

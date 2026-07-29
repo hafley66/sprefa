@@ -78,7 +78,7 @@
 :- use_module(library(apply)).
 :- use_module(library(ordsets)).
 :- use_module(library(pairs)).
-:- use_module('../0_match_expand', [expand_match_program/2]).
+:- use_module('../1_expansion', [expand_program/3]).
 :- use_module('../0_body_walk', [walk_body/3, event_is_relation_atom/2,
                                  body_wrapper_refs/4]).
 :- use_module('../0_program_check',
@@ -446,7 +446,10 @@ delta_ref_is_set(Decls, Row) :-
 
 run_program(SugaredProg, Initial, Schedule, FinalAll, DeltaTicks) :-
     prepare_program(SugaredProg, HostProg, _, _, _),
-    expand_match_program(HostProg, Prog),
+    % Host preparation stays a PRE-PASS: it mixes syntax normalization with
+    % world-plan extraction, so it does not belong in the four-phase table.
+    % Everything after it runs in the declared order (1_expansion.pl).
+    expand_program(HostProg, Prog, _),
     check_program(Prog),
     seed_store(Prog, Initial, Store0),
     Prog = prog(_, Rules),

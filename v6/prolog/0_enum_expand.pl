@@ -9,12 +9,50 @@
 %   body_tag(Id, page) <- body_page(Id, View)
 %   body_tag(Id, redirect) <- body_redirect(Id, To)
 
-:- module(enum_expand, [ expand_enum_program/2 ]).
+% enum_context/2 exists because expansion ERASES its own input: expand_enum_
+% program/2 removes every enum_decl/2 entry. Anything that has to reason about
+% enums AFTER that point (match exhaustiveness is the live case) must be handed
+% the metadata rather than re-reading declarations that are gone. It is
+% computed from the SURFACE declarations, before any phase runs.
+%
+% This file owns the variant naming, so it owns the context. 0_match_expand.pl
+% used to carry a second copy of the naming rule and a second enum_variant/2
+% walker; both were deleted when the expansion driver (rank R3 of
+% plans/2026-07-29-prolog-org-review.md) started passing this context.
+:- module(enum_expand,
+          [ expand_enum_program/2,
+            expand_enum_in_context/3,
+            enum_context/2 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 
 :- op(1150, xfx, <-).
+
+% enum_context(+SurfaceDecls, -Enums) with Enums a list of
+% EnumName-VariantRefs, and VariantRefs a list of GeneratedRef-VariantName in
+% declaration order. The generated names come from the same variant_rel_name/3
+% the expansion itself uses, so the context cannot drift from what expansion
+% produces.
+enum_context(SurfaceDecls, Enums) :-
+    findall(EnumName-VariantRefs,
+            ( member(enum_decl(EnumName, VariantTerms), SurfaceDecls),
+              findall(VariantRef-VariantName,
+                      ( enum_variant(VariantTerms, VariantTerm),
+                        variant_spec(VariantTerm, VariantName, Columns),
+                        variant_rel_name(EnumName, VariantName,
+                                         VariantRelName),
+                        length(Columns, ContentArity),
+                        VariantArity is ContentArity + 1,
+                        VariantRef = VariantRelName/VariantArity ),
+                      VariantRefs) ),
+            Enums).
+
+% The expansion-driver arity. Enum runs first, so it needs nothing from the
+% context; the argument is there because 1_expansion.pl calls every wired
+% phase the same way.
+expand_enum_in_context(_Context, Program, Expanded) :-
+    expand_enum_program(Program, Expanded).
 
 expand_enum_program(prog(SugaredDecls, OriginalRules),
                     prog(ExpandedDecls, ExpandedRules)) :-

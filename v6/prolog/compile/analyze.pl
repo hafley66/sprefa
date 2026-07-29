@@ -22,7 +22,8 @@
             rule_head_ref/2, rule_is_edge/1, rule_is_level/1,
             body_ref_uses/2, rel_columns/4, rel_columns/5,
             rel_column_types/5, rel_column_types/7, snake_name/2,
-            check_supported_subset/1, edge_trigger_shape/2,
+            check_supported_subset/1, check_supported_subset_expanded/1,
+            edge_trigger_shape/2,
             conjunction_goals/2, check_edge_head_column_types/2,
             aggregate_head_template/2, rule_is_aggregate/1,
             body_guard_goals/2, guard_goal/1, bind_goal/3,
@@ -37,7 +38,7 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
-:- use_module('../0_match_expand', [expand_match_program/2]).
+:- use_module('../1_expansion', [expand_program/3]).
 :- use_module('../0_body_walk',
               [ walk_body/3, event_is_relation_atom/2,
                 body_conjunction_goals/3, body_wrapper_refs/4 ]).
@@ -759,8 +760,14 @@ check_edge_head_column_types_for_rule(RelPlans, (Head <+ Body)) :-
 % instances of its ring/grade discipline; the planned clock checker
 % (TICK-MODEL.md section 6) generalizes them and lives here when built.
 
+% Two entries on purpose. check_supported_subset/1 takes SURFACE syntax and
+% expands it through the declared phase order; callers that have already
+% expanded call check_supported_subset_expanded/1 directly. compile.pl's
+% program_plan/2 used the sugared entry on an already-expanded program, which
+% expanded a second time for nothing (rank R3 of
+% plans/2026-07-29-prolog-org-review.md).
 check_supported_subset(SugaredProg) :-
-    expand_match_program(SugaredProg, ExpandedProg),
+    expand_program(SugaredProg, ExpandedProg, _),
     check_supported_subset_expanded(ExpandedProg).
 
 % The cross-plane trigger conditions come from 0_program_check.pl, shared with
