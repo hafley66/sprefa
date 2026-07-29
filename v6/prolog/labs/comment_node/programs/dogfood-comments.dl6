@@ -1,0 +1,44 @@
+# dogfood-comments.dl6 -- the repo-scale leg: THIS REPOSITORY'S OWN COMPILER
+# SOURCES (`v6/prolog/**/*.pl`) as comment facts, on the served engine.
+#
+# The point of running it at repo scale is the statement count, not the rows:
+# the count-test law says a path that could be quadratic gets a test asserting
+# the PLAN and not the end state, and a per-file `sh` host over 58 files is
+# exactly the shape that goes wrong quietly. `receipt-scale.sh` reads
+# DL_PERF_LOG and asserts statements per tick are FLAT as the corpus fills.
+#
+# It also records a v5/v6 asymmetry that matters for the dogfood directive:
+# v5's `src/cst.rs lang_label_for_path` maps 17 extensions and `pl` is not one
+# of them, so v5 cannot produce a single comment fact about the prolog sources
+# the user asked to dogfood. v6 can, because `sprefa-extract` drives ast-grep's
+# grammar registry and prolog is in it. This program is therefore not a port of
+# anything; it is capability v5 does not have.
+#
+# RX LOWERING (the snippet law):
+#
+#   const commentNode$ = file$.pipe(
+#     groupBy((row) => row.digest),
+#     mergeMap((group) => group.pipe(take(1), mergeMap(runCommentHost))),
+#     mergeMap(commitEdbArrival));
+#
+#   const commentKindCount$ = commentNode$.pipe(
+#     scan(tallyByKind, new Map()),
+#     distinctUntilChanged(sameRowSet));
+
+bind watch(glob: text, path: text, digest: text).
+
+rel file(path: text, digest: text).
+file(path, digest) <- watch('**/*.pl', path, digest).
+
+sh comment_fact(path: text) -> (line: int, kind: text, comment_text: text) =
+  `"$DL_EXTRACT_BIN" --family cst {path} | python3 "$DL_CN" comments {path}`.
+
+rel comment_node(path: text, digest: text, line: int, kind: text, comment_text: text).
+comment_node(path, digest, line, kind, comment_text) <-
+  file(path, digest), ? comment_fact(path, line, kind, comment_text) @ salt(digest: digest).
+
+rel comment_kind_count(kind: text, comments: int).
+comment_kind_count(kind, count(line)) <- comment_node(path, digest, line, kind, comment_text).
+
+rel file_comment_count(path: text, comments: int).
+file_comment_count(path, count(line)) <- comment_node(path, digest, line, kind, comment_text).

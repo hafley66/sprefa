@@ -1,0 +1,134 @@
+# suppress-rail.dl6 -- RECEIPT PROGRAM 1: v5 technique 2 (dl-disable
+# suppression + pairing + the unused-suppression antijoin) and technique 7 (a
+# lint finding governed by that suppression), ported to v6 with ZERO new
+# constructs. Every spelling below already has a graded fixture.
+#
+# The four capabilities the header says all seven techniques decompose into,
+# and where each one lives here:
+#
+#   marker capture   -> the `disable_line` / `disable_next` host TEMPLATES.
+#                       The regex is in the shell, because v6 has eleven
+#                       expressions (registry.pl `expression/5`) and not one
+#                       of them touches text: no `=~`, no `replace_re`, no
+#                       `split`, no `trim`. SLOT-MARKER-CAPTURE, priced.
+#   grammar witness  -> `suppressed` JOINS the scanner hit against
+#                       `comment_node` at the SAME (path, line). This is v5's
+#                       own join convention (std/suppress.dl's header), and
+#                       it is what hands the cheap scanner back its
+#                       string-literal safety: a `dl-disable-line` sitting
+#                       inside a string literal is flagged by grep, carries no
+#                       comment node, and is antijoined out of existence.
+#   antijoin         -> `suppress_unused`: a directive whose scope caught no
+#                       matching finding (eslint reportUnusedDisableDirectives).
+#   line numbers     -> the `call_ref` host pipes the extractor's own JSONL
+#                       through the byte-span FLATTENER. `sprefa-extract`
+#                       writes `"span":{"start":..,"end":..}` and
+#                       `serve/1_hosts.ts decodeObjectItems` projects
+#                       TOP-LEVEL declared columns only, so a nested field
+#                       never reaches a declared int column. Flattening in the
+#                       template is what makes `line` a real number here where
+#                       diag-rail.dl6 had to ship whole-file zeros.
+#
+# THE WHOLE PROGRAM'S RX LOWERING (the snippet law), one pipeline per host
+# plus one merge at the bottom:
+#
+#   const file$ = watchSource(root).pipe(
+#     bufferTime(coalesceMs), map(diffAgainstLastDigest),
+#     concatMap((batch) => engine.submit(batch)));           // RX-B1
+#
+#   const answered = (host) => demand$.pipe(                  // RX-H2
+#     groupBy((row) => row.witnessDigest),
+#     mergeMap((group) => group.pipe(take(1), mergeMap(host))),
+#     mergeMap(commitEdbArrival));
+#
+#   const suppressed$ = combineLatest([directiveLine$, commentNode$]).pipe(
+#     map(([directives, comments]) => {
+#       const onLine = new Set(comments.map((row) => `${row.path}:${row.line}`));
+#       return directives.filter((row) => onLine.has(`${row.path}:${row.line}`));
+#     }),
+#     distinctUntilChanged(sameRowSet));                      // the grammar witness
+#
+#   const diag$ = merge(
+#     bannedCall$.pipe(withLatestFrom(suppressed$),
+#       filter(([hit, block]) => !block.some(sameLineAndCode(hit, "no-eval"))),
+#       map(errorRow)),
+#     suppressUnused$.pipe(map(warnRow)))
+#     .pipe(mergeMap(commitEdbArrival));
+
+# ── the world push ──────────────────────────────────────────────────────────
+bind watch(glob: text, path: text, digest: text).
+
+rel file(path: text, digest: text).
+file(path, digest) <- watch('**/*.ts', path, digest).
+
+# ── the grammar fact: v5's comment_node, from the cst family v6 already emits
+# The tool is POLICY-FREE by construction (std/suppress.dl's law: "policy
+# lives HERE, never in Rust"); it knows comment SYNTAX and no convention.
+sh comment_fact(path: text) -> (line: int, kind: text, comment_text: text) =
+  `"$DL_EXTRACT_BIN" --family cst {path} | python3 "$DL_CN" comments {path}`.
+
+rel comment_node(path: text, digest: text, line: int, kind: text, comment_text: text).
+comment_node(path, digest, line, kind, comment_text) <-
+  file(path, digest), ? comment_fact(path, line, kind, comment_text) @ salt(digest: digest).
+
+# ── marker capture: the two exact-line directives ───────────────────────────
+# `dl-disable-line` is not a prefix of `dl-disable-next-line`, so the two
+# patterns are mutually exclusive without v5's `($| )` anchor gymnastics.
+sh disable_line(path: text) -> (line: int, code: text) =
+  `grep -nE 'dl-disable-line +[A-Za-z0-9_-]+' {path} | sed -E 's/^([0-9]+):.*dl-disable-line +([A-Za-z0-9_-]+).*/{"line":\1,"code":"\2"}/'`.
+
+sh disable_next(path: text) -> (line: int, code: text) =
+  `grep -nE 'dl-disable-next-line +[A-Za-z0-9_-]+' {path} | sed -E 's/^([0-9]+):.*dl-disable-next-line +([A-Za-z0-9_-]+).*/{"line":\1,"code":"\2"}/'`.
+
+rel directive_line(path: text, digest: text, line: int, code: text).
+directive_line(path, digest, line, code) <-
+  file(path, digest), ? disable_line(path, line, code) @ salt(digest: digest).
+
+rel directive_next(path: text, digest: text, line: int, code: text).
+directive_next(path, digest, line, code) <-
+  file(path, digest), ? disable_next(path, line, code) @ salt(digest: digest).
+
+# ── THE GRAMMAR WITNESS ─────────────────────────────────────────────────────
+# A scanner hit becomes a directive only where the grammar puts a comment on
+# that exact line. `dl-disable-next-line` moves its effect one line down, and
+# `+ 1` is ordinary int arithmetic in the language, not a host trick.
+rel suppressed(path: text, line: int, code: text).
+suppressed(path, line, code) <-
+  directive_line(path, digest, line, code),
+  comment_node(path, digest, line, kind, comment_text).
+suppressed(path, effect_line, code) <-
+  directive_next(path, digest, line, code),
+  comment_node(path, digest, line, kind, comment_text),
+  effect_line := line + 1.
+
+# ── the finding, with real line numbers ─────────────────────────────────────
+sh call_ref(path: text) -> (line: int, callee: text) =
+  `"$DL_EXTRACT_BIN" --family call {path} | python3 "$DL_CN" lines {path}`.
+
+rel call_site(path: text, digest: text, line: int, callee: text).
+call_site(path, digest, line, callee) <-
+  file(path, digest), ? call_ref(path, line, callee) @ salt(digest: digest).
+
+rel banned_call(path: text, line: int, callee: text).
+banned_call(path, line, callee) <- call_site(path, digest, line, callee), callee == 'eval'.
+
+# The rail's PRE-suppression finding set, v5's `rail_finding` contract verbatim.
+rel rail_finding(path: text, line: int, code: text).
+rail_finding(path, line, 'no-eval') <- banned_call(path, line, callee).
+
+# ── the antijoin: a directive whose scope caught nothing ────────────────────
+rel suppress_unused(path: text, line: int, code: text).
+suppress_unused(path, line, code) <-
+  suppressed(path, line, code), not(rail_finding(path, line, code)).
+
+# ── the bridge: v5's diag_v5 schema, verbatim column order ──────────────────
+rel diag_v5(path: text, line: int, col: int, end_line: int, end_col: int,
+            severity: text, code: text, msg: text, hint: text).
+
+diag_v5(path, line, 0, line, 0, 'error', 'no-eval',
+        'eval() is banned; use a safe alternative', '') <-
+  banned_call(path, line, callee), not(suppressed(path, line, 'no-eval')).
+
+diag_v5(path, line, 0, line, 0, 'warn', 'dl-suppress-unused',
+        'unused suppression: no finding in its scope -- remove the directive', '') <-
+  suppress_unused(path, line, code).

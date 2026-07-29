@@ -1,0 +1,98 @@
+# arch-rail.dl6 -- RECEIPT PROGRAM 2: v5 technique 1 (ARCH JSON markers ->
+# named architecture nodes + the parent hierarchy), dogfooding this repo's own
+# `v6/prolog/*.pl` compiler sources. std/arch.dl is the file being ported.
+#
+# WHAT IS FAITHFUL AND WHAT IS NOT, stated up front because the difference is
+# this lab's finding and not an implementation detail:
+#
+#   FAITHFUL   the grammar witness. A `%  ARCH {...}` sitting inside a quoted
+#              atom is flagged by the scanner and carries NO comment node, so
+#              `arch_node` antijoins it away. Receipt: probes/arch_template.sh
+#              over a file with exactly that shape reports 4 scanner hits;
+#              this program derives 3 nodes.
+#   FAITHFUL   the hierarchy itself. node/parent/child/root/leaf are ordinary
+#              joins and one `not(...)`, exactly as std/arch.dl writes them.
+#   NOT        the JSON payload destructure. std/arch.dl says
+#              `json(payload, q:{ "url": $url })`; the v6 spelling for that is
+#              `decode(payload, {url: url})` over a struct-typed column, and a
+#              struct type CANNOT be an sh host output column today --
+#              probes/p1_struct_host_output.dl6 gets
+#              `unsupported_surface(column_type_wrapper(arch_marker,payload,none))`
+#              from the real compiler (ARCH row struct_host_output_seam).
+#              So the payload is destructured in the TEMPLATE below.
+#   NOT        the url decomposition. `arch_parent` is `replace_re(url,
+#              r"/[^/]*$", "")` in v5. v6 has ELEVEN expressions
+#              (registry.pl expression/5) and none of them touches text, so
+#              `parent` and `last` are computed in the template too.
+#
+# Both NOTs are the SAME gap wearing two hats: a value arrives from the world
+# already shaped, or it never gets reshaped. That is SLOT-MARKER-CAPTURE.
+#
+# RX LOWERING (the snippet law):
+#
+#   const archNode$ = combineLatest([markerHit$, commentNode$]).pipe(
+#     map(([hits, comments]) => {
+#       const onLine = new Set(comments.map((row) => `${row.path}:${row.line}`));
+#       return hits.filter((hit) => onLine.has(`${hit.path}:${hit.line}`));
+#     }),
+#     distinctUntilChanged(sameRowSet));
+#
+#   const archEdge$ = archNode$.pipe(
+#     map((nodes) => {
+#       const byUrl = new Map(nodes.map((node) => [node.url, node]));
+#       return nodes.flatMap((node) => byUrl.has(node.parent)
+#         ? [{ parent: node.parent, child: node.url }] : []);
+#     }));
+#
+#   const archRoot$ = archNode$.pipe(                       // the not(...) arm
+#     map((nodes) => {
+#       const byUrl = new Set(nodes.map((node) => node.url));
+#       return nodes.filter((node) => !byUrl.has(node.parent));
+#     }));
+
+# ── the world push: this repo's own compiler sources ────────────────────────
+bind watch(glob: text, path: text, digest: text).
+
+rel file(path: text, digest: text).
+file(path, digest) <- watch('**/*.pl', path, digest).
+
+# ── the grammar fact (policy-free tool, std/suppress.dl's law) ──────────────
+sh comment_fact(path: text) -> (line: int, kind: text, comment_text: text) =
+  `"$DL_EXTRACT_BIN" --family cst {path} | python3 "$DL_CN" comments {path}`.
+
+rel comment_node(path: text, digest: text, line: int, kind: text, comment_text: text).
+comment_node(path, digest, line, kind, comment_text) <-
+  file(path, digest), ? comment_fact(path, line, kind, comment_text) @ salt(digest: digest).
+
+# ── the marker host: convention + payload destructure, in the template ──────
+# The `^ARCH\s*\{` anchor std/arch.dl documents is `ARCH *\{` here; the JSON
+# read is one sed capture; the url split is one awk pass. All three are
+# datalog in v5 and shell in v6, and that is exactly the cost being reported.
+sh arch_marker(path: text) -> (line: int, url: text, parent: text, last: text) =
+  `grep -nE 'ARCH *\{' {path} | sed -E 's/^([0-9]+):.*"url":"([^"]*)".*/\1 \2/' | awk '{ url=$2; parent=url; last=url; if (index(url, "/") > 0) { sub(/\/[^\/]*$/, "", parent); sub(/.*\//, "", last) } else { parent = "" } printf "{\"line\":%s,\"url\":\"%s\",\"parent\":\"%s\",\"last\":\"%s\"}\n", $1, url, parent, last }'`.
+
+rel marker_hit(path: text, digest: text, line: int, url: text, parent: text, last: text).
+marker_hit(path, digest, line, url, parent, last) <-
+  file(path, digest), ? arch_marker(path, line, url, parent, last) @ salt(digest: digest).
+
+# ── THE GRAMMAR WITNESS: only a hit the parser calls a comment is a node ────
+rel arch_node(path: text, line: int, url: text, parent: text, last: text).
+arch_node(path, line, url, parent, last) <-
+  marker_hit(path, digest, line, url, parent, last),
+  comment_node(path, digest, line, kind, comment_text).
+
+# ── the hierarchy: ordinary joins, exactly as std/arch.dl writes them ───────
+rel arch_url(url: text).
+arch_url(url) <- arch_node(path, line, url, parent, last).
+
+rel arch_edge(parent: text, child: text).
+arch_edge(parent, url) <- arch_node(path, line, url, parent, last), arch_url(parent).
+
+rel arch_root(url: text).
+arch_root(url) <- arch_node(path, line, url, parent, last), not(arch_url(parent)).
+
+rel arch_leaf(url: text).
+arch_leaf(url) <- arch_url(url), not(arch_edge(url, _)).
+
+rel arch_child_count(parent: text, children: int).
+arch_child_count(parent, count(child)) <- arch_edge(parent, child).
