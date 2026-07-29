@@ -466,6 +466,22 @@ covers_endpoint_exists(Subject) :-
     exists_file(Path), !.
 
 % ═════════════════════════════════════════════════════════════════════════════
+% COORDINATOR FORKS — fork(Date, Name, Chosen, Alternative, Why).
+% User directive 2026-07-29 night: every option the coordinator auto-takes
+% lands here with the fork and the reasoning; prefer best-of-both-worlds or
+% the easiest-backtrack path. Alternative names the road not taken.
+% ═════════════════════════════════════════════════════════════════════════════
+
+fork('2026-07-29', org_arc_agent_shape, one_opus_sequenced_worktree, parallel_rank_lanes,
+     "ranks build on each other (lint gate protects later ranks) and all live in v6/prolog; one worktree kills cross-lane conflicts; backtrack = per-rank commits revert independently").
+fork('2026-07-29', soak_justfile_wiring, coordinator_wires_at_merge, soak_agent_edits_justfile,
+     "org agent owns the v6/justfile prolog-lint recipe; disjoint file ownership law; recipe text rides the soak report so wiring is one paste").
+fork('2026-07-29', overnight_agent_tier, claude_sonnet_agent_tool, codex_luna_shell,
+     "same capability tier; Agent-tool completions re-invoke the coordinator so the overnight pipeline advances unattended, codex shells need manual polling; sol/terra reserved for hard trade-off arcs per user word").
+fork('2026-07-29', phase2_sequencing, soak_lands_before_hosts_p2_dispatch, parallel_dispatch,
+     "soak and hosts phase 2 both touch v6/tsv2 runtime; serializing keeps the luna/sonnet-work verification honest; cost = a few hours latency, backtrack free").
+
+% ═════════════════════════════════════════════════════════════════════════════
 % BUILD ORDER — task(Name, Status, Needs). `roadmap` topsorts it; learning
 % order = the same sort, because a technique is learnable once its inputs are.
 % ═════════════════════════════════════════════════════════════════════════════
@@ -510,7 +526,10 @@ task(runtime_bridge_p1,   done,    [incremental_emitter, hosts_wiring_p1]). % LA
 task(tick_model,          done,    [tsv2_pipeline]).       % compile/TICK-MODEL.md: B/N/Z semirings + tick grading; 6 cross-plane refusals are its hand-proven theorems; clock_check implements it
 task(clock_check,         unbuilt, [tick_model]).          % phase-5 checker: registry ring/grade columns, N-B junction coercion refusals, derivable tick-offset tables
 task(extraction_live_p2,  unbuilt, [runtime_bridge_p1]).   % golden plan phase 2: FIXED scip/ast-grep extractor output through hosts, bought watcher, enumerate/enumerate_at pair
-task(memory_soak,         unbuilt, [runtime_bridge_p1]).   % user 2026-07-29 late: interval-driven contrived-sqlite churn soak (massive assert/retract), node RSS pressure must stay flat; sqlite stats surfaced in tsv2 (and read what rust src/db.rs already exposes) so behavior is characterizable across impls
+task(memory_soak,         in_flight, [runtime_bridge_p1]). % user 2026-07-29 late: interval-driven contrived-sqlite churn soak (massive assert/retract), node RSS pressure must stay flat; sqlite stats surfaced in tsv2 (and read what rust src/db.rs already exposes) so behavior is characterizable across impls. DISPATCHED 2026-07-29 night (sonnet worktree, base 5a9bfdd8; no justfile edit, coordinator wires recipe at merge)
+task(prolog_org_refactor, in_flight, []).                  % plans/2026-07-29-prolog-org-review.md ranked table executed R10+R6 -> R1 -> R2 -> R3 -> R4+R5 -> R9 -> R7+R8, test-first per rank; opus worktree, base 5a9bfdd8; coordinator task queue #1-#7
+task(watcher_buy_research, in_flight, []).                 % phase-2 prereq: chokidar vs @parcel/watcher (vs fs.watch/watchman) candidate table per build-vs-buy law -> plans/2026-07-29-watcher-buy-research.md; research-only sonnet
+task(save_session_pl,     unbuilt, []).                    % user idea 2026-07-29 night: session saves as consultable .pl facts alongside chat_log md so a new session can consult/1 prior state; spell at next save
 
 roadmap :-
     findall(Name-Needs, task(Name, _, Needs), Pairs),
