@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# flagship-flow.sh -- v5 flow-interproc versus the portable v6 callable-plane port.
+# flagship-flow.sh -- v5 flow-interproc versus the v6 value-plane port.
 #
-# V5 flow_edge and flow_reach close a df value plane. V6 currently exposes
-# resolved callable edges, so this rig grades relation counts and deterministic
-# spot checks instead of byte-diffing unrelated value identifiers.
+# The v6 rail reads df direct rows, positional df arg/param rows, resolved
+# caller-site pins, and flat sig-owner fields. The classifier requires a
+# nonzero flow_edge intersection: an all-gap table is a failed value-plane leg.
 set -euo pipefail
 
 TSV2="$(cd "$(dirname "$0")/.." && pwd)"
@@ -126,4 +126,4 @@ done
 
 python3 "$CLASSIFY" "$WORK"
 say "artifacts: $WORK"
-say "FLAGSHIP FLOW GRADED: counts plus spot checks, 0 unclassified"
+say "FLAGSHIP FLOW GRADED: value-plane counts, match assertions, 0 unclassified"
