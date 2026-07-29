@@ -542,3 +542,53 @@ export interface IServeTrace {
    *  a file; a second call with the same env is a no-op. */
   installFromEnv(): void;
 }
+
+// ── Serve-side stats (NEW DIRECTIVE 2026-07-29 late: memory-soak + sqlite
+// stats; scripts/memory-soak.ts, tests/serveStats.test.ts). Mirrors the rust
+// daemon's own dbstat surface (src/db.rs `Db::rel_stats`, src/cli/health.rs
+// `report_db`'s one dbstat pass): PRAGMA-level file stats always available,
+// per-object page bytes only when `dbstat` is queryable through THIS driver
+// (verified empirically against @libsql/client 0.17.4, never assumed --
+// runtime/serveStats.ts header carries the receipt). No sqlite3_status()
+// wrapper exists on the rust side either (grepped, absent), so none is
+// invented here -- PRAGMA + one dbstat pass is the whole of what v5 exposes
+// and the whole of what this surface adds. ────────────────────────────────
+
+export interface IProcessMemorySnapshot {
+  readonly rssBytes: number;
+  readonly heapUsedBytes: number;
+  readonly externalBytes: number;
+}
+
+export interface ISqliteObjectBytes {
+  readonly name: string;
+  readonly bytes: number;
+}
+
+export interface ISqliteStatsSnapshot {
+  readonly pageCount: number;
+  readonly pageSize: number;
+  readonly freelistCount: number;
+  readonly dbBytes: number;
+  readonly freelistBytes: number;
+  readonly dbstatAvailable: boolean;
+  readonly objectBytes: readonly ISqliteObjectBytes[];
+}
+
+export interface IServeStatsSnapshot {
+  readonly memory: IProcessMemorySnapshot;
+  readonly sqlite: ISqliteStatsSnapshot;
+}
+
+export interface IServeStats {
+  /** PRAGMA page_count/page_size/freelist_count, always; per-table `dbstat`
+   *  page bytes for `tableNames` when this connection's SQLite build exposes
+   *  the vtab (`dbstatAvailable` states which; `objectBytes` is empty when
+   *  false, never a guess). One dbstat statement regardless of table count
+   *  (the N+1 law applies to stats reads too). */
+  sqliteSnapshot(seam: ISqlSeam, tableNames: readonly string[]): Observable<ISqliteStatsSnapshot>;
+  /** `process.memoryUsage()`'s rss/heapUsed/external, read in whatever
+   *  process calls this -- the served engine's own process when invoked from
+   *  serve/4_http.ts's `GET /stats` handler. */
+  processMemory(): IProcessMemorySnapshot;
+}
