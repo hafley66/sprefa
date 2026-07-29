@@ -1051,3 +1051,48 @@ tick fold BEFORE pairwise. 5 fixture/5 candidates distilled in the
 verdict for promotion. Open slots: UPDATE-ARM-LEVEL-SPELLING (keep
 refusal), DELETE-ARM-DISCRIMINATION, LOG-FINALIZE-REFUSAL,
 ARM-SIBLING-WILDCARD, UPDATE-ARM-COMPILED.
+
+LANGUAGE DESIGN REVIEW LANDED (opus, read-only, 16 cold-authored
+programs through the text door; full text in the task output,
+relayed): FOUND A LIVE BUG (A4, coordinator re-verified at HEAD):
+world-fed key(1) rels DIVERGE oracle-vs-emitter since the
+hosts-wiring commit (oracle keyed-replaces via absorb_set_arrival;
+emitter still PK-over-all-columns + INSERT OR IGNORE; zero fixture
+coverage kept 131/131 green; lower.pl headers state the now-false
+premise). FIX LANE DISPATCHED (codex sol, brief plans/2026-07-29-
+keyed-arrival-divergence-brief.md) also carrying B2 (three
+silences -> load refusals: log-on-level-headed-rel A1, latest-in-
+level-rule A3, pre-in-level-rule) + the gen_emitted sweep footgun.
+Other top findings: A2 edge join cardinality = f(tick batching)
+(3 batchings, 3 answers, no keyed rel involved -- latest() is the
+knob and A12: the compiler REFUSES latest in edge bodies while
+ACCEPTING the backlog-replay wrong program; B1 = lower latest as
+the negation path minus NOT EXISTS); A5 typos/arity mismatches
+compile clean, Name/Arity collision emits INVALID TS (duplicate
+CREATE TABLE + TS1117), undeclared rel = legal EDB by the
+edb_definition ruling (unpriced cost); A6 mid-tick level rows fire
+edges while visible NOWHERE; A7 invalidation-as-log = permanent
+poison (missing worked example: epoch column); A8 keep(count) is
+per-rel never per-key (B6 wants a ruling); A9 the ruled collapse
+LOGGING obligation is implemented NOWHERE; A11 count never 0;
+B4 refusals print as swipl Unknown message with no file/line
+(zero prolog:message//1 clauses -- "the worst part of the
+cold-author experience"); B7 no float = no avg(); B8 vocabulary-law
+violations BY THE LANGUAGE: pre/keep not rx-prolog-SQL words,
+combine is an rx word with non-rx semantics (cross-join vs
+combineLatest, receipt in review), finalize is stream-teardown in
+rx not per-row retraction, now() binds tick not wall time and will
+collide with clock binds. C3/C4/C6: SYNTAX.md hand-written half
+stale (sh/probe/query rows missing from registry so the generated
+table CANNOT cover them), refused constructs presented as surface,
+two dead spellings still in grammar. D (defend): oracle-as-spec,
+named refusals, predictable emitted SQL, one canonical parser,
+the construct budget discipline.
+GOLDEN PLAN WRITTEN (plans/2026-07-29-v6-alpha-golden-plan.md,
+task closed): P0 correctness debts -> Phase 1 bridge the two
+runtimes (hosts phase 2 + tsv2 engine under a served process) ->
+Phase 2 extraction live (watcher bought, worktree-default
+enumeration) -> Phase 3 dataflow flagship (edge-body arc latest
+FIRST, flow-interproc port graded vs v5) -> Phase 4 CLI + LSP
+milestone -> Phase 5 type pass + ingest perf. Alpha exit = 6
+receipts listed in the plan. Out-of-alpha list recorded.
