@@ -989,3 +989,38 @@ receipts (real tsc/rustc/go) in the verdict. 6 named slots incl
 slot_spread_marker_position + slot_spread_and_kwargs_overlap.
 NOT WIRED -- design record only, wiring queues behind the alpha
 priorities.
+
+HOSTS WIRING PHASE 1 LANDED (merge 60631393, codex sol no-commit
+flow, coordinator re-ran in worktree AND merged main: conformance
+131/0, sweep both modes 69 compiled/66 identical/0 wrong (final
+66/2 pre-existing), plunit 67/67, TEXT_DOOR 69/69/0, roundtrip ALL
+PASS, dl 96/96): sh_decl/probe/bind_decl/query/ts_query wired end
+to end -- oracle (1_host_expand.pl shared expansion, keyed
+schedule-fed responses with late/duplicate replacement graded),
+parse/print (`sh name(in)->(out) = template`, `? probe` + `@
+salt(col: Val)` riders per SYNTAX.md:144, `bind name(cols).`,
+top-level `? rel(args).`), registry, grammar, compiler (hostPlans/
+bindPlans/queryPlans emitted as data; execution = named phase-2
+unsupporteds). GHCACHER.DL6 PARSES GAP-FREE: G2 findings 8 -> 0
+(19 decls, 9 rules, 2 queries -> 3 host plans + 2 query plans).
+5 lab fixtures promoted: extraction_fork_callgraph/span_line +
+native_ts_query_term identical BOTH MODES; both ghcacher fixtures
+stop at the NAMED decode/2 compiler-lowering boundary (json-family
+refusals = the known 16-fixture bucket). KWARGS PARTIAL LANDED on
+this lane: omitted named-arg body columns = fresh anonymous vars,
+partial heads refuse (partial_head), unknown/duplicate named args
+keep named findings. New refusal: probe_mismatch(multiple_probes).
+PHASE 2 (live host/interval execution in the tsv2 runtime) = the
+named next arc, aligned with the alpha's runtime-bridging spine.
+V5-UTILITY REVIEW LANDED (opus, read-only; full text in the task
+output, relayed to user): headline = v6 is TWO DISJOINT RUNTIMES
+and only tsv2 is graded (v6/dl still DELETE-all+rebuild via
+lowerSql); distance table over the 9 programs (LSP diags = M and
+closest, watcher ABSENT, CLI absent, scan() used in 105/129
+examples with no v6 spelling); ingest 98x is the felt gap, the
+retraction win is the unfelt one. Reviewer corrections by
+coordinator: the 42-fixture "edge seam" claim is stale (seam
+landed; the 42 are edge-BODY construct gaps: pre 12, latest 6,
+negation 6, json destructure 6, now 5, finalize 2); SCOREBOARD +
+justfile expected-count comments stale, refresh rides the next
+sweep-touching arc.
