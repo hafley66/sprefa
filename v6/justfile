@@ -26,11 +26,11 @@ conformance:
 roundtrip:
 	cd {{v6}}/prolog/compile && bash scripts/roundtrip.sh
 
-# term door vs .dl6 text door, byte-identical emitted modules (expect: 72/72/0)
+# term door vs .dl6 text door, byte-identical emitted modules (expect: 85/85/0)
 text-door:
 	cd {{v6}}/prolog && bash compile/scripts/text_door_receipt.sh
 
-# compiler unit tests (expect: 124/124 and growing)
+# compiler unit tests (expect: 137/137 and growing)
 plunit:
 	cd {{v6}}/prolog/compile && swipl -q -l test/plunit_tests.pl -g run_tests -g halt
 
@@ -48,11 +48,11 @@ prolog-lint:
 # ── tsv2 (prolog compiles TO TypeScript) ──
 
 # full corpus sweep: compile every fixture, replay vs oracle tick logs
-# (expect: RUN total=72 identical=70 wrong=0; slow, minutes)
+# (expect: RUN total=85 identical=83 wrong=0; slow, minutes)
 sweep:
 	cd {{v6}}/tsv2 && bash scripts/sweep.sh
 
-# tsv2 runtime + served-engine tests (expect: 28 pass / 1 skip, and growing)
+# tsv2 runtime + served-engine tests (expect: 44 pass / 1 skip, and growing)
 tsv2-test:
 	cd {{v6}}/tsv2 && npm test
 

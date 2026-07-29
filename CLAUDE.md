@@ -1347,3 +1347,28 @@ prolog_load_context, passes from any cwd). TWO FLAKE CLASSES seen
 tonight, both pre-existing: store golden.test 1-in-N under parallel
 load (ledger'd before), one node segfault in a sweep run (clean on
 rerun, experimental transform-types under load suspected).
+TICK PHASE ALIGNMENT LANDED (opus worktree, 2 commits, merged;
+coordinator re-verified worktree AND merged main green exit 0):
+THE FLAGSHIP BLOCKER IS DOWN. Mid-tick level plane now freezes
+where engine.pl freezes it (recomputeLevelsBeforeEdges shares the
+emitter's own 5 supportSql; naive referee recomputes before AND
+after edges); edge_body_joins_arrival_fed_level REMOVED,
+clock_rel_join_storms byte-identical both modes (was 3-vs-1 rows).
+Departure frontier = separate __departure_frontier_<rel> TEMP table
+per listened rel (sign-column rejected with the all-83-modules-
+byte-identical receipt); finalize-in-edge flipped; departures
+counted in carryPending. Sweep 82/80 -> 85/83/0-wrong, TEXT_DOOR
+85/85/0, plunit 137/137. HOLE FORCED SHUT en route: flipping the
+finalize registry row deleted the generic refused-goal catch and
+the compiler ACCEPTED finalize-in-level; finalize_in_level_rule
+restored shared-side, drift became an agreement test. C7 INHERITED
+not closed (ARCH row c7_durable_carry): staged departures die with
+the connection like the rest of the carry set; durable-carry = own
+arc. door-handwritten went stale a SECOND time (periods->literals),
+coordinator regen'd + filed ARCH row gen_staleness_gate. Justfile
+expect comments refreshed again (85/85/0, 85/83, 137/137, 44/1).
+REMAINING edge-body buckets: pre 13 (pre_occurrence_loop arc),
+json/decode 15 (decode_arc, user-level encoding call first).
+FLAGSHIP DISPATCHED per fork flagship_pick: callgraph rail first
+proves the v5-output-vs-v6 grading rig, flow-interproc rides the
+same rig.
