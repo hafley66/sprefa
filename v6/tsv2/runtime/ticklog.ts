@@ -57,6 +57,8 @@ function byRelNameAscending(left: IRelDelta, right: IRelDelta): number {
 }
 
 export const TickLogEmitter: ITickLogEmitter = {
+  valueText: encodeValue,
+
   line(tick: number, deltas: ITickDeltas): ITickLogLine {
     const nonEmpty = deltas.rels.filter((delta) => delta.add.length > 0 || delta.del.length > 0);
     const relsText = [...nonEmpty].sort(byRelNameAscending).map(encodeRel).join(",");

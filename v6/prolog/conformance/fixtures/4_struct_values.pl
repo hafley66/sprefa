@@ -1,0 +1,324 @@
+% fixtures/4_struct_values.pl : the declared value plane (ruling
+% compound_storage = struct_as_rows, arc header
+% plans/2026-07-29-struct-as-rows-header.md).
+%
+% A declared struct value is a rel row referenced by content id. On the ORACLE
+% side that is a statement about DECLARATIONS and REFUSALS only: engine.pl
+% already holds real terms, so a struct-typed column holds the same canonical
+% obj(...) it always did and ticklog.pl renders it as canonical JSON exactly as
+% it always did. What the type decl adds here is the shape contract, the cycle
+% refusal, and the unknown-type refusal. What it adds on the EMITTED side is
+% the whole storage plane -- dictionary tables, intern-at-arrival, boundary
+% render joins -- and the grade that the two sides still print the same bytes.
+%
+% Owner: coordinator (struct-as-rows arc).
+
+:- op(1150, xfx, <-).
+:- op(1150, xfx, <+).
+:- op(700,  xfx, :=).
+
+% ═══ refusals (fail-first: each of these was ACCEPTED before this arc) ══════
+
+% Content identity is computed FROM the children's content identity, so a
+% cyclic type graph has no identity at all (types-as-rels verdict:
+% interned_graph_is_a_dag). Refused on both doors; the entity plane, which
+% permits cycles, is out of scope.
+fixture(struct_type_cycle_rejected,
+  prog([ type_decl(node, [col(next, node)]),
+         col_type(holder/1, item, node) ],
+       []),
+  [],
+  [ [ +holder(obj([next-nothing])) ] ],
+  [ throws(type_cycle([node])) ]).
+
+% Two types that reference each other. The same refusal, one hop out: neither
+% name can ever be placed, so both are named.
+fixture(struct_type_mutual_cycle_rejected,
+  prog([ type_decl(left, [col(other, right)]),
+         type_decl(right, [col(other, left)]) ],
+       []),
+  [],
+  [],
+  [ throws(type_cycle([left, right])) ]).
+
+% A bare identifier in type position is a REF to a declared type. A name no
+% `type` decl introduces is a named refusal, never a column that quietly holds
+% whatever arrives -- the parser cannot tell a typo from a type.
+fixture(struct_column_type_unknown_rejected,
+  prog([ col_type(finding/2, path, text),
+         col_type(finding/2, at, spann) ],
+       []),
+  [],
+  [],
+  [ throws(column_type_unknown(spann)) ]).
+
+% SLOT-ARRIVAL-MALFORMED. A world row whose value is missing a declared field.
+fixture(struct_arrival_missing_key_rejected,
+  prog([ type_decl(span, [col(start, int), col(end, int)]),
+         col_type(finding/2, path, text),
+         col_type(finding/2, at, span) ],
+       []),
+  [],
+  [ [ +finding('a.rs', obj([start-3])) ] ],
+  [ throws(type_arrival_shape_mismatch(finding/2, at, span, missing_key(span, end))) ]).
+
+% The same refusal for a field whose declared type is int and whose arriving
+% value is not. An int field silently storing text is exactly the TEXT-collapse
+% class the expression lift spent an arc removing.
+fixture(struct_arrival_field_type_rejected,
+  prog([ type_decl(span, [col(start, int), col(end, int)]),
+         col_type(finding/2, path, text),
+         col_type(finding/2, at, span) ],
+       []),
+  [],
+  [ [ +finding('a.rs', obj([end-nine, start-3])) ] ],
+  [ throws(type_arrival_shape_mismatch(finding/2, at, span, field_not_int(span, end, nine))) ]).
+
+% A key the type does not declare. Accepting it would put content in the value
+% that the dictionary's column set cannot store, so the rendering and the row
+% would disagree.
+fixture(struct_arrival_unknown_key_rejected,
+  prog([ type_decl(span, [col(start, int), col(end, int)]),
+         col_type(finding/2, path, text),
+         col_type(finding/2, at, span) ],
+       []),
+  [],
+  [ [ +finding('a.rs', obj([end-9, extra-1, start-3])) ] ],
+  [ throws(type_arrival_shape_mismatch(finding/2, at, span, unknown_key(span, extra))) ]).
+
+% SLOT-ARRIVAL-CANONICAL-ORDER. Two spellings of one value would be two rows
+% on the oracle (term identity) and ONE dictionary row on the emitted side
+% (same canonical content), so the non-canonical spelling is refused rather
+% than left to diverge. Lifting this needs canonicalization inside the
+% oracle's own absorb path, which is an oracle semantics ruling.
+fixture(struct_arrival_key_order_rejected,
+  prog([ type_decl(span, [col(start, int), col(end, int)]),
+         col_type(finding/2, path, text),
+         col_type(finding/2, at, span) ],
+       []),
+  [],
+  [ [ +finding('a.rs', obj([start-3, end-9])) ] ],
+  [ throws(type_arrival_shape_mismatch(finding/2, at, span, keys_not_sorted(span, [start, end]))) ]).
+
+% A struct-typed column does NOT accept a plain Prolog compound term.
+% SLOT-TERM-STRUCT (0_type_plane.pl header): the oracle renders a compound
+% term as canonical PROLOG text and a struct as canonical JSON, so accepting
+% the functor spelling would silently change the graded bytes of a value that
+% already has a meaning. The functor form keeps its current untyped behavior
+% in undeclared columns; it is simply not a struct spelling.
+fixture(struct_arrival_functor_term_rejected,
+  prog([ type_decl(span, [col(start, int), col(end, int)]),
+         col_type(finding/2, path, text),
+         col_type(finding/2, at, span) ],
+       []),
+  [],
+  [ [ +finding('a.rs', span(3, 9)) ] ],
+  [ throws(type_arrival_shape_mismatch(finding/2, at, span, not_an_object(span, span(3, 9)))) ]).
+
+% ═══ the value plane runs (oracle side: terms, unchanged) ═══════════════════
+
+% EDGE 1, half one. A struct-typed column prints its VALUE, never an id, and
+% the value prints as canonical JSON with sorted keys. On the oracle this is
+% ticklog.pl's existing obj(...) rendering; the emitted side has to JOIN a
+% dictionary and select a memoized rendering to say the same bytes.
+fixture(struct_column_renders_canonical_json,
+  prog([ type_decl(span, [col(start, int), col(end, int)]),
+         col_type(finding/2, path, text),
+         col_type(finding/2, at, span),
+         col_type(touched/1, path, text) ],
+       [ (touched(Path) <- finding(Path, _At)) ]),
+  [],
+  [ [ +finding('a.rs', obj([end-9, start-3])) ],
+    [ +finding('b.rs', obj([end-4, start-1])) ] ],
+  [ final(touched/1, [ touched('a.rs'), touched('b.rs') ]),
+    final(finding/2, [ finding('a.rs', obj([end-9, start-3])),
+                       finding('b.rs', obj([end-4, start-1])) ]),
+    ticks(2) ]).
+
+% EDGE 1, half two: BUILD ORDER INDEPENDENCE. The same two values arrive in
+% opposite orders in the two halves of this pair. Dense storage ids are
+% assigned in arrival order and therefore differ between the halves; the tick
+% log must not. This is the lab's rendered_text_stable_under_both_policies as
+% a real fixture pair -- the sibling is struct_intern_order_b below and the
+% grade is the two emitted tick logs being identical after the rel names are
+% aligned.
+fixture(struct_intern_order_a,
+  prog([ type_decl(span, [col(start, int), col(end, int)]),
+         col_type(mark/1, at, span) ],
+       []),
+  [],
+  [ [ +mark(obj([end-2, start-1])) ],
+    [ +mark(obj([end-4, start-3])) ] ],
+  [ final(mark/1, [ mark(obj([end-2, start-1])), mark(obj([end-4, start-3])) ]),
+    ticks(2) ]).
+
+fixture(struct_intern_order_b,
+  prog([ type_decl(span, [col(start, int), col(end, int)]),
+         col_type(mark/1, at, span) ],
+       []),
+  [],
+  [ [ +mark(obj([end-4, start-3])) ],
+    [ +mark(obj([end-2, start-1])) ] ],
+  [ final(mark/1, [ mark(obj([end-2, start-1])), mark(obj([end-4, start-3])) ]),
+    ticks(2) ]).
+
+% THE MIGRATION RECEIPT (verdict Q6: "migrating a column from inline to ref
+% changes the stored bytes and, under a counter policy, changes ids; it does
+% not change the value"), MEASURED, and it does not say what the arc header
+% expected.
+%
+% The twin of `struct_intern_order_a` with the type declaration REMOVED and
+% nothing else touched -- same rel, same rows, same schedule -- was compiled
+% and replayed on this arc's sweep. Its ORACLE log is byte-identical to the
+% declared twin's, which is the half that holds: the declaration is inert on
+% a door that stores terms, so the VALUE did not change. Its EMITTED log is
+% not:
+%
+%   declared   actual = oracle
+%              {"tick":1,"deltas":{"mark":{"add":[[{"end":2,"start":1}]],...
+%   inline     actual {"tick":1,"deltas":{"mark":{"add":[["obj([|](-(end,2),[|](-(start,1),[])))"]],"del":[]}}}
+%              oracle {"tick":1,"deltas":{"mark":{"add":[[{"end":2,"start":1}]],"del":[]}}}
+%
+% An untyped compound value ARRIVES as canonical prolog term text while the
+% emitter's own compound encoding is the json1 tagged form -- the "compound
+% arrival text vs json1 match" mismatch SCOREBOARD.md has carried since phase
+% C. So the honest statement is stronger than "byte-identical either way":
+% the ref side is byte-identical to the oracle and the inline side never was.
+% The migration is the fix, not a wash.
+%
+% The twin is NOT kept as a fixture, deliberately: it would be a corpus entry
+% whose emitted log is knowingly wrong, and the sweep's wrong bucket is a gate
+% that must stay at zero. Making it live in the `unsupported` bucket instead
+% means turning the untyped-compound-arrival encoding into a NAMED refusal --
+% real work, real blast radius across every fixture that arrives a compound
+% into a text column, and SLOT-TERM-STRUCT's question first. Named follow-up.
+
+% Nesting costs no new syntax: a struct field may itself be a declared type,
+% and the parent's rendering is one concat over the child's.
+fixture(struct_nested_value_renders_whole_tree,
+  prog([ type_decl(span, [col(start, int), col(end, int)]),
+         type_decl(place, [col(file, text), col(at, span)]),
+         col_type(diag/2, where, place),
+         col_type(diag/2, message, text),
+         col_type(diag_file/1, file, text) ],
+       [ (diag_file(File) <- diag(Where, _Message), decode(Where, {file: File})) ]),
+  [],
+  [ [ +diag(obj([at-obj([end-9, start-3]), file-'a.rs']), 'unused') ] ],
+  [ final(diag_file/1, [ diag_file('a.rs') ]),
+    ticks(1) ]).
+
+% THE ACCEPTANCE CASE (arc header scope item 5): ghcacher's stars
+% normalization. `ghcacher_json_normalization` reads the same value out of an
+% UNTYPED json column and is refused by name (decode_source_not_struct on the
+% first rule, json_each on the second). Declaring the response body's shape is
+% the whole difference: decode becomes a dictionary join and the rule compiles.
+%
+%   type repo_body(full_name: text, stargazers_count: int).
+%   rel current_body(ep: text, body: repo_body).
+%   stars(ep, n) <- current_body(ep, body), decode(body, {stargazers_count: n}).
+%
+%   const stars$ = combineLatest([currentBody$, repoBodyDict$]).pipe(
+%     map(([bodies, dict]) => bodies.flatMap((row) => {
+%       const body = dict.get(row.body);          // one keyed read, no parse
+%       return body ? [{ ep: row.ep, n: body.stargazers_count }] : [];
+%     })),
+%     distinctUntilChanged(sameRowSet),
+%   );
+fixture(struct_ghcacher_stars_normalization,
+  prog([ type_decl(repo_body, [col(full_name, text), col(stargazers_count, int)]),
+         col_type(current_body/2, ep, text),
+         col_type(current_body/2, body, repo_body),
+         col_type(stars/2, ep, text),
+         col_type(stars/2, n, int) ],
+       [ (stars(Ep, N) <-
+            current_body(Ep, Body),
+            decode(Body, {stargazers_count: N})) ]),
+  [],
+  [ [ +current_body(repo, obj([full_name-cli, stargazers_count-17])) ],
+    [ +current_body(other, obj([full_name-hub, stargazers_count-4])) ] ],
+  [ deltas(stars/2, [ [ +stars(repo, 17) ], [ +stars(other, 4) ] ]),
+    final(stars/2, [ stars(other, 4), stars(repo, 17) ]),
+    ticks(2) ]).
+
+% A key the declared type does not have is a NAMED refusal, where the untyped
+% arm's own answer is "fails quietly" (json_arm.pl
+% decode_missing_key_fails_quietly). That difference is the point of declaring
+% a type: a typo in a field name stops being a rule that derives nothing.
+fixture(struct_decode_field_unknown_rejected,
+  prog([ type_decl(span, [col(start, int), col(end, int)]),
+         col_type(mark/1, at, span),
+         col_type(seen/1, start, int) ],
+       [ (seen(Start) <- mark(At), decode(At, {beginning: Start})) ]),
+  [],
+  [ [ +mark(obj([end-2, start-1])) ] ],
+  [ final(seen/1, []), ticks(1) ]).
+
+% SPANS (arc header scope item 5). `sprefa-extract` emits byte spans as a
+% NESTED json object -- `SpanOut { start: u32, end: u32 }` in
+% v6/sprefa-extract/src/types.rs, serialized `"span":{"start":..,"end":..}` --
+% and both flagship-callgraph.dl6 and diag-rail.dl6 dropped line numbers
+% entirely rather than fake them, because a nested field could not reach a
+% declared int column. Under struct-as-rows the shape is expressible exactly:
+% the span is a declared type, its fields ARE int columns, and decode/2 gets
+% them out by join. This fixture is that shape end to end with the value
+% arriving as an ordinary world row.
+%
+%   type span(end: int, start: int).
+%   rel node_fact(path: text, name: text, at: span) log keep(all).
+%   rel def_start(path: text, offset: int).
+%   def_start(path, offset) <- node_fact(path, name, at), decode(at, {start: offset}).
+%
+%   const defStart$ = combineLatest([nodeFact$, spanDict$]).pipe(
+%     map(([facts, spans]) => facts.flatMap((fact) => {
+%       const at = spans.get(fact.at);
+%       return at ? [{ path: fact.path, offset: at.start }] : [];
+%     })),
+%     distinctUntilChanged(sameRowSet),
+%   );
+%
+% WHAT IS STILL MISSING for the real rails is stated in the arc report and is
+% NOT in this file's scope: an sh host's OUTPUT column may now be declared with
+% a struct type (1_host_expand.pl accepts it, and column_type_unknown catches a
+% name no type declares), but serve/1_hosts.ts's coerce/3 JSON-stringifies a
+% nested object before it reaches the arrival row, so the struct value arrives
+% as TEXT rather than as the object StructPlane interns. That one seam is what
+% stands between this fixture and a real line number.
+fixture(struct_span_columns_are_int_after_decode,
+  prog([ type_decl(span, [col(end, int), col(start, int)]),
+         col_type(node_fact/3, path, text),
+         col_type(node_fact/3, name, text),
+         col_type(node_fact/3, at, span),
+         kind(node_fact/3, log), keep(node_fact/3, all),
+         col_type(def_start/2, path, text),
+         col_type(def_start/2, offset, int) ],
+       [ (def_start(Path, Offset) <-
+            node_fact(Path, _Name, At),
+            decode(At, {start: Offset})) ]),
+  [],
+  [ [ +node_fact('a.rs', main, obj([end-42, start-17])) ],
+    [ +node_fact('b.rs', helper, obj([end-9, start-3])) ] ],
+  [ deltas(def_start/2, [ [ +def_start('a.rs', 17) ], [ +def_start('b.rs', 3) ] ]),
+    final(def_start/2, [ def_start('a.rs', 17), def_start('b.rs', 3) ]),
+    ticks(2) ]).
+
+% THE SHARED CHILD (types-as-rels verdict Q3, domination_shared_child_survives
+% / domination_sole_owner_cascades) as a compiled fixture. Two parents hold the
+% SAME child value; releasing one leaves the survivor's rendering intact, and
+% releasing the last one removes both parents. What the tick log shows is the
+% VALUE plane only -- the dictionary is boundary-invisible (Edge 2), which is
+% exactly why GC timing on it cannot be observed here.
+fixture(struct_shared_child_survives_one_release,
+  prog([ type_decl(span, [col(start, int), col(end, int)]),
+         col_type(hit/2, owner, text),
+         col_type(hit/2, at, span) ],
+       []),
+  [],
+  [ [ +hit(left, obj([end-2, start-1])), +hit(right, obj([end-2, start-1])) ],
+    [ -hit(left, obj([end-2, start-1])) ],
+    [ -hit(right, obj([end-2, start-1])) ] ],
+  [ deltas(hit/2, [ [ +hit(left, obj([end-2, start-1])),
+                      +hit(right, obj([end-2, start-1])) ],
+                    [ -hit(left, obj([end-2, start-1])) ],
+                    [ -hit(right, obj([end-2, start-1])) ] ]),
+    final(hit/2, []),
+    ticks(3) ]).

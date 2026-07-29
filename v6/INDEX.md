@@ -49,14 +49,15 @@
 | [plans/2026-07-25-sql-builder-build-vs-buy.md](plans/2026-07-25-sql-builder-build-vs-buy.md) | 322 | SQL query-builder / templating: build-vs-buy for `lowerSql.ts` |
 | [prolog/LANG.md](prolog/LANG.md) | 95 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
 | [prolog/compile/PIPELINE.md](prolog/compile/PIPELINE.md) | 153 | The tsv2 compiler pipeline, stage by stage |
-| [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 354 | TSV2 Phase C scoreboard |
-| [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 240 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
+| [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 380 | TSV2 Phase C scoreboard |
+| [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 243 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
 | [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 115 | TICK MODEL: the semiring/grading semantics behind the clock checker |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-extract/AGENTS.md](sprefa-extract/AGENTS.md) | 66 | sprefa-extract — Agent Guidance |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 167 | v6 store — retraction perf & completeness report |
+| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
 | [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
 
 ## Full header index
@@ -732,15 +733,16 @@
 ```
 1:# TSV2 Phase C scoreboard
 15:## Totals (current)
-40:### Named gap found by the flagship arc, unowned
-54:### The UNSUPPORTED bucket, by named reason (52)
-72:### The three fixtures this arc moved
-86:### the mid-tick level freeze (`edge_body_joins_arrival_fed_level`, removed)
-109:### the departure frontier (`edge_body_needs_finalize`, removed)
-133:### `edge_body_needs_pre`: why it is not a widening
-162:### The final-state leg (new, and it changes how to read this table)
-226:## Per-fixture table: compiled (85)
-319:## Per-construct blocked tally (UNSUPPORTED, ranked)
+40:### What the struct-as-rows arc moved
+63:### Named gap found by the flagship arc, unowned
+77:### The UNSUPPORTED bucket, by named reason (61)
+98:### The three fixtures this arc moved
+112:### the mid-tick level freeze (`edge_body_joins_arrival_fed_level`, removed)
+135:### the departure frontier (`edge_body_needs_finalize`, removed)
+159:### `edge_body_needs_pre`: why it is not a widening
+188:### The final-state leg (new, and it changes how to read this table)
+252:## Per-fixture table: compiled (85)
+345:## Per-construct blocked tally (UNSUPPORTED, ranked)
 ```
 
 ### prolog/compile/SYNTAX.md
@@ -749,14 +751,14 @@
 7:## Ruling that reframes this whole document (relayed mid-flight)
 21:## The central superseding decision: bare identifier = variable, always
 45:## Construct table
-103:## CLI ("the bop")
-126:### Context status
-136:### Core grammar and input aliases
-176:### Legacy surface: parsed, then refused
-187:### World term lowering rows
-205:## Round-trip design note (why decl lines are exact, not fallback-merged)
-220:## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
-231:## What `dl_view/*.dl6` is
+104:## CLI ("the bop")
+127:### Context status
+137:### Core grammar and input aliases
+179:### Legacy surface: parsed, then refused
+190:### World term lowering rows
+208:## Round-trip design note (why decl lines are exact, not fallback-merged)
+223:## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
+234:## What `dl_view/*.dl6` is
 ```
 
 ### prolog/compile/TICK-MODEL.md
@@ -823,6 +825,14 @@
 130:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
 143:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
 156:## Breakpoint ramp — tight gun 700 MB
+```
+
+### sprefa-store/bench/out/REPORT.md
+```
+1:# Z-set / IVM head-to-head — feasibility lab
+15:## Charts
+22:## Data
+43:## Takeaways (derived)
 ```
 
 ### tsv2/SCALE.md

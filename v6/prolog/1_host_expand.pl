@@ -124,8 +124,12 @@ validate_columns(Columns, Role) :-
     column_names(Columns, Names),
     ( duplicate(Names, Name)
     -> throw(column_mismatch(Role, duplicate(Name)))
-    ; forall(member(col(Name, Type), Columns),
-             ( atom(Name), memberchk(Type, [int, text, json]) ))
+    % STRUCT-AS-ROWS: a host column type may name a DECLARED struct type as
+    % well as a primitive. Whether the name resolves is not this predicate's
+    % question -- 0_program_check.pl:column_type_unknown answers it for every
+    % col_type/3 in the program, host-produced entries included -- so the test
+    % here is only that a type was spelled at all.
+    ; forall(member(col(Name, Type), Columns), ( atom(Name), atom(Type) ))
     ).
 
 column_names(Columns, Names) :-

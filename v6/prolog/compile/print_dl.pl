@@ -213,6 +213,7 @@ decl_ref_order(Decls, Order) :-
     dedup_preserve_order(Refs0, Order).
 
 decl_order_item(enum_decl(Name, Variants), enum_decl(Name, Variants)).
+decl_order_item(Decl, Decl) :- Decl = type_decl(_, _).
 decl_order_item(Decl, Decl) :- Decl = sh_decl(_, _, _, _).
 decl_order_item(Decl, Decl) :- Decl = bind_decl(_, _).
 decl_order_item(kind(Ref, log), Ref).
@@ -240,6 +241,11 @@ decl_line(_, _, _, enum_decl(Name, Variants), Line) :-
     !,
     print_enum_variants(Variants, VariantsText),
     format(atom(Line), "rel ~w(~w).~n", [Name, VariantsText]).
+decl_line(_, _, _, type_decl(Name, Specs), Line) :-
+    !,
+    maplist(print_host_column, Specs, ColumnTexts),
+    atomic_list_concat(ColumnTexts, ', ', ColumnsText),
+    format(atom(Line), "type ~w(~w).~n", [Name, ColumnsText]).
 decl_line(_, _, _, sh_decl(Name, Inputs, Outputs, template(Template)), Line) :-
     !,
     maplist(print_host_column, Inputs, InputTexts),

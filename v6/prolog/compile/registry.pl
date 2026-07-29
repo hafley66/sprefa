@@ -51,7 +51,14 @@ surface(pre/1,          sample,    refs_of_arg(1, pos, sampled), wrapper(rel_ato
 % edge body (lowered to a read of the emitted __tick counter); analyze.pl
 % keeps now_in_level_rule and edge_body_with_now for the wider placements.
 surface(now/1,          time,      no_refs,                      wrapper(expr, lower),                  live).
-surface(decode/2,       guard,     no_refs,                      wrapper(expr_pair, refuse(goal)),      refused).
+% STRUCT-AS-ROWS (SLOT-DECODE-SURFACE): decode/2 stays on the surface as sugar
+% and lowers to a dictionary JOIN in a LEVEL body over a struct-typed column
+% (lower.pl expand_decode_rules/4). Every wider placement keeps a named
+% refusal: an edge body is edge_body_needs_json_destructure (the untyped
+% compound-arrival encoding, SLOT-TERM-STRUCT), an untyped source is
+% decode_source_not_struct, a non-object pattern is decode_pattern_not_object,
+% and a key the type does not declare is decode_field_unknown.
+surface(decode/2,       guard,     no_refs,                      wrapper(expr_pair, lower),             live).
 surface(json_each/2,    guard,     no_refs,                      wrapper(expr_pair, refuse(goal)),      refused).
 surface(true/0,         guard,     no_refs,                      word(lower),                           live).
 
@@ -89,6 +96,12 @@ surface(json_object/2,  aggregate, no_refs,                      head(refuse(agg
 surface(enum_decl/2,     decl,      no_refs,                      decl(enum_variants),                    live).
 surface(';' /2,          decl,      no_refs,                      decl(enum_variant_separator),           live).
 surface(col_type/3,      decl,      no_refs,                      decl(column_type),                      live).
+% STRUCT-AS-ROWS (ruling compound_storage = struct_as_rows). A declared
+% struct type. Its values live in a storage-plane dictionary keyed on
+% canonical content; a column typed with the name stores the ref. The
+% dictionary is deliberately NOT a rel: it never appears in relColumns, in a
+% boundary read or in the tick log (arc header Edge 2).
+surface(type_decl/2,     decl,      no_refs,                      decl(struct_type),                      live).
 surface(set/0,           decl,      no_refs,                      decl(refuse(removed_word)),            refused).
 surface(match/2,         sugar,     no_refs,                      block(match_arms),                      live).
 surface(sh_decl/4,       world,     no_refs,                      decl(host_plan),                        live).

@@ -40,6 +40,7 @@
 :- use_module(lower).
 :- use_module(emit_ts).
 :- use_module(parse_dl, [parse_dl_file/4]).
+:- use_module('../0_type_plane', [world_row_shape_violation/3]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -99,6 +100,12 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     % here, and the sugared entry expands again. That second expansion was the
     % redundant order site rank R3 removes.
     check_supported_subset_expanded(Prog),
+    % STRUCT-AS-ROWS, the compiler's half of SLOT-ARRIVAL-MALFORMED. The
+    % oracle refuses the same rows in engine.pl:check_world_shapes/3; here it
+    % runs at PLAN time so a malformed program never reaches emission and
+    % lands in the sweep's `unsupported` bucket beside every other named
+    % refusal, rather than compiling and then throwing mid-replay.
+    check_world_shapes(Prog, Initial, Schedule),
     % Union rule-derived refs with EVERY declared ref (analyze.pl:
     % declared_refs/2's header comment) -- a kind(Ref, _) decl that no rule
     % ever mentions is still a real rel a schedule can write, and must still
@@ -144,6 +151,14 @@ compile_fixture(Name, FixtureFile, OutFile, Emitter) :-
     Term = fixture(Name, _Prog, Initial, _Schedule, _Expectations),
     compile_program(Name, Term, Bindings, Initial, OutFile, Emitter).
 
+check_world_shapes(prog(Decls, _), Initial, Schedule) :-
+    append([Initial | Schedule], WorldRows),
+    (   world_row_shape_violation(Decls, WorldRows, mismatch(Ref, Column, TypeName, Reason))
+    ->  throw(unsupported_construct(
+                  type_arrival_shape_mismatch(Ref, Column, TypeName, Reason)))
+    ;   true
+    ).
+
 compile_dl6(File, OutFile) :-
     parse_dl_file(File, Prog, Bindings, Findings),
     ( Findings == []
@@ -158,9 +173,9 @@ compile_dl6(File, OutFile) :-
 compile_program(Name, Term, Bindings, Initial, OutFile, Emitter) :-
     program_plan(Term-Bindings, Plan),
     lower_program(Plan, Lowered),
-    Plan = plan(_, _, RelPlans, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(RelPlans, Initial, LevelStatements, BootStatements),
+    boot_statements(Decls, RelPlans, Initial, LevelStatements, BootStatements),
     call(Emitter, Name, Plan, Lowered, BootStatements, Text),
     setup_call_cleanup(
         open(OutFile, write, Stream),

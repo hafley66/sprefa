@@ -51,6 +51,9 @@
                 body_conjunction_goals/3, body_wrapper_refs/4 ]).
 :- use_module('../0_program_check',
               [ first_violation/3, relation_kind/3, declared_key/3 ]).
+:- use_module('../0_type_plane',
+              [ type_definitions/2, type_definition/4, column_storage/3,
+                declared_type_name/2 ]).
 :- use_module('../conformance/body', [rel_ref/2]).
 :- use_module(registry,
               [ surface_for_term/6,
@@ -363,19 +366,34 @@ rel_column_types(Decls, Rules, Initial, Schedule, Bindings, Ref, Types) :-
     maplist(column_type_at_decl(Decls, Rules, Initial, Schedule, Ref, Columns),
             Positions, Types).
 
+% STRUCT-AS-ROWS: the declared type goes through 0_type_plane.pl:
+% column_storage/3 before it becomes a STORAGE kind, so `int`/`text` are
+% unchanged, `json` resolves to text (the untyped-json inline path, which used
+% to reach lower.pl:column_def/3 with no matching clause at all), and a
+% declared struct type becomes ref(TypeName), the third storage kind
+% types-as-rels verdict Q6 named this slot for.
+%
+% The witness cross-check compares against the STORAGE kind, and only for the
+% two scalar kinds. A ref column has no literal witness by construction (a
+% struct value is compound, never atomic/1), and a struct value in a column
+% declared int is already the type_arrival_shape_mismatch refusal.
 column_type_at_decl(Decls, Rules, Initial, Schedule, Ref, Columns, Position, Type) :-
     nth1(Position, Columns, Column),
     ( memberchk(col_type(Ref, Column, DeclaredType), Decls)
-    -> findall(WitnessType,
+    -> type_definitions(Decls, Types),
+       column_storage(Types, DeclaredType, Storage),
+       findall(WitnessType,
                 ( column_source_args(Rules, Initial, Schedule, Ref, Args),
                   nth1(Position, Args, Witness),
                   atomic(Witness),
                   literal_witness_type(Witness, WitnessType)
                 ), WitnessTypes),
-       ( member(WitnessType, WitnessTypes), WitnessType \== DeclaredType
+       ( Storage = ref(_)
+       -> Type = Storage
+       ; member(WitnessType, WitnessTypes), WitnessType \== Storage
        -> throw(unsupported_construct(
-                    decl_type_conflicts_witness(Ref, Position, DeclaredType, WitnessType)))
-       ; Type = DeclaredType
+                    decl_type_conflicts_witness(Ref, Position, Storage, WitnessType)))
+       ; Type = Storage
        )
     ; column_type_at(Rules, Initial, Schedule, Ref, Position, Type)
     ).
@@ -654,6 +672,20 @@ merge_contribution(_, frozen(Type), frozen(Type)) :- !.
 merge_contribution(Contribution, open(Existing), open(Merged)) :-
     merge_type(Contribution, Existing, Merged).
 
+% STRUCT-AS-ROWS: ref(Type) travels through the fixpoint and these clauses
+% come FIRST, ahead of the scalar widening. A head column fed by a ref body
+% column is itself a ref column -- letting the text clause win would store the
+% dictionary id and RENDER IT AS AN INTEGER at the boundary, which is exactly
+% the "tick log prints ids" failure Edge 1 exists to prevent, and it would be
+% silent. Two different declared types meeting in one column, or a ref meeting
+% a scalar, is a named refusal instead: there is no widening that keeps the
+% rendering honest.
+merge_type(ref(Type), none, ref(Type)) :- !.
+merge_type(none, ref(Type), ref(Type)) :- !.
+merge_type(ref(Type), ref(Type), ref(Type)) :- !.
+merge_type(Left, Right, _) :-
+    ( Left = ref(_) ; Right = ref(_) ), !,
+    throw(unsupported_construct(column_ref_type_conflict(Left, Right))).
 merge_type(text, _, text) :- !.
 merge_type(_, text, text) :- !.
 merge_type(int, _, int) :- !.
@@ -838,9 +870,15 @@ edge_goal_refusal(not(Atom), Body, 5, edge_body_with_negation(Body)) :-
 % zero rows where the oracle unifies. The object-pattern half (`{name: X}`)
 % needs a third shape again, and json_each/2 needs a table-valued read.
 % A decode arc owns the encoding decision first; the arm is not the blocker.
+%
+% STRUCT-AS-ROWS flipped decode/2's registry row to `lower` so a LEVEL body
+% over a struct-typed column compiles to a dictionary join. This clause
+% therefore names the two functors directly instead of reading the refused
+% status off the row: the arm is still the blocker for an EDGE body, and the
+% status word can no longer say so.
 edge_goal_refusal(Goal, Body, 8, edge_body_needs_json_destructure(Body)) :-
-    body_surface_for_term(Goal, _, guard, no_refs,
-                          wrapper(expr_pair, refuse(goal)), refused).
+    nonvar(Goal),
+    ( Goal = decode(_, _) ; Goal = json_each(_, _) ).
 
 % The ordered goal list, with next/1 and variadic combine spliced away and
 % not/1 left whole. The splicing used to be a local `Term =.. [combine | ...]`
@@ -981,6 +1019,12 @@ check_supported_subset(SugaredProg) :-
 % separate forall/2 goals they replaced used to sit.
 check_supported_subset_expanded(Program) :-
     Program = prog(Decls, Rules),
+    % STRUCT-AS-ROWS: the declared value plane is checked FIRST on both doors
+    % (engine.pl:engine_check_order/1 opens with the same two classes), before
+    % anything else reads a column type -- every later check that asks a
+    % column's storage kind would otherwise ask it of a type that does not
+    % resolve.
+    shared_refusal(Program, [ type_cycle, column_type_unknown ]),
     forall(( member(Rule, Rules), rule_reserved_construct(Rule, Construct) ),
            throw(unsupported_construct(Construct))),
     shared_refusal(Program, [ log_on_level_headed_rel,
@@ -1025,6 +1069,8 @@ shared_refusal(Program, Order) :-
     ;   true
     ).
 
+compiler_refusal(type_cycle,            Names, type_cycle(Names)).
+compiler_refusal(column_type_unknown,    Name, column_type_unknown(Name)).
 compiler_refusal(keyed_level_head,        Ref, keyed_level_head(Ref)).
 % The only payload that differs from the oracle's: lowering needs the
 % positions to explain which key decl is at fault.

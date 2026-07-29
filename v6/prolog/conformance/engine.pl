@@ -82,6 +82,7 @@
 :- use_module('../0_body_walk', [walk_body/3, body_wrapper_refs/4]).
 :- use_module('../0_program_check',
               [ first_violation/3, relation_kind/3, declared_key/3 ]).
+:- use_module('../0_type_plane', [ world_row_shape_violation/3 ]).
 :- use_module('../1_host_expand', [prepare_program/5]).
 :- use_module(rulings).
 :- use_module(body).
@@ -124,7 +125,12 @@ key_of(Positions, Row, Key) :-
 % both of which are fixture data: the oracle throws bare terms, the compiler
 % wraps in unsupported_construct/1, and a program violating two classes reports
 % different ones at the two doors.
-engine_check_order([ keyed_level_head,
+% STRUCT-AS-ROWS (ruling compound_storage = struct_as_rows): the declared
+% value plane is checked first, ahead of every class that reads a column type,
+% and the compiler's gate opens with the same two.
+engine_check_order([ type_cycle,
+                     column_type_unknown,
+                     keyed_level_head,
                      keyed_log_rel,
                      log_on_level_headed_rel,
                      missing_retention,
@@ -142,6 +148,8 @@ check_program(Program) :-
     ;   true
     ).
 
+engine_refusal(type_cycle,              Names, type_cycle(Names)).
+engine_refusal(column_type_unknown,     Name,  column_type_unknown(Name)).
 engine_refusal(keyed_level_head,        Ref,   keyed_level_head(Ref)).
 engine_refusal(keyed_log_rel,           Ref-_, keyed_log_rel(Ref)).
 engine_refusal(log_on_level_headed_rel, Ref,   log_on_level_headed_rel(Ref)).
@@ -450,6 +458,7 @@ run_program(SugaredProg, Initial, Schedule, FinalAll, DeltaTicks) :-
     % Everything after it runs in the declared order (1_expansion.pl).
     expand_program(HostProg, Prog, _),
     check_program(Prog),
+    check_world_shapes(Prog, Initial, Schedule),
     seed_store(Prog, Initial, Store0),
     Prog = prog(_, Rules),
     split_rules(Rules, AggRules, PlainLevel, _),
@@ -457,6 +466,19 @@ run_program(SugaredProg, Initial, Schedule, FinalAll, DeltaTicks) :-
     level_closure(PlainLevel, AggRules, BaseRows, 0, Level0),
     append(BaseRows, Level0, All0), sort(All0, PrevAll),
     run_ticks(Prog, state(1, Store0, Level0, PrevAll), [], Schedule, 0, FinalAll, DeltaTicks).
+
+% SLOT-ARRIVAL-MALFORMED (ruling compound_storage = struct_as_rows): a world
+% row whose value does not match the declared struct shape is a NAMED refusal
+% at the boundary. The check is decl-driven -- a row that passes runs exactly
+% as it did before the type existed -- and it runs here, where both the seed
+% rows and the whole schedule are in hand, rather than inside absorb_arrivals,
+% so a malformed row is a load failure and never a half-applied tick.
+check_world_shapes(prog(Decls, _), Initial, Schedule) :-
+    append([Initial | Schedule], WorldRows),
+    (   world_row_shape_violation(Decls, WorldRows, mismatch(Ref, Column, TypeName, Reason))
+    ->  throw(type_arrival_shape_mismatch(Ref, Column, TypeName, Reason))
+    ;   true
+    ).
 
 seed_store(prog(Decls, _), Initial, Store) :-
     findall(Entry,

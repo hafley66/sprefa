@@ -219,7 +219,8 @@ get_or_make_var(Name, Vars0, Var, Vars) :-
 
 statement(Kind, Item, Vars0, Vars, S0, S) :-
     skip_ws(S0, S1),
-    ( bind_decl_stmt(Item0, S1, S2) -> Kind = decl_list, Item = [Item0], Vars = Vars0, S = S2
+    ( type_decl_stmt(Item0, S1, S2) -> Kind = decl_list, Item = [Item0], Vars = Vars0, S = S2
+    ; bind_decl_stmt(Item0, S1, S2) -> Kind = decl_list, Item = [Item0], Vars = Vars0, S = S2
     ; decl_a_stmt(Item0, S1, S2) -> Kind = decl_list, Item = Item0, Vars = Vars0, S = S2
     ; decl_b_stmt(Item0, S1, S2) -> Kind = decl_list, Item = Item0, Vars = Vars0, S = S2
     ; sh_decl_stmt(Item0, S1, S2) -> Kind = decl_list, Item = [Item0], Vars = Vars0, S = S2
@@ -303,7 +304,13 @@ decl_a_column(column(Name, Type), S0, S) :-
 
 typed_column_type(int, S0, S) :- word(`int`, S0, S), !.
 typed_column_type(text, S0, S) :- word(`text`, S0, S), !.
-typed_column_type(json, S0, S) :- word(`json`, S0, S).
+typed_column_type(json, S0, S) :- word(`json`, S0, S), !.
+% STRUCT-AS-ROWS (ruling compound_storage): a bare identifier in type
+% position names a declared struct type, and the column stores a ref to that
+% type's dictionary. A name no `type` decl introduces is NOT silently a text
+% column -- 0_type_plane.pl:column_storage/3 throws column_type_unknown, so a
+% typo is a named refusal rather than a column that quietly holds a blob.
+typed_column_type(Name, S0, S) :- ident(Name, S0, S).
 
 enum_decl_variants((First ; Rest), S0, S) :-
     enum_decl_variant(First, S0, S1),
@@ -459,6 +466,35 @@ coltype(Wrapper, S0, S) :-
 coltype(none, S0, S) :- ident(_, S0, S).
 
 % ═══ selected world declarations ════════════════════════════════════════════
+
+% STRUCT-AS-ROWS (ruling compound_storage = struct_as_rows). SLOT-SPELLING is
+% answered in 0_type_plane.pl's header: `type`, an SQL word (CREATE TYPE ...
+% AS), never `rel`. The column production is decl_a's own typed_column_type/3,
+% so a struct field may itself be a declared type and nesting costs no new
+% syntax:
+%
+%   type span(start: int, end: int).
+%   type finding(at: span, message: text).
+%   rel diag(path: text, found: finding) log keep(all).
+type_decl_stmt(type_decl(Name, Specs), S0, S) :-
+    word(`type`, S0, S1),
+    ws0(S1, S2),
+    ident(Name, S2, S3),
+    ws0(S3, S4),
+    lit_dcg(`(`, S4, S5),
+    type_decl_columns(Specs, S5, S6),
+    ws0(S6, S7),
+    lit_dcg(`)`, S7, S8),
+    ws0(S8, S9),
+    lit_dcg(`.`, S9, S),
+    findall(Column, member(col(Column, _), Specs), Columns),
+    record_column_order(Name, Columns).
+
+type_decl_columns([], S0, S) :- ws0(S0, S1), peek(0'), S1, S), !.
+type_decl_columns([col(Name, Type) | Rest], S0, S) :-
+    ws0(S0, S1), ident(Name, S1, S2), ws0(S2, S3), lit_dcg(`:`, S3, S4),
+    ws0(S4, S5), typed_column_type(Type, S5, S6), ws0(S6, S7),
+    ( lit_dcg(`,`, S7, S8) -> type_decl_columns(Rest, S8, S) ; Rest = [], S = S7 ).
 
 bind_decl_stmt(bind_decl(Name, Columns), S0, S) :-
     word(`bind`, S0, S1),

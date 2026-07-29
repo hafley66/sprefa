@@ -124,7 +124,7 @@ dl6_grammar(Text) :-
     },
     "decl-words": {
       "name": "storage.type.declaration.dl6",
-      "match": "\\\\b(rel|sh|bind|log|keep|key|int|text|json|salt)\\\\b"
+      "match": "\\\\b(rel|type|sh|bind|log|keep|key|int|text|json|salt)\\\\b"
     },
     "live-keywords": {
       "name": "keyword.control.dl6",

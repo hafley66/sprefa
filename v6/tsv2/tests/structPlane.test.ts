@@ -1,0 +1,320 @@
+/**
+ * structPlane.test.ts — the receipts the struct-as-rows arc header names
+ * (plans/2026-07-29-struct-as-rows-header.md), for the parts tick-log byte
+ * grading cannot see.
+ *
+ * The sweep already grades correctness: `struct_column_renders_canonical_json`,
+ * `struct_intern_order_a`, `struct_intern_order_b`,
+ * `struct_shared_child_survives_one_release`,
+ * `struct_nested_value_renders_whole_tree`, `struct_ghcacher_stars_normalization`
+ * are byte-identical to the oracle in BOTH emitter modes, tick log and final
+ * state. What that grading cannot see is:
+ *
+ *   EDGE 1  whether byte-identity was won honestly. Two runs that happened to
+ *           assign the same dense ids would print the same bytes while the
+ *           rendering was, in fact, id-shaped. So the build-order test asserts
+ *           the logs agree AND the dense ids DISAGREE.
+ *   EDGE 2  whether the dictionary leaked. A dictionary rel in the log is
+ *           invisible to "is the log identical" only until a program declares
+ *           one, so this asserts the log's rel-name set against the ORACLE's
+ *           while sqlite_master provably holds the dictionary tables.
+ *   COST    the intern path's statement count, flat in the number of arriving
+ *           values (repo law: formerly-quadratic paths get COUNT tests, never
+ *           end-state equality alone), and the boundary read's PLAN.
+ *   CRASH   what a kill mid-intern can leave behind.
+ *
+ * SABOTAGE RECEIPTS (each edit made, this file run, then reverted; the quoted
+ * text is what the run printed):
+ *   a. lower.pl canonical_column_expr/3's ref clause -> plain `quote_ident`,
+ *      i.e. render the id, the exact Edge 1 failure. 2 of 7 RED:
+ *        "a ref column printed a bare number, i.e. an id:
+ *         {"tick":1,"deltas":{"mark":{"add":[[1]],"del":[]}}}"
+ *        "this fixture's boundary read must touch the dictionary: SELECT
+ *         "at", "_sign" AS "__sign", count(*) ... FROM "__delta_mark""
+ *   b. structPlane.ts internOneType/4 rewritten to run one INSERT per tuple
+ *      (the N+1 shape the count test exists for). 1 of 7 RED: "three values
+ *      must intern in two statements, got 4".
+ *
+ * ONE ATTEMPTED SABOTAGE THAT DID NOT GO RED, recorded rather than dropped:
+ * deleting structPlane.ts's `if (types.length === 0 || arrivals.length === 0)
+ * return of(arrivals)` early return leaves all 7 GREEN. That guard is
+ * redundant with the `perType.size === 0` one below it -- an empty batch
+ * collects no value, so the second guard already returns before any statement
+ * runs. It is kept for the zero-types case, where it also skips building the
+ * byName map, and the count test's zero-statement claim is carried by the
+ * second guard, not the first.
+ *
+ * NAMED BLIND SPOT: the LOOKUP statement's own query plan is not asserted.
+ * The EXPLAIN test plans the boundary RENDER read; a scan inside `lookupSql`'s
+ * `WHERE "__semantic" IN (...)` would be invisible to every check in this
+ * file. It reads a UNIQUE index today and nothing here would notice if that
+ * stopped being true.
+ */
+
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+
+import { concatMap, firstValueFrom, map, toArray } from "rxjs";
+import type { ISqlRunner } from "sprefa-store-engine/src/engine/types.ts";
+
+import { BootRunner } from "../runtime/2_boot.ts";
+import { ScratchStore } from "../runtime/scratchStore.ts";
+import { StructPlane } from "../runtime/structPlane.ts";
+import { TickFold } from "../runtime/tickLoop.ts";
+import type {
+  IArrivalBatch,
+  IBootStatement,
+  IGenProgram,
+  ISqlSeam,
+  IStructRefColumns,
+  IStructTypePlan,
+  SqlStatement,
+} from "../runtime/types.ts";
+
+import * as orderA from "../gen_emitted/struct_intern_order_a.ts";
+import * as orderB from "../gen_emitted/struct_intern_order_b.ts";
+import * as shared from "../gen_emitted/struct_shared_child_survives_one_release.ts";
+
+type EmittedProgram = IGenProgram & { readonly boot: readonly IBootStatement[] };
+
+const ORDER_A_SCHEDULE: readonly IArrivalBatch[] = [
+  [{ rel: "mark", sign: "add", row: [{ end: 2, start: 1 } as unknown as string] }],
+  [{ rel: "mark", sign: "add", row: [{ end: 4, start: 3 } as unknown as string] }],
+];
+const ORDER_B_SCHEDULE: readonly IArrivalBatch[] = [
+  [{ rel: "mark", sign: "add", row: [{ end: 4, start: 3 } as unknown as string] }],
+  [{ rel: "mark", sign: "add", row: [{ end: 2, start: 1 } as unknown as string] }],
+];
+
+function bootedSeam(program: EmittedProgram, path = ":memory:"): Promise<ISqlSeam> {
+  const seam = ScratchStore.open(path);
+  return firstValueFrom(
+    ScratchStore.boot(seam, program.ddl).pipe(concatMap(() => BootRunner.run(seam, program.boot))),
+  ).then(() => seam);
+}
+
+function runSchedule(
+  program: EmittedProgram,
+  seam: ISqlSeam,
+  schedule: readonly IArrivalBatch[],
+): Promise<string[]> {
+  return firstValueFrom(TickFold.run(program, seam, schedule).pipe(toArray())) as Promise<string[]>;
+}
+
+/** The delta payload of each line with the tick NUMBER dropped. Two build
+ *  orders of the same value set legitimately place a value on different
+ *  ticks; what must not differ is what the value renders as. */
+function deltaPayloads(lines: readonly string[]): string[] {
+  return lines.map((line) => line.replace(/^\{"tick":\d+,/, "{"));
+}
+
+function denseIds(seam: ISqlSeam, table: string): Promise<Record<string, number>> {
+  return firstValueFrom(
+    seam.runner.execute(seam.db, `SELECT "__semantic", "__id" FROM "${table}"`).pipe(
+      map((result) => {
+        const ids: Record<string, number> = {};
+        for (const row of result.rows) ids[row["__semantic"] as string] = Number(row["__id"]);
+        return ids;
+      }),
+    ),
+  );
+}
+
+// ── EDGE 1: the tick log prints values, never ids ────────────────────────────
+
+test("edge 1: two build orders render identically while their dense ids differ", async () => {
+  const seamA = await bootedSeam(orderA.program as EmittedProgram);
+  const linesA = await runSchedule(orderA.program as EmittedProgram, seamA, ORDER_A_SCHEDULE);
+  const idsA = await denseIds(seamA, "__dict_span");
+
+  const seamB = await bootedSeam(orderB.program as EmittedProgram);
+  const linesB = await runSchedule(orderB.program as EmittedProgram, seamB, ORDER_B_SCHEDULE);
+  const idsB = await denseIds(seamB, "__dict_span");
+
+  const shared_semantic = 'span{"end":2,"start":1}';
+  assert.notEqual(
+    idsA[shared_semantic],
+    idsB[shared_semantic],
+    "this pair is only a receipt if the two runs assign DIFFERENT dense ids to the same value; " +
+      `both gave ${String(idsA[shared_semantic])}`,
+  );
+
+  assert.deepEqual(
+    deltaPayloads(linesA).sort(),
+    deltaPayloads(linesB).sort(),
+    "the two build orders must render the same values",
+  );
+  for (const line of linesA) {
+    assert.ok(
+      !/"mark":\{"add":\[\[\d/.test(line),
+      `a ref column printed a bare number, i.e. an id: ${line}`,
+    );
+  }
+});
+
+// ── EDGE 2: dictionaries are boundary-invisible ──────────────────────────────
+
+test("edge 2: the log's rel-name set matches the oracle while sqlite_master holds the dictionary", async () => {
+  const seam = await bootedSeam(shared.program as EmittedProgram);
+  const lines = await runSchedule(shared.program as EmittedProgram, seam, [
+    [
+      { rel: "hit", sign: "add", row: ["left", { end: 2, start: 1 } as unknown as string] },
+      { rel: "hit", sign: "add", row: ["right", { end: 2, start: 1 } as unknown as string] },
+    ],
+    [{ rel: "hit", sign: "del", row: ["left", { end: 2, start: 1 } as unknown as string] }],
+    [{ rel: "hit", sign: "del", row: ["right", { end: 2, start: 1 } as unknown as string] }],
+  ]);
+
+  const logged = new Set<string>();
+  for (const line of lines) {
+    const deltas = (JSON.parse(line) as { deltas: Record<string, unknown> }).deltas;
+    for (const rel of Object.keys(deltas)) logged.add(rel);
+  }
+  assert.deepEqual(
+    [...logged].sort(),
+    ["hit"],
+    "the tick log may name only value-plane rels; the oracle has no dictionary and can never produce one",
+  );
+  assert.deepEqual(
+    Object.keys(shared.program.relColumns).sort(),
+    ["hit"],
+    "a dictionary must not be reachable through relColumns either",
+  );
+
+  const tables = await firstValueFrom(
+    seam.runner
+      .execute(seam.db, `SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`)
+      .pipe(map((result) => result.rows.map((row) => row["name"] as string))),
+  );
+  assert.ok(
+    tables.includes("__dict_span"),
+    `the assertion above is vacuous unless the dictionary really exists: ${tables.join(", ")}`,
+  );
+});
+
+// ── COST: statements flat in the number of arriving values ───────────────────
+
+function countingSeam(seam: ISqlSeam): { seam: ISqlSeam; statements: string[] } {
+  const statements: string[] = [];
+  const record = (statement: string | SqlStatement): void => {
+    statements.push(typeof statement === "string" ? statement : statement.sql);
+  };
+  const runner: ISqlRunner = {
+    ...seam.runner,
+    execute(db, statement) {
+      record(statement);
+      return seam.runner.execute(db, statement);
+    },
+    batch(db, batched) {
+      for (const statement of batched) record(statement);
+      return seam.runner.batch(db, batched);
+    },
+    executeMultiple(db, sql) {
+      for (const part of sql.split(";\n")) record(part);
+      return seam.runner.executeMultiple(db, sql);
+    },
+  };
+  return { seam: { db: seam.db, runner }, statements };
+}
+
+const SPAN_TYPES: readonly IStructTypePlan[] = orderA.STRUCT_TYPES;
+const SPAN_REF_COLUMNS: IStructRefColumns = orderA.STRUCT_REF_COLUMNS;
+
+function markBatch(count: number): IArrivalBatch {
+  return Array.from({ length: count }, (_unused, index) => ({
+    rel: "mark",
+    sign: "add" as const,
+    row: [{ end: index * 2 + 2, start: index * 2 + 1 } as unknown as string],
+  }));
+}
+
+async function internStatementCount(count: number): Promise<number> {
+  const base = await bootedSeam(orderA.program as EmittedProgram);
+  const { seam, statements } = countingSeam(base);
+  await firstValueFrom(StructPlane.intern(seam, SPAN_TYPES, SPAN_REF_COLUMNS, markBatch(count)));
+  return statements.length;
+}
+
+test("count: interning is two statements per type, flat in the number of values", async () => {
+  const three = await internStatementCount(3);
+  const fifty = await internStatementCount(50);
+  assert.equal(three, 2, `three values must intern in two statements, got ${three}`);
+  assert.equal(fifty, three, `fifty values must cost what three did, got ${fifty} vs ${three}`);
+});
+
+test("count: a tick carrying no struct value runs zero intern statements", async () => {
+  const base = await bootedSeam(orderA.program as EmittedProgram);
+  const { seam, statements } = countingSeam(base);
+  await firstValueFrom(StructPlane.intern(seam, SPAN_TYPES, SPAN_REF_COLUMNS, []));
+  assert.equal(statements.length, 0, `a tick with no struct value must run zero intern statements: ${statements.length}`);
+});
+
+test("plan: the boundary render of a ref column SEARCHes the dictionary by rowid", async () => {
+  const seam = await bootedSeam(orderA.program as EmittedProgram);
+  const sql = orderA.incrementalPlan.relations.find((relation) => relation.rel === "mark")!.boundarySql;
+  assert.ok(sql.includes('"__dict_span"'), `this fixture's boundary read must touch the dictionary: ${sql}`);
+  const plan = await firstValueFrom(
+    seam.runner
+      .execute(seam.db, `EXPLAIN QUERY PLAN ${sql}`)
+      .pipe(map((result) => result.rows.map((row) => row["detail"] as string).join(" | "))),
+  );
+  assert.ok(
+    /CORRELATED SCALAR SUBQUERY/.test(plan) && /SEARCH d USING INTEGER PRIMARY KEY \(rowid=\?\)/.test(plan),
+    `the dictionary render must be a rowid SEARCH, never a SCAN, got: ${plan}`,
+  );
+});
+
+// ── CRASH: what a kill mid-intern can leave behind ───────────────────────────
+
+test("crash: a kill between intern and the arrival write leaves only an unreferenced dictionary row", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "struct-plane-"));
+  const path = `file:${join(directory, "crash.sqlite")}`;
+  try {
+    // The interrupted tick: intern runs, then the process dies before the
+    // arrival statements. Ordering, not a transaction, is what makes this
+    // safe -- the dictionary is written FIRST, so the only residue is a row
+    // nothing references. A parent row without its dictionary row, the
+    // direction that WOULD break the boundary render, is unreachable.
+    const crashed = await bootedSeam(orderA.program as EmittedProgram, path);
+    await firstValueFrom(StructPlane.intern(crashed, SPAN_TYPES, SPAN_REF_COLUMNS, markBatch(1)));
+    const orphanIds = await denseIds(crashed, "__dict_span");
+    assert.deepEqual(Object.keys(orphanIds), ['span{"end":2,"start":1}']);
+    const marks = await firstValueFrom(
+      crashed.runner.execute(crashed.db, `SELECT count(*) AS n FROM "mark"`).pipe(map((r) => Number(r.rows[0]!["n"]))),
+    );
+    assert.equal(marks, 0, "the parent row must be absent; only the dictionary row survived");
+
+    // The restart replays the same tick. Content addressing is what makes
+    // the orphan harmless: the retry finds the existing row, does not mint a
+    // second one, and the log is what a clean run would have printed.
+    const replayed = await runSchedule(orderA.program as EmittedProgram, crashed, ORDER_A_SCHEDULE);
+    const afterIds = await denseIds(crashed, "__dict_span");
+    assert.equal(
+      Object.keys(afterIds).length,
+      2,
+      `the replay must reuse the orphan, not mint a duplicate: ${JSON.stringify(afterIds)}`,
+    );
+
+    const clean = await bootedSeam(orderA.program as EmittedProgram);
+    const cleanLines = await runSchedule(orderA.program as EmittedProgram, clean, ORDER_A_SCHEDULE);
+    assert.deepEqual(
+      deltaPayloads(replayed),
+      deltaPayloads(cleanLines),
+      "a run that resumed over an orphaned dictionary row must print what a clean run prints",
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("canonicalText is sorted-keys-no-whitespace, the ruled cross-target encoding", () => {
+  assert.equal(StructPlane.canonicalText({ start: 3, end: 9 }), '{"end":9,"start":3}');
+  assert.equal(
+    StructPlane.canonicalText({ file: "a.rs", at: { start: 3, end: 9 } }),
+    '{"at":{"end":9,"start":3},"file":"a.rs"}',
+  );
+  assert.equal(StructPlane.canonicalText({ b: 1, a: 2 }), '{"a":2,"b":1}');
+});

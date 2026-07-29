@@ -45,6 +45,8 @@
 
 :- use_module(library(lists)).
 :- use_module('0_body_walk', [body_wrapper_refs/4]).
+:- use_module('0_type_plane',
+              [ type_definitions/2, type_cycle_witness/2, declared_type_name/2 ]).
 :- use_module('compile/registry', [surface_for_term/6]).
 
 :- op(1150, xfx, <-).
@@ -146,6 +148,27 @@ program_violation(finalize_in_level_rule, prog(_, Rules), Ref) :-
                       walk_policy(descend_not(false), splice_bare(false)),
                       Ref).
 
+% ── the value plane (STRUCT-AS-ROWS) ─────────────────────────────────────────
+
+% A cycle among declared struct types. A value's content key is computed FROM
+% its children's content keys, so a cyclic reference graph has no key at all
+% (types-as-rels verdict: interned_graph_is_a_dag, and the crack the round-1
+% lab named). The entity plane -- extrinsic ids, which DO permit cycles -- is
+% out of this arc's scope, so this is a refusal, not a capability gap.
+program_violation(type_cycle, prog(Decls, _), Names) :-
+    type_definitions(Decls, Types),
+    type_cycle_witness(Types, Names).
+
+% A column type that is neither a primitive nor a declared struct type. The
+% parser accepts a bare identifier in type position (that is what makes
+% `at: span` spellable at all), so a typo would otherwise become a column
+% with no storage kind at all.
+program_violation(column_type_unknown, prog(Decls, _), Name) :-
+    type_definitions(Decls, Types),
+    declared_column_type_use(Decls, Name),
+    \+ memberchk(Name, [int, text, json]),
+    \+ declared_type_name(Types, Name).
+
 % ── the two classes only the oracle used to check ────────────────────────────
 
 % A Log relation with no keep/2 is unbounded history by accident rather than
@@ -163,3 +186,9 @@ program_violation(missing_retention, prog(Decls, _), Ref) :-
 program_violation(aggregate_in_edge_head, prog(_, Rules), Ref) :-
     member((Head <+ _), Rules),
     aggregate_head_ref(Head, Ref).
+
+% ── helper for the value-plane classes ───────────────────────────────────────
+
+declared_column_type_use(Decls, Name) :- member(col_type(_, _, Name), Decls).
+declared_column_type_use(Decls, Name) :-
+    member(type_decl(_, Specs), Decls), member(col(_, Name), Specs).

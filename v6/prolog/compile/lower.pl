@@ -24,7 +24,7 @@
 %                        referee. DeltaTable and BoundarySql carry P1's
 %                        tick-local change stream.
 %
-% plus boot_statements/4, a SEPARATE list of bootstmt(Sql, Params) (needs
+% plus boot_statements/5, a SEPARATE list of bootstmt(Sql, Params) (needs
 % Initial, which plan/6 does not carry, plus LevelStatements for the t=0
 % level closure -- PHASE C2 RULING 2, boot_level_recompute_statements/2).
 %
@@ -33,7 +33,7 @@
 % plain Prolog structure -- no TypeScript syntax, no rxjs, no host-language
 % idiom anywhere in this file. `emit_ts.pl` is the ONE backend that renders
 % this term. A future emit_rust.pl reads the identical lowered/8 +
-% boot_statements/4 + RelPlans and renders sqlx/rusqlite calls around the
+% boot_statements/5 + RelPlans and renders sqlx/rusqlite calls around the
 % SAME SQL strings -- SQLite is the shared middle language both backends
 % speak; nothing here decides how a HOST assembles statements into a program.
 %
@@ -125,7 +125,7 @@
 % inside one group is refused at strat.pl:topo_order_group/2.
 
 :- module(lower,
-          [ lower_program/2, boot_statements/4, relplan_kind/3,
+          [ lower_program/2, boot_statements/5, relplan_kind/3,
             % The expression-lowering seam, exported for the
             % expression_inventory unit (rank R5 of
             % plans/2026-07-29-prolog-org-review.md). That unit walks every
@@ -139,12 +139,21 @@
             % The departure frontier's table name (TICK PHASE ALIGNMENT target
             % 2). emit_ts.pl renders both the relation-plan field and the
             % departure arm's SELECT, and the name has exactly one definition.
-            departure_frontier_table_name/2, departure_read_sql/3 ]).
+            departure_frontier_table_name/2, departure_read_sql/3,
+            % STRUCT-AS-ROWS: the storage plane's own names, exported so the
+            % emitter can render the intern plan and the plunit units can pin
+            % the exact SQL text.
+            dictionary_table_name/2, dictionary_ddl/3, dictionary_render_expr/3,
+            struct_type_plans/2 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(analyze).
 :- use_module(registry, [expression/5]).
+:- use_module('../0_type_plane',
+              [ type_definitions/2, type_definition/4, column_storage/3,
+                type_topological_order/2, type_canonical_json/4,
+                type_field_values/4, declared_type_name/2 ]).
 :- use_module('../conformance/body', [rel_ref/2]).
 
 :- op(1150, xfx, <-).
@@ -626,7 +635,290 @@ rel_ddl(EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
 % compound-term columns stay inline-flat text, never their own storage
 % type).
 column_def(QuotedColumn, int, Def) :- !, format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
+% STRUCT-AS-ROWS: a ref column stores the dense dictionary id and nothing
+% else. No FOREIGN KEY clause and no ON DELETE clause, ever: the retraction
+% lab measured SQL cascade deleting a shared child out from under a live
+% second parent and leaving dangling refs (types-as-rels verdict finding 6,
+% plans/2026-07-28-sqlite-retraction-verdict.md fk_cascade WRONG).
+column_def(QuotedColumn, ref(_), Def) :- !, format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
 column_def(QuotedColumn, text, Def) :- format(atom(Def), '~w TEXT NOT NULL', [QuotedColumn]).
+
+% ═══ the value plane's storage (STRUCT-AS-ROWS) ═════════════════════════════
+%
+% One dictionary table per declared type. It is NOT a rel: it never appears in
+% relColumns, never gets a delta table, never gets a boundarySql, and never
+% reaches the tick log (arc header Edge 2). The oracle holds real terms and
+% has no dictionary at all, so a dictionary row crossing the boundary would be
+% a row the oracle can never produce.
+%
+% Three columns beyond the content columns, the round-2 surrogate-mate ruling
+% made concrete:
+%
+%   "__id"        the dense storage mate. INTEGER PRIMARY KEY, so SQLite
+%                 assigns it as the rowid: dense, monotone, and free. It is
+%                 build-order dependent and therefore never crosses the
+%                 boundary (verdict surrogate_reintern_changes_dense_not_
+%                 semantic).
+%   "__semantic"  the content key, UNIQUE. Type name plus canonical content,
+%                 where every CHILD contributes its own canonical content --
+%                 never its dense id, which would make a parent's key
+%                 build-order dependent (verdict
+%                 parent_hash_from_dense_would_be_order_dependent).
+%   "__rendered"  the memoized canonical JSON, written ONCE at intern time
+%                 (Edge 1). Children intern before parents, so a parent's
+%                 rendering is one concat over finished child renderings and
+%                 the boundary read is a single indexed lookup, not a
+%                 recursion.
+%
+% A plain rowid table, deliberately, not WITHOUT ROWID: INTEGER PRIMARY KEY
+% is what makes SQLite hand out the dense id, and the boundary lookup is then
+% a rowid SEARCH, the cheapest probe the engine has.
+
+dictionary_table_name(TypeName, Table) :-
+    atomic_list_concat(['__dict_', TypeName], Table).
+
+dictionary_ddl(Types, TypeName, [TableDdl, IndexDdl]) :-
+    type_definition(Types, TypeName, Columns, ColumnTypes),
+    dictionary_table_name(TypeName, Table), quote_ident(Table, QuotedTable),
+    maplist(quote_ident, Columns, QuotedColumns),
+    maplist(dictionary_storage_kind(Types), ColumnTypes, StorageKinds),
+    maplist(column_def, QuotedColumns, StorageKinds, ColumnDefs),
+    atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
+    format(atom(TableDdl),
+           'CREATE TABLE ~w ("__id" INTEGER PRIMARY KEY, "__semantic" TEXT NOT NULL, "__rendered" TEXT NOT NULL, ~w)',
+           [QuotedTable, ColumnsSql]),
+    atomic_list_concat(['__dict_', TypeName, '_semantic'], IndexName),
+    quote_ident(IndexName, QuotedIndex),
+    format(atom(IndexDdl), 'CREATE UNIQUE INDEX ~w ON ~w ("__semantic")',
+           [QuotedIndex, QuotedTable]).
+
+dictionary_storage_kind(Types, DeclaredType, Storage) :-
+    column_storage(Types, DeclaredType, Storage).
+
+% The boundary read of a ref column: join the dictionary, select the memoized
+% rendering. Written as a correlated scalar subquery rather than a FROM-clause
+% join so it drops into delta_statement/2's existing SELECT-expression list
+% with no restructuring, and so the same expression text serves the snapshot
+% read, the final-state read and the delta read alike.
+%
+% EXPLAIN receipt (v6/tsv2/tests/structPlane.test.ts): the inner query plans as
+% `SEARCH d USING INTEGER PRIMARY KEY (rowid=?)`, never a SCAN.
+dictionary_render_expr(TypeName, Column, Expr) :-
+    dictionary_table_name(TypeName, Table), quote_ident(Table, QuotedTable),
+    quote_ident(Column, QuotedColumn),
+    format(atom(Expr),
+           '(SELECT d."__rendered" FROM ~w d WHERE d."__id" = ~w) AS ~w',
+           [QuotedTable, QuotedColumn, QuotedColumn]).
+
+% The per-type plan the emitter hands the runtime, in TOPOLOGICAL order:
+% children before parents, so the post-order intern is one pass down the list
+% and a parent's ref columns are already resolved when its own statement runs.
+%
+% Two statements per type per tick, both set-based over one json_each(?)
+% parameter, so the statement count is FLAT in the number of arriving values
+% (v6/tsv2/tests/structPlane.test.ts is the count receipt). The N+1 law is
+% structural here, not a lint: there is no per-row shape to fall into.
+struct_type_plans(Decls, Plans) :-
+    type_definitions(Decls, Types),
+    (   Types == []
+    ->  Plans = []
+    ;   type_topological_order(Types, Ordered),
+        findall(Plan, ( member(TypeName, Ordered),
+                        struct_type_plan(Types, TypeName, Plan) ), Plans)
+    ).
+
+struct_type_plan(Types, TypeName,
+                 structtype(TypeName, Columns, RefTypes, InternSql, LookupSql)) :-
+    type_definition(Types, TypeName, Columns, ColumnTypes),
+    maplist(dictionary_ref_type(Types), ColumnTypes, RefTypes),
+    dictionary_table_name(TypeName, Table), quote_ident(Table, QuotedTable),
+    maplist(quote_ident, Columns, QuotedColumns),
+    atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
+    length(Columns, Width),
+    Total is Width + 2,
+    incremental_json_select_exprs_from(Total, 0, SelectExprs),
+    atomic_list_concat(SelectExprs, ', ', SelectSql),
+    format(atom(InternSql),
+           'INSERT OR IGNORE INTO ~w ("__semantic", "__rendered", ~w) SELECT ~w FROM json_each(?)',
+           [QuotedTable, ColumnsSql, SelectSql]),
+    format(atom(LookupSql),
+           'SELECT "__semantic", "__id" FROM ~w WHERE "__semantic" IN (SELECT value FROM json_each(?))',
+           [QuotedTable]).
+
+dictionary_ref_type(Types, DeclaredType, RefType) :-
+    column_storage(Types, DeclaredType, Storage),
+    ( Storage = ref(Name) -> RefType = Name ; RefType = none ).
+
+% ═══ decode/2 as a dictionary join (SLOT-DECODE-SURFACE) ════════════════════
+%
+% SLOT-DECODE-SURFACE, decided: decode/2 STAYS on the surface as sugar and
+% lowers to a join. Removing it was the alternative and it loses: decode/2 is
+% the shipped destructuring spelling, it is what the oracle solves (body.pl
+% json_decode/2), and the untyped-json arm still needs it, so removing it from
+% the surface would mean two spellings for one idea rather than none.
+%
+% What it lowers TO is the whole point of the ruling. `decode(Where, {file:
+% File})` over a column declared `place` becomes an ordinary positive body
+% atom over that type's dictionary:
+%
+%   diag_file(File) <- diag(Where, _M), decode(Where, {file: File}).
+%     becomes
+%   diag_file(File) <- diag(Where, _M), '__dict_place'(Where, File, _At).
+%
+%   .dl6 with its rx lowering (the snippet law):
+%     type place(file: text, at: span).
+%     rel diag(where: place, message: text).
+%     diag_file(file) <- diag(where, message), decode(where, {file: file}).
+%
+%     const diagFile$ = combineLatest([diag$, placeDict$]).pipe(
+%       map(([diags, places]) => diags.flatMap((diag) => {
+%         const place = places.get(diag.where);      // the join: one keyed read
+%         return place ? [{ file: place.file }] : [];
+%       })),
+%       distinctUntilChanged(sameRowSet),
+%     );
+%
+% Doing it as a REWRITE OF THE RULE rather than a new compiler stage is what
+% makes it safe: every level-statement family (recompute insert, delta arm,
+% refCount arm, recursive-CTE arm, aggregate scope seed/delete/insert) reads
+% the rule body, so all of them get the join from one edit and none of them
+% can be the family where the destructure is silently absent -- the
+% silent-filter-loss class compile_body_guards/4's own header names.
+%
+% The dictionary atoms are APPENDED, after every original goal, so the source
+% variable is already bound when compile_pattern_arg/7 reaches the join and
+% the condition comes out as `d1."__id" = b0."where"` rather than a fresh
+% binding. `__id` is typed ref(Type), the same storage kind as the column that
+% points at it, so join_column_types_agree/4 sees one domain and the
+% cross-type join guard stays meaningful.
+%
+% Edge bodies keep the refusal (analyze.pl edge_body_needs_json_destructure):
+% a compound value that ARRIVES into an untyped column is stored as canonical
+% term text, and that encoding question is SLOT-TERM-STRUCT's, not this one's.
+
+dictionary_relplans(Types, Plans) :-
+    findall(relplan(Name/DictArity, set, ['__id' | Columns], none,
+                    [ref(TypeName) | StorageKinds]),
+            ( member(type_def(TypeName, Columns, ColumnTypes), Types),
+              dictionary_table_name(TypeName, Name),
+              length(Columns, Width), DictArity is Width + 1,
+              maplist(dictionary_storage_kind(Types), ColumnTypes, StorageKinds) ),
+            Plans).
+
+% Runs even when the program declares NO type. A rule with a decode goal and
+% no struct type must reach decode_source_not_struct, and skipping the pass on
+% an empty type table instead left decode/2 in the body where body_ref_uses/2
+% does not see it -- the head variable it should have bound then failed far
+% away as unbound_head_var, a diagnostic that names neither decode nor the
+% missing declaration. A rule with no decode goal keeps its body term
+% UNCHANGED (identity, not a rebuild), which is what keeps every pre-existing
+% emitted module byte-identical.
+expand_decode_rules(Types, RelPlans, Rules, Expanded) :-
+    maplist(expand_decode_rule(Types, RelPlans), Rules, Expanded).
+
+expand_decode_rule(Types, RelPlans, (Head <- Body), (Head <- Expanded)) :- !,
+    conjunction_goals(Body, Goals),
+    partition(is_decode_goal, Goals, DecodeGoals, OtherGoals),
+    (   DecodeGoals == []
+    ->  Expanded = Body
+    ;   foldl(decode_goal_atoms(Types, RelPlans, OtherGoals), DecodeGoals, [], Atoms),
+        append(OtherGoals, Atoms, AllGoals),
+        goals_conjunction(AllGoals, Expanded)
+    ).
+expand_decode_rule(_, _, Rule, Rule).
+
+is_decode_goal(Goal) :- nonvar(Goal), Goal = decode(_, _).
+
+goals_conjunction([Goal], Goal) :- !.
+goals_conjunction([Goal | Rest], (Goal, More)) :- goals_conjunction(Rest, More).
+
+decode_goal_atoms(Types, RelPlans, BodyGoals, decode(Source, Pattern), Acc0, Acc) :-
+    decode_source_type(Types, RelPlans, BodyGoals, Acc0, decode(Source, Pattern), TypeName),
+    decode_pattern_atoms(Types, TypeName, Source, Pattern, Atoms),
+    append(Acc0, Atoms, Acc).
+
+% The declared type of the variable decode/2 reads, resolved from whichever
+% positive body atom (or already-emitted dictionary atom) binds it. A source
+% with no ref-typed binding is a NAMED refusal, never a lowering that answers
+% something: the untyped-json arm still needs its own encoding decision, which
+% is SLOT-TERM-STRUCT's question and not this one's.
+decode_source_type(Types, RelPlans, BodyGoals, DictAtoms, Goal, TypeName) :-
+    Goal = decode(Source, _),
+    (   var(Source),
+        decode_binding_type(RelPlans, BodyGoals, DictAtoms, Source, Found)
+    ->  TypeName = Found
+    ;   throw(unsupported_construct(decode_source_not_struct(Goal)))
+    ),
+    ( declared_type_name(Types, TypeName) -> true
+    ; throw(unsupported_construct(column_type_unknown(TypeName))) ).
+
+% Walked with member/2 over the goal list, never collected with findall/3:
+% findall COPIES its template, and the whole resolution here is `Argument ==
+% Source`, variable IDENTITY. A findall in this position silently answers "no
+% binding" for every source and every decode becomes decode_source_not_struct.
+% (The prolog-org journal records the same bite twice, both times with a
+% failure message far from the cause.)
+decode_binding_type(RelPlans, BodyGoals, DictAtoms, Source, Found) :-
+    ( member(Atom, BodyGoals) ; member(Atom, DictAtoms) ),
+    compound(Atom),
+    functor(Atom, Name, Arity),
+    relplan_column_types(RelPlans, Name/Arity, ColumnTypes),
+    Atom =.. [_ | Args],
+    nth1(Position, Args, Argument),
+    Argument == Source,
+    nth1(Position, ColumnTypes, ref(Found)),
+    !.
+
+decode_pattern_atoms(Types, TypeName, Source, Pattern, Atoms) :-
+    (   Pattern = {}(Fields)
+    ->  true
+    ;   throw(unsupported_construct(decode_pattern_not_object(TypeName, Pattern)))
+    ),
+    braces_pattern_pairs(Fields, Pairs),
+    type_definition(Types, TypeName, Columns, ColumnTypes),
+    forall(member(Key-_, Pairs),
+           ( memberchk(Key, Columns) -> true
+           ; throw(unsupported_construct(decode_field_unknown(TypeName, Key))) )),
+    length(Columns, Width),
+    length(Slots, Width),
+    foldl(decode_slot(Types, Pairs, Columns, ColumnTypes), Slots, 1-[]-[], _-_-NestedGroups),
+    dictionary_table_name(TypeName, Table),
+    Atom =.. [Table, Source | Slots],
+    append(NestedGroups, Nested),
+    append([Atom], Nested, Atoms).
+
+% One dictionary column: the pattern's own argument when the pattern names it,
+% otherwise a fresh anonymous variable (an object pattern is OPEN -- body.pl
+% json_decode/2 ignores keys the pattern does not mention). A nested object
+% pattern over a ref column becomes ANOTHER dictionary atom, keyed on the
+% fresh variable this slot binds, which is how depth costs no new construct.
+decode_slot(Types, Pairs, Columns, ColumnTypes, Slot,
+            Position-Acc-Nested0, NextPosition-Acc-Nested) :-
+    nth1(Position, Columns, Column),
+    nth1(Position, ColumnTypes, ColumnType),
+    NextPosition is Position + 1,
+    (   memberchk(Column-SubPattern, Pairs)
+    ->  (   nonvar(SubPattern), SubPattern = {}(_), declared_type_name(Types, ColumnType)
+        ->  decode_pattern_atoms(Types, ColumnType, Slot, SubPattern, SubAtoms),
+            append(Nested0, [SubAtoms], Nested)
+        ;   Slot = SubPattern, Nested = Nested0
+        )
+    ;   Nested = Nested0
+    ).
+
+braces_pattern_pairs((Left, Right), Pairs) :- !,
+    braces_pattern_pairs(Left, LeftPairs),
+    braces_pattern_pairs(Right, RightPairs),
+    append(LeftPairs, RightPairs, Pairs).
+braces_pattern_pairs(Key: Pattern, [Key-Pattern]).
+
+incremental_json_select_exprs_from(0, _, []) :- !.
+incremental_json_select_exprs_from(N, Index, [Expr | More]) :-
+    N > 0,
+    format(atom(Expr), 'json_extract(value, \'$[~w]\')', [Index]),
+    NextIndex is Index + 1,
+    NextN is N - 1,
+    incremental_json_select_exprs_from(NextN, NextIndex, More).
 
 % ═══ arrival statement templates (round 2: Log rel drops tick/seq params) ═══
 
@@ -1434,14 +1726,29 @@ level_rule_delta_arms(RelPlans, (Head <- Body), DeltaArms) :-
     level_positive_delta_arms(RelPlans, Head, Body, PosUses, NegUses, PosUses, DeltaArms).
 
 level_positive_delta_arms(_, _, _, [], _, _, []).
+% STRUCT-AS-ROWS: a dictionary atom gets NO delta arm, and needs none. A
+% dictionary row is created only by interning a value some ARRIVING row
+% carries, and interning runs before that tick's arrival statements, so every
+% new dictionary row already has its parent row in the parent's own frontier
+% -- the parent's arm covers exactly the same derivations. An arm on this side
+% would additionally read `__frontier___dict_<type>`, a table the DDL does not
+% create (a dictionary is storage plane: no delta table, no frontier, no
+% boundary), so this is the same fact stated twice: dictionaries do not move
+% on their own.
 level_positive_delta_arms(RelPlans, Head, Body, [_ | RestPositions], NegUses, PosUses,
-                          [DeltaArm | RestArms]) :-
+                          Arms) :-
     length(RestPositions, RemainingCount),
     length(PosUses, PositiveCount),
     Position is PositiveCount - RemainingCount - 1,
     nth0_select(Position, PosUses, DeltaUse, OtherPosUses),
-    level_delta_select_arm(RelPlans, Head, Body, DeltaUse, OtherPosUses, NegUses, DeltaArm),
-    level_positive_delta_arms(RelPlans, Head, Body, RestPositions, NegUses, PosUses, RestArms).
+    level_positive_delta_arms(RelPlans, Head, Body, RestPositions, NegUses, PosUses, RestArms),
+    (   dictionary_use(DeltaUse)
+    ->  Arms = RestArms
+    ;   level_delta_select_arm(RelPlans, Head, Body, DeltaUse, OtherPosUses, NegUses, DeltaArm),
+        Arms = [DeltaArm | RestArms]
+    ).
+
+dictionary_use(use(Name/_Arity, _, _, _)) :- sub_atom(Name, 0, _, _, '__dict_').
 
 nth0_select(0, [Selected | Rest], Selected, Rest) :- !.
 nth0_select(Index, [Item | Rest], Selected, [Item | More]) :-
@@ -1623,6 +1930,12 @@ support_ddl(RelPlans, levelstmt(HeadRef, _, _, _, _, _), [Ddl]) :-
 canonical_column_expr(Column, int, QuotedColumn) :-
     !,
     quote_ident(Column, QuotedColumn).
+% STRUCT-AS-ROWS, arc header Edge 1: a ref column reads its VALUE, never its
+% id. The rendering was computed once at intern time, so this is one indexed
+% probe per row and no recursion regardless of nesting depth.
+canonical_column_expr(Column, ref(TypeName), Expr) :-
+    !,
+    dictionary_render_expr(TypeName, Column, Expr).
 canonical_column_expr(Column, text, Expr) :-
     quote_ident(Column, QuotedColumn),
     format(atom(Expr),
@@ -1644,26 +1957,68 @@ canonical_column_expr(Column, Expr) :-
 % it runs `boot` after DDL and before the tick fold, confirmed by that
 % script's own header comment.
 
-boot_seed_statement(relplan(Ref, log, Columns, _, _), Initial, Statements) :- !,
-    findall(bootstmt(Sql, Values),
+boot_seed_statement(Types, relplan(Ref, log, Columns, _, ColumnTypes), Initial, Statements) :- !,
+    boot_rows_statements(Types, 'INSERT INTO', Ref, Columns, ColumnTypes, Initial, Statements).
+boot_seed_statement(Types, relplan(Ref, set, Columns, _, ColumnTypes), Initial, Statements) :-
+    boot_rows_statements(Types, 'INSERT OR IGNORE INTO', Ref, Columns, ColumnTypes, Initial, Statements).
+
+boot_rows_statements(Types, Insert, Ref, Columns, ColumnTypes, Initial, Statements) :-
+    findall(Group,
             ( member(Row, Initial), rel_ref(Row, Ref), Row =.. [_ | Values],
-              table_name(Ref, Table), quote_ident(Table, QuotedTable),
-              maplist(quote_ident, Columns, QuotedColumns),
-              atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
-              length(Columns, N), placeholders(N, Placeholders),
-              atomic_list_concat(Placeholders, ', ', PlaceholdersSql),
-              format(atom(Sql), 'INSERT INTO ~w (~w) VALUES (~w)', [QuotedTable, ColumnsSql, PlaceholdersSql]) ),
-            Statements).
-boot_seed_statement(relplan(Ref, set, Columns, _, _), Initial, Statements) :-
-    findall(bootstmt(Sql, Values),
-            ( member(Row, Initial), rel_ref(Row, Ref), Row =.. [_ | Values],
-              table_name(Ref, Table), quote_ident(Table, QuotedTable),
-              maplist(quote_ident, Columns, QuotedColumns),
-              atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
-              length(Columns, N), placeholders(N, Placeholders),
-              atomic_list_concat(Placeholders, ', ', PlaceholdersSql),
-              format(atom(Sql), 'INSERT OR IGNORE INTO ~w (~w) VALUES (~w)', [QuotedTable, ColumnsSql, PlaceholdersSql]) ),
-            Statements).
+              boot_row_statements(Types, Insert, Ref, Columns, ColumnTypes, Values, Group) ),
+            Groups),
+    append(Groups, Statements).
+
+% STRUCT-AS-ROWS on the boot path. A seed row whose column is a ref carries a
+% VALUE, and the dense id it must store does not exist until the dictionary
+% row does. So one seed row becomes: the intern statements for every value in
+% its ref columns (children before parents), then the row insert itself, whose
+% ref parameter is a `SELECT "__id" ... WHERE "__semantic" = ?` subquery
+% rather than a bind. Arrivals take the same shape at runtime; this is the
+% same plan with the values known at compile time.
+boot_row_statements(Types, Insert, Ref, Columns, ColumnTypes, Values, Statements) :-
+    table_name(Ref, Table), quote_ident(Table, QuotedTable),
+    maplist(quote_ident, Columns, QuotedColumns),
+    atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
+    foldl(boot_column_slot(Types), ColumnTypes, Values,
+          slots([], [], []), slots(RevSlots, RevParams, RevIntern)),
+    reverse(RevSlots, Slots), reverse(RevParams, Params),
+    reverse(RevIntern, InternGroups), append(InternGroups, InternStatements),
+    atomic_list_concat(Slots, ', ', SlotsSql),
+    format(atom(Sql), '~w ~w (~w) VALUES (~w)', [Insert, QuotedTable, ColumnsSql, SlotsSql]),
+    append(InternStatements, [bootstmt(Sql, Params)], Statements).
+
+boot_column_slot(Types, ColumnType, Value,
+                 slots(Slots, Params, Intern), slots([Slot | Slots], NewParams, [Group | Intern])) :-
+    (   ColumnType = ref(TypeName)
+    ->  struct_intern_statements(Types, TypeName, Value, Semantic, Group),
+        dictionary_table_name(TypeName, DictTable), quote_ident(DictTable, QuotedDict),
+        format(atom(Slot), '(SELECT "__id" FROM ~w WHERE "__semantic" = ?)', [QuotedDict]),
+        NewParams = [Semantic | Params]
+    ;   Slot = '?', NewParams = [Value | Params], Group = []
+    ).
+
+% Post-order: every child's intern statement precedes its parent's, so a
+% parent's ref column can resolve by subquery against a row that already
+% exists. The DAG guarantee (0_program_check.pl:type_cycle) is what makes this
+% terminate.
+struct_intern_statements(Types, TypeName, Value, Semantic, Statements) :-
+    type_definition(Types, TypeName, Columns, ColumnTypes),
+    type_field_values(Types, TypeName, Value, FieldValues),
+    type_canonical_json(Types, TypeName, Value, Rendered),
+    atomic_list_concat([TypeName, Rendered], Semantic),
+    foldl(boot_column_slot(Types), ColumnTypes, FieldValues,
+          slots([], [], []), slots(RevSlots, RevParams, RevIntern)),
+    reverse(RevSlots, Slots), reverse(RevParams, Params),
+    reverse(RevIntern, ChildGroups), append(ChildGroups, ChildStatements),
+    dictionary_table_name(TypeName, DictTable), quote_ident(DictTable, QuotedDict),
+    maplist(quote_ident, Columns, QuotedColumns),
+    atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
+    atomic_list_concat(Slots, ', ', SlotsSql),
+    format(atom(Sql),
+           'INSERT OR IGNORE INTO ~w ("__semantic", "__rendered", ~w) VALUES (?, ?, ~w)',
+           [QuotedDict, ColumnsSql, SlotsSql]),
+    append(ChildStatements, [bootstmt(Sql, [Semantic, Rendered | Params])], Statements).
 
 % ═══ top level ═══════════════════════════════════════════════════════════════
 
@@ -1687,7 +2042,18 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     % one-to-one.
     maplist(edge_statements_for_rule(RelPlans), EdgeRules, EdgeStatementGroups),
     append(EdgeStatementGroups, EdgeStatements),
-    level_statement_groups(RelPlans, RuleOrder, RuleLevelStatements),
+    % STRUCT-AS-ROWS: level bodies are compiled against RelPlans PLUS the
+    % dictionary plans, and with decode/2 already rewritten into dictionary
+    % atoms. The dictionary plans reach the BODY compiler only -- never
+    % rel_ddl/5, delta_statement/2, arrival_statement/2 or relColumns -- which
+    % is Edge 2 enforced by construction rather than by a filter someone can
+    % forget: a dictionary has no delta table to report and no name the tick
+    % log can reach.
+    type_definitions(Decls, LoweringTypes),
+    dictionary_relplans(LoweringTypes, DictionaryRelPlans),
+    append(RelPlans, DictionaryRelPlans, BodyRelPlans),
+    expand_decode_rules(LoweringTypes, BodyRelPlans, RuleOrder, DecodedRuleOrder),
+    level_statement_groups(BodyRelPlans, DecodedRuleOrder, RuleLevelStatements),
     retention_statements(Decls, RelPlans, RetentionStatements),
     append(RuleLevelStatements, RetentionStatements, LevelStatements),
     maplist(support_ddl(RelPlans), RuleLevelStatements, SupportDdlGroups),
@@ -1696,10 +2062,24 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     append(AggregateScopeDdlGroups, AggregateScopeDdl),
     program_uses_tick(prog(Decls, Rules), UsesTick),
     ( UsesTick == true -> tick_table_ddl(TickDdl) ; TickDdl = [] ),
-    append([RelationDdl, DeltaDdl, SupportDdl, AggregateScopeDdl, TickDdl], Ddl),
+    % STRUCT-AS-ROWS: the dictionaries come FIRST in the DDL list, in
+    % topological order, so a program's storage plane exists before any table
+    % whose columns point into it.
+    struct_dictionary_ddl(Decls, DictionaryDdl),
+    append([DictionaryDdl, RelationDdl, DeltaDdl, SupportDdl, AggregateScopeDdl, TickDdl], Ddl),
     maplist(delta_statement, RelPlans, DeltaStatements).
 
 arrival_target_relplan(ArrivalTargets, relplan(Ref, _, _, _, _)) :- memberchk(Ref, ArrivalTargets).
+
+struct_dictionary_ddl(Decls, Ddl) :-
+    type_definitions(Decls, Types),
+    (   Types == []
+    ->  Ddl = []
+    ;   type_topological_order(Types, Ordered),
+        findall(Group, ( member(TypeName, Ordered),
+                         dictionary_ddl(Types, TypeName, Group) ), Groups),
+        append(Groups, Ddl)
+    ).
 
 % Boot statements, computed on demand (needs Initial, which plan/6 does not
 % carry -- compile.pl calls this directly with the fixture's Initial list).
@@ -1710,12 +2090,15 @@ arrival_target_relplan(ArrivalTargets, relplan(Ref, _, _, _, _)) :- memberchk(Re
 % (head_move_flips_current_tree_in_one_tick) only reached compilation once
 % unmarked edge triggers were accepted, and its "before" snapshot was empty
 % at tick 1 without this.
-boot_statements(RelPlans, Initial, LevelStatements, BootStatements) :-
-    maplist(boot_seed_statement_for(Initial), RelPlans, SeedGroups), append(SeedGroups, SeedStatements),
+boot_statements(Decls, RelPlans, Initial, LevelStatements, BootStatements) :-
+    type_definitions(Decls, Types),
+    maplist(boot_seed_statement_for(Types, Initial), RelPlans, SeedGroups),
+    append(SeedGroups, SeedStatements),
     boot_level_recompute_statements(LevelStatements, LevelBootStatements),
     append(SeedStatements, LevelBootStatements, BootStatements).
 
-boot_seed_statement_for(Initial, RelPlan, Statements) :- boot_seed_statement(RelPlan, Initial, Statements).
+boot_seed_statement_for(Types, Initial, RelPlan, Statements) :-
+    boot_seed_statement(Types, RelPlan, Initial, Statements).
 
 % engine.pl:run_program computes level_closure(PlainLevel, AggRules, BaseRows,
 % 0, Level0) ONCE, immediately after seeding Initial rows and before tick 1's

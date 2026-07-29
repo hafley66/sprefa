@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"def_start":{"add":[["a.rs",17]],"del":[]},"node_fact":{"add":[["a.rs","main",{"end":42,"start":17}]],"del":[]}}}
+{"tick":2,"deltas":{"def_start":{"add":[["b.rs",3]],"del":[]},"node_fact":{"add":[["b.rs","helper",{"end":9,"start":3}]],"del":[]}}}

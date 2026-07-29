@@ -264,6 +264,53 @@ export interface IIncrementalRuntime {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// The declared value plane (ruling compound_storage = struct_as_rows).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One declared struct type's storage plan, emitted by
+ * lower.pl:struct_type_plans/2 in TOPOLOGICAL order (children before parents),
+ * which is what makes the post-order intern one left fold with no recursion at
+ * the SQL layer.
+ *
+ * `refs[i]` is the declared type name a column points at, or `null` for a
+ * scalar column. Both statements are set-based over a single `json_each(?)`
+ * parameter, so a tick costs two statements per type regardless of how many
+ * values arrive.
+ */
+export interface IStructTypePlan {
+  readonly name: string;
+  readonly columns: readonly string[];
+  readonly refs: readonly (string | null)[];
+  /** `INSERT OR IGNORE INTO "__dict_<name>" (...) SELECT ... FROM json_each(?)` */
+  readonly internSql: string;
+  /** `SELECT "__semantic", "__id" FROM "__dict_<name>" WHERE "__semantic" IN (...)` */
+  readonly lookupSql: string;
+}
+
+/** Per rel name, the declared struct type of each column position (`null` for
+ *  a scalar column). Only rels with at least one ref column appear. */
+export type IStructRefColumns = Readonly<Record<string, readonly (string | null)[]>>;
+
+export interface IStructPlane {
+  /**
+   * Interns every struct value the batch carries and returns the batch with
+   * each ref column rewritten from the VALUE to its dense dictionary id.
+   * Returns the batch unchanged, running zero statements, when the program
+   * declares no types or the batch carries no struct value.
+   */
+  intern(
+    seam: ISqlSeam,
+    types: readonly IStructTypePlan[],
+    refColumns: IStructRefColumns,
+    arrivals: IArrivalBatch,
+  ): Observable<IArrivalBatch>;
+  /** Canonical JSON: sorted object keys, no whitespace. The ruled
+   *  cross-target encoding, and what `__rendered` memoizes. */
+  canonicalText(value: unknown): string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PINNED: the generated-program contract (do not rename these five fields).
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -343,6 +390,13 @@ export interface ITickLogEmitter {
    *  spaces, LF terminated by the caller (this returns the line WITHOUT a
    *  trailing newline). */
   line(tick: number, deltas: ITickDeltas): ITickLogLine;
+  /** ONE column value as the log encodes it: an integer as a JSON number,
+   *  object/array text canonicalized as JSON (sorted keys, no whitespace),
+   *  anything else as a JSON string. Exported because the final-state grading
+   *  leg has to encode by the same rule as the per-tick leg -- it did not,
+   *  and a struct column (whose stored value IS canonical JSON text) was the
+   *  first value to make the two legs disagree. */
+  valueText(value: IRowValue): string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

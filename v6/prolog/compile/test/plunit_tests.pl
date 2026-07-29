@@ -33,7 +33,7 @@
                 % plan compiles to, asserted by the incremental_mode unit.
                 incremental_program_safe/4, reconcile_every_tick/2,
                 derived_edge_carry_required/3, retraction_guard/2 ]).
-:- use_module('../lower', [ boot_statements/4 ]).
+:- use_module('../lower', [ boot_statements/5 ]).
 
 % Body-walk characterization (rank R1) reaches the traversals on BOTH sides of
 % the oracle/compiler split, because the review's central claim is that
@@ -654,9 +654,9 @@ test(emitted_incremental_tick_freezes_the_level_plane_before_edges) :-
                   (seen(Path, At) <+ diagnostic(Path, _), tick_rel(At)) ]),
     program_plan(fixture(freeze, Prog, [], [], [])-[], Plan),
     lower_program(Plan, Lowered),
-    Plan = plan(_, _, RelPlans, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(RelPlans, [], LevelStatements, Boot),
+    boot_statements(Decls, RelPlans, [], LevelStatements, Boot),
     emit_program(freeze, Plan, Lowered, Boot, Text),
     once(sub_atom(Text, BeforeAt, _, _, 'IncrementalRuntime.applyLevelsBeforeEdges')),
     once(sub_atom(Text, ReconcileAt, _, _, 'IncrementalRuntime.recomputeLevelsBeforeEdges')),
@@ -1200,9 +1200,9 @@ test(emitter_carries_world_plans_and_demand_sql) :-
     program_plan(Term-Bindings, Plan),
     lower_program(Plan, Lowered),
     Term = fixture(_, _, Initial, _, _),
-    Plan = plan(_, _, RelPlans, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(RelPlans, Initial, LevelStatements, Boot),
+    boot_statements(Decls, RelPlans, Initial, LevelStatements, Boot),
     emit_program(native_ts_query_term, Plan, Lowered, Boot, Text),
     once(sub_atom(Text, _, _, _, 'export const hostPlans')),
     % PHASE 2 (runtime bridge arc): the two named refusals are gone; both world
