@@ -1,6 +1,0 @@
-[
-  [ {"rel":"counter","sign":"add","row":["hits",0]} ],
-  [ {"rel":"increment","sign":"add","row":["hits","a"]} ],
-  [ {"rel":"increment","sign":"add","row":["hits","b"]}, {"rel":"increment","sign":"add","row":["hits","c"]} ],
-  [ {"rel":"decrement","sign":"add","row":["hits","d"]} ]
-]

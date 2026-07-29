@@ -1,8 +1,0 @@
-[
-  [ {"rel":"phase","sign":"add","row":["api","idle"]}, {"rel":"retries","sign":"add","row":["api",0]} ],
-  [ {"rel":"poll_due","sign":"add","row":["api"]} ],
-  [ {"rel":"fetch_result","sign":"add","row":["api","error"]} ],
-  [ {"rel":"poll_due","sign":"add","row":["api"]} ],
-  [ {"rel":"fetch_result","sign":"add","row":["api","error"]} ],
-  [ {"rel":"fetch_result","sign":"add","row":["api","fresh"]} ]
-]

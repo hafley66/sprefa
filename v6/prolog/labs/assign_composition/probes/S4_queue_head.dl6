@@ -1,7 +1,0 @@
-rel open_request(session_id: text, tab_id: text) log keep(all).
-rel live_tab(session_id: text, tab_id: text).
-rel queue_next(session_id: text, next: int) key(1).
-rel queue_slot(session_id: text, slot: int, tab_id: text) log keep(all).
-
-queue_next(SessionId, SoFar + 1) <+ open_request(SessionId, _), latest(live_tab(SessionId, _)), pre(queue_next(SessionId, SoFar)).
-queue_slot(SessionId, SoFar + 1, TabId) <+ open_request(SessionId, TabId), latest(live_tab(SessionId, _)), pre(queue_next(SessionId, SoFar)).

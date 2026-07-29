@@ -388,7 +388,7 @@ Lab files at `v6/prolog/labs/assign_composition/` (probes, `0_assign_expand.pl`,
 `oracle_pairs.sh`, `oracle.sh`, `probe.sh`, `show_one.pl`) are deleted in the
 death commit recorded below. Recover with `git show <hash>:<path>`.
 
-**Last copy: `LAB_DEATH_HASH`**
+**Last copy: `4c2255a3`**
 
 `0_assign_expand.pl` is the one file worth resurrecting: under card 1B or 1C it
 moves to `v6/prolog/` unchanged in shape.

@@ -1,3 +1,0 @@
-rel eprintln_hit(path: text, line_number: int).
-
-message(Path, LineNumber, concat(['eprintln at ', Path, ':', LineNumber, ' is waived'])) <- eprintln_hit(Path, LineNumber).

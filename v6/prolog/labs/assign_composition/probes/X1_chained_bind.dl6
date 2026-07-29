@@ -1,4 +1,0 @@
-rel reading(name: text, value: int).
-rel scaled(name: text, out: int).
-
-scaled(Name, Doubled) <- reading(Name, Value), Bumped := Value + 1, Doubled := Bumped * 2.

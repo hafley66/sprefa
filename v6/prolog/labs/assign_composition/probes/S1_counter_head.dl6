@@ -1,7 +1,0 @@
-rel increment(name: text, tag: text) log keep(all).
-rel decrement(name: text, tag: text) log keep(all).
-rel counter(name: text, next: int) key(1).
-
-counter(Name, Total + 1) <+ increment(Name, _), pre(counter(Name, Total)).
-counter(Name, Total - 1) <+ decrement(Name, _), pre(counter(Name, Total)).
-hot(Name) <- counter(Name, Total), Total >= 2.

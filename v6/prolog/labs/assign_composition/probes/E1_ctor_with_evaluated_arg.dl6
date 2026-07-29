@@ -1,3 +1,0 @@
-rel reading(name: text, value: int).
-
-wrapped(Name, pair(Value + 1)) <- reading(Name, Value).

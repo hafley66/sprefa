@@ -1,4 +1,0 @@
-rel division_input(label: text, numerator: int, denominator: int).
-rel probe(label: text, quotient: int, remainder: int).
-
-probe(Label, Quotient, Remainder) <- division_input(Label, Numerator, Denominator), Quotient := Numerator / Denominator, Remainder := Numerator mod Denominator.

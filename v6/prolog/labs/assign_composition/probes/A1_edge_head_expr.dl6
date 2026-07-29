@@ -1,5 +1,0 @@
-rel kick(col1: text) log keep(all).
-rel pulse(next) log keep(all).
-
-pulse(1) <+ kick(_).
-pulse(SoFar + 1) <+ pulse(SoFar), SoFar < 3.

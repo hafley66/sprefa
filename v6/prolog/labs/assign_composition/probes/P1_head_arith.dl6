@@ -1,3 +1,0 @@
-rel hit(path: text, line: int).
-
-report(Path, Line + 1) <- hit(Path, Line).
