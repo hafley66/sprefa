@@ -254,6 +254,7 @@ function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
 function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return readSnapshot(seam).pipe(
     concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
     concatMap((before) =>
       resolveWorktreeFile_0Writes(seam, before, arrivals).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
@@ -274,9 +275,11 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
   return IncrementalRuntime.prepareTick(seam, INCREMENTAL_RELATIONS).pipe(
     concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, INCREMENTAL_RELATIONS)),
     concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),
+    concatMap(() => IncrementalRuntime.recomputeLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
     concatMap(() => IncrementalRuntime.applyEdges(seam, INCREMENTAL_EDGE_STATEMENTS, INCREMENTAL_RELATIONS)),
     concatMap(() => IncrementalRuntime.mergeNextIntoCurrent(seam, INCREMENTAL_RELATIONS)),
     concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.readBoundary(seam, INCREMENTAL_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, INCREMENTAL_RELATIONS).pipe(

@@ -135,7 +135,11 @@
             % The column-expression and refCount-SQL seams (rank R8). The
             % sql_text_snapshots and incremental_mode units pin the exact text
             % these produce; both were private qualified calls before.
-            canonical_column_expr/2, level_support_sql/4 ]).
+            canonical_column_expr/2, level_support_sql/4,
+            % The departure frontier's table name (TICK PHASE ALIGNMENT target
+            % 2). emit_ts.pl renders both the relation-plan field and the
+            % departure arm's SELECT, and the name has exactly one definition.
+            departure_frontier_table_name/2, departure_read_sql/3 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -159,6 +163,28 @@ frontier_table_name(Name/_Arity, FrontierTable) :-
 
 next_frontier_table_name(Name/_Arity, NextFrontierTable) :-
     format(atom(NextFrontierTable), '__next_frontier_~w', [Name]).
+
+% Last tick's net -delta rows of a rel some rule binds with finalize/1
+% (engine.pl tick/7's DepartureCarry). Emitted ONLY for those rels
+% (analyze:listened_departure_refs/2), which is what keeps a program with no
+% finalize in it byte-identical to what the previous emitter wrote. Same
+% column shape as the arrival frontier on purpose: the arm's delta SELECT is
+% then the SAME text with one table name swapped, so no new SQL shape enters
+% the emitter and the existing EXPLAIN receipts still describe it.
+departure_frontier_table_name(Name/_Arity, DepartureTable) :-
+    format(atom(DepartureTable), '__departure_frontier_~w', [Name]).
+
+% The naive referee's read of that table: the departed rows in staged order,
+% one occurrence each. Built HERE and not in emit_ts.pl because every other
+% statement the emitter renders is lowered text it only quotes into a
+% template -- the emitter builds identifiers, never SQL.
+departure_read_sql(Ref, Columns, Sql) :-
+    departure_frontier_table_name(Ref, DepartureTable),
+    quote_ident(DepartureTable, QuotedDepartureTable),
+    maplist(quote_ident, Columns, QuotedColumns),
+    atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
+    format(atom(Sql), 'SELECT ~w FROM ~w ORDER BY "_phase", "_sequence"',
+           [ColumnsSql, QuotedDepartureTable]).
 
 support_table_name(Name/_Arity, SupportTable) :-
     format(atom(SupportTable), '__support_next_~w', [Name]).
@@ -705,6 +731,18 @@ edge_statements_for_rule(RelPlans, (Head <+ Body), EdgeStatements) :-
                  edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms,
                                        NegAtoms, GuardGoals, EdgeStmt) ),
                EdgeStatements)
+    % ONE arm, from the finalize'd rel's departure frontier. The other
+    % positive atoms are joins, never arms: an arrival occurrence on one of
+    % them leaves finalize standing in the body and body.pl's
+    % `solve(finalize(_), _) :- !, fail` makes that arm derive nothing, so
+    % emitting it would be emitting a statement that can only ever return
+    % zero rows.
+    ; Shape = departure_trigger(FinalizeAtom, OtherPositiveAtoms, SampleAtoms,
+                                NegAtoms, GuardGoals)
+    -> append(OtherPositiveAtoms, SampleAtoms, OtherAtoms),
+       edge_statement_single(RelPlans, Head, FinalizeAtom, OtherAtoms, NegAtoms,
+                             GuardGoals, departure, EdgeStmt),
+       EdgeStatements = [EdgeStmt]
     ).
 
 % One arm: TriggerAtom's own args bind to numbered placeholders (unchanged
@@ -722,8 +760,15 @@ edge_statements_for_rule(RelPlans, (Head <+ Body), EdgeStatements) :-
 % into one Map entry the way a Set head's last-write-wins fold does (every
 % key would otherwise be the same empty `[]`).
 edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms, GuardGoals,
+                      EdgeStmt) :-
+    edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms,
+                          GuardGoals, arrival, EdgeStmt).
+
+edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms, GuardGoals,
+                      TriggerKind,
                       edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns,
-                               ProjectSql, WriteSql, DeltaProjectSql)) :-
+                               ProjectSql, WriteSql, DeltaProjectSql,
+                               TriggerKind)) :-
     rel_ref(TriggerAtom, TriggerRef),
     rel_ref(Head, HeadRef),
     relplan_kind(RelPlans, HeadRef, HeadKind),
@@ -775,7 +820,7 @@ edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms, GuardGo
     ; format(atom(ProjectSql), 'SELECT ~w FROM ~w WHERE ~w', [SelectSql, FromSql, WhereSql])
     ),
     edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms,
-                           GuardGoals, HeadColumns, DeltaProjectSql),
+                           GuardGoals, HeadColumns, TriggerKind, DeltaProjectSql),
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
@@ -805,10 +850,13 @@ edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms, GuardGo
     ).
 
 edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms, GuardGoals,
-                       HeadColumns, DeltaProjectSql) :-
+                       HeadColumns, TriggerKind, DeltaProjectSql) :-
     rel_ref(TriggerAtom, TriggerRef),
     TriggerAtom =.. [_ | TriggerArgs],
-    frontier_table_name(TriggerRef, FrontierTable),
+    (   TriggerKind == departure
+    ->  departure_frontier_table_name(TriggerRef, FrontierTable)
+    ;   frontier_table_name(TriggerRef, FrontierTable)
+    ),
     quote_ident(FrontierTable, QuotedFrontierTable),
     DeltaAlias = d0,
     relplan_columns(RelPlans, TriggerRef, TriggerColumns),
@@ -1487,6 +1535,29 @@ retention_statements(Decls, RelPlans, RetentionStatements) :-
             ),
             RetentionStatements).
 
+delta_ddl(DepartureRefs, RelPlan, Ddl) :-
+    RelPlan = relplan(Ref, _, Columns, _, ColumnTypes),
+    delta_ddl(RelPlan, BaseDdl),
+    (   memberchk(Ref, DepartureRefs)
+    ->  departure_frontier_ddl(Ref, Columns, ColumnTypes, DepartureDdl),
+        append(BaseDdl, DepartureDdl, Ddl)
+    ;   Ddl = BaseDdl
+    ).
+
+departure_frontier_ddl(Ref, Columns, ColumnTypes, [TableDdl, IndexDdl]) :-
+    departure_frontier_table_name(Ref, DepartureTable),
+    quote_ident(DepartureTable, QuotedDepartureTable),
+    maplist(quote_ident, Columns, QuotedColumns),
+    maplist(column_def, QuotedColumns, ColumnTypes, ColumnDefs),
+    atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
+    format(atom(TableDdl),
+           'CREATE TEMP TABLE ~w ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ~w)',
+           [QuotedDepartureTable, ColumnsSql]),
+    format(atom(IndexName), '~w_phase', [DepartureTable]),
+    quote_ident(IndexName, QuotedIndexName),
+    format(atom(IndexDdl), 'CREATE INDEX ~w ON ~w ("_phase")',
+           [QuotedIndexName, QuotedDepartureTable]).
+
 delta_ddl(relplan(Ref, _Kind, Columns, _, ColumnTypes),
           [TableDdl, IndexDdl, FrontierDdl, FrontierIndexDdl,
            NextFrontierDdl, NextFrontierIndexDdl]) :-
@@ -1604,7 +1675,8 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
             LevelHeadedRefs),
     maplist(rel_ddl(EdgeHeadedRefs, ArrivalTargets, LevelHeadedRefs),
             RelPlans, RelationDdlGroups),
-    maplist(delta_ddl, RelPlans, DeltaDdlGroups),
+    listened_departure_refs(Rules, DepartureRefs),
+    maplist(delta_ddl(DepartureRefs), RelPlans, DeltaDdlGroups),
     append(RelationDdlGroups, RelationDdl),
     append(DeltaDdlGroups, DeltaDdl),
     include(arrival_target_relplan(ArrivalTargets), RelPlans, ArrivalRelPlans),

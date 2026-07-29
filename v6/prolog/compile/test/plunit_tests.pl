@@ -43,6 +43,7 @@
 :- use_module('../analyze',
               [ body_ref_uses/2, conjunction_goals/2,
                 level_body_latest_ref/2, level_body_pre_ref/2,
+                listened_departure_refs/2,
                 reserved_construct_in_body/2, body_forbidden_goal/2 ]).
 :- use_module('../../conformance/engine',
               [ trigger_items/2, body_finalize_ref/2,
@@ -175,7 +176,7 @@ test(demand_laziness_columns) :-
 % self-join filtered by a stamp column.
 test(switch_as_keyed_replace_edge_sql) :-
     lowered_for(switch_as_keyed_replace, Lowered),
-    Lowered = lowered(_, _, _, [edgestmt(open_scope/2, route_change/2, HeadColumns, KeyColumns, ProjectSql, UpsertSql, DeltaProjectSql)], _, _, _, _),
+    Lowered = lowered(_, _, _, [edgestmt(open_scope/2, route_change/2, HeadColumns, KeyColumns, ProjectSql, UpsertSql, DeltaProjectSql, arrival)], _, _, _, _),
     HeadColumns == [session_id, target],
     KeyColumns == [session_id],
     ProjectSql ==
@@ -292,7 +293,8 @@ test(edge_derived_trigger_reads_promoted_frontier) :-
     Lowered = lowered(_, _, _, EdgeStatements, _, _, _, _),
     memberchk(
         edgestmt(stage_two/1, stage_one/1, [item], [], _, _,
-                 'SELECT d0."item" AS "item" FROM "__frontier_stage_one" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"'),
+                 'SELECT d0."item" AS "item" FROM "__frontier_stage_one" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"',
+                 arrival),
         EdgeStatements).
 
 test(level_derived_trigger_reads_same_tick_frontier) :-
@@ -301,7 +303,8 @@ test(level_derived_trigger_reads_same_tick_frontier) :-
     Lowered = lowered(_, _, _, EdgeStatements, _, _, _, _),
     memberchk(
         edgestmt(fetch_call/1, fetch_demand/1, [endpoint], [], _, _,
-                 'SELECT d0."endpoint" AS "endpoint" FROM "__frontier_fetch_demand" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"'),
+                 'SELECT d0."endpoint" AS "endpoint" FROM "__frontier_fetch_demand" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"',
+                 arrival),
         EdgeStatements).
 
 % Round 2: one plain "read every row" query per rel (log and set alike) --
@@ -353,8 +356,35 @@ test(latest_edge_sample_reads_base_table_in_both_sql_families) :-
             [],
             'SELECT b0."client" AS "client", ?1 AS "item" FROM "subscriber" b0',
             _,
-            'SELECT b0."client" AS "client", d0."item" AS "item" FROM "__frontier_change_ev" d0, "subscriber" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"')
+            'SELECT b0."client" AS "client", d0."item" AS "item" FROM "__frontier_change_ev" d0, "subscriber" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"',
+            arrival)
     ].
+
+% The departure arm (TICK PHASE ALIGNMENT target 2). Three claims in one
+% snapshot, all of them what makes the feature cheap:
+%   1  the arm reads __departure_frontier_<rel>, the rel's OWN table, and
+%      nothing else joins;
+%   2  the SQL is the arrival arm's text with one table name swapped -- same
+%      `_phase >= 0` filter, same `ORDER BY _phase, _sequence` -- so no new
+%      statement shape enters the emitter and the existing EXPLAIN receipts
+%      still describe it;
+%   3  ONE arm, not one per body atom. keyed_replace_departs_the_old_row's
+%      body is a bare finalize, and departed_fires_next_tick_on_retraction's
+%      carries a now/1 beside it; neither raises a second occurrence source.
+test(departure_arm_reads_the_departure_frontier) :-
+    lowered_for('engine_core.pl', keyed_replace_departs_the_old_row, Lowered),
+    Lowered = lowered(_, Ddl, _, EdgeStatements, _, _, _, _),
+    memberchk(
+        edgestmt(replaced_value/2, latest/2, [key, old_value], [], _, _,
+                 'SELECT d0."key" AS "key", d0."value" AS "old_value" FROM "__departure_frontier_latest" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"',
+                 departure),
+        EdgeStatements),
+    % The departure table is emitted for the LISTENED rel only.
+    memberchk('CREATE TEMP TABLE "__departure_frontier_latest" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)', Ddl),
+    memberchk('CREATE INDEX "__departure_frontier_latest_phase" ON "__departure_frontier_latest" ("_phase")', Ddl),
+    \+ ( member(OtherDdl, Ddl),
+         sub_atom(OtherDdl, _, _, _, '__departure_frontier_'),
+         \+ sub_atom(OtherDdl, _, _, _, '__departure_frontier_latest') ).
 
 test(latest_keyed_sample_is_one_edge_arm_with_key_predicates) :-
     lowered_for('shell_stream.pl', identical_demand_dedups, Lowered),
@@ -362,7 +392,7 @@ test(latest_keyed_sample_is_one_edge_arm_with_key_predicates) :-
     findall(
         EdgeStatement,
         (member(EdgeStatement, EdgeStatements),
-         EdgeStatement = edgestmt(_, fill/3, _, _, _, _, _)),
+         EdgeStatement = edgestmt(_, fill/3, _, _, _, _, _, _)),
         SampledEdgeStatements),
     SampledEdgeStatements = [
         edgestmt(
@@ -372,7 +402,8 @@ test(latest_keyed_sample_is_one_edge_arm_with_key_predicates) :-
             [],
             'SELECT ?1 AS "args", ?2 AS "salt", ?3 AS "payload" FROM "demand" b0 WHERE b0."args" = ?1 AND b0."salt" = ?2',
             _,
-            'SELECT d0."args" AS "args", d0."salt" AS "salt", d0."payload" AS "payload" FROM "__frontier_fill" d0, "demand" b0 WHERE d0."_phase" >= 0 AND b0."args" = d0."args" AND b0."salt" = d0."salt" ORDER BY d0."_phase", d0."_sequence"')
+            'SELECT d0."args" AS "args", d0."salt" AS "salt", d0."payload" AS "payload" FROM "__frontier_fill" d0, "demand" b0 WHERE d0."_phase" >= 0 AND b0."args" = d0."args" AND b0."salt" = d0."salt" ORDER BY d0."_phase", d0."_sequence"',
+            arrival)
     ].
 
 :- end_tests(sql_text_snapshots).
@@ -591,17 +622,50 @@ test(initial_only_ref_still_gets_a_table) :-
     lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
     memberchk('CREATE TABLE "known_repo" ("col1" INTEGER NOT NULL, PRIMARY KEY ("col1")) WITHOUT ROWID', Ddl).
 
-% RUNTIME-SEAM PLACEHOLDER (analyze.pl:check_no_edge_joins_arrival_fed_level/1).
-% The oracle runs this program; the emitted runtime's mid-tick level plane is
-% insert-only, so a level row an arrival retracted this tick is still in its
-% table when a non-trigger atom joins it. Remove with the runtime fix.
-test(rejects_edge_join_against_an_arrival_fed_level_rel,
-     [throws(unsupported_construct(edge_body_joins_arrival_fed_level(diagnostic/2)))]) :-
+% The class the TICK PHASE ALIGNMENT arc opened: an edge arm joining a level
+% rel an ARRIVAL can retract. It used to throw
+% edge_body_joins_arrival_fed_level (a runtime-seam placeholder); now both
+% pipelines freeze the mid-tick level plane where engine.pl freezes it, so it
+% compiles. FAIL-FIRST RECEIPT for the runtime half, captured before the
+% phase-order change with the refusal switched off, on the fixture this
+% program is a reduction of (check_eventing.pl:clock_rel_join_storms, BOTH
+% emitter modes, tick 3):
+%   actual  "diag_seen":{"add":[["a_rs",3,..],["a_rs",5,..],["a_rs",7,..]]}
+%   oracle  "diag_seen":{"add":[["a_rs",5,..]]}
+% The two retracted diagnostics were still in the table when the tick_rel arm
+% joined it. After the change both modes are byte-identical on tick log AND
+% final state.
+test(accepts_edge_join_against_an_arrival_fed_level_rel) :-
     Prog = prog([kind(tick_rel/1, log), keep(tick_rel/1, all),
                  kind(seen/2, log), keep(seen/2, all)],
                 [ (diagnostic(Path, Code) <- file_line(Path, Code)),
                   (seen(Path, At) <+ diagnostic(Path, _), tick_rel(At)) ]),
     check_supported_subset(Prog).
+
+% The emitted incremental tick must CARRY the freeze: applyLevelsBeforeEdges
+% only grows the plane, so the retracting pass has to sit between it and
+% applyEdges. Sabotage receipt: dropping
+% emit_ts.pl:pre_edge_level_reconcile_lines/2 from the pipeline flips this red
+% and takes clock_rel_join_storms back to the three-row tick above.
+test(emitted_incremental_tick_freezes_the_level_plane_before_edges) :-
+    Prog = prog([kind(tick_rel/1, log), keep(tick_rel/1, all),
+                 kind(seen/2, log), keep(seen/2, all)],
+                [ (diagnostic(Path, Code) <- file_line(Path, Code)),
+                  (seen(Path, At) <+ diagnostic(Path, _), tick_rel(At)) ]),
+    program_plan(fixture(freeze, Prog, [], [], [])-[], Plan),
+    lower_program(Plan, Lowered),
+    Plan = plan(_, _, RelPlans, _, _, _),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    boot_statements(RelPlans, [], LevelStatements, Boot),
+    emit_program(freeze, Plan, Lowered, Boot, Text),
+    once(sub_atom(Text, BeforeAt, _, _, 'IncrementalRuntime.applyLevelsBeforeEdges')),
+    once(sub_atom(Text, ReconcileAt, _, _, 'IncrementalRuntime.recomputeLevelsBeforeEdges')),
+    once(sub_atom(Text, EdgesAt, _, _, 'IncrementalRuntime.applyEdges')),
+    BeforeAt < ReconcileAt, ReconcileAt < EdgesAt,
+    % The naive referee's own freeze: recomputeLevels once before the edge
+    % batch and once after (engine.pl's two level closures).
+    findall(At, sub_atom(Text, At, _, _, 'concatMap((before) => recomputeLevels(seam)'), RecomputeAts),
+    length(RecomputeAts, 2), !.
 
 % The narrowing that keeps exhaust_policy compiled: a level rel whose own
 % derivation reads only EDGE-WRITTEN rels cannot be moved by an arrival before
@@ -924,7 +988,8 @@ test(enum_tag_view_can_trigger_keyed_edge_head) :-
     Lowered = lowered(_, _, _, EdgeStatements, _, _, _, _),
     memberchk(
         edgestmt(current/2, door_tag/2, [id, tag], [id], _, _,
-                 'SELECT d0."id" AS "id", d0."tag" AS "tag" FROM "__frontier_door_tag" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"'),
+                 'SELECT d0."id" AS "id", d0."tag" AS "tag" FROM "__frontier_door_tag" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"',
+                 arrival),
         EdgeStatements).
 
 :- end_tests(enum_decl_expansion).
@@ -1359,7 +1424,10 @@ walk_golden(finalize_only,
     goal_rel_refs-([]-[]),
     body_atoms-[],
     reserved_constructs-[],
-    forbidden_goals-[finalize(a(1))],
+    % finalize/1 left the refused set with the departure frontier (TICK
+    % PHASE ALIGNMENT target 2): it is a LIVE registry row now, so the
+    % forbidden-goal scan no longer names it.
+    forbidden_goals-[],
     host_body_goals-[finalize(a(1))]
   ]).
 
@@ -1471,7 +1539,7 @@ walk_golden(mixed,
     goal_rel_refs-([a/1,next/1,combine/2]-[b/1,c/1]),
     body_atoms-[a(1),next(d(4)),combine(e(5),f(6))],
     reserved_constructs-[],
-    forbidden_goals-[finalize(g(10)),pre(h(11))],
+    forbidden_goals-[pre(h(11))],
     host_body_goals-[a(1),not((b(2),latest(c(3)))),next(d(4)),combine(e(5),f(6)),zz:=7,8<9,finalize(g(10)),pre(h(11))]
   ]).
 
@@ -1532,6 +1600,38 @@ test(engine_and_compiler_pre_scans_agree) :-
            ( findall(R, body_pre_ref(Body, R), EngineRefs),
              findall(R, level_body_pre_ref(Body, R), CompilerRefs),
              EngineRefs == CompilerRefs )).
+
+% The same claim one level up, over whole rule LISTS rather than one body:
+% analyze:listened_departure_refs/2 is the compiler's copy of the predicate
+% engine.pl:tick/7 gates DepartureCarry on, and it decides which rels get a
+% departure frontier table. If the two ever disagreed, the emitted program
+% would either stage departures nothing reads or miss the ones an arm needs.
+% The oracle's own copy is private, so this rebuilds it from the exported
+% body_finalize_ref/2 -- the same shape engine.pl's clause has.
+test(listened_departure_refs_agree_across_doors) :-
+    forall(departure_ref_case(Rules),
+           ( findall(Ref,
+                     ( member((_ <+ Body), Rules), body_finalize_ref(Body, Ref) ),
+                     OracleRefs0),
+             sort(OracleRefs0, OracleRefs),
+             listened_departure_refs(Rules, CompilerRefs),
+             OracleRefs == CompilerRefs )).
+
+departure_ref_case([ (out(Item) <+ finalize(gone(Item))) ]).
+departure_ref_case([ (out(Item) <+ src(Item)) ]).
+% The update arm: one finalize plus a plain join. Only the finalize'd rel is
+% listened to.
+departure_ref_case([ (changed(Key, Old, New) <+ finalize(row(Key, Old)),
+                                               row(Key, New)) ]).
+% A LEVEL rule's finalize is not a departure listen (the oracle's clause reads
+% <+ rules only, and both doors refuse the program anyway).
+departure_ref_case([ (out(Item) <- finalize(gone(Item))) ]).
+% Two rules listening to two rels, plus one that listens to neither.
+departure_ref_case([ (a(Item) <+ finalize(one(Item))),
+                     (b(Item) <+ finalize(two(Item))),
+                     (c(Item) <+ plain(Item)) ]).
+% A negated finalize is opaque to the walk on both sides.
+departure_ref_case([ (out(Item) <+ src(Item), not(finalize(gone(Item)))) ]).
 
 :- end_tests(body_walk_characterization).
 
@@ -1627,25 +1727,26 @@ test(pre_in_level_rule_both_doors) :-
     OracleVerdict == pre_in_level_rule(cfg/1),
     CompilerVerdict == unsupported_construct(pre_in_level_rule(cfg/1)).
 
-% ── the finalize diagnostic drift, stated rather than repaired ───────────────
-% Both doors refuse a finalize/1 in a level rule, and they name it differently:
-% the oracle has a dedicated check, the compiler reaches it through the generic
-% refused-goal path and reports the enclosing head. The review flagged this as
-% diagnostic drift; it is fixture-visible on both sides, so R2 preserves it and
-% records it here instead.
-test(finalize_in_level_rule_diagnostics_drift) :-
+% ── the finalize diagnostic drift, now CLOSED ───────────────────────────────
+% R2 recorded this as drift and preserved it: both doors refused a finalize/1
+% in a level rule, and they named it differently, because the oracle had a
+% dedicated check while the compiler reached it through the generic
+% refused-goal path and reported the enclosing head (level_body_goal).
+%
+% TICK PHASE ALIGNMENT target 2 forced the repair rather than choosing it.
+% finalize/1 became a LIVE registry row (it is the departure trigger in an edge
+% body), which deleted the generic path this refusal was riding on -- measured,
+% not assumed: with the row flipped and nothing else changed, this exact
+% program compiled ACCEPTED. analyze.pl's shared_refusal list gained
+% finalize_in_level_rule in the position engine.pl's own engine_check_order/1
+% gives it, so the two doors now name the same class AND agree on which class a
+% program violating several of them reports.
+test(finalize_in_level_rule_agrees_across_doors) :-
     Prog = prog([], [ (out(Item) <- (src(Item), finalize(gone(Item)))) ]),
     door_verdict(oracle, Prog, OracleVerdict),
     door_verdict(compiler, Prog, CompilerVerdict),
     OracleVerdict == finalize_in_level_rule(gone/1),
-    % =@= over a term whose variable is SHARED between the head and the
-    % finalize atom, because that is how the compiler reports it: the payload
-    % keeps the rule's own variable rather than copying. Two anonymous holes
-    % are not a variant of one repeated hole, so writing `out(_)` and
-    % `gone(_)` here would fail for the wrong reason.
-    Expected = unsupported_construct(
-                 level_body_goal(out(Item), finalize(gone(Item)))),
-    CompilerVerdict =@= Expected.
+    CompilerVerdict == unsupported_construct(finalize_in_level_rule(gone/1)).
 
 % ── nested not/1 parity ─────────────────────────────────────────────────────
 % Both level-rule scans descend not/1, so a latest or pre buried under any

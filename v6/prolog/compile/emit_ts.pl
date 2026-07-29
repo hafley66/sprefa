@@ -45,10 +45,11 @@
 % the emitted triggerOccurrences call), and RelPlans is available straight
 % off the Lowered term this module already renders -- reused, not
 % reimplemented.
-:- use_module(lower, [ relplan_kind/3 ]).
+:- use_module(lower, [ relplan_kind/3, departure_frontier_table_name/2,
+                       departure_read_sql/3 ]).
 :- use_module(analyze,
               [ body_ref_uses/2, derived_refs/2, rule_head_ref/2,
-                program_uses_tick/2 ]).
+                program_uses_tick/2, listened_departure_refs/2 ]).
 :- use_module('../1_host_expand', [compile_host_decl/2]).
 :- use_module(registry, [bind_executor/2]).
 
@@ -552,8 +553,9 @@ arrival_statement_fn_lines(Name, Lines) :-
 
 % ═══ incremental relation plans ══════════════════════════════════════════════
 
-incremental_relation_lines(RelPlans, ArrivalStatements, DeltaStatements, Lines) :-
-    maplist(incremental_relation_entry_line(RelPlans, ArrivalStatements),
+incremental_relation_lines(RelPlans, ArrivalStatements, DeltaStatements,
+                           DepartureRefs, Lines) :-
+    maplist(incremental_relation_entry_line(RelPlans, ArrivalStatements, DepartureRefs),
             DeltaStatements, EntryLines),
     append(
         [ ['const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = ['],
@@ -561,7 +563,7 @@ incremental_relation_lines(RelPlans, ArrivalStatements, DeltaStatements, Lines) 
           ['];']
         ], Lines).
 
-incremental_relation_entry_line(RelPlans, ArrivalStatements,
+incremental_relation_entry_line(RelPlans, ArrivalStatements, DepartureRefs,
         deltastmt(Ref, _SelectSql, DeltaTable, BoundarySql), Line) :-
     ref_name(Ref, Name),
     relplan_kind(RelPlans, Ref, Kind),
@@ -584,11 +586,21 @@ incremental_relation_entry_line(RelPlans, ArrivalStatements,
     js_template(BoundarySql, BoundaryTemplate),
     format(atom(FrontierTable), '__frontier_~w', [Name]),
     format(atom(NextFrontierTable), '__next_frontier_~w', [Name]),
+    % departureFrontierTableName is OPTIONAL on IIncrementalRelationPlan and
+    % emitted only for a rel some rule binds with finalize/1, so a program
+    % with no departure arm renders the entry it always rendered, character
+    % for character.
+    (   memberchk(Ref, DepartureRefs)
+    ->  departure_frontier_table_name(Ref, DepartureTable),
+        format(atom(DepartureField), ', departureFrontierTableName: "~w"',
+               [DepartureTable])
+    ;   DepartureField = ''
+    ),
     format(atom(Line),
-           '  { rel: "~w", kind: "~w", tableName: "~w", deltaTableName: "~w", frontierTableName: "~w", nextFrontierTableName: "~w", columns: ~w, keyIndices: [~w], arrivalAddSql: ~w, arrivalDelSql: ~w, boundarySql: ~w },',
+           '  { rel: "~w", kind: "~w", tableName: "~w", deltaTableName: "~w", frontierTableName: "~w", nextFrontierTableName: "~w", columns: ~w, keyIndices: [~w], arrivalAddSql: ~w, arrivalDelSql: ~w, boundarySql: ~w~w },',
            [Name, Kind, Name, DeltaTable, FrontierTable, NextFrontierTable,
             ColumnsText, KeyIndicesText, ArrivalAddTemplate, ArrivalDelTemplate,
-            BoundaryTemplate]).
+            BoundaryTemplate, DepartureField]).
 
 position_index(Position, Index) :- Index is Position - 1.
 
@@ -602,7 +614,7 @@ incremental_edge_statement_lines(EdgeStatements, RelPlans, Lines) :-
 
 incremental_edge_statement_entry_line(RelPlans,
         edgestmt(HeadRef, _TriggerRef, HeadColumns, KeyColumns, _ProjectSql,
-                 _WriteSql, DeltaProjectSql), Line) :-
+                 _WriteSql, DeltaProjectSql, _EdgeTriggerKind), Line) :-
     ref_name(HeadRef, HeadName),
     relplan_kind(RelPlans, HeadRef, HeadKind),
     format(atom(DeltaTable), '__delta_~w', [HeadName]),
@@ -725,10 +737,11 @@ edge_resolver_blocks(EdgeStatements, RelPlans, ConstLines, FnLines) :-
     flatten_with_blank_separators(ConstLineGroups, ConstLines),
     flatten_with_blank_separators(FnLineGroups, FnLines).
 
-edge_resolver_block_indexed(RelPlans, Index-edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql, _DeltaProjectSql), ConstLines, FnLines) :-
+edge_resolver_block_indexed(RelPlans, Index-edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql, _DeltaProjectSql, EdgeTriggerKind), ConstLines, FnLines) :-
     relplan_kind(RelPlans, TriggerRef, TriggerKind),
     relplan_kind(RelPlans, HeadRef, HeadKind),
-    edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql, _), TriggerKind, HeadKind, Index, ConstLines, FnLines).
+    memberchk(relplan(TriggerRef, _, TriggerColumns, _, _), RelPlans),
+    edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql, _, EdgeTriggerKind), TriggerKind, TriggerColumns, HeadKind, Index, ConstLines, FnLines).
 
 % HeadKind decides how projected rows become SqlStatements (engine.pl
 % apply_edge_writes/6, :236-254, unchanged distinction from before this
@@ -739,7 +752,7 @@ edge_resolver_block_indexed(RelPlans, Index-edgestmt(HeadRef, TriggerRef, HeadCo
 % collapsing through a key Map would be wrong (KeyColumns is `[]` for a Log
 % head, so every row would collapse to the SAME key and only the last
 % survive, contradicting q1's "duplicate rows are distinct occurrences").
-edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql, _DeltaProjectSql), TriggerKind, HeadKind, Index, ConstLines, FnLines) :-
+edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql, _DeltaProjectSql, EdgeTriggerKind), TriggerKind, TriggerColumns, HeadKind, Index, ConstLines, FnLines) :-
     ref_name(TriggerRef, TriggerName),
     upper_snake(HeadRef, Upper),
     format(atom(ProjectConst), 'EDGE_~w_~w_PROJECT_SQL', [Upper, Index]),
@@ -751,15 +764,18 @@ edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, Proje
     format(atom(ProjectLine), 'const ~w = ~w;', [ProjectConst, ProjectTemplate]),
     format(atom(WriteLine), 'const ~w = ~w;', [WriteConst, WriteTemplate]),
     format(atom(ColumnsLine), 'const ~w: readonly string[] = ~w;', [ColumnsConst, ColumnsArrayText]),
+    departure_resolver_const_lines(EdgeTriggerKind, TriggerRef, TriggerColumns,
+                                   Upper, Index, DepartureConstLines),
     ( HeadKind == log
-    -> ConstLines = [ProjectLine, WriteLine, ColumnsLine]
+    -> ConstLines0 = [ProjectLine, WriteLine, ColumnsLine]
     ;  format(atom(IndicesConst), 'EDGE_~w_~w_KEY_INDICES', [Upper, Index]),
        key_indices(HeadColumns, KeyColumns, Indices),
        atomic_list_concat(Indices, ', ', IndicesJoined),
        format(atom(IndicesArrayText), '[~w]', [IndicesJoined]),
        format(atom(IndicesLine), 'const ~w: readonly number[] = ~w;', [IndicesConst, IndicesArrayText]),
-       ConstLines = [ProjectLine, WriteLine, ColumnsLine, IndicesLine]
+       ConstLines0 = [ProjectLine, WriteLine, ColumnsLine, IndicesLine]
     ),
+    append(ConstLines0, DepartureConstLines, ConstLines),
     pascal_case(HeadRef, Pascal),
     format(atom(FnName), 'resolve~w_~wWrites', [Pascal, Index]),
     format(atom(SigLine), 'function ~w(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {', [FnName]),
@@ -804,27 +820,89 @@ edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, Proje
          WriteMapLine
        ]
     ),
-    append(
-        [ [ SigLine,
-            TriggerLine,
-            % forkJoin([]) COMPLETES WITHOUT EMITTING (verified against rxjs
-            % 7.8.2, not assumed) -- a drain tick, or any tick where no
-            % arrival matches this trigger, has an empty triggerRows, and
-            % without this guard the WHOLE tick() chain silently completes
-            % with no ITickDeltas at all for that tick (a real bug caught
-            % running the emitted program against the real seam, not by
-            % typecheck -- tsgo has no way to know forkJoin([]) is
-            % empty-completing rather than []-emitting).
-            '  if (triggerRows.length === 0) return of([]);',
-            ForkLine,
-            '    map((results) => {'
-          ],
-          MapBodyLines,
-          [ '    }),',
-            '  );',
-            '}'
-          ]
-        ], FnLines).
+    % forkJoin([]) COMPLETES WITHOUT EMITTING (verified against rxjs 7.8.2,
+    % not assumed) -- a drain tick, or any tick where no arrival matches this
+    % trigger, has an empty triggerRows, and without this guard the WHOLE
+    % tick() chain silently completes with no ITickDeltas at all for that tick
+    % (a real bug caught running the emitted program against the real seam,
+    % not by typecheck -- tsgo has no way to know forkJoin([]) is
+    % empty-completing rather than []-emitting).
+    EmptyGuardLine = '  if (triggerRows.length === 0) return of([]);',
+    (   EdgeTriggerKind == departure
+    ->  % The referee's cross-tick carry: the departure table is written at the
+        % END of a naive tick from that tick's own multisetDiff `del` rows, and
+        % READ here on the next one. It is the one piece of state the snapshot
+        % path keeps between ticks, and it keeps it in SQLite beside the
+        % frontier tables rather than in a module variable, so both pipelines
+        % lose or keep a pending departure together (they are TEMP tables:
+        % neither survives a process restart -- the Ti-carry durability class,
+        % match-frontier lab C7, inherited here, not closed).
+        format(atom(DepartureSqlConst), 'EDGE_~w_~w_DEPARTURE_SQL', [Upper, Index]),
+        format(atom(DepartureColumnsConst), 'EDGE_~w_~w_TRIGGER_COLUMNS', [Upper, Index]),
+        format(atom(DepartureReadLine),
+               '  return departureOccurrences(seam, ~w, ~w).pipe(',
+               [DepartureSqlConst, DepartureColumnsConst]),
+        format(atom(DepartureForkLine),
+               '      return forkJoin(triggerRows.map((departedRow) => seam.runner.execute(seam.db, { sql: ~w, args: bindArgs(departedRow) }))).pipe(',
+               [ProjectConst]),
+        append(
+            [ [ SigLine,
+                '  void before;',
+                '  void arrivals;',
+                DepartureReadLine,
+                '    concatMap((triggerRows) => {',
+                '      if (triggerRows.length === 0) return of<readonly SqlStatement[]>([]);',
+                DepartureForkLine,
+                '        map((results) => {'
+              ],
+              MapBodyLines,
+              [ '        }),',
+                '      );',
+                '    }),',
+                '  );',
+                '}'
+              ]
+            ], FnLines)
+    ;   append(
+            [ [ SigLine,
+                TriggerLine,
+                EmptyGuardLine,
+                ForkLine,
+                '    map((results) => {'
+              ],
+              MapBodyLines,
+              [ '    }),',
+                '  );',
+                '}'
+              ]
+            ], FnLines)
+    ).
+
+departure_resolver_const_lines(arrival, _, _, _, _, []) :- !.
+departure_resolver_const_lines(departure, TriggerRef, TriggerColumns, Upper, Index,
+                               [SqlLine, ColumnsLine]) :-
+    departure_read_sql(TriggerRef, TriggerColumns, Sql),
+    js_template(Sql, SqlTemplate),
+    format(atom(SqlConst), 'EDGE_~w_~w_DEPARTURE_SQL', [Upper, Index]),
+    format(atom(ColumnsConst), 'EDGE_~w_~w_TRIGGER_COLUMNS', [Upper, Index]),
+    format(atom(SqlLine), 'const ~w = ~w;', [SqlConst, SqlTemplate]),
+    quoted_string_array_text(TriggerColumns, ColumnsArrayText),
+    format(atom(ColumnsLine), 'const ~w: readonly string[] = ~w;',
+           [ColumnsConst, ColumnsArrayText]).
+
+% Emitted once per program that has any departure arm; nothing else changes
+% for a program without one.
+departure_occurrences_helper_lines(EdgeStatements, Lines) :-
+    (   member(edgestmt(_, _, _, _, _, _, _, departure), EdgeStatements)
+    ->  Lines =
+        [ 'function departureOccurrences(seam: ISqlSeam, sql: string, columns: readonly string[]): Observable<readonly IRow[]> {',
+          '  return seam.runner.execute(seam.db, sql).pipe(',
+          '    map((result) => result.rows.map((row) => columns.map((column) => row[column] as IRowValue) as IRow)),',
+          '  );',
+          '}'
+        ]
+    ;   Lines = []
+    ).
 
 key_indices(HeadColumns, KeyColumns, Indices) :-
     findall(Index0,
@@ -874,12 +952,13 @@ recompute_levels_fn_lines(LevelStatements, Lines) :-
 
 % ═══ buildDeltas ═════════════════════════════════════════════════════════════
 
-build_deltas_fn_lines(RelPlans, EdgeStatements, RetentionStatements, Lines) :-
+build_deltas_fn_lines(RelPlans, EdgeStatements, RetentionStatements,
+                      DepartureRefs, Lines) :-
     findall(Ref, member(retentionstmt(Ref, _, _), RetentionStatements),
             RetentionRefs),
     maplist(diff_local_line(RetentionRefs), RelPlans, DiffLines),
     maplist(rel_entry_line, RelPlans, RelEntryLines),
-    carry_pending_expr(EdgeStatements, CarryExpr),
+    carry_pending_expr(EdgeStatements, DepartureRefs, CarryExpr),
     format(atom(CarryLine), '    carryPending: ~w,', [CarryExpr]),
     append(
         [ ['function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {'],
@@ -919,16 +998,31 @@ rel_entry_line(relplan(Ref, _Kind, _Columns, _Key, _ColumnTypes), Line) :-
 % body), and an un-deduped fold would repeat the identical `X.add.length >
 % 0 || X.del.length > 0` disjunct once per arm -- harmless logically
 % (idempotent OR), just noise in the emitted text.
-carry_pending_expr([], 'false') :- !.
-carry_pending_expr(EdgeStatements, Expr) :-
-    findall(HeadRef, member(edgestmt(HeadRef, _, _, _, _, _, _), EdgeStatements), HeadRefs0),
+% A -delta of a LISTENED rel is carry too: engine.pl appends DepartureCarry to
+% ArrivalCarry in one CarryOut list, and a non-empty CarryOut is what mints the
+% drain tick the departure arm fires on. Without this term the referee's drain
+% boundary lies about exactly the ticks this feature exists for.
+carry_pending_expr([], [], 'false') :- !.
+carry_pending_expr(EdgeStatements, DepartureRefs, Expr) :-
+    findall(HeadRef, member(edgestmt(HeadRef, _, _, _, _, _, _, _), EdgeStatements), HeadRefs0),
     sort(HeadRefs0, HeadRefs),
     findall(Cond,
             ( member(HeadRef, HeadRefs),
               ref_name(HeadRef, Name),
               format(atom(Cond), '~w.add.length > 0 || ~w.del.length > 0', [Name, Name]) ),
-            Conds),
-    atomic_list_concat(Conds, ' || ', Expr).
+            HeadConds),
+    % A listened rel that is ALSO an edge head already contributes its `del`
+    % half through the condition above; repeating it would be a harmless but
+    % noisy duplicate disjunct.
+    findall(Cond,
+            ( member(DepartureRef, DepartureRefs),
+              \+ memberchk(DepartureRef, HeadRefs),
+              ref_name(DepartureRef, Name),
+              format(atom(Cond), '~w.del.length > 0', [Name]) ),
+            DepartureConds),
+    append(HeadConds, DepartureConds, Conds),
+    ( Conds == [] -> Expr = 'false'
+    ; atomic_list_concat(Conds, ' || ', Expr) ).
 
 % ═══ tick() + program export ════════════════════════════════════════════════
 
@@ -940,7 +1034,8 @@ naive_retention_fn_lines(_RetentionStatements,
       '}'
     ]).
 
-run_naive_tick_fn_lines(Name, [], HasRetention, UsesTick, Lines) :- !,
+run_naive_tick_fn_lines(Name, [], HasRetention, UsesTick, DepartureRefs, Lines) :- !,
+    departure_stage_naive_lines(DepartureRefs, DepartureStageLines),
     format(atom(NameCommentLine), '  // ~w: no edge rules -- absorb arrivals, recompute levels, diff.', [Name]),
     retention_tick_lines(HasRetention, RetentionLines),
     advance_tick_naive_line(UsesTick, AdvanceTickLines),
@@ -953,14 +1048,18 @@ run_naive_tick_fn_lines(Name, [], HasRetention, UsesTick, Lines) :- !,
         '    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),'
       ],
       RetentionLines,
-      [ '    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),',
-        '  );',
+      [ '    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),'
+      ],
+      DepartureStageLines,
+      [ '  );',
         NameCommentLine,
         '}'
       ]
     ], Lines).
-run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick, Lines) :-
+run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick,
+                        DepartureRefs, Lines) :-
     EdgeStatements \== [],
+    departure_stage_naive_lines(DepartureRefs, DepartureStageLines),
     advance_tick_naive_line(UsesTick, AdvanceTickLines),
     edge_resolve_call_exprs(EdgeStatements, ResolveCallExprs),
     ( ResolveCallExprs = [SingleCall]
@@ -977,6 +1076,12 @@ run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick, Lines) :-
       ],
       AdvanceTickLines,
       [ '    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),',
+      % TICK PHASE ALIGNMENT: the referee freezes the level plane where
+      % engine.pl does -- after arrivals, before the edge batch. The naive
+      % recompute is a DELETE + rebuild of every level table, so this one call
+      % supplies both halves of MidLevel; the second call below is the oracle's
+      % second closure, over the post-write store.
+      '    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),',
       '    concatMap((before) =>',
       EdgeWritesLine,
       '        concatMap((statements) => seam.runner.batch(seam.db, statements)),',
@@ -987,8 +1092,10 @@ run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick, Lines) :-
       ],
       RetentionLines,
       [
-      '    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),',
-      '  );',
+      '    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),'
+      ],
+      DepartureStageLines,
+      [ '  );',
       NameCommentLine,
       '}'
       ]
@@ -997,6 +1104,23 @@ run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick, Lines) :-
 retention_tick_lines(true,
     ['    concatMap((before) => applyNaiveRetention(seam).pipe(map(() => before))),']).
 retention_tick_lines(false, []).
+
+% The referee's own end-of-tick departure staging. It reuses the RUNTIME's
+% IncrementalRuntime.stageDepartures over the deltas THIS path computed from
+% its two snapshots -- the same table, filled from an independent source, so
+% the two pipelines stay comparable while neither borrows the other's answer.
+% Between readBoundary and promoteFrontiers, on purpose: the source is the
+% tick's NET boundary delta (engine.pl reads DepartureCarry off `Deltas`), and
+% promoteFrontiers is what then reports the staged rows as carryPending.
+departure_stage_incremental_lines([], []) :- !.
+departure_stage_incremental_lines(DepartureRefs,
+    ['    concatMap((rels) => IncrementalRuntime.stageDepartures(seam, INCREMENTAL_RELATIONS, rels).pipe(map(() => rels))),']) :-
+    DepartureRefs \== [].
+
+departure_stage_naive_lines([], []) :- !.
+departure_stage_naive_lines(DepartureRefs,
+    ['    concatMap((deltas) => IncrementalRuntime.stageDepartures(seam, INCREMENTAL_RELATIONS, deltas.rels).pipe(map(() => deltas))),']) :-
+    DepartureRefs \== [].
 
 incremental_mode_lines(IncrementalSafe, ReconcileEveryTick,
     [ SafeLine, ReconcileLine,
@@ -1030,7 +1154,7 @@ incremental_plan_export_lines(RetractionGuard, HasRetention, Lines) :-
 incremental_carry_expr([], 'false') :- !.
 incremental_carry_expr(EdgeStatements, Expr) :-
     findall(HeadName,
-            ( member(edgestmt(HeadRef, _, _, _, _, _, _), EdgeStatements),
+            ( member(edgestmt(HeadRef, _, _, _, _, _, _, _), EdgeStatements),
               ref_name(HeadRef, HeadName) ),
             HeadNames0),
     sort(HeadNames0, HeadNames),
@@ -1060,9 +1184,35 @@ advance_tick_naive_line(false, []) :- !.
 advance_tick_naive_line(true,
     ['    concatMap((before) => advanceTick(seam).pipe(map(() => before))),']).
 
+% TICK PHASE ALIGNMENT: the mid-tick level plane an edge body reads must be
+% engine.pl's FROZEN MidLevel (`level_closure` over the store AFTER arrivals,
+% BEFORE any edge write). applyLevelsBeforeEdges only grows that plane;
+% recomputeLevelsBeforeEdges runs the retracting half at the same point.
+% Emitted ONLY for programs that have edge rules: with no edge rule nothing
+% reads the plane mid-tick, the correction is unobservable, and those modules'
+% text stays byte-identical to what the previous emitter wrote.
+pre_edge_level_reconcile_lines([], [], []) :- !.
+pre_edge_level_reconcile_lines(EdgeStatements,
+    ['    concatMap(() => IncrementalRuntime.recomputeLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),'],
+    % The tick pipeline is emitted as TWO chained pipes when the reconcile line
+    % is present, split at the edge boundary: the mid-tick phases (arrivals ->
+    % frozen level plane -> edges -> post-write level growth), then the closing
+    % phases (retention -> reconcile -> boundary -> carry). rxjs types `pipe`
+    % through a fixed overload list that stops at NINE operators; the reconcile
+    % line is the tenth, and a tenth silently degrades the whole chain to
+    % Observable<unknown>, which tsgo then rejects against the ITickDeltas
+    % return type. TYPE boundary only: the operator sequence, and therefore the
+    % executed statement sequence, is unchanged. A program with no edge rules
+    % takes neither line and its emitted text is byte-identical to what the
+    % previous emitter wrote.
+    ['  ).pipe(']) :-
+    EdgeStatements \== [].
+
 run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
-                              HasRetention, UsesTick, Lines) :-
+                              HasRetention, UsesTick, DepartureRefs, Lines) :-
     advance_tick_pipeline_line(UsesTick, AdvanceTickLines),
+    departure_stage_incremental_lines(DepartureRefs, DepartureStageLines),
+    pre_edge_level_reconcile_lines(EdgeStatements, PreEdgeReconcileLines, PipeSplitLines),
     ( EdgeStatements == []
     -> MergeLine = '    concatMap(() => of(undefined)),',
        PostEdgeLevelLine = '    concatMap(() => of(undefined)),'
@@ -1082,15 +1232,21 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
       ],
       AdvanceTickLines,
       [ '    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, INCREMENTAL_RELATIONS)),',
-      '    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),',
-      '    concatMap(() => IncrementalRuntime.applyEdges(seam, INCREMENTAL_EDGE_STATEMENTS, INCREMENTAL_RELATIONS)),',
+      '    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),'
+      ],
+      PreEdgeReconcileLines,
+      [ '    concatMap(() => IncrementalRuntime.applyEdges(seam, INCREMENTAL_EDGE_STATEMENTS, INCREMENTAL_RELATIONS)),',
       MergeLine,
       PostEdgeLevelLine
       ],
+      PipeSplitLines,
       RetentionLines,
       [
       RecomputeLine,
-      '    concatMap(() => IncrementalRuntime.readBoundary(seam, INCREMENTAL_RELATIONS)),',
+      '    concatMap(() => IncrementalRuntime.readBoundary(seam, INCREMENTAL_RELATIONS)),'
+      ],
+      DepartureStageLines,
+      [
       '    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, INCREMENTAL_RELATIONS).pipe(',
       '      map((carryPending): ITickDeltas => ({ rels, carryPending })),',
       '    )),',
@@ -1119,7 +1275,7 @@ run_tick_dispatch_lines(false,
 derived_edge_carry_required(
         plan(_, prog(_, Rules), _, _, _, _), EdgeStatements, Required) :-
     derived_refs(Rules, DerivedRefs),
-    ( member(edgestmt(_, TriggerRef, _, _, _, _, _), EdgeStatements),
+    ( member(edgestmt(_, TriggerRef, _, _, _, _, _, _), EdgeStatements),
       memberchk(TriggerRef, DerivedRefs)
     -> Required = true
     ;  Required = false
@@ -1160,7 +1316,7 @@ retraction_guard(plan(_, prog(_, Rules), _, _, _, _), Guard) :-
 % EdgeStatements list, matching edge_resolver_blocks/4's own naming.
 edge_resolve_call_exprs(EdgeStatements, Exprs) :-
     findall(Expr,
-            ( nth0(Index, EdgeStatements, edgestmt(HeadRef, _, _, _, _, _, _)),
+            ( nth0(Index, EdgeStatements, edgestmt(HeadRef, _, _, _, _, _, _, _)),
               edge_resolve_call_expr(HeadRef, Index, Expr) ),
             Exprs).
 
@@ -1199,6 +1355,9 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     world_plan_lines(Plan, WorldPlanLines),
     bind_args_helper_lines(BindArgsHelperLines),
     ( EdgeStatements == [] -> TriggerOccurrencesHelperLines = [] ; trigger_occurrences_helper_lines(TriggerOccurrencesHelperLines) ),
+    Plan = plan(_, prog(_, PlanRules), _, _, _, _),
+    listened_departure_refs(PlanRules, DepartureRefs),
+    departure_occurrences_helper_lines(EdgeStatements, DepartureOccurrencesHelperLines),
     ddl_lines(Ddl, DdlLines),
     rel_columns_lines(RelPlans, RelColumnsLines),
     arrival_targets_lines(ArrivalTargets, ArrivalTargetsLines),
@@ -1208,7 +1367,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     final_select_lines(DeltaStatements, FinalSelectLines),
     arrival_statements_lines(ArrivalStatements, ArrivalStatementsLines),
     arrival_statement_fn_lines(Name, ArrivalStatementFnLines),
-    incremental_relation_lines(RelPlans, ArrivalStatements, DeltaStatements, IncrementalRelationLines),
+    incremental_relation_lines(RelPlans, ArrivalStatements, DeltaStatements, DepartureRefs, IncrementalRelationLines),
     incremental_edge_statement_lines(EdgeStatements, RelPlans, IncrementalEdgeStatementLines),
     incremental_level_statement_lines(RuleLevelStatements, RelPlans, IncrementalLevelStatementLines),
     incremental_retention_statement_lines(RetentionStatements,
@@ -1220,12 +1379,12 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     recompute_levels_fn_lines(RuleLevelStatements, RecomputeLevelsFnLines),
     naive_retention_fn_lines(RetentionStatements, NaiveRetentionFnLines),
     build_deltas_fn_lines(RelPlans, EdgeStatements, RetentionStatements,
-                          BuildDeltasFnLines),
+                          DepartureRefs, BuildDeltasFnLines),
     Plan = plan(_, TickProg, _, _, _, _),
     program_uses_tick(TickProg, UsesTick),
     advance_tick_fn_lines(UsesTick, AdvanceTickFnLines),
     run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick,
-                            RunNaiveTickFnLines),
+                            DepartureRefs, RunNaiveTickFnLines),
     incremental_program_safe(Plan, EdgeStatements, RuleLevelStatements, IncrementalSafe),
     reconcile_every_tick(Plan, ReconcileEveryTick),
     derived_edge_carry_required(Plan, EdgeStatements, DerivedEdgeCarryRequired),
@@ -1233,7 +1392,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     incremental_mode_lines(IncrementalSafe, ReconcileEveryTick,
                            IncrementalModeLines),
     run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
-                                  HasRetention, UsesTick,
+                                  HasRetention, UsesTick, DepartureRefs,
                                   RunIncrementalTickFnLines),
     incremental_plan_export_lines(RetractionGuard, HasRetention,
                                   IncrementalPlanExportLines),
@@ -1241,6 +1400,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     Sections0 =
     [ HeaderLines, ImportLines, LocalTypeLines, WorldPlanLines,
       BindArgsHelperLines, TriggerOccurrencesHelperLines,
+      DepartureOccurrencesHelperLines,
       DdlLines, RelColumnsLines, ArrivalTargetsLines,
       BootLines, SnapshotTypeLines, ReadSnapshotFnLines, FinalSelectLines,
       ArrivalStatementsLines, ArrivalStatementFnLines,
