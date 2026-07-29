@@ -366,3 +366,12 @@ ruling(retention_count_lowering, retracting_rule_over_log, user,
 % (rendered_text_stable_under_both_policies is the receipt shape).
 ruling(compound_storage, struct_as_rows, user,
        'user 2026-07-29: "lol d" -- struct-as-rel over json-blob patch; tick-log + dictionary edges worked in plans/2026-07-29-struct-as-rows-header.md').
+
+% 2026-07-29 morning. Watcher dependency (morning-list #3): STAY on
+% node fs.watch behind the IWatchSource seam. The watcher lives and
+% dies by lang/runtime -- the TS host binding is temporary (rust one
+% day), so no further investment in the binding choice unless it
+% borks a bench. @parcel/watcher remains the researched one-adapter
+% swap, taken only on a measured bench regression, never proactively.
+ruling(watcher_dep, fs_watch_until_bench_regression, user,
+       'user 2026-07-29: "will live and die by lang/runtime ... dont put too much thought into it unless it borks any form of bench"').

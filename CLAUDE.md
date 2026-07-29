@@ -1482,6 +1482,11 @@ tick alignment + flagship, phase 4 bop + LSP), conformance
 136 -> 139, sweep identical 70 -> 85, plunit 75 -> 137, tsv2 tests
 21 -> 56, every fork/decision in ARCH fork/5, every open defect a
 priced ARCH row. AWAITING USER: push main + v6.2.0 tag (bop gate
-satisfied); decode/encoding ruling (15 fixtures); flow-interproc
-extractor-scope call; @parcel/watcher dep word; phase 5 go-ahead;
-the standing v5 pile.
+satisfied); phase 5 go-ahead; the standing v5 pile. RESOLVED morning
+2026-07-29: decode/encoding superseded by compound_storage =
+struct_as_rows; flow-interproc extractor scope waived -> terra
+--resolve lane LANDED (merge 17778bbb + 0_prolog ledger refresh
+c26b4e0e, worktree+branch removed, flow_interproc_port unblocked);
+watcher dep RULED fs_watch_until_bench_regression (rulings.pl: TS
+host binding is temporary, rust one day; @parcel/watcher = the
+one-adapter swap taken only on a measured bench regression).
