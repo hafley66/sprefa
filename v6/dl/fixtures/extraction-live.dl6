@@ -1,0 +1,70 @@
+# extraction-live.dl6 -- the golden plan's PHASE 2 EXIT RECEIPT program:
+# an sg-rail-class diag rail that runs end to end on v6, with a REAL file edit
+# driving the retick. Nothing here is a construct this arc invented; every line
+# is a shipped spelling.
+#
+# THE LOOP, in one read:
+#
+#   watch(glob, path, digest)          the world pushes a changed file
+#     -> file(path, digest)            the program's own file set
+#     -> ? extract(...) @ salt(digest) demand, content-addressed on the digest
+#     -> call_site(...)                the extractor's rows, as ordinary EDB
+#     -> banned_call(...)              the rail's finding
+#
+# Its rx lowering, per the "every snippet carries its lowering" law:
+#
+#   watchSource(root).pipe(
+#     bufferTime(coalesceMs),
+#     map(diffAgainstLastDigest),               // -> IArrivalRow[] with signs
+#     concatMap(batch => engine.submit(batch)))
+#   .pipe(...)                                   // = the watch bind, RX-B1 shape
+#
+#   demand$.pipe(                                // = RX-EH1 / RX-H2
+#     groupBy(row => row.witnessDigest),
+#     mergeMap(g => g.pipe(take(1), mergeMap(runExtract))),
+#     mergeMap(commitEdbArrival))
+#
+# The engine half (file -> call_site -> banned_call) is the ordinary delta join
+# the incremental emitter already writes; nothing about extraction is special
+# once the rows are EDB arrivals. That is the whole content of the fork verdict.
+
+# ── the world push: one watcher over one glob ────────────────────────────────
+# `watch`'s row is (glob, path, digest). The DIGEST is what makes this a
+# freshness source and not a notification: a save that does not change bytes
+# re-emits an identical row, which is zero delta, so nothing below re-derives.
+# A deleted file arrives as a `-` of the row that was there -- presence rides
+# the arrival sign, so there is no "kind" column and no null (ruling: no null
+# exists; Option is variants or row absence).
+bind watch(glob: text, path: text, digest: text).
+
+# ── the world pull: one extractor invocation per (path, content) ─────────────
+# `$DL_EXTRACT_BIN` is an ENVIRONMENT reference, expanded by the child's own
+# shell, so this program text names no absolute path and no build profile. The
+# receipt script resolves the in-tree RELEASE build and exports it
+# (v6/tsv2/scripts/extraction-live.sh); v6/dl's 4_ingest.ts hardcoded DEBUG
+# default is exactly what that avoids.
+#
+# The declared outputs are a NAMED PROJECTION over the extractor's JSONL: it
+# interleaves `record=node` lines (kind/name, no callee) with `record=site`
+# lines (callee), and a line that does not carry every declared column
+# contributes no row. One host declaration is one record shape.
+sh extract(path: text) -> (callee: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+
+# ── the program's own file set ──────────────────────────────────────────────
+rel file(path: text, digest: text).
+file(path, digest) <- watch("**/*.ts", path, digest).
+
+# ── extraction demand, content-addressed ────────────────────────────────────
+# The digest is a SALT, not an input: it never reaches the command line (the
+# extractor reads the file itself), but it IS the cache identity, so a new
+# content digest mints a fresh witness and re-runs, while an unchanged digest
+# is served from `__host_witness` forever. That is ruling salt_minting =
+# content_addressed, spelled.
+rel call_site(path: text, digest: text, callee: text).
+call_site(path, digest, callee) <-
+  file(path, digest), ? extract(path, callee) @ salt(digest: digest).
+
+# ── the rail ────────────────────────────────────────────────────────────────
+rel banned_call(path: text, callee: text).
+banned_call(path, callee) <- call_site(path, digest, callee), callee == "eval".

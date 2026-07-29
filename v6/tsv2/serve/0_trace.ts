@@ -26,11 +26,13 @@ export const SERVE_CHANNEL_NAMES = {
   tick: "sprefa:tick",
   effect: "sprefa:effect",
   bind: "sprefa:bind",
+  watch: "sprefa:watch",
 } as const;
 
 const tickChannel = diagnostics_channel.channel(SERVE_CHANNEL_NAMES.tick);
 const effectChannel = diagnostics_channel.channel(SERVE_CHANNEL_NAMES.effect);
 const bindChannel = diagnostics_channel.channel(SERVE_CHANNEL_NAMES.bind);
+const watchChannel = diagnostics_channel.channel(SERVE_CHANNEL_NAMES.watch);
 
 import type {
   IServeBindEvent as BindEvent,
@@ -38,11 +40,13 @@ import type {
   IServeTickEvent as TickEvent,
   IServeTickLine,
   IServeTrace,
+  IServeWatchEvent as WatchEvent,
 } from "../runtime/types.ts";
 
 let logger: Logger | null = null;
 let pendingEffects: EffectEvent[] = [];
 let pendingBinds: BindEvent[] = [];
+let pendingWatches: WatchEvent[] = [];
 let installed = false;
 
 function install(logPath: string): void {
@@ -53,11 +57,15 @@ function install(logPath: string): void {
   bindChannel.subscribe((message) => {
     pendingBinds.push(message as BindEvent);
   });
+  watchChannel.subscribe((message) => {
+    pendingWatches.push(message as WatchEvent);
+  });
   tickChannel.subscribe((message) => {
     const event = message as TickEvent;
-    const line: IServeTickLine = { ...event, effects: pendingEffects, binds: pendingBinds };
+    const line: IServeTickLine = { ...event, effects: pendingEffects, binds: pendingBinds, watches: pendingWatches };
     pendingEffects = [];
     pendingBinds = [];
+    pendingWatches = [];
     logger?.info(line);
   });
   installed = true;
@@ -78,6 +86,11 @@ export const ServeTrace: IServeTrace = {
   bind(rel, period, bucket): void {
     if (!bindChannel.hasSubscribers) return;
     bindChannel.publish({ rel, period, bucket } satisfies BindEvent);
+  },
+
+  watch(rel, glob, added, removed): void {
+    if (!watchChannel.hasSubscribers) return;
+    watchChannel.publish({ rel, glob, added, removed } satisfies WatchEvent);
   },
 
   installFromEnv(): void {

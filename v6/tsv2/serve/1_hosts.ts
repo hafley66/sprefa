@@ -201,10 +201,12 @@ function coerce(host: string, column: IHostColumnPlan, raw: unknown): IRowValue 
   return JSON.stringify(raw);
 }
 
+function carriesEveryColumn(item: Record<string, unknown>, outputs: readonly IHostColumnPlan[]): boolean {
+  return outputs.every((column) => column.name in item && item[column.name] !== null);
+}
+
 function objectRow(host: string, item: Record<string, unknown>, outputs: readonly IHostColumnPlan[]): IRowValue[] {
-  const byName = outputs.every((column) => column.name in item);
-  const positional = Object.values(item);
-  return outputs.map((column, index) => coerce(host, column, byName ? item[column.name] : positional[index]));
+  return outputs.map((column) => coerce(host, column, item[column.name]));
 }
 
 function parseJsonItems(text: string): unknown[] | null {
@@ -243,18 +245,50 @@ function parseWhitespace(host: string, text: string, outputs: readonly IHostColu
   });
 }
 
+/**
+ * A JSON OBJECT stream is a NAMED PROJECTION, and a heterogeneous one is the
+ * normal case: `sprefa-extract` interleaves `{"record":"node",...,"name":...}`
+ * with `{"record":"site",...,"callee":...}` on one stdout, and a host declaring
+ * `-> (record: text, callee: text)` wants the `site` lines and only those.
+ *
+ * So an object item that does not carry every declared output column (or
+ * carries it as JSON null) contributes NO ROW. That is the ruled Option shape
+ * read at the world boundary -- absence is row absence, never a null column and
+ * never a positional guess at a neighbouring field (positional fallback is what
+ * made this a miscompile before: `Object.values(item)[0]` happily wrote a
+ * `node` line's span object into a `callee` column).
+ *
+ * WHERE THE SILENCE IS ANSWERED, since skipping is a silence and this repo does
+ * not accept those unnamed. A "nonempty stdout, zero rows" answer cannot be
+ * distinguished HERE from a legitimately empty projection -- a source file with
+ * no call sites emits only `node` lines, and failing that would break the rail
+ * on ordinary input. So it is not decided here at all: `ServeTrace.effect`
+ * already publishes the row count of every host run and `__host_witness`
+ * durably stores `response_rows`, so a misspelled output column reads as a host
+ * that answers zero rows every time, in the self-diagnosis surface that exists
+ * for exactly this question. A load-time check is impossible (the compiler
+ * cannot know a stream's key set), which is why this is a trace obligation.
+ */
+function decodeObjectItems(host: string, items: readonly unknown[], outputs: readonly IHostColumnPlan[]): IRowValue[][] {
+  const objects = items.filter(
+    (item): item is Record<string, unknown> => item !== null && typeof item === "object" && !Array.isArray(item),
+  );
+  if (objects.length !== items.length) {
+    // Mixed or non-object JSON (an array of arrays, or of scalars) keeps the
+    // positional reading it always had.
+    return items.map((item) =>
+      outputs.map((column, index) => coerce(host, column, Array.isArray(item) ? item[index] : item)),
+    );
+  }
+  return objects.filter((item) => carriesEveryColumn(item, outputs)).map((item) => objectRow(host, item, outputs));
+}
+
 function decodeOutput(host: string, stdout: string, outputs: readonly IHostColumnPlan[]): IRowValue[][] {
   const trimmed = stdout.trim();
   if (trimmed.length === 0) return [];
   if (outputs.length === 0) return [];
   const items = parseJsonItems(trimmed);
-  if (items) {
-    return items.map((item) =>
-      item !== null && typeof item === "object" && !Array.isArray(item)
-        ? objectRow(host, item as Record<string, unknown>, outputs)
-        : outputs.map((column, index) => coerce(host, column, Array.isArray(item) ? item[index] : item)),
-    );
-  }
+  if (items) return decodeObjectItems(host, items, outputs);
   return parseWhitespace(host, trimmed, outputs);
 }
 

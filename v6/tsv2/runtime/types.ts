@@ -352,16 +352,23 @@ export interface IHostPlan {
 }
 
 /**
- * One `bind_decl` as emitted data. `periods` is the program's own statement
- * about cadence: the distinct integer literals its rules read in the bind
- * atom's first column (emit_ts.pl `bind_read_periods/4`). An empty list means
- * the program declared the bind and never asked for a cadence, so no timer is
- * owed -- never a default period invented out here.
+ * One `bind_decl` as emitted data. `literals` is the program's own statement
+ * about WHICH INSTANCES of the world source it consumes: the distinct literals
+ * its rules read in the bind atom's first column, which registry.pl calls the
+ * configuration column (emit_ts.pl `bind_read_literals/4`). `interval` reads
+ * integer seconds there, `watch` reads a glob string. An empty list means the
+ * program declared the bind and never asked for an instance, so nothing is
+ * owed -- never a default invented out here.
+ *
+ * This field was `periods: readonly number[]` while `interval` was the only
+ * bind; it widened when `watch` arrived rather than growing a second field for
+ * the same concept. `IBindPlan` is not one of IGenProgram's five pinned names,
+ * so widening it is the sanctioned direction.
  */
 export interface IBindPlan {
   readonly name: string;
   readonly columns: readonly IHostColumnPlan[];
-  readonly periods: readonly number[];
+  readonly literals: readonly IRowValue[];
   readonly execution: string;
 }
 
@@ -467,6 +474,45 @@ export interface IIntervalBindRunner {
   readonly firings$: Observable<IBindFired>;
 }
 
+/** One committed watcher burst: the coalesced window's arrival batch, already
+ *  landed. `added`/`removed` count ROWS, not filesystem events -- a save that
+ *  did not change content contributes neither. */
+export interface IWatchFired {
+  readonly rel: string;
+  readonly glob: string;
+  readonly added: number;
+  readonly removed: number;
+  readonly tick: number;
+}
+
+/**
+ * The `watch` bind: file-change rows into one EDB rel, coalesced per window.
+ *
+ * SEAM LAW (golden plan phase 2, coordinator's watcher_first_impl fork): the
+ * watcher LIBRARY is behind this adapter and nothing above it names one. The
+ * first implementation is node's own `fsPromises.watch` (zero dependencies);
+ * swapping in `@parcel/watcher` later replaces `IWatchSource` alone, because
+ * what crosses this seam is already collapsed to `(glob, path, digest)` rows
+ * with an arrival sign -- never a library's create/update/delete/rename
+ * vocabulary.
+ */
+export interface IWatchBindRunner {
+  /** Cold. One filesystem watch per declared glob; each coalesced window
+   *  commits ONE arrival batch, so a git checkout is a handful of ticks and
+   *  not one per file. */
+  readonly firings$: Observable<IWatchFired>;
+}
+
+/** The swappable half: a raw path notification stream, one per watched root.
+ *  Implementations emit a path per underlying filesystem event, duplicates and
+ *  all -- deduping, hashing and sign assignment are the runner's, above this
+ *  line, so a backend change cannot alter what the engine sees. */
+export interface IWatchSource {
+  /** Cold. `root` is an absolute directory; emits absolute paths. Recursive.
+   *  Unsubscribing must stop the underlying watch. */
+  watch(root: string): Observable<string>;
+}
+
 /** Every value the served app's one stream carries. */
 export type IServeEvent =
   | {
@@ -480,6 +526,7 @@ export type IServeEvent =
   | { readonly kind: "tick"; readonly outcome: ITickOutcome }
   | { readonly kind: "effect"; readonly done: IHostEffectDone }
   | { readonly kind: "bind"; readonly fired: IBindFired }
+  | { readonly kind: "watch"; readonly fired: IWatchFired }
   | { readonly kind: "served"; readonly method: string; readonly path: string };
 
 export interface IServeConfig {
@@ -489,6 +536,17 @@ export interface IServeConfig {
    *  serving defaults to `asyncScheduler`, a test injects a `TestScheduler` so
    *  a bind's cadence runs on virtual time and no test sleeps on a wall clock. */
   readonly scheduler?: SchedulerLike;
+  /** Directory every `watch` glob and every emitted path is relative to.
+   *  Defaults to `process.cwd()`. Rows carry ROOT-RELATIVE paths so a program's
+   *  findings do not move when the server does. */
+  readonly watchRoot?: string;
+  /** Watcher coalesce window in milliseconds (default 100). One window is one
+   *  arrival batch and therefore one tick; see serve/2_binds.ts. */
+  readonly watchCoalesceMs?: number;
+  /** The swappable watcher backend (default `NodeWatchSource`). Injected by
+   *  the watcher receipt so the seam can be driven without touching a real
+   *  filesystem, and the seam a future `@parcel/watcher` adapter replaces. */
+  readonly watchSource?: IWatchSource;
 }
 
 export interface IServeTsv2 {
@@ -520,11 +578,21 @@ export interface IServeBindEvent {
   readonly bucket: number;
 }
 
-/** One JSONL line per tick: the tick's own span plus every effect and bind
- *  firing observed since the previous line. */
+/** One coalesced watcher window that committed. Counts are ROWS, so a window
+ *  whose files were re-saved unchanged never produces one of these at all. */
+export interface IServeWatchEvent {
+  readonly rel: string;
+  readonly glob: string;
+  readonly added: number;
+  readonly removed: number;
+}
+
+/** One JSONL line per tick: the tick's own span plus every effect, bind, and
+ *  watcher firing observed since the previous line. */
 export interface IServeTickLine extends IServeTickEvent {
   readonly effects: readonly IServeEffectEvent[];
   readonly binds: readonly IServeBindEvent[];
+  readonly watches: readonly IServeWatchEvent[];
 }
 
 export interface IServeTrace {
@@ -538,6 +606,7 @@ export interface IServeTrace {
     failure?: unknown,
   ): void;
   bind(rel: string, period: number, bucket: number): void;
+  watch(rel: string, glob: string, added: number, removed: number): void;
   /** Idempotent. Installs the one subscriber per channel when DL_PERF_LOG names
    *  a file; a second call with the same env is a no-op. */
   installFromEnv(): void;
