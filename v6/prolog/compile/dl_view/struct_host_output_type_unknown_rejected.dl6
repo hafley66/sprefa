@@ -1,4 +1,4 @@
-type span(end: int, start: int).
+rel span(end: int, start: int).
 rel source_path(path: text).
 rel host_span(path: text, at: span).
 sh scan_span(path: text) -> (at: spann) = `scan {path}`.

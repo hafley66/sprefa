@@ -248,21 +248,25 @@ function internOneType(
   bucket: ReadonlyMap<string, ICollected>,
   ids: Map<string, number>,
 ): Observable<unknown> {
-  const tuples = [...bucket.entries()].map(([semantic, collected]) => [
-    semantic,
-    collected.rendered,
-    ...collected.fields.map((field) =>
+  const lookupToSemantic = new Map<string, string>();
+  const tuples = [...bucket.entries()].map(([semantic, collected]) => {
+    const fields = collected.fields.map((field) =>
       typeof field === "object" && field !== null && "childSemantic" in field
         ? idFor(ids, field.childSemantic)
-        : field,
-    ),
-  ]);
-  const semantics = [...bucket.keys()];
+        : field
+    );
+    lookupToSemantic.set(JSON.stringify(fields), semantic);
+    return fields;
+  });
   return seam.runner.execute(seam.db, { sql: plan.internSql, args: [JSON.stringify(tuples)] }).pipe(
-    concatMap(() => seam.runner.execute(seam.db, { sql: plan.lookupSql, args: [JSON.stringify(semantics)] })),
+    concatMap(() => seam.runner.execute(seam.db, { sql: plan.lookupSql, args: [JSON.stringify(tuples)] })),
     map((result) => {
       for (const row of result.rows) {
-        ids.set(row["__semantic"] as string, Number(row["__id"]));
+        const semantic = lookupToSemantic.get(row["__lookup"] as string);
+        if (semantic === undefined) {
+          throw new Error(`relation reference lookup returned an unknown row ${String(row["__lookup"])}`);
+        }
+        ids.set(semantic, Number(row["__id"]));
       }
       return undefined;
     }),

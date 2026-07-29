@@ -143,7 +143,7 @@ construct inventory.
 |---|---|---|
 | `kind(Ref, log)` | `log` after columns | declaration modifier |
 | `col_type(Ref, Column, Type)` | `Column: int` / `Column: text` | typed declaration entry; source order is preserved |
-| `type_decl(Name, [col(Column, Type), ...])` | `type name(column: type, ...).` | declared struct type; values are storage-plane dictionary rows keyed on canonical content |
+| `type_decl(Name, [col(Column, Type), ...])` | `rel name(column: type, ...).` referenced from another column type | relation-valued row; values are storage-plane dictionary rows keyed on canonical content |
 | `col_type(Ref, Column, TypeName)` | `Column: span` | ref column; stores the dictionary id, renders the value at the boundary |
 | removed `set` word | `set` after columns | `unsupported_surface(removed_word(set))` |
 | `keep(Ref, all\|count(N))` | `keep(all)` / `keep(count(N))` | declaration modifier |

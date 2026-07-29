@@ -1,4 +1,4 @@
-type span(start: int, end: int).
+rel span(start: int, end: int).
 rel mark(at: span).
 rel seen(start: int).
 

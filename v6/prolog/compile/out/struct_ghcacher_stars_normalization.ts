@@ -63,7 +63,7 @@ function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
 }
 
 export const STRUCT_TYPES: readonly IStructTypePlan[] = [
-  { name: "repo_body", columns: ["full_name", "stargazers_count"], refs: [null, null], internSql: `INSERT OR IGNORE INTO "__dict_repo_body" ("__semantic", "__rendered", "full_name", "stargazers_count") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)`, lookupSql: `SELECT "__semantic", "__id" FROM "__dict_repo_body" WHERE "__semantic" IN (SELECT value FROM json_each(?))` },
+  { name: "repo_body", columns: ["full_name", "stargazers_count"], refs: [null, null], internSql: `INSERT OR IGNORE INTO "repo_body" ("full_name", "stargazers_count") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)`, lookupSql: `SELECT json_array("full_name", "stargazers_count") AS "__lookup", "__id" FROM "repo_body" WHERE json_array("full_name", "stargazers_count") IN (SELECT value FROM json_each(?))` },
 ];
 
 export const STRUCT_REF_COLUMNS: IStructRefColumns = {
@@ -71,9 +71,9 @@ export const STRUCT_REF_COLUMNS: IStructRefColumns = {
 };
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "__dict_repo_body" ("__id" INTEGER PRIMARY KEY, "__semantic" TEXT NOT NULL, "__rendered" TEXT NOT NULL, "full_name" TEXT NOT NULL, "stargazers_count" INTEGER NOT NULL)`,
-  `CREATE UNIQUE INDEX "__dict_repo_body_semantic" ON "__dict_repo_body" ("__semantic")`,
   `CREATE TABLE "current_body" ("ep" TEXT NOT NULL, "body" INTEGER NOT NULL, PRIMARY KEY ("ep", "body")) WITHOUT ROWID`,
+  `CREATE TABLE "repo_body" ("__id" INTEGER PRIMARY KEY, "full_name" TEXT NOT NULL, "stargazers_count" INTEGER NOT NULL, UNIQUE ("full_name", "stargazers_count"))`,
+  `CREATE TEMP VIEW "__ref_repo_body" AS SELECT "__id", "full_name", "stargazers_count" FROM "repo_body"`,
   `CREATE TABLE "stars" ("ep" TEXT NOT NULL, "n" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("ep", "n")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_current_body" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ep" TEXT NOT NULL, "body" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_current_body_sign" ON "__delta_current_body" ("_sign")`,
@@ -81,6 +81,12 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_current_body_phase" ON "__frontier_current_body" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_current_body" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ep" TEXT NOT NULL, "body" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_current_body_phase" ON "__next_frontier_current_body" ("_phase")`,
+  `CREATE TEMP TABLE "__delta_repo_body" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "full_name" TEXT NOT NULL, "stargazers_count" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_repo_body_sign" ON "__delta_repo_body" ("_sign")`,
+  `CREATE TEMP TABLE "__frontier_repo_body" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "full_name" TEXT NOT NULL, "stargazers_count" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_repo_body_phase" ON "__frontier_repo_body" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_repo_body" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "full_name" TEXT NOT NULL, "stargazers_count" INTEGER NOT NULL)`,
+  `CREATE INDEX "__next_frontier_repo_body_phase" ON "__next_frontier_repo_body" ("_phase")`,
   `CREATE TEMP TABLE "__delta_stars" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ep" TEXT NOT NULL, "n" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_stars_sign" ON "__delta_stars" ("_sign")`,
   `CREATE TEMP TABLE "__frontier_stars" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ep" TEXT NOT NULL, "n" INTEGER NOT NULL)`,
@@ -92,35 +98,40 @@ const ddl: readonly string[] = [
 
 const relColumns: Record<string, readonly string[]> = {
   current_body: ["ep", "body"],
+  repo_body: ["full_name", "stargazers_count"],
   stars: ["ep", "n"],
 };
 
-const arrivalTargets: readonly string[] = ["current_body"];
+const arrivalTargets: readonly string[] = ["current_body", "repo_body"];
 
 const boot: readonly IBootStatement[] = [
   { sql: `DELETE FROM "stars"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "stars" ("ep", "n") SELECT b0."ep", b1."stargazers_count" FROM "current_body" b0, "__dict_repo_body" b1 WHERE b1."__id" = b0."body"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "stars" ("ep", "n") SELECT b0."ep", b1."stargazers_count" FROM "current_body" b0, "__ref_repo_body" b1 WHERE b1."__id" = b0."body"`, params: [] },
 ];
 
 type Snapshot = {
   readonly current_body: readonly IRow[];
+  readonly repo_body: readonly IRow[];
   readonly stars: readonly IRow[];
 };
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    current_body: selectRows(seam, `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' THEN json_extract("ep", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ep", '$.args')) || ')' ELSE "ep" END AS "ep", (SELECT d."__rendered" FROM "__dict_repo_body" d WHERE d."__id" = "body") AS "body" FROM "current_body"`, relColumns.current_body!),
+    current_body: selectRows(seam, `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' THEN json_extract("ep", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ep", '$.args')) || ')' ELSE "ep" END AS "ep", "body" FROM "current_body"`, relColumns.current_body!),
+    repo_body: selectRows(seam, `SELECT CASE WHEN json_valid("full_name") AND json_type("full_name") = 'object' THEN json_extract("full_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("full_name", '$.args')) || ')' ELSE "full_name" END AS "full_name", "stargazers_count" FROM "repo_body"`, relColumns.repo_body!),
     stars: selectRows(seam, `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' THEN json_extract("ep", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ep", '$.args')) || ')' ELSE "ep" END AS "ep", "n" FROM "stars"`, relColumns.stars!),
   });
 }
 
 const finalSelect: Record<string, string> = {
-  current_body: `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' THEN json_extract("ep", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ep", '$.args')) || ')' ELSE "ep" END AS "ep", (SELECT d."__rendered" FROM "__dict_repo_body" d WHERE d."__id" = "body") AS "body" FROM "current_body"`,
+  current_body: `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' THEN json_extract("ep", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ep", '$.args')) || ')' ELSE "ep" END AS "ep", "body" FROM "current_body"`,
+  repo_body: `SELECT CASE WHEN json_valid("full_name") AND json_type("full_name") = 'object' THEN json_extract("full_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("full_name", '$.args')) || ')' ELSE "full_name" END AS "full_name", "stargazers_count" FROM "repo_body"`,
   stars: `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' THEN json_extract("ep", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ep", '$.args')) || ')' ELSE "ep" END AS "ep", "n" FROM "stars"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   current_body: { kind: "set", addSql: `INSERT OR IGNORE INTO "current_body" ("ep", "body") VALUES (?, ?)`, delSql: `DELETE FROM "current_body" WHERE "ep" = ? AND "body" = ?` },
+  repo_body: { kind: "set", addSql: `INSERT OR IGNORE INTO "repo_body" ("full_name", "stargazers_count") VALUES (?, ?)`, delSql: `DELETE FROM "repo_body" WHERE "full_name" = ? AND "stargazers_count" = ?` },
 };
 
 function arrivalStatement(arrival: IArrivalRow): SqlStatement {
@@ -146,7 +157,8 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "current_body", kind: "set", tableName: "current_body", deltaTableName: "__delta_current_body", frontierTableName: "__frontier_current_body", nextFrontierTableName: "__next_frontier_current_body", columns: ["ep", "body"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "current_body" ("ep", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "ep", "body"`, arrivalDelSql: `DELETE FROM "current_body" WHERE ("ep", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "ep", "body"`, boundarySql: `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' THEN json_extract("ep", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ep", '$.args')) || ')' ELSE "ep" END AS "ep", (SELECT d."__rendered" FROM "__dict_repo_body" d WHERE d."__id" = "body") AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_current_body" WHERE "_sign" IN (-1, 1) GROUP BY "ep", "body", "_sign"` },
+  { rel: "current_body", kind: "set", tableName: "current_body", deltaTableName: "__delta_current_body", frontierTableName: "__frontier_current_body", nextFrontierTableName: "__next_frontier_current_body", columns: ["ep", "body"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "current_body" ("ep", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "ep", "body"`, arrivalDelSql: `DELETE FROM "current_body" WHERE ("ep", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "ep", "body"`, boundarySql: `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' THEN json_extract("ep", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ep", '$.args')) || ')' ELSE "ep" END AS "ep", "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_current_body" WHERE "_sign" IN (-1, 1) GROUP BY "ep", "body", "_sign"` },
+  { rel: "repo_body", kind: "set", tableName: "repo_body", deltaTableName: "__delta_repo_body", frontierTableName: "__frontier_repo_body", nextFrontierTableName: "__next_frontier_repo_body", columns: ["full_name", "stargazers_count"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "repo_body" ("full_name", "stargazers_count") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "full_name", "stargazers_count"`, arrivalDelSql: `DELETE FROM "repo_body" WHERE ("full_name", "stargazers_count") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "full_name", "stargazers_count"`, boundarySql: `SELECT CASE WHEN json_valid("full_name") AND json_type("full_name") = 'object' THEN json_extract("full_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("full_name", '$.args')) || ')' ELSE "full_name" END AS "full_name", "stargazers_count", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_repo_body" WHERE "_sign" IN (-1, 1) GROUP BY "full_name", "stargazers_count", "_sign"` },
   { rel: "stars", kind: "set", tableName: "stars", deltaTableName: "__delta_stars", frontierTableName: "__frontier_stars", nextFrontierTableName: "__next_frontier_stars", columns: ["ep", "n"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' THEN json_extract("ep", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ep", '$.args')) || ')' ELSE "ep" END AS "ep", "n", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_stars" WHERE "_sign" IN (-1, 1) GROUP BY "ep", "n", "_sign"` },
 ];
 
@@ -154,20 +166,22 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "stars", headDeltaTableName: "__delta_stars", headColumns: ["ep", "n"], insertSql: `INSERT OR IGNORE INTO "stars" ("ep", "n") SELECT DISTINCT d0."ep", b0."stargazers_count" FROM "__frontier_current_body" d0, "__dict_repo_body" b0 WHERE d0."_phase" >= 0 AND b0."__id" = d0."body" RETURNING "ep", "n"`, selectSql: `SELECT "ep", "n" FROM "stars"`, recomputeSql: `DELETE FROM "stars";\nINSERT OR IGNORE INTO "stars" ("ep", "n") SELECT b0."ep", b1."stargazers_count" FROM "current_body" b0, "__dict_repo_body" b1 WHERE b1."__id" = b0."body"`, supportSql: [`DELETE FROM "__support_next_stars"`, `INSERT INTO "__support_next_stars" ("ep", "n", "__support_count") SELECT "ep", "n", sum("__support_count") FROM (SELECT b0."ep" AS "ep", b1."stargazers_count" AS "n", count(*) AS "__support_count" FROM "current_body" b0, "__dict_repo_body" b1 WHERE b1."__id" = b0."body" GROUP BY b0."ep", b1."stargazers_count") GROUP BY "ep", "n"`, `UPDATE "stars" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_stars" n WHERE n."ep" = h."ep" AND n."n" = h."n"), 0))`, `DELETE FROM "stars" WHERE "__support_count" <= 0 RETURNING "ep", "n"`, `INSERT INTO "stars" ("ep", "n", "__support_count") SELECT "ep", "n", n."__support_count" FROM "__support_next_stars" n WHERE NOT EXISTS (SELECT 1 FROM "stars" h WHERE n."ep" = h."ep" AND n."n" = h."n") RETURNING "ep", "n"`], aggregateSql: null },
+  { headRel: "stars", headDeltaTableName: "__delta_stars", headColumns: ["ep", "n"], insertSql: `INSERT OR IGNORE INTO "stars" ("ep", "n") SELECT DISTINCT d0."ep", b0."stargazers_count" FROM "__frontier_current_body" d0, "__ref_repo_body" b0 WHERE d0."_phase" >= 0 AND b0."__id" = d0."body" RETURNING "ep", "n"`, selectSql: `SELECT "ep", "n" FROM "stars"`, recomputeSql: `DELETE FROM "stars";\nINSERT OR IGNORE INTO "stars" ("ep", "n") SELECT b0."ep", b1."stargazers_count" FROM "current_body" b0, "__ref_repo_body" b1 WHERE b1."__id" = b0."body"`, supportSql: [`DELETE FROM "__support_next_stars"`, `INSERT INTO "__support_next_stars" ("ep", "n", "__support_count") SELECT "ep", "n", sum("__support_count") FROM (SELECT b0."ep" AS "ep", b1."stargazers_count" AS "n", count(*) AS "__support_count" FROM "current_body" b0, "__ref_repo_body" b1 WHERE b1."__id" = b0."body" GROUP BY b0."ep", b1."stargazers_count") GROUP BY "ep", "n"`, `UPDATE "stars" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_stars" n WHERE n."ep" = h."ep" AND n."n" = h."n"), 0))`, `DELETE FROM "stars" WHERE "__support_count" <= 0 RETURNING "ep", "n"`, `INSERT INTO "stars" ("ep", "n", "__support_count") SELECT "ep", "n", n."__support_count" FROM "__support_next_stars" n WHERE NOT EXISTS (SELECT 1 FROM "stars" h WHERE n."ep" = h."ep" AND n."n" = h."n") RETURNING "ep", "n"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "stars";\nINSERT OR IGNORE INTO "stars" ("ep", "n") SELECT b0."ep", b1."stargazers_count" FROM "current_body" b0, "__dict_repo_body" b1 WHERE b1."__id" = b0."body"`;
+  const sql = `DELETE FROM "stars";\nINSERT OR IGNORE INTO "stars" ("ep", "n") SELECT b0."ep", b1."stargazers_count" FROM "current_body" b0, "__ref_repo_body" b1 WHERE b1."__id" = b0."body"`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
 function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
   const current_body = multisetDiff(before.current_body, after.current_body);
+  const repo_body = multisetDiff(before.repo_body, after.repo_body);
   const stars = multisetDiff(before.stars, after.stars);
   return {
     rels: [
       { rel: "current_body", add: current_body.add, del: current_body.del },
+      { rel: "repo_body", add: repo_body.add, del: repo_body.del },
       { rel: "stars", add: stars.add, del: stars.del },
     ],
     carryPending: false,

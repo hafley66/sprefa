@@ -1,4 +1,4 @@
-type span(end: int, start: int).
+rel span(end: int, start: int).
 rel source_path(path: text).
 rel host_span(path: text, at: span).
 rel host_start(path: text, start: int).

@@ -1,2 +1,2 @@
-type left(other: right).
-type right(other: left).
+rel left(other: right).
+rel right(other: left).

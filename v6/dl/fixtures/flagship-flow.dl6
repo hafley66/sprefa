@@ -13,7 +13,7 @@
 # the intended exact joins; this program must not replace them with
 # callable-plane edges.
 
-type span(start: int, end: int).
+rel span(start: int, end: int).
 
 sh enumerate_at(rev: text, glob: text) -> (path: text, digest: text) =
   `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.

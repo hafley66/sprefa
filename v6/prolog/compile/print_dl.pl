@@ -245,7 +245,7 @@ decl_line(_, _, _, type_decl(Name, Specs), Line) :-
     !,
     maplist(print_host_column, Specs, ColumnTexts),
     atomic_list_concat(ColumnTexts, ', ', ColumnsText),
-    format(atom(Line), "type ~w(~w).~n", [Name, ColumnsText]).
+    format(atom(Line), "rel ~w(~w).~n", [Name, ColumnsText]).
 decl_line(_, _, _, sh_decl(Name, Inputs, Outputs, template(Template)), Line) :-
     !,
     maplist(print_host_column, Inputs, InputTexts),

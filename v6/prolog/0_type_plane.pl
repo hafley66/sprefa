@@ -1,11 +1,12 @@
-% 0_type_plane.pl : the declared value plane -- struct types, their storage
+% 0_type_plane.pl : the declared value plane -- referenced relation values,
+% their storage
 % kind per column, their topological order, their canonical JSON rendering,
 % and the shape check a world arrival must satisfy.
 %
 % RULED 2026-07-29 (rulings.pl compound_storage = struct_as_rows): a declared
 % struct value is a rel row referenced by content id. A parent column stores
 % the ref, never an inline blob; destructuring becomes joins. This file is the
-% ONE place that says what a declared type is, consumed by BOTH doors (the
+% ONE place that says what a relation-valued column is, consumed by BOTH doors (the
 % oracle's engine.pl and the compiler's analyze/lower/emit) exactly the way
 % 0_enum_expand.pl and 0_match_expand.pl are.
 %
@@ -13,9 +14,10 @@
 %
 %   type_decl(TypeName, [col(Column, Type), ...])
 %
-% SLOT-SPELLING, decided: the surface word is `type`, not `rel`.
+% The surface has one declaration word. A `rel` referenced from another
+% relation's column type position is normalized to this internal declaration.
 %
-%   type span(start: int, end: int).
+%   rel span(start: int, end: int).
 %   rel finding(path: text, at: span).
 %
 % The lab (plans/2026-07-28-types-as-rels-verdict.md, THE SHORTHAND TABLE)
@@ -25,10 +27,9 @@
 % and that is forced by the arc header's Edge 2: dictionary rows must not
 % reach the boundary, because the oracle holds real terms and has no
 % dictionary at all, so any dictionary rel in the tick log would be a rel the
-% oracle can never produce. Spelling a type as `rel` would make it nameable,
-% joinable and printable by construction. `type` keeps the value plane
-% declarable without making its storage a boundary object, and it is an SQL
-% word (CREATE TYPE ... AS) so the vocabulary law holds.
+% oracle can never produce. The current normalization classifies the
+% referenced declaration as a value relation. Its dictionary stays outside
+% the program relation boundary.
 %
 % A column type is `int`, `text`, `json` (the untyped-json escape hatch, per
 % SLOT-JSON1-FATE: json1 stays as the representation of UNTYPED json ONLY) or

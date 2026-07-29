@@ -63,21 +63,22 @@ function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
 }
 
 export const STRUCT_TYPES: readonly IStructTypePlan[] = [
-  { name: "span", columns: ["start", "end"], refs: [null, null], internSql: `INSERT OR IGNORE INTO "__dict_span" ("__semantic", "__rendered", "start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)`, lookupSql: `SELECT "__semantic", "__id" FROM "__dict_span" WHERE "__semantic" IN (SELECT value FROM json_each(?))` },
-  { name: "place", columns: ["file", "at"], refs: [null, "span"], internSql: `INSERT OR IGNORE INTO "__dict_place" ("__semantic", "__rendered", "file", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)`, lookupSql: `SELECT "__semantic", "__id" FROM "__dict_place" WHERE "__semantic" IN (SELECT value FROM json_each(?))` },
+  { name: "span", columns: ["start", "end"], refs: [null, null], internSql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)`, lookupSql: `SELECT json_array("start", "end") AS "__lookup", "__id" FROM "span" WHERE json_array("start", "end") IN (SELECT value FROM json_each(?))` },
+  { name: "place", columns: ["file", "at"], refs: [null, "span"], internSql: `INSERT OR IGNORE INTO "place" ("file", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)`, lookupSql: `SELECT json_array("file", "at") AS "__lookup", "__id" FROM "place" WHERE json_array("file", "at") IN (SELECT value FROM json_each(?))` },
 ];
 
 export const STRUCT_REF_COLUMNS: IStructRefColumns = {
   "diag": ["place", null],
+  "place": [null, "span"],
 };
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "__dict_span" ("__id" INTEGER PRIMARY KEY, "__semantic" TEXT NOT NULL, "__rendered" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
-  `CREATE UNIQUE INDEX "__dict_span_semantic" ON "__dict_span" ("__semantic")`,
-  `CREATE TABLE "__dict_place" ("__id" INTEGER PRIMARY KEY, "__semantic" TEXT NOT NULL, "__rendered" TEXT NOT NULL, "file" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
-  `CREATE UNIQUE INDEX "__dict_place_semantic" ON "__dict_place" ("__semantic")`,
   `CREATE TABLE "diag" ("where" INTEGER NOT NULL, "message" TEXT NOT NULL, PRIMARY KEY ("where", "message")) WITHOUT ROWID`,
   `CREATE TABLE "diag_file" ("file" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("file")) WITHOUT ROWID`,
+  `CREATE TABLE "place" ("__id" INTEGER PRIMARY KEY, "file" TEXT NOT NULL, "at" INTEGER NOT NULL, UNIQUE ("file", "at"))`,
+  `CREATE TEMP VIEW "__ref_place" AS SELECT "__id", "file", "at" FROM "place"`,
+  `CREATE TABLE "span" ("__id" INTEGER PRIMARY KEY, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, UNIQUE ("start", "end"))`,
+  `CREATE TEMP VIEW "__ref_span" AS SELECT "__id", "start", "end" FROM "span"`,
   `CREATE TEMP TABLE "__delta_diag" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "where" INTEGER NOT NULL, "message" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_diag_sign" ON "__delta_diag" ("_sign")`,
   `CREATE TEMP TABLE "__frontier_diag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "where" INTEGER NOT NULL, "message" TEXT NOT NULL)`,
@@ -90,40 +91,62 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_diag_file_phase" ON "__frontier_diag_file" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_diag_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_diag_file_phase" ON "__next_frontier_diag_file" ("_phase")`,
+  `CREATE TEMP TABLE "__delta_place" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_place_sign" ON "__delta_place" ("_sign")`,
+  `CREATE TEMP TABLE "__frontier_place" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_place_phase" ON "__frontier_place" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_place" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE INDEX "__next_frontier_place_phase" ON "__next_frontier_place" ("_phase")`,
+  `CREATE TEMP TABLE "__delta_span" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_span_sign" ON "__delta_span" ("_sign")`,
+  `CREATE TEMP TABLE "__frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_span_phase" ON "__frontier_span" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
+  `CREATE INDEX "__next_frontier_span_phase" ON "__next_frontier_span" ("_phase")`,
   `CREATE TEMP TABLE "__support_next_diag_file" ("file" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("file")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
   diag: ["where", "message"],
   diag_file: ["file"],
+  place: ["file", "at"],
+  span: ["start", "end"],
 };
 
-const arrivalTargets: readonly string[] = ["diag"];
+const arrivalTargets: readonly string[] = ["diag", "place", "span"];
 
 const boot: readonly IBootStatement[] = [
   { sql: `DELETE FROM "diag_file"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "diag_file" ("file") SELECT b1."file" FROM "diag" b0, "__dict_place" b1 WHERE b1."__id" = b0."where"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "diag_file" ("file") SELECT b1."file" FROM "diag" b0, "__ref_place" b1 WHERE b1."__id" = b0."where"`, params: [] },
 ];
 
 type Snapshot = {
   readonly diag: readonly IRow[];
   readonly diag_file: readonly IRow[];
+  readonly place: readonly IRow[];
+  readonly span: readonly IRow[];
 };
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    diag: selectRows(seam, `SELECT (SELECT d."__rendered" FROM "__dict_place" d WHERE d."__id" = "where") AS "where", CASE WHEN json_valid("message") AND json_type("message") = 'object' THEN json_extract("message", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("message", '$.args')) || ')' ELSE "message" END AS "message" FROM "diag"`, relColumns.diag!),
+    diag: selectRows(seam, `SELECT "where", CASE WHEN json_valid("message") AND json_type("message") = 'object' THEN json_extract("message", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("message", '$.args')) || ')' ELSE "message" END AS "message" FROM "diag"`, relColumns.diag!),
     diag_file: selectRows(seam, `SELECT CASE WHEN json_valid("file") AND json_type("file") = 'object' THEN json_extract("file", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("file", '$.args')) || ')' ELSE "file" END AS "file" FROM "diag_file"`, relColumns.diag_file!),
+    place: selectRows(seam, `SELECT CASE WHEN json_valid("file") AND json_type("file") = 'object' THEN json_extract("file", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("file", '$.args')) || ')' ELSE "file" END AS "file", "at" FROM "place"`, relColumns.place!),
+    span: selectRows(seam, `SELECT "start", "end" FROM "span"`, relColumns.span!),
   });
 }
 
 const finalSelect: Record<string, string> = {
-  diag: `SELECT (SELECT d."__rendered" FROM "__dict_place" d WHERE d."__id" = "where") AS "where", CASE WHEN json_valid("message") AND json_type("message") = 'object' THEN json_extract("message", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("message", '$.args')) || ')' ELSE "message" END AS "message" FROM "diag"`,
+  diag: `SELECT "where", CASE WHEN json_valid("message") AND json_type("message") = 'object' THEN json_extract("message", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("message", '$.args')) || ')' ELSE "message" END AS "message" FROM "diag"`,
   diag_file: `SELECT CASE WHEN json_valid("file") AND json_type("file") = 'object' THEN json_extract("file", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("file", '$.args')) || ')' ELSE "file" END AS "file" FROM "diag_file"`,
+  place: `SELECT CASE WHEN json_valid("file") AND json_type("file") = 'object' THEN json_extract("file", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("file", '$.args')) || ')' ELSE "file" END AS "file", "at" FROM "place"`,
+  span: `SELECT "start", "end" FROM "span"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   diag: { kind: "set", addSql: `INSERT OR IGNORE INTO "diag" ("where", "message") VALUES (?, ?)`, delSql: `DELETE FROM "diag" WHERE "where" = ? AND "message" = ?` },
+  place: { kind: "set", addSql: `INSERT OR IGNORE INTO "place" ("file", "at") VALUES (?, ?)`, delSql: `DELETE FROM "place" WHERE "file" = ? AND "at" = ?` },
+  span: { kind: "set", addSql: `INSERT OR IGNORE INTO "span" ("start", "end") VALUES (?, ?)`, delSql: `DELETE FROM "span" WHERE "start" = ? AND "end" = ?` },
 };
 
 function arrivalStatement(arrival: IArrivalRow): SqlStatement {
@@ -149,29 +172,35 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "diag", kind: "set", tableName: "diag", deltaTableName: "__delta_diag", frontierTableName: "__frontier_diag", nextFrontierTableName: "__next_frontier_diag", columns: ["where", "message"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "diag" ("where", "message") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "where", "message"`, arrivalDelSql: `DELETE FROM "diag" WHERE ("where", "message") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "where", "message"`, boundarySql: `SELECT (SELECT d."__rendered" FROM "__dict_place" d WHERE d."__id" = "where") AS "where", CASE WHEN json_valid("message") AND json_type("message") = 'object' THEN json_extract("message", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("message", '$.args')) || ')' ELSE "message" END AS "message", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_diag" WHERE "_sign" IN (-1, 1) GROUP BY "where", "message", "_sign"` },
+  { rel: "diag", kind: "set", tableName: "diag", deltaTableName: "__delta_diag", frontierTableName: "__frontier_diag", nextFrontierTableName: "__next_frontier_diag", columns: ["where", "message"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "diag" ("where", "message") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "where", "message"`, arrivalDelSql: `DELETE FROM "diag" WHERE ("where", "message") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "where", "message"`, boundarySql: `SELECT "where", CASE WHEN json_valid("message") AND json_type("message") = 'object' THEN json_extract("message", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("message", '$.args')) || ')' ELSE "message" END AS "message", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_diag" WHERE "_sign" IN (-1, 1) GROUP BY "where", "message", "_sign"` },
   { rel: "diag_file", kind: "set", tableName: "diag_file", deltaTableName: "__delta_diag_file", frontierTableName: "__frontier_diag_file", nextFrontierTableName: "__next_frontier_diag_file", columns: ["file"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("file") AND json_type("file") = 'object' THEN json_extract("file", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("file", '$.args')) || ')' ELSE "file" END AS "file", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_diag_file" WHERE "_sign" IN (-1, 1) GROUP BY "file", "_sign"` },
+  { rel: "place", kind: "set", tableName: "place", deltaTableName: "__delta_place", frontierTableName: "__frontier_place", nextFrontierTableName: "__next_frontier_place", columns: ["file", "at"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "place" ("file", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "file", "at"`, arrivalDelSql: `DELETE FROM "place" WHERE ("file", "at") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "file", "at"`, boundarySql: `SELECT CASE WHEN json_valid("file") AND json_type("file") = 'object' THEN json_extract("file", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("file", '$.args')) || ')' ELSE "file" END AS "file", "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_place" WHERE "_sign" IN (-1, 1) GROUP BY "file", "at", "_sign"` },
+  { rel: "span", kind: "set", tableName: "span", deltaTableName: "__delta_span", frontierTableName: "__frontier_span", nextFrontierTableName: "__next_frontier_span", columns: ["start", "end"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "start", "end"`, arrivalDelSql: `DELETE FROM "span" WHERE ("start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "start", "end"`, boundarySql: `SELECT "start", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" WHERE "_sign" IN (-1, 1) GROUP BY "start", "end", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "diag_file", headDeltaTableName: "__delta_diag_file", headColumns: ["file"], insertSql: `INSERT OR IGNORE INTO "diag_file" ("file") SELECT DISTINCT b0."file" FROM "__frontier_diag" d0, "__dict_place" b0 WHERE d0."_phase" >= 0 AND b0."__id" = d0."where" RETURNING "file"`, selectSql: `SELECT "file" FROM "diag_file"`, recomputeSql: `DELETE FROM "diag_file";\nINSERT OR IGNORE INTO "diag_file" ("file") SELECT b1."file" FROM "diag" b0, "__dict_place" b1 WHERE b1."__id" = b0."where"`, supportSql: [`DELETE FROM "__support_next_diag_file"`, `INSERT INTO "__support_next_diag_file" ("file", "__support_count") SELECT "file", sum("__support_count") FROM (SELECT b1."file" AS "file", count(*) AS "__support_count" FROM "diag" b0, "__dict_place" b1 WHERE b1."__id" = b0."where" GROUP BY b1."file") GROUP BY "file"`, `UPDATE "diag_file" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_diag_file" n WHERE n."file" = h."file"), 0))`, `DELETE FROM "diag_file" WHERE "__support_count" <= 0 RETURNING "file"`, `INSERT INTO "diag_file" ("file", "__support_count") SELECT "file", n."__support_count" FROM "__support_next_diag_file" n WHERE NOT EXISTS (SELECT 1 FROM "diag_file" h WHERE n."file" = h."file") RETURNING "file"`], aggregateSql: null },
+  { headRel: "diag_file", headDeltaTableName: "__delta_diag_file", headColumns: ["file"], insertSql: `INSERT OR IGNORE INTO "diag_file" ("file") SELECT DISTINCT b0."file" FROM "__frontier_diag" d0, "__ref_place" b0 WHERE d0."_phase" >= 0 AND b0."__id" = d0."where" RETURNING "file"`, selectSql: `SELECT "file" FROM "diag_file"`, recomputeSql: `DELETE FROM "diag_file";\nINSERT OR IGNORE INTO "diag_file" ("file") SELECT b1."file" FROM "diag" b0, "__ref_place" b1 WHERE b1."__id" = b0."where"`, supportSql: [`DELETE FROM "__support_next_diag_file"`, `INSERT INTO "__support_next_diag_file" ("file", "__support_count") SELECT "file", sum("__support_count") FROM (SELECT b1."file" AS "file", count(*) AS "__support_count" FROM "diag" b0, "__ref_place" b1 WHERE b1."__id" = b0."where" GROUP BY b1."file") GROUP BY "file"`, `UPDATE "diag_file" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_diag_file" n WHERE n."file" = h."file"), 0))`, `DELETE FROM "diag_file" WHERE "__support_count" <= 0 RETURNING "file"`, `INSERT INTO "diag_file" ("file", "__support_count") SELECT "file", n."__support_count" FROM "__support_next_diag_file" n WHERE NOT EXISTS (SELECT 1 FROM "diag_file" h WHERE n."file" = h."file") RETURNING "file"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "diag_file";\nINSERT OR IGNORE INTO "diag_file" ("file") SELECT b1."file" FROM "diag" b0, "__dict_place" b1 WHERE b1."__id" = b0."where"`;
+  const sql = `DELETE FROM "diag_file";\nINSERT OR IGNORE INTO "diag_file" ("file") SELECT b1."file" FROM "diag" b0, "__ref_place" b1 WHERE b1."__id" = b0."where"`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
 function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
   const diag = multisetDiff(before.diag, after.diag);
   const diag_file = multisetDiff(before.diag_file, after.diag_file);
+  const place = multisetDiff(before.place, after.place);
+  const span = multisetDiff(before.span, after.span);
   return {
     rels: [
       { rel: "diag", add: diag.add, del: diag.del },
       { rel: "diag_file", add: diag_file.add, del: diag_file.del },
+      { rel: "place", add: place.add, del: place.del },
+      { rel: "span", add: span.add, del: span.del },
     ],
     carryPending: false,
   };

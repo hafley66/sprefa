@@ -1,2 +1,2 @@
-type node(next: node).
+rel node(next: node).
 rel holder(item: node).

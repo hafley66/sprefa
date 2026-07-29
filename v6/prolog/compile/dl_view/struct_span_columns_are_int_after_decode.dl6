@@ -1,4 +1,4 @@
-type span(end: int, start: int).
+rel span(end: int, start: int).
 rel node_fact(path: text, name: text, at: span) log keep(all).
 rel def_start(path: text, offset: int).
 

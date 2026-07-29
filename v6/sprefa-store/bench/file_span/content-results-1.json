@@ -1,0 +1,16 @@
+{
+  "cache_limit_bytes": 1048576,
+  "cache_peak_bytes": 1048564,
+  "cached_blobs": 153,
+  "git_bytes_read": 25494045,
+  "git_cat_file_batch_ms": 58.875833987258375,
+  "newline_index_bytes": 212892,
+  "process_peak_rss_bytes": 55721984,
+  "rounds": 3,
+  "source_bytes": 8498015,
+  "sqlite_bytes_read": 25494045,
+  "sqlite_db_bytes": 8667136,
+  "sqlite_plan": "SEARCH stored_blob USING INTEGER PRIMARY KEY (rowid=?)",
+  "sqlite_read_ms": 12.85000005736947,
+  "tracked_blobs": 300
+}

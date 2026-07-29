@@ -143,7 +143,7 @@
             % STRUCT-AS-ROWS: the storage plane's own names, exported so the
             % emitter can render the intern plan and the plunit units can pin
             % the exact SQL text.
-            dictionary_table_name/2, dictionary_ddl/3, dictionary_render_expr/3,
+            dictionary_table_name/2, dictionary_render_expr/3,
             struct_type_plans/2 ]).
 
 :- use_module(library(lists)).
@@ -599,7 +599,7 @@ alias_select_expr(Expr, Alias, AliasedExpr) :- format(atom(AliasedExpr), '~w AS 
 % absorb_set_arrival/5 replaces by key. An unkeyed arrival target retains the
 % all-column primary key used for exact-row Set membership.
 
-rel_ddl(_, _, _, relplan(Ref, log, Columns, _, ColumnTypes), [Ddl]) :- !,
+rel_ddl(_, _, _, _, relplan(Ref, log, Columns, _, ColumnTypes), [Ddl]) :- !,
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     maplist(column_def, QuotedColumns, ColumnTypes, ColumnDefs),
@@ -608,12 +608,13 @@ rel_ddl(_, _, _, relplan(Ref, log, Columns, _, ColumnTypes), [Ddl]) :- !,
     % are distinct occurrences (engine.pl q1) and must physically coexist as
     % separate rows for multisetDiff to count them correctly.
     format(atom(Ddl), 'CREATE TABLE ~w (~w)', [QuotedTable, ColumnsSql]).
-rel_ddl(EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
-        relplan(Ref, set, Columns, KeyOrNone, ColumnTypes), [Ddl]) :-
+rel_ddl(Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
+        relplan(Ref, set, Columns, KeyOrNone, ColumnTypes), Ddls) :-
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     maplist(column_def, QuotedColumns, ColumnTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
+    atomic_list_concat(QuotedColumns, ', ', SelectColumnsSql),
     ( ( memberchk(Ref, EdgeHeadedRefs) ; memberchk(Ref, ArrivalTargetRefs) ),
       KeyOrNone = key(KeyPositions)
     -> nth1_list(KeyPositions, Columns, KeyColumns),
@@ -625,8 +626,22 @@ rel_ddl(EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
     -> SupportColumn = ', "__support_count" INTEGER NOT NULL DEFAULT 1'
     ;  SupportColumn = ''
     ),
-    format(atom(Ddl), 'CREATE TABLE ~w (~w~w, PRIMARY KEY (~w)) WITHOUT ROWID',
-           [QuotedTable, ColumnsSql, SupportColumn, PkSql]).
+    Ref = Name/_,
+    ( declared_type_name(Types, Name)
+    -> format(atom(Ddl),
+              'CREATE TABLE ~w ("__id" INTEGER PRIMARY KEY, ~w~w, UNIQUE (~w))',
+              [QuotedTable, ColumnsSql, SupportColumn, PkSql]),
+       dictionary_table_name(Name, ReferenceView),
+       quote_ident(ReferenceView, QuotedReferenceView),
+       format(atom(ViewDdl),
+              'CREATE TEMP VIEW ~w AS SELECT "__id", ~w FROM ~w',
+              [QuotedReferenceView, SelectColumnsSql, QuotedTable]),
+       Ddls = [Ddl, ViewDdl]
+    ;  format(atom(Ddl),
+              'CREATE TABLE ~w (~w~w, PRIMARY KEY (~w)) WITHOUT ROWID',
+              [QuotedTable, ColumnsSql, SupportColumn, PkSql]),
+       Ddls = [Ddl]
+    ).
 
 % PHASE C2 RULING 1: INTEGER storage for an int-typed column, TEXT for
 % everything else (text columns and compound-term columns alike -- a
@@ -675,22 +690,7 @@ column_def(QuotedColumn, text, Def) :- format(atom(Def), '~w TEXT NOT NULL', [Qu
 % a rowid SEARCH, the cheapest probe the engine has.
 
 dictionary_table_name(TypeName, Table) :-
-    atomic_list_concat(['__dict_', TypeName], Table).
-
-dictionary_ddl(Types, TypeName, [TableDdl, IndexDdl]) :-
-    type_definition(Types, TypeName, Columns, ColumnTypes),
-    dictionary_table_name(TypeName, Table), quote_ident(Table, QuotedTable),
-    maplist(quote_ident, Columns, QuotedColumns),
-    maplist(dictionary_storage_kind(Types), ColumnTypes, StorageKinds),
-    maplist(column_def, QuotedColumns, StorageKinds, ColumnDefs),
-    atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
-    format(atom(TableDdl),
-           'CREATE TABLE ~w ("__id" INTEGER PRIMARY KEY, "__semantic" TEXT NOT NULL, "__rendered" TEXT NOT NULL, ~w)',
-           [QuotedTable, ColumnsSql]),
-    atomic_list_concat(['__dict_', TypeName, '_semantic'], IndexName),
-    quote_ident(IndexName, QuotedIndex),
-    format(atom(IndexDdl), 'CREATE UNIQUE INDEX ~w ON ~w ("__semantic")',
-           [QuotedIndex, QuotedTable]).
+    atomic_list_concat(['__ref_', TypeName], Table).
 
 dictionary_storage_kind(Types, DeclaredType, Storage) :-
     column_storage(Types, DeclaredType, Storage).
@@ -704,11 +704,9 @@ dictionary_storage_kind(Types, DeclaredType, Storage) :-
 % EXPLAIN receipt (v6/tsv2/tests/structPlane.test.ts): the inner query plans as
 % `SEARCH d USING INTEGER PRIMARY KEY (rowid=?)`, never a SCAN.
 dictionary_render_expr(TypeName, Column, Expr) :-
-    dictionary_table_name(TypeName, Table), quote_ident(Table, QuotedTable),
+    dictionary_table_name(TypeName, _Table),
     quote_ident(Column, QuotedColumn),
-    format(atom(Expr),
-           '(SELECT d."__rendered" FROM ~w d WHERE d."__id" = ~w) AS ~w',
-           [QuotedTable, QuotedColumn, QuotedColumn]).
+    format(atom(Expr), '~w', [QuotedColumn]).
 
 % The per-type plan the emitter hands the runtime, in TOPOLOGICAL order:
 % children before parents, so the post-order intern is one pass down the list
@@ -731,19 +729,23 @@ struct_type_plan(Types, TypeName,
                  structtype(TypeName, Columns, RefTypes, InternSql, LookupSql)) :-
     type_definition(Types, TypeName, Columns, ColumnTypes),
     maplist(dictionary_ref_type(Types), ColumnTypes, RefTypes),
-    dictionary_table_name(TypeName, Table), quote_ident(Table, QuotedTable),
+    quote_ident(TypeName, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
     length(Columns, Width),
-    Total is Width + 2,
-    incremental_json_select_exprs_from(Total, 0, SelectExprs),
+    incremental_json_select_exprs_from(Width, 0, SelectExprs),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
     format(atom(InternSql),
-           'INSERT OR IGNORE INTO ~w ("__semantic", "__rendered", ~w) SELECT ~w FROM json_each(?)',
+           'INSERT OR IGNORE INTO ~w (~w) SELECT ~w FROM json_each(?)',
            [QuotedTable, ColumnsSql, SelectSql]),
+    findall(JsonArg,
+            ( member(QuotedColumn, QuotedColumns),
+              format(atom(JsonArg), '~w', [QuotedColumn]) ),
+            JsonArgs),
+    atomic_list_concat(JsonArgs, ', ', JsonArgsSql),
     format(atom(LookupSql),
-           'SELECT "__semantic", "__id" FROM ~w WHERE "__semantic" IN (SELECT value FROM json_each(?))',
-           [QuotedTable]).
+           'SELECT json_array(~w) AS "__lookup", "__id" FROM ~w WHERE json_array(~w) IN (SELECT value FROM json_each(?))',
+           [JsonArgsSql, QuotedTable, JsonArgsSql]).
 
 dictionary_ref_type(Types, DeclaredType, RefType) :-
     column_storage(Types, DeclaredType, Storage),
@@ -766,7 +768,7 @@ dictionary_ref_type(Types, DeclaredType, RefType) :-
 %   diag_file(File) <- diag(Where, _M), '__dict_place'(Where, File, _At).
 %
 %   .dl6 with its rx lowering (the snippet law):
-%     type place(file: text, at: span).
+%     rel place(file: text, at: span).
 %     rel diag(where: place, message: text).
 %     diag_file(file) <- diag(where, message), decode(where, {file: file}).
 %
@@ -1766,7 +1768,7 @@ level_positive_delta_arms(RelPlans, Head, Body, [_ | RestPositions], NegUses, Po
         Arms = [DeltaArm | RestArms]
     ).
 
-dictionary_use(use(Name/_Arity, _, _, _)) :- sub_atom(Name, 0, _, _, '__dict_').
+dictionary_use(use(Name/_Arity, _, _, _)) :- sub_atom(Name, 0, _, _, '__ref_').
 
 nth0_select(0, [Selected | Rest], Selected, Rest) :- !.
 nth0_select(Index, [Item | Rest], Selected, [Item | More]) :-
@@ -2042,11 +2044,12 @@ struct_intern_statements(Types, TypeName, Value, Semantic, Statements) :-
 
 lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder, EdgeRules),
               lowered(Name, Ddl, ArrivalStatements, EdgeStatements, LevelStatements, DeltaStatements, RelPlans, ArrivalTargets)) :-
+    type_definitions(Decls, LoweringTypes),
     findall(EdgeHeadedRef, ( member(EdgeRule, EdgeRules), rule_head_ref(EdgeRule, EdgeHeadedRef) ), EdgeHeadedRefs),
     findall(LevelHeadedRef,
             ( member(LevelRule, RuleOrder), rule_head_ref(LevelRule, LevelHeadedRef) ),
             LevelHeadedRefs),
-    maplist(rel_ddl(EdgeHeadedRefs, ArrivalTargets, LevelHeadedRefs),
+    maplist(rel_ddl(LoweringTypes, EdgeHeadedRefs, ArrivalTargets, LevelHeadedRefs),
             RelPlans, RelationDdlGroups),
     listened_departure_refs(Rules, DepartureRefs),
     maplist(delta_ddl(DepartureRefs), RelPlans, DeltaDdlGroups),
@@ -2067,9 +2070,8 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     % is Edge 2 enforced by construction rather than by a filter someone can
     % forget: a dictionary has no delta table to report and no name the tick
     % log can reach.
-    type_definitions(Decls, LoweringTypes),
     dictionary_relplans(LoweringTypes, DictionaryRelPlans),
-    append(RelPlans, DictionaryRelPlans, BodyRelPlans),
+    append(DictionaryRelPlans, RelPlans, BodyRelPlans),
     expand_decode_rules(LoweringTypes, BodyRelPlans, RuleOrder, DecodedRuleOrder),
     level_statement_groups(BodyRelPlans, DecodedRuleOrder, RuleLevelStatements),
     retention_statements(Decls, RelPlans, RetentionStatements),
@@ -2083,21 +2085,10 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     % STRUCT-AS-ROWS: the dictionaries come FIRST in the DDL list, in
     % topological order, so a program's storage plane exists before any table
     % whose columns point into it.
-    struct_dictionary_ddl(Decls, DictionaryDdl),
-    append([DictionaryDdl, RelationDdl, DeltaDdl, SupportDdl, AggregateScopeDdl, TickDdl], Ddl),
+    append([RelationDdl, DeltaDdl, SupportDdl, AggregateScopeDdl, TickDdl], Ddl),
     maplist(delta_statement, RelPlans, DeltaStatements).
 
 arrival_target_relplan(ArrivalTargets, relplan(Ref, _, _, _, _)) :- memberchk(Ref, ArrivalTargets).
-
-struct_dictionary_ddl(Decls, Ddl) :-
-    type_definitions(Decls, Types),
-    (   Types == []
-    ->  Ddl = []
-    ;   type_topological_order(Types, Ordered),
-        findall(Group, ( member(TypeName, Ordered),
-                         dictionary_ddl(Types, TypeName, Group) ), Groups),
-        append(Groups, Ddl)
-    ).
 
 % Boot statements, computed on demand (needs Initial, which plan/6 does not
 % carry -- compile.pl calls this directly with the fixture's Initial list).

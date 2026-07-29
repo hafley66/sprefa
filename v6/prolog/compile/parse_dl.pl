@@ -83,8 +83,9 @@ parse_dl(Codes, Prog, Bindings, Findings) :-
     retractall(finding_fact(_)),
     retractall(rel_column_order_fact(_, _)),
     retractall(host_signature_fact(_, _, _)),
-    statements(Codes, Left, [], VarsFinal, Decls, Rules, Queries),
+    statements(Codes, Left, [], VarsFinal, ParsedDecls, Rules, Queries),
     ( Left == [] -> true ; throw(dl_parse_error(trailing_input(Left))) ),
+    normalize_relation_value_decls(ParsedDecls, Decls),
     maplist(swap_pair, VarsFinal, BindingsRev),
     reverse(BindingsRev, Bindings),
     findall(F, finding_fact(F), Findings),
@@ -219,8 +220,7 @@ get_or_make_var(Name, Vars0, Var, Vars) :-
 
 statement(Kind, Item, Vars0, Vars, S0, S) :-
     skip_ws(S0, S1),
-    ( type_decl_stmt(Item0, S1, S2) -> Kind = decl_list, Item = [Item0], Vars = Vars0, S = S2
-    ; bind_decl_stmt(Item0, S1, S2) -> Kind = decl_list, Item = [Item0], Vars = Vars0, S = S2
+    ( bind_decl_stmt(Item0, S1, S2) -> Kind = decl_list, Item = [Item0], Vars = Vars0, S = S2
     ; decl_a_stmt(Item0, S1, S2) -> Kind = decl_list, Item = Item0, Vars = Vars0, S = S2
     ; decl_b_stmt(Item0, S1, S2) -> Kind = decl_list, Item = Item0, Vars = Vars0, S = S2
     ; sh_decl_stmt(Item0, S1, S2) -> Kind = decl_list, Item = [Item0], Vars = Vars0, S = S2
@@ -306,10 +306,10 @@ typed_column_type(int, S0, S) :- word(`int`, S0, S), !.
 typed_column_type(text, S0, S) :- word(`text`, S0, S), !.
 typed_column_type(json, S0, S) :- word(`json`, S0, S), !.
 % STRUCT-AS-ROWS (ruling compound_storage): a bare identifier in type
-% position names a declared struct type, and the column stores a ref to that
-% type's dictionary. A name no `type` decl introduces is NOT silently a text
-% column -- 0_type_plane.pl:column_storage/3 throws column_type_unknown, so a
-% typo is a named refusal rather than a column that quietly holds a blob.
+% position names a referenced relation value, and the column stores a ref to
+% that relation's dictionary. A name with no matching `rel` declaration is
+% not silently a text column: 0_type_plane.pl:column_storage/3 throws
+% column_type_unknown, so a typo remains a named refusal.
 typed_column_type(Name, S0, S) :- ident(Name, S0, S).
 
 enum_decl_variants((First ; Rest), S0, S) :-
@@ -467,34 +467,62 @@ coltype(none, S0, S) :- ident(_, S0, S).
 
 % ═══ selected world declarations ════════════════════════════════════════════
 
-% STRUCT-AS-ROWS (ruling compound_storage = struct_as_rows). SLOT-SPELLING is
-% answered in 0_type_plane.pl's header: `type`, an SQL word (CREATE TYPE ...
-% AS), never `rel`. The column production is decl_a's own typed_column_type/3,
-% so a struct field may itself be a declared type and nesting costs no new
-% syntax:
-%
-%   type span(start: int, end: int).
-%   type finding(at: span, message: text).
-%   rel diag(path: text, found: finding) log keep(all).
-type_decl_stmt(type_decl(Name, Specs), S0, S) :-
-    word(`type`, S0, S1),
-    ws0(S1, S2),
-    ident(Name, S2, S3),
-    ws0(S3, S4),
-    lit_dcg(`(`, S4, S5),
-    type_decl_columns(Specs, S5, S6),
-    ws0(S6, S7),
-    lit_dcg(`)`, S7, S8),
-    ws0(S8, S9),
-    lit_dcg(`.`, S9, S),
-    findall(Column, member(col(Column, _), Specs), Columns),
-    record_column_order(Name, Columns).
+% A relation named in column type position supplies that relation's value
+% domain. The parser keeps one surface declaration (`rel`) and normalizes the
+% referenced relation to the existing type_decl IR so every downstream shape,
+% interning, rendering, and refusal path remains shared.
+normalize_relation_value_decls(Decls0, Decls) :-
+    findall(Name,
+            ( declared_column_type_name(Decls0, Name),
+              relation_schema(Decls0, Name, _, _) ),
+            Names0),
+    sort(Names0, ValueRelationNames),
+    normalize_relation_value_decls(Decls0, ValueRelationNames, [], Decls).
 
-type_decl_columns([], S0, S) :- ws0(S0, S1), peek(0'), S1, S), !.
-type_decl_columns([col(Name, Type) | Rest], S0, S) :-
-    ws0(S0, S1), ident(Name, S1, S2), ws0(S2, S3), lit_dcg(`:`, S3, S4),
-    ws0(S4, S5), typed_column_type(Type, S5, S6), ws0(S6, S7),
-    ( lit_dcg(`,`, S7, S8) -> type_decl_columns(Rest, S8, S) ; Rest = [], S = S7 ).
+normalize_relation_value_decls([], _, _, []).
+normalize_relation_value_decls([Head | Rest],
+                               ValueNames, Seen,
+                               [type_decl(Name, Specs), Head | More]) :-
+    Head = col_type(Name/Arity, _, _),
+    memberchk(Name, ValueNames),
+    \+ memberchk(Name, Seen),
+    !,
+    relation_schema([Head | Rest],
+                    Name, Name/Arity, Specs),
+    normalize_relation_value_decls(Rest, ValueNames, [Name | Seen], More).
+normalize_relation_value_decls([Head | Rest],
+                               ValueNames, Seen, [Head | More]) :-
+    Head = col_type(Name/_, _, _),
+    memberchk(Name, ValueNames),
+    !,
+    normalize_relation_value_decls(Rest, ValueNames, Seen, More).
+normalize_relation_value_decls([Decl | Rest], ValueNames, Seen,
+                               [Decl | More]) :-
+    normalize_relation_value_decls(Rest, ValueNames, Seen, More).
+
+relation_schema(Decls, Name, Ref, Specs) :-
+    once(member(col_type(Name/Arity, _, _), Decls)),
+    Ref = Name/Arity,
+    findall(col(Column, Type),
+            member(col_type(Ref, Column, Type), Decls),
+            Specs),
+    length(Specs, Arity).
+
+declared_column_type_name(Decls, Name) :-
+    member(col_type(_, _, Name), Decls),
+    \+ scalar_column_type(Name).
+declared_column_type_name(Decls, Name) :-
+    member(sh_decl(_, Inputs, Outputs, _), Decls),
+    ( member(col(_, Name), Inputs) ; member(col(_, Name), Outputs) ),
+    \+ scalar_column_type(Name).
+declared_column_type_name(Decls, Name) :-
+    member(bind_decl(_, Columns), Decls),
+    member(col(_, Name), Columns),
+    \+ scalar_column_type(Name).
+
+scalar_column_type(int).
+scalar_column_type(text).
+scalar_column_type(json).
 
 bind_decl_stmt(bind_decl(Name, Columns), S0, S) :-
     word(`bind`, S0, S1),

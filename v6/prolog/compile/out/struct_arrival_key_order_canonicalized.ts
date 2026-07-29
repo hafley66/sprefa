@@ -63,7 +63,7 @@ function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
 }
 
 export const STRUCT_TYPES: readonly IStructTypePlan[] = [
-  { name: "span", columns: ["start", "end"], refs: [null, null], internSql: `INSERT OR IGNORE INTO "__dict_span" ("__semantic", "__rendered", "start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)`, lookupSql: `SELECT "__semantic", "__id" FROM "__dict_span" WHERE "__semantic" IN (SELECT value FROM json_each(?))` },
+  { name: "span", columns: ["start", "end"], refs: [null, null], internSql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)`, lookupSql: `SELECT json_array("start", "end") AS "__lookup", "__id" FROM "span" WHERE json_array("start", "end") IN (SELECT value FROM json_each(?))` },
 ];
 
 export const STRUCT_REF_COLUMNS: IStructRefColumns = {
@@ -71,42 +71,53 @@ export const STRUCT_REF_COLUMNS: IStructRefColumns = {
 };
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "__dict_span" ("__id" INTEGER PRIMARY KEY, "__semantic" TEXT NOT NULL, "__rendered" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
-  `CREATE UNIQUE INDEX "__dict_span_semantic" ON "__dict_span" ("__semantic")`,
   `CREATE TABLE "finding" ("path" TEXT NOT NULL, "at" INTEGER NOT NULL, PRIMARY KEY ("path", "at")) WITHOUT ROWID`,
+  `CREATE TABLE "span" ("__id" INTEGER PRIMARY KEY, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, UNIQUE ("start", "end"))`,
+  `CREATE TEMP VIEW "__ref_span" AS SELECT "__id", "start", "end" FROM "span"`,
   `CREATE TEMP TABLE "__delta_finding" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_finding_sign" ON "__delta_finding" ("_sign")`,
   `CREATE TEMP TABLE "__frontier_finding" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_finding_phase" ON "__frontier_finding" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_finding" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_finding_phase" ON "__next_frontier_finding" ("_phase")`,
+  `CREATE TEMP TABLE "__delta_span" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_span_sign" ON "__delta_span" ("_sign")`,
+  `CREATE TEMP TABLE "__frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_span_phase" ON "__frontier_span" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
+  `CREATE INDEX "__next_frontier_span_phase" ON "__next_frontier_span" ("_phase")`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
   finding: ["path", "at"],
+  span: ["start", "end"],
 };
 
-const arrivalTargets: readonly string[] = ["finding"];
+const arrivalTargets: readonly string[] = ["finding", "span"];
 
 const boot: readonly IBootStatement[] = [
 ];
 
 type Snapshot = {
   readonly finding: readonly IRow[];
+  readonly span: readonly IRow[];
 };
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    finding: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", (SELECT d."__rendered" FROM "__dict_span" d WHERE d."__id" = "at") AS "at" FROM "finding"`, relColumns.finding!),
+    finding: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "at" FROM "finding"`, relColumns.finding!),
+    span: selectRows(seam, `SELECT "start", "end" FROM "span"`, relColumns.span!),
   });
 }
 
 const finalSelect: Record<string, string> = {
-  finding: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", (SELECT d."__rendered" FROM "__dict_span" d WHERE d."__id" = "at") AS "at" FROM "finding"`,
+  finding: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "at" FROM "finding"`,
+  span: `SELECT "start", "end" FROM "span"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   finding: { kind: "set", addSql: `INSERT OR IGNORE INTO "finding" ("path", "at") VALUES (?, ?)`, delSql: `DELETE FROM "finding" WHERE "path" = ? AND "at" = ?` },
+  span: { kind: "set", addSql: `INSERT OR IGNORE INTO "span" ("start", "end") VALUES (?, ?)`, delSql: `DELETE FROM "span" WHERE "start" = ? AND "end" = ?` },
 };
 
 function arrivalStatement(arrival: IArrivalRow): SqlStatement {
@@ -132,7 +143,8 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "finding", kind: "set", tableName: "finding", deltaTableName: "__delta_finding", frontierTableName: "__frontier_finding", nextFrontierTableName: "__next_frontier_finding", columns: ["path", "at"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "finding" ("path", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "at"`, arrivalDelSql: `DELETE FROM "finding" WHERE ("path", "at") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "at"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", (SELECT d."__rendered" FROM "__dict_span" d WHERE d."__id" = "at") AS "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_finding" WHERE "_sign" IN (-1, 1) GROUP BY "path", "at", "_sign"` },
+  { rel: "finding", kind: "set", tableName: "finding", deltaTableName: "__delta_finding", frontierTableName: "__frontier_finding", nextFrontierTableName: "__next_frontier_finding", columns: ["path", "at"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "finding" ("path", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "at"`, arrivalDelSql: `DELETE FROM "finding" WHERE ("path", "at") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "at"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_finding" WHERE "_sign" IN (-1, 1) GROUP BY "path", "at", "_sign"` },
+  { rel: "span", kind: "set", tableName: "span", deltaTableName: "__delta_span", frontierTableName: "__frontier_span", nextFrontierTableName: "__next_frontier_span", columns: ["start", "end"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "start", "end"`, arrivalDelSql: `DELETE FROM "span" WHERE ("start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "start", "end"`, boundarySql: `SELECT "start", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" WHERE "_sign" IN (-1, 1) GROUP BY "start", "end", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -148,9 +160,11 @@ function recomputeLevels(seam: ISqlSeam): Observable<void> {
 
 function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
   const finding = multisetDiff(before.finding, after.finding);
+  const span = multisetDiff(before.span, after.span);
   return {
     rels: [
       { rel: "finding", add: finding.add, del: finding.del },
+      { rel: "span", add: span.add, del: span.del },
     ],
     carryPending: false,
   };

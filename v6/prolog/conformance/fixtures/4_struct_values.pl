@@ -245,7 +245,7 @@ fixture(struct_nested_value_renders_whole_tree,
 % first rule, json_each on the second). Declaring the response body's shape is
 % the whole difference: decode becomes a dictionary join and the rule compiles.
 %
-%   type repo_body(full_name: text, stargazers_count: int).
+%   rel repo_body(full_name: text, stargazers_count: int).
 %   rel current_body(ep: text, body: repo_body).
 %   stars(ep, n) <- current_body(ep, body), decode(body, {stargazers_count: n}).
 %
@@ -295,7 +295,7 @@ fixture(struct_decode_field_unknown_rejected,
 % them out by join. This fixture is that shape end to end with the value
 % arriving as an ordinary world row.
 %
-%   type span(end: int, start: int).
+%   rel span(end: int, start: int).
 %   rel node_fact(path: text, name: text, at: span) log keep(all).
 %   rel def_start(path: text, offset: int).
 %   def_start(path, offset) <- node_fact(path, name, at), decode(at, {start: offset}).

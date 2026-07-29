@@ -1090,6 +1090,23 @@ test(selected_surface_round_trips) :-
     parse_dl(PrintedCodes, Reparsed, _, []),
     Program =@= Reparsed.
 
+test(removed_type_keyword_is_rejected,
+     [throws(dl_parse_error(statement, _))]) :-
+    string_codes("type span(start: int, end: int).", Codes),
+    parse_dl(Codes, _, _, _).
+
+test(referenced_rel_remains_queryable_and_marks_reference_edge) :-
+    string_codes(
+      "rel span(start: int, end: int).\nrel mark(at: span).\n",
+      Codes),
+    parse_dl(Codes, prog(Decls, []), _, []),
+    memberchk(type_decl(span,
+                        [col(start, int), col(end, int)]),
+              Decls),
+    memberchk(col_type(mark/1, at, span), Decls),
+    memberchk(col_type(span/2, start, int), Decls),
+    memberchk(col_type(span/2, end, int), Decls).
+
 test(named_body_omissions_are_fresh) :-
     string_codes(
       "rel source(a: text, b: text, c: text).\nout(X) <- source(a: X).\n",
@@ -1170,7 +1187,7 @@ test(host_duplicate_column_refusal,
 % response-column lowering, and emitted host plan together.
 test(host_declared_struct_output_parses_and_lowers_as_ref) :-
     string_codes(
-      "type span(end: int, start: int).\nrel source_path(path: text).\nrel host_span(path: text, at: span).\nsh scan_span(path: text) -> (at: span) = `scan {path}`.\nhost_span(Path, At) <- source_path(Path), ? scan_span(Path, At).\n",
+      "rel span(end: int, start: int).\nrel source_path(path: text).\nrel host_span(path: text, at: span).\nsh scan_span(path: text) -> (at: span) = `scan {path}`.\nhost_span(Path, At) <- source_path(Path), ? scan_span(Path, At).\n",
       Codes),
     parse_dl(Codes, Program, Bindings, []),
     program_plan(
@@ -1203,7 +1220,7 @@ test(host_declared_struct_output_parses_and_lowers_as_ref) :-
 test(host_unknown_struct_output_refuses_by_type_name,
      [throws(unsupported_construct(column_type_unknown(spann)))]) :-
     string_codes(
-      "type span(end: int, start: int).\nrel source_path(path: text).\nrel host_span(path: text, at: span).\nsh scan_span(path: text) -> (at: spann) = `scan {path}`.\nhost_span(Path, At) <- source_path(Path), ? scan_span(Path, At).\n",
+      "rel span(end: int, start: int).\nrel source_path(path: text).\nrel host_span(path: text, at: span).\nsh scan_span(path: text) -> (at: spann) = `scan {path}`.\nhost_span(Path, At) <- source_path(Path), ? scan_span(Path, At).\n",
       Codes),
     parse_dl(Codes, Program, Bindings, []),
     program_plan(

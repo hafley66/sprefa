@@ -1,0 +1,39 @@
+[
+  {
+    "bytes_per_reference": 15.927369826435246,
+    "cell": "whole",
+    "db_bytes": 954368,
+    "filter_ms": 0.038672920782119036,
+    "ingest_ms": 39.182125008665025,
+    "paths": 2996,
+    "plan": [
+      "SEARCH path USING COVERING INDEX sqlite_autoindex_path_1 (text>? AND text<?)"
+    ],
+    "references": 59920
+  },
+  {
+    "bytes_per_reference": 19.14018691588785,
+    "cell": "segments",
+    "db_bytes": 1146880,
+    "filter_ms": 0.05883416975848377,
+    "ingest_ms": 52.0838750526309,
+    "paths": 2996,
+    "plan": [
+      "SEARCH s USING COVERING INDEX sqlite_autoindex_segment_1 (text=?)",
+      "SEARCH ps USING COVERING INDEX path_segment_value (segment_id=?)"
+    ],
+    "references": 59920
+  },
+  {
+    "bytes_per_reference": 57.55727636849132,
+    "cell": "repeated",
+    "db_bytes": 3448832,
+    "filter_ms": 1.0233058303128928,
+    "ingest_ms": 48.089500050991774,
+    "paths": 2996,
+    "plan": [
+      "SEARCH fact USING PRIMARY KEY (path>? AND path<?)"
+    ],
+    "references": 59920
+  }
+]

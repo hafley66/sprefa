@@ -1,4 +1,4 @@
-type repo_body(full_name: text, stargazers_count: int).
+rel repo_body(full_name: text, stargazers_count: int).
 rel current_body(ep: text, body: repo_body).
 rel stars(ep: text, n: int).
 

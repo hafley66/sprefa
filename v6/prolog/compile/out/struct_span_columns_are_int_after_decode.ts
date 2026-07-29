@@ -63,7 +63,7 @@ function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
 }
 
 export const STRUCT_TYPES: readonly IStructTypePlan[] = [
-  { name: "span", columns: ["end", "start"], refs: [null, null], internSql: `INSERT OR IGNORE INTO "__dict_span" ("__semantic", "__rendered", "end", "start") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)`, lookupSql: `SELECT "__semantic", "__id" FROM "__dict_span" WHERE "__semantic" IN (SELECT value FROM json_each(?))` },
+  { name: "span", columns: ["end", "start"], refs: [null, null], internSql: `INSERT OR IGNORE INTO "span" ("end", "start") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)`, lookupSql: `SELECT json_array("end", "start") AS "__lookup", "__id" FROM "span" WHERE json_array("end", "start") IN (SELECT value FROM json_each(?))` },
 ];
 
 export const STRUCT_REF_COLUMNS: IStructRefColumns = {
@@ -71,10 +71,10 @@ export const STRUCT_REF_COLUMNS: IStructRefColumns = {
 };
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "__dict_span" ("__id" INTEGER PRIMARY KEY, "__semantic" TEXT NOT NULL, "__rendered" TEXT NOT NULL, "end" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
-  `CREATE UNIQUE INDEX "__dict_span_semantic" ON "__dict_span" ("__semantic")`,
   `CREATE TABLE "def_start" ("path" TEXT NOT NULL, "offset" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "offset")) WITHOUT ROWID`,
   `CREATE TABLE "node_fact" ("path" TEXT NOT NULL, "name" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE TABLE "span" ("__id" INTEGER PRIMARY KEY, "end" INTEGER NOT NULL, "start" INTEGER NOT NULL, UNIQUE ("end", "start"))`,
+  `CREATE TEMP VIEW "__ref_span" AS SELECT "__id", "end", "start" FROM "span"`,
   `CREATE TEMP TABLE "__delta_def_start" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "offset" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_def_start_sign" ON "__delta_def_start" ("_sign")`,
   `CREATE TEMP TABLE "__frontier_def_start" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "offset" INTEGER NOT NULL)`,
@@ -87,40 +87,51 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_node_fact_phase" ON "__frontier_node_fact" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_node_fact" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "name" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_node_fact_phase" ON "__next_frontier_node_fact" ("_phase")`,
+  `CREATE TEMP TABLE "__delta_span" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "end" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_span_sign" ON "__delta_span" ("_sign")`,
+  `CREATE TEMP TABLE "__frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "end" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_span_phase" ON "__frontier_span" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "end" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
+  `CREATE INDEX "__next_frontier_span_phase" ON "__next_frontier_span" ("_phase")`,
   `CREATE TEMP TABLE "__support_next_def_start" ("path" TEXT NOT NULL, "offset" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("path", "offset")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
   def_start: ["path", "offset"],
   node_fact: ["path", "name", "at"],
+  span: ["end", "start"],
 };
 
-const arrivalTargets: readonly string[] = ["node_fact"];
+const arrivalTargets: readonly string[] = ["node_fact", "span"];
 
 const boot: readonly IBootStatement[] = [
   { sql: `DELETE FROM "def_start"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "def_start" ("path", "offset") SELECT b0."path", b1."start" FROM "node_fact" b0, "__dict_span" b1 WHERE b1."__id" = b0."at"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "def_start" ("path", "offset") SELECT b0."path", b1."start" FROM "node_fact" b0, "__ref_span" b1 WHERE b1."__id" = b0."at"`, params: [] },
 ];
 
 type Snapshot = {
   readonly def_start: readonly IRow[];
   readonly node_fact: readonly IRow[];
+  readonly span: readonly IRow[];
 };
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
     def_start: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "offset" FROM "def_start"`, relColumns.def_start!),
-    node_fact: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", (SELECT d."__rendered" FROM "__dict_span" d WHERE d."__id" = "at") AS "at" FROM "node_fact"`, relColumns.node_fact!),
+    node_fact: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "at" FROM "node_fact"`, relColumns.node_fact!),
+    span: selectRows(seam, `SELECT "end", "start" FROM "span"`, relColumns.span!),
   });
 }
 
 const finalSelect: Record<string, string> = {
   def_start: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "offset" FROM "def_start"`,
-  node_fact: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", (SELECT d."__rendered" FROM "__dict_span" d WHERE d."__id" = "at") AS "at" FROM "node_fact"`,
+  node_fact: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "at" FROM "node_fact"`,
+  span: `SELECT "end", "start" FROM "span"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   node_fact: { kind: "log", addSql: `INSERT INTO "node_fact" ("path", "name", "at") VALUES (?, ?, ?)`, delSql: null },
+  span: { kind: "set", addSql: `INSERT OR IGNORE INTO "span" ("end", "start") VALUES (?, ?)`, delSql: `DELETE FROM "span" WHERE "end" = ? AND "start" = ?` },
 };
 
 function arrivalStatement(arrival: IArrivalRow): SqlStatement {
@@ -147,28 +158,31 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "def_start", kind: "set", tableName: "def_start", deltaTableName: "__delta_def_start", frontierTableName: "__frontier_def_start", nextFrontierTableName: "__next_frontier_def_start", columns: ["path", "offset"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "offset", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_def_start" WHERE "_sign" IN (-1, 1) GROUP BY "path", "offset", "_sign"` },
-  { rel: "node_fact", kind: "log", tableName: "node_fact", deltaTableName: "__delta_node_fact", frontierTableName: "__frontier_node_fact", nextFrontierTableName: "__next_frontier_node_fact", columns: ["path", "name", "at"], keyIndices: [], arrivalAddSql: `INSERT INTO "node_fact" ("path", "name", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "path", "name", "at"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", (SELECT d."__rendered" FROM "__dict_span" d WHERE d."__id" = "at") AS "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_node_fact" WHERE "_sign" IN (-1, 1) GROUP BY "path", "name", "at", "_sign"` },
+  { rel: "node_fact", kind: "log", tableName: "node_fact", deltaTableName: "__delta_node_fact", frontierTableName: "__frontier_node_fact", nextFrontierTableName: "__next_frontier_node_fact", columns: ["path", "name", "at"], keyIndices: [], arrivalAddSql: `INSERT INTO "node_fact" ("path", "name", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "path", "name", "at"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_node_fact" WHERE "_sign" IN (-1, 1) GROUP BY "path", "name", "at", "_sign"` },
+  { rel: "span", kind: "set", tableName: "span", deltaTableName: "__delta_span", frontierTableName: "__frontier_span", nextFrontierTableName: "__next_frontier_span", columns: ["end", "start"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "span" ("end", "start") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "end", "start"`, arrivalDelSql: `DELETE FROM "span" WHERE ("end", "start") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "end", "start"`, boundarySql: `SELECT "end", "start", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" WHERE "_sign" IN (-1, 1) GROUP BY "end", "start", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "def_start", headDeltaTableName: "__delta_def_start", headColumns: ["path", "offset"], insertSql: `INSERT OR IGNORE INTO "def_start" ("path", "offset") SELECT DISTINCT d0."path", b0."start" FROM "__frontier_node_fact" d0, "__dict_span" b0 WHERE d0."_phase" >= 0 AND b0."__id" = d0."at" RETURNING "path", "offset"`, selectSql: `SELECT "path", "offset" FROM "def_start"`, recomputeSql: `DELETE FROM "def_start";\nINSERT OR IGNORE INTO "def_start" ("path", "offset") SELECT b0."path", b1."start" FROM "node_fact" b0, "__dict_span" b1 WHERE b1."__id" = b0."at"`, supportSql: [`DELETE FROM "__support_next_def_start"`, `INSERT INTO "__support_next_def_start" ("path", "offset", "__support_count") SELECT "path", "offset", sum("__support_count") FROM (SELECT b0."path" AS "path", b1."start" AS "offset", count(*) AS "__support_count" FROM "node_fact" b0, "__dict_span" b1 WHERE b1."__id" = b0."at" GROUP BY b0."path", b1."start") GROUP BY "path", "offset"`, `UPDATE "def_start" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_def_start" n WHERE n."path" = h."path" AND n."offset" = h."offset"), 0))`, `DELETE FROM "def_start" WHERE "__support_count" <= 0 RETURNING "path", "offset"`, `INSERT INTO "def_start" ("path", "offset", "__support_count") SELECT "path", "offset", n."__support_count" FROM "__support_next_def_start" n WHERE NOT EXISTS (SELECT 1 FROM "def_start" h WHERE n."path" = h."path" AND n."offset" = h."offset") RETURNING "path", "offset"`], aggregateSql: null },
+  { headRel: "def_start", headDeltaTableName: "__delta_def_start", headColumns: ["path", "offset"], insertSql: `INSERT OR IGNORE INTO "def_start" ("path", "offset") SELECT DISTINCT d0."path", b0."start" FROM "__frontier_node_fact" d0, "__ref_span" b0 WHERE d0."_phase" >= 0 AND b0."__id" = d0."at" RETURNING "path", "offset"`, selectSql: `SELECT "path", "offset" FROM "def_start"`, recomputeSql: `DELETE FROM "def_start";\nINSERT OR IGNORE INTO "def_start" ("path", "offset") SELECT b0."path", b1."start" FROM "node_fact" b0, "__ref_span" b1 WHERE b1."__id" = b0."at"`, supportSql: [`DELETE FROM "__support_next_def_start"`, `INSERT INTO "__support_next_def_start" ("path", "offset", "__support_count") SELECT "path", "offset", sum("__support_count") FROM (SELECT b0."path" AS "path", b1."start" AS "offset", count(*) AS "__support_count" FROM "node_fact" b0, "__ref_span" b1 WHERE b1."__id" = b0."at" GROUP BY b0."path", b1."start") GROUP BY "path", "offset"`, `UPDATE "def_start" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_def_start" n WHERE n."path" = h."path" AND n."offset" = h."offset"), 0))`, `DELETE FROM "def_start" WHERE "__support_count" <= 0 RETURNING "path", "offset"`, `INSERT INTO "def_start" ("path", "offset", "__support_count") SELECT "path", "offset", n."__support_count" FROM "__support_next_def_start" n WHERE NOT EXISTS (SELECT 1 FROM "def_start" h WHERE n."path" = h."path" AND n."offset" = h."offset") RETURNING "path", "offset"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "def_start";\nINSERT OR IGNORE INTO "def_start" ("path", "offset") SELECT b0."path", b1."start" FROM "node_fact" b0, "__dict_span" b1 WHERE b1."__id" = b0."at"`;
+  const sql = `DELETE FROM "def_start";\nINSERT OR IGNORE INTO "def_start" ("path", "offset") SELECT b0."path", b1."start" FROM "node_fact" b0, "__ref_span" b1 WHERE b1."__id" = b0."at"`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
 function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
   const def_start = multisetDiff(before.def_start, after.def_start);
   const node_fact = multisetDiff(before.node_fact, after.node_fact);
+  const span = multisetDiff(before.span, after.span);
   return {
     rels: [
       { rel: "def_start", add: def_start.add, del: def_start.del },
       { rel: "node_fact", add: node_fact.add, del: node_fact.del },
+      { rel: "span", add: span.add, del: span.del },
     ],
     carryPending: false,
   };

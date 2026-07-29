@@ -42,6 +42,13 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `decision` plans/2026-07-20-typed-template-bootstrap-lab.md:705 — Select the embedded relation storage strategy after measuring Vec-plus-indexes against a Rust Datalog crate on the fixed fact vocabulary.
 - `decision` plans/2026-07-20-typed-template-bootstrap-lab.md:711 — Decide whether repeated named slots mean equality constraints or duplicate-binding errors after matcher ambiguity tests exist.
 - `decision` plans/2026-07-25-analysis-engine-bakeoff-labs.md:118 — per-candidate verdict at the human gate — adopt-as-engine / adopt-as-oracle / read-only / discard
+- `decision` plans/2026-07-29-file-identity-span-spine.md:363 — Confirm the proposed semantic names File, Blob, RevFile, and FileSpan before any declaration spelling or migration lands.
+- `decision` plans/2026-07-29-file-identity-span-spine.md:366 — Choose whether work revisions retain one stable rev_id while rev_file rows change, or mint a new observation revision per accepted watcher batch.
+- `decision` plans/2026-07-29-file-identity-span-spine.md:370 — Choose the user-visible declaration spelling for standard library value views separately from their rel declarations. No spelling is introduced by this plan.
+- `decision` plans/2026-07-29-file-span-storage-lab.md:531 — Choose the surface spelling for generic relation-reference columns after accepting or rejecting the generic ref(Relation) semantics.
+- `decision` plans/2026-07-29-file-span-storage-lab.md:534 — Choose the authoring spelling for registered typed host executors; implementation may reuse IHostPlan internally without exposing new syntax first.
+- `decision` plans/2026-07-29-rel-value-unification-lab.md:394 — Decide automatic versus explicit relation-reference spelling only after both forms run through the real parser and compiler.
+- `decision` plans/2026-07-29-rel-value-unification-lab.md:397 — Decide rel A-to-B versus ordinary rel plus modes only after deterministic, multi-row, keyed-update, cached, and host-produced real fixtures establish its SQL and Rx meaning.
 - `docs` plans/2026-07-10-change-cost-friction-inventory.md:151 — item 6 — a generated per-language coverage table (which node kinds each TypeLang lift emits, tested counts on a fixture) in docs/reference
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:105 — match() trailing positional is a match ID not captured text — rename convention to match_id in shipped examples, show named-capture form in the op quickref
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:106 — comment_node.text strips comment tokens — state it in the relations table row, not only the buried authoring bullet
@@ -255,6 +262,13 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-25-analysis-engine-bakeoff-labs.md:117 `perf` — RAM budget per lab declared BEFORE its first C2 run — exceeding = fail (30GB lesson)
 - plans/2026-07-25-analysis-engine-bakeoff-labs.md:118 `decision` — per-candidate verdict at the human gate — adopt-as-engine / adopt-as-oracle / read-only / discard
 - plans/2026-07-25-analysis-engine-bakeoff-labs.md:119 `docs` — scale matrix committed to labs/bakeoff/MATRIX.md (tool × Q1–Q10 × C0–C3 × wall/RSS/LOC/cold-start)
+- plans/2026-07-29-file-identity-span-spine.md:363 `decision` — Confirm the proposed semantic names File, Blob, RevFile, and FileSpan before any declaration spelling or migration lands.
+- plans/2026-07-29-file-identity-span-spine.md:366 `decision` — Choose whether work revisions retain one stable rev_id while rev_file rows change, or mint a new observation revision per accepted watcher batch.
+- plans/2026-07-29-file-identity-span-spine.md:370 `decision` — Choose the user-visible declaration spelling for standard library value views separately from their rel declarations. No spelling is introduced by this plan.
+- plans/2026-07-29-file-span-storage-lab.md:531 `decision` — Choose the surface spelling for generic relation-reference columns after accepting or rejecting the generic ref(Relation) semantics.
+- plans/2026-07-29-file-span-storage-lab.md:534 `decision` — Choose the authoring spelling for registered typed host executors; implementation may reuse IHostPlan internally without exposing new syntax first.
+- plans/2026-07-29-rel-value-unification-lab.md:394 `decision` — Decide automatic versus explicit relation-reference spelling only after both forms run through the real parser and compiler.
+- plans/2026-07-29-rel-value-unification-lab.md:397 `decision` — Decide rel A-to-B versus ordinary rel plus modes only after deterministic, multi-row, keyed-update, cached, and host-produced real fixtures establish its SQL and Rx meaning.
 <!-- END: plans-by-plan -->
 
 ## By code file

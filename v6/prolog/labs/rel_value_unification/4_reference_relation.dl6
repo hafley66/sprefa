@@ -1,0 +1,9 @@
+rel span(start: int, end: int).
+rel finding(path: text, at: span).
+rel copied_span(start: int, end: int).
+rel finding_start(path: text, start: int).
+
+copied_span(Start, End) <- span(Start, End).
+finding_start(Path, Start) <-
+    finding(Path, At),
+    decode(At, {start: Start}).

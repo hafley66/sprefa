@@ -91,11 +91,21 @@ find_fixture(Stream, Name, Term, Bindings) :-
 %              program order for each occurrence; with at most one edge rule
 %              per target fixture this is a formality kept for generality).
 
+materialize_reference_target_rels(prog(Decls0, Rules), prog(Decls, Rules)) :-
+    findall(col_type(Name/Arity, Column, Type),
+            ( member(type_decl(Name, Specs), Decls0),
+              length(Specs, Arity),
+              member(col(Column, Type), Specs),
+              \+ memberchk(col_type(Name/Arity, Column, Type), Decls0) ),
+            MissingColumns),
+    append(Decls0, MissingColumns, Decls).
+
 program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindings, Plan) :-
     prepare_program(SugaredProg, HostProg, _, _, _),
     % Host preparation stays a PRE-PASS (see engine.pl); the sugar phases run
     % in the order 1_expansion.pl declares.
-    expand_program(HostProg, Prog, _),
+    expand_program(HostProg, ExpandedProg, _),
+    materialize_reference_target_rels(ExpandedProg, Prog),
     Prog = prog(Decls, Rules),
     % ..._expanded/1, not check_supported_subset/1: Prog is ALREADY expanded
     % here, and the sugared entry expands again. That second expansion was the
