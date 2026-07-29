@@ -922,10 +922,15 @@ test(emitter_carries_world_plans_and_demand_sql) :-
     boot_statements(RelPlans, Initial, LevelStatements, Boot),
     emit_program(native_ts_query_term, Plan, Lowered, Boot, Text),
     once(sub_atom(Text, _, _, _, 'export const hostPlans')),
+    % PHASE 2 (runtime bridge arc): the two named refusals are gone; both world
+    % terms now carry the executor the served runtime dispatches on. The bind's
+    % `periods` list is EMPTY for this fixture on purpose -- it declares
+    % `bind interval(...)` and seeds an `interval(300, 1)` Initial row, but no
+    % RULE reads a literal period, so no timer is owed.
+    once(sub_atom(Text, _, _, _, 'execution: "live_sh"')),
+    once(sub_atom(Text, _, _, _, 'periods: [], execution: "live_interval"')),
     once(sub_atom(Text, _, _, _,
-                  'unsupported_host_execution_phase_2(tree_sitter)')),
-    once(sub_atom(Text, _, _, _,
-                  'unsupported_bind_execution_phase_2(interval)')),
+                  'export const unsupportedExecution: readonly string[] = [];')),
     once(sub_atom(Text, _, _, _,
                   'CREATE TABLE "__host_demand_tree_sitter"')),
     once(sub_atom(Text, _, _, _,

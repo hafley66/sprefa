@@ -189,7 +189,7 @@ imports_lines(_HasEdgeRules, HasRetention, Lines) :-
 local_types_lines(
     [ 'interface IHostColumnPlan { readonly name: string; readonly type: "int" | "text" | "json" }',
       'interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }',
-      'interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly execution: string }',
+      'interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly periods: readonly number[]; readonly execution: string }',
       'interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }',
       '',
       'interface IBootStatement {',
@@ -200,15 +200,17 @@ local_types_lines(
       'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };'
     ]).
 
-world_plan_lines(plan(_, prog(Decls, _), _, _, _, _), Lines) :-
+world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _), Lines) :-
     findall(HostPlan,
             ( member(Decl, Decls),
               Decl = sh_decl(_, _, _, _),
               compile_host_decl(Decl, HostPlan)
             ),
             HostPlans),
-    findall(bind_plan(Name, Columns),
-            member(bind_decl(Name, Columns), Decls),
+    findall(bind_plan(Name, Columns, Periods),
+            ( member(bind_decl(Name, Columns), Decls),
+              bind_read_periods(Rules, Name, Columns, Periods)
+            ),
             BindPlans),
     findall(query_plan(Name/Arity, snapshot(current)),
             ( member(query(Atom), Decls),
@@ -218,9 +220,11 @@ world_plan_lines(plan(_, prog(Decls, _), _, _, _, _), Lines) :-
     maplist(host_plan_json, HostPlans, HostRows),
     maplist(bind_plan_json, BindPlans, BindRows),
     maplist(query_plan_json, QueryPlans, QueryRows),
-    maplist(host_refusal_text, HostPlans, HostRefusals),
-    maplist(bind_refusal_text, BindPlans, BindRefusals),
-    append(HostRefusals, BindRefusals, Refusals),
+    % PHASE 2 (plans/2026-07-29-runtime-bridge-header.md): sh hosts and the
+    % interval bind EXECUTE in the served runtime, so neither emits a refusal
+    % row any more. The const and its slot stay: a future world term with no
+    % executor names itself here rather than executing silently.
+    Refusals = [],
     array_const_line('export const hostPlans: readonly IHostPlanData[]', HostRows,
                      HostLine),
     array_const_line('export const bindPlans: readonly IBindPlanData[]', BindRows,
@@ -246,16 +250,50 @@ host_plan_json(
     js_string(DemandName, DemandJson),
     js_string(ResponseName, ResponseJson),
     format(atom(Json),
-           '{ name: ~w, inputs: ~w, outputs: ~w, template: ~w, demandRel: ~w, responseRel: ~w, execution: "unsupported_host_execution_phase_2" }',
+           '{ name: ~w, inputs: ~w, outputs: ~w, template: ~w, demandRel: ~w, responseRel: ~w, execution: "live_sh" }',
            [NameJson, InputsJson, OutputsJson, TemplateJson,
             DemandJson, ResponseJson]).
 
-bind_plan_json(bind_plan(Name, Columns), Json) :-
+bind_plan_json(bind_plan(Name, Columns, Periods), Json) :-
     js_string(Name, NameJson),
     host_columns_json(Columns, ColumnsJson),
+    atomic_list_concat(Periods, ', ', PeriodBody),
+    format(atom(PeriodsJson), '[~w]', [PeriodBody]),
     format(atom(Json),
-           '{ name: ~w, columns: ~w, execution: "unsupported_bind_execution_phase_2" }',
-           [NameJson, ColumnsJson]).
+           '{ name: ~w, columns: ~w, periods: ~w, execution: "live_interval" }',
+           [NameJson, ColumnsJson, PeriodsJson]).
+
+% ═══ bind cadence values (phase 2, runtime bridge arc) ═══════════════════════
+% A bind declaration authorizes a world source; the PROGRAM'S OWN RULES say
+% which cadence values it consumes, as integer literals in the first column of
+% a body atom naming the bind (`interval(300, Bucket)`). Those literals are the
+% only statement anywhere in the program about how often the world should push,
+% so they are what the served runtime spins a timer for -- a program that
+% declares `bind interval(...)` and never reads a literal period gets no timer
+% at all, and says so by emitting an empty list.
+%
+% The scan is over the WHOLE rule term (head and body alike): a rule that heads
+% the bind rel is already refused at load (bind_and_rule_head), so every
+% occurrence reachable here is a read.
+bind_read_periods(Rules, Name, Columns, Periods) :-
+    length(Columns, Arity),
+    findall(Period,
+            ( bind_subterm(Rules, Atom),
+              compound(Atom),
+              functor(Atom, Name, Arity),
+              arg(1, Atom, Period),
+              integer(Period)
+            ),
+            Raw),
+    sort(Raw, Periods).
+
+bind_subterm(Term, Term) :-
+    nonvar(Term).
+bind_subterm(Term, Sub) :-
+    nonvar(Term),
+    compound(Term),
+    arg(_, Term, Argument),
+    bind_subterm(Argument, Sub).
 
 query_plan_json(query_plan(Name/Arity, snapshot(current)), Json) :-
     js_string(Name, NameJson),
@@ -271,14 +309,6 @@ host_column_json(col(Name, Type), Json) :-
     js_string(Name, NameJson),
     js_string(Type, TypeJson),
     format(atom(Json), '{ name: ~w, type: ~w }', [NameJson, TypeJson]).
-
-host_refusal_text(host_plan(Name, _, _, _, _, _), Text) :-
-    format(atom(Refusal), 'unsupported_host_execution_phase_2(~w)', [Name]),
-    js_string(Refusal, Text).
-
-bind_refusal_text(bind_plan(Name, _), Text) :-
-    format(atom(Refusal), 'unsupported_bind_execution_phase_2(~w)', [Name]),
-    js_string(Refusal, Text).
 
 % ═══ integer bind helper (phase C sweep finding) ═══════════════════════════
 % @libsql/client binds a JS `number` parameter as SQLite REAL, not INTEGER --

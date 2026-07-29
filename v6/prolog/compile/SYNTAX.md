@@ -136,9 +136,9 @@ construct inventory.
 
 | term | rx lowering | phase-1 compiler result |
 |---|---|---|
-| `sh_decl(Name, Inputs, Outputs, template(Text))` | RX-H1: request rows group by witness, take one request, decode declared outputs, then commit an EDB arrival | emitted as a `hostPlans` data row; live host execution is named `unsupported_host_execution_phase_2(Name)` |
+| `sh_decl(Name, Inputs, Outputs, template(Text))` | RX-H1: request rows group by witness, take one request, decode declared outputs, then commit an EDB arrival | emitted as a `hostPlans` data row carrying `execution: "live_sh"`; the served runtime (`v6/tsv2/serve/1_hosts.ts`) spawns the template and commits the decoded response as an EDB arrival |
 | `probe(Name, Inputs, Outputs, Salts)` | RX-H2: mint identity from host plus inputs, mint witness from identity plus salts, deduplicate by witness, then demand the host | lowers to `__host_demand_Name` SQL and a join with keyed EDB relation `__host_response_Name` |
-| `bind_decl(interval, Columns)` | RX-B1: subscribe to the registered interval source while the program is active and commit each row as EDB | emitted as a `bindPlans` data row; schedule arrivals grade phase 1 and live bind execution is named `unsupported_bind_execution_phase_2(Name)` |
+| `bind_decl(interval, Columns)` | RX-B1: subscribe to the registered interval source while the program is active and commit each row as EDB | emitted as a `bindPlans` data row carrying `periods` (the integer literals the program's own rules read in the bind atom's first column) and `execution: "live_interval"`; schedule arrivals still grade phase 1, and the served runtime (`v6/tsv2/serve/2_binds.ts`) spins one rx `interval` per declared period |
 | `query(RelAtom)` | RX-Q1: scan the current SQLite query plan and stream its rows | emitted as a `queryPlans` data row |
 
 The chosen salt spelling is `@ salt(column: Value)`. Printing and reparsing
