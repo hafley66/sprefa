@@ -14,6 +14,8 @@
 :- use_module(library(plunit)).
 :- use_module(library(apply)).
 :- use_module('../compile', [ read_fixture_term/4, program_plan/2 ]).
+:- use_module('../../0_refusal_messages',
+              [ refusal_inventory/1, refusal_message_clause_count/1 ]).
 :- use_module('../strat', [ stratum_groups/2 ]).
 :- use_module('../lower',
               [ lower_program/2, compile_expr/4, compile_comparison/3,
@@ -1241,20 +1243,15 @@ test(emitter_carries_world_plans_and_demand_sql) :-
 % Bodies are GROUND on purpose. Every golden is then an exact literal and the
 % comparison is ==, with no variable-identity slack to hide a reordering.
 %
-% THREE DRIFTS THESE GOLDENS PIN, all pre-existing and all preserved by the
-% refactor rather than silently fixed (each is a registry row the hardcoded
-% lists never learned about):
+% THREE FORMER DRIFTS THESE GOLDENS PIN:
 %
-%   1. engine:trigger_items/2 makes an ARRIVAL out of next/1, combine, a
-%      comparison, and a reserved lifecycle wrapper. See the `mixed` golden:
-%      arrival(next(d(4))), arrival(combine(e(5),f(6))), arrival(8<9). These
-%      are inert downstream because occurrence_trigger/4 unifies the item
-%      against a real stored row and none of these shapes can match one, but
-%      the classification is wrong at the source.
-%   2. level_eval:goal_rel_refs/3 reports next/1 and combine/2 as POSITIVE
-%      relation references, so stratification carries constraints naming
-%      relations that cannot exist.
-%   3. body:body_atoms/2 repeats drift 1 in its own hardcoded list.
+%   1. engine:trigger_items/2 now admits only plain-atom walk events as
+%      arrivals, while finalize/1 remains the departure case. Registered
+%      wrappers and comparisons are not relation atoms.
+%   2. level_eval:goal_rel_refs/3 projects splice_bare registry rows through
+%      their relation arguments, so next/1 and combine/variadic name their
+%      contained refs.
+%   3. body:body_atoms/2 now projects the same plain-atom walk events.
 %
 % AND ONE ORDERING CONTRACT that is the reason goal_rel_refs/3 keeps a local
 % not/1 recursion instead of projecting from the shared walker: see the
@@ -1367,14 +1364,14 @@ walk_golden(not_mixed,
 walk_golden(next_wrapper,
   [ body_ref_uses-[use(a/1,[1],pos,trigger)],
     conjunction_goals-[a(1)],
-    trigger_items-[arrival(next(a(1)))],
+    trigger_items-[],
     engine_finalize_refs-[],
     engine_latest_refs-[],
     engine_pre_refs-[],
     analyze_latest_refs-[],
     analyze_pre_refs-[],
-    goal_rel_refs-([next/1]-[]),
-    body_atoms-[next(a(1))],
+    goal_rel_refs-([a/1]-[]),
+    body_atoms-[],
     reserved_constructs-[],
     forbidden_goals-[],
     host_body_goals-[next(a(1))]
@@ -1383,14 +1380,14 @@ walk_golden(next_wrapper,
 walk_golden(combine3,
   [ body_ref_uses-[use(a/1,[1],pos,trigger),use(b/1,[2],pos,trigger),use(c/1,[3],pos,trigger)],
     conjunction_goals-[a(1),b(2),c(3)],
-    trigger_items-[arrival(combine(a(1),b(2),c(3)))],
+    trigger_items-[],
     engine_finalize_refs-[],
     engine_latest_refs-[],
     engine_pre_refs-[],
     analyze_latest_refs-[],
     analyze_pre_refs-[],
-    goal_rel_refs-([combine/3]-[]),
-    body_atoms-[combine(a(1),b(2),c(3))],
+    goal_rel_refs-([a/1,b/1,c/1]-[]),
+    body_atoms-[],
     reserved_constructs-[],
     forbidden_goals-[],
     host_body_goals-[combine(a(1),b(2),c(3))]
@@ -1450,14 +1447,14 @@ walk_golden(pre_only,
 walk_golden(lifecycle,
   [ body_ref_uses-[use(a/1,[1],pos,trigger)],
     conjunction_goals-[unsubscribe(a(1))],
-    trigger_items-[arrival(unsubscribe(a(1)))],
+    trigger_items-[],
     engine_finalize_refs-[],
     engine_latest_refs-[],
     engine_pre_refs-[],
     analyze_latest_refs-[],
     analyze_pre_refs-[],
     goal_rel_refs-([unsubscribe/1]-[]),
-    body_atoms-[unsubscribe(a(1))],
+    body_atoms-[],
     reserved_constructs-[lifecycle_arm(unsubscribe)],
     forbidden_goals-[],
     host_body_goals-[unsubscribe(a(1))]
@@ -1482,7 +1479,7 @@ walk_golden(bind_goal,
 walk_golden(comparison,
   [ body_ref_uses-[],
     conjunction_goals-[1<9],
-    trigger_items-[arrival(1<9)],
+    trigger_items-[],
     engine_finalize_refs-[],
     engine_latest_refs-[],
     engine_pre_refs-[],
@@ -1530,14 +1527,14 @@ walk_golden(true_word,
 walk_golden(mixed,
   [ body_ref_uses-[use(a/1,[1],pos,trigger),use(b/1,[2],neg,trigger),use(c/1,[3],neg,sampled),use(d/1,[4],pos,trigger),use(e/1,[5],pos,trigger),use(f/1,[6],pos,trigger),use(g/1,[10],pos,trigger),use(h/1,[11],pos,sampled)],
     conjunction_goals-[a(1),not((b(2),latest(c(3)))),d(4),e(5),f(6),zz:=7,8<9,finalize(g(10)),pre(h(11))],
-    trigger_items-[arrival(a(1)),arrival(next(d(4))),arrival(combine(e(5),f(6))),arrival(8<9),departure(g(10))],
+    trigger_items-[arrival(a(1)),departure(g(10))],
     engine_finalize_refs-[g/1],
     engine_latest_refs-[c/1],
     engine_pre_refs-[h/1],
     analyze_latest_refs-[c/1],
     analyze_pre_refs-[h/1],
-    goal_rel_refs-([a/1,next/1,combine/2]-[b/1,c/1]),
-    body_atoms-[a(1),next(d(4)),combine(e(5),f(6))],
+    goal_rel_refs-([a/1,d/1,e/1,f/1]-[b/1,c/1]),
+    body_atoms-[a(1)],
     reserved_constructs-[],
     forbidden_goals-[pre(h(11))],
     host_body_goals-[a(1),not((b(2),latest(c(3)))),next(d(4)),combine(e(5),f(6)),zz:=7,8<9,finalize(g(10)),pre(h(11))]
@@ -1769,15 +1766,15 @@ test(nested_not_pre_parity) :-
     OracleVerdict == pre_in_level_rule(cfg/1),
     CompilerVerdict == unsupported_construct(pre_in_level_rule(cfg/1)).
 
-% A finalize under not/1 is opaque to BOTH doors, which is the asymmetry the
-% review named: the finalize scan does not descend negation on either side.
-% Pinned so closing one side alone becomes a visible change.
-test(nested_not_finalize_is_opaque_to_both_doors) :-
+% finalize/1 is a departure occurrence and has no level-plane meaning at any
+% negation depth. Both doors use the shared program check and name the same
+% refusal.
+test(nested_not_finalize_refused_by_both_doors) :-
     Prog = prog([], [ (out(Item) <- (src(Item), not(finalize(gone(Item))))) ]),
     door_verdict(oracle, Prog, OracleVerdict),
     door_verdict(compiler, Prog, CompilerVerdict),
-    OracleVerdict == accepted,
-    CompilerVerdict == accepted.
+    OracleVerdict == finalize_in_level_rule(gone/1),
+    CompilerVerdict == unsupported_construct(finalize_in_level_rule(gone/1)).
 
 % ── the two classes the oracle alone used to check ──────────────────────────
 
@@ -1809,6 +1806,26 @@ test(plain_edge_head_still_accepted_by_both_doors) :-
     CompilerVerdict == accepted.
 
 :- end_tests(cross_plane_check_parity).
+
+% ═══════════════════════════════════════════════════════════════════════════
+% REFUSAL MESSAGE UMBRELLA
+
+:- begin_tests(refusal_messages).
+
+test(every_named_refusal_renders_one_line) :-
+    refusal_message_clause_count(ClauseCount),
+    ClauseCount =:= 1,
+    refusal_inventory(Inventory),
+    Inventory = [_ | _],
+    forall(member(Name/_Arity-Example, Inventory),
+           ( message_to_string(unsupported_construct(Example), Text),
+             \+ sub_string(Text, _, _, _, "Unknown message"),
+             atom_string(Name, NameText),
+             sub_string(Text, _, _, _, NameText),
+             split_string(Text, "\n", "", [_])
+           )).
+
+:- end_tests(refusal_messages).
 
 % ═══════════════════════════════════════════════════════════════════════════
 % DECLARATION QUERY PARITY (rank R9)

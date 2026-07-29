@@ -10,7 +10,7 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
-:- use_module('../0_body_walk', [body_conjunction_goals/3]).
+:- use_module('../0_body_walk', [walk_body/3]).
 :- use_module('../compile/registry', [expression/5]).
 
 :- op(700, xfx, :=).
@@ -120,36 +120,20 @@ solve(json_each(Expr, Element), _) :- !,
 solve(Comparison, _) :- comparison_goal(Comparison), !, solve_comparison(Comparison).
 solve(Atom, Ctx) :- Ctx = ctx(Visible, _, _), member(Atom, Visible).
 
-% Shared conjunction walk (rank R1 of plans/2026-07-29-prolog-org-review.md)
-% with this file's own silent-form list kept exactly as it was. That list is a
-% strict SUBSET of the registry's body rows: next/1, variadic combine, zip/2
-% and the four reserved lifecycle wrappers are missing from it, so each of
-% those is still reported as an ATOM here. The body_walk_characterization unit
-% pins that; it is the same drift engine:trigger_items/2 carries, and widening
-% it is a semantics change owed a fixture rather than a cleanup.
-%
 % This predicate currently has no caller in the tree outside that test; rank R7
 % of the review owns deciding whether it survives at all.
 body_atoms(Body, Atoms) :-
-    body_conjunction_goals(Body,
-                           walk_policy(descend_not(false),
-                                       splice_bare(false)),
-                           Goals),
-    exclude(silent_body_form, Goals, Atoms).
+    walk_body(Body, walk_policy(descend_not(false), splice_bare(false)),
+              Events),
+    plain_body_atoms(Events, Atoms).
 
-silent_body_form(Goal) :- nonvar(Goal), silent_body_shape(Goal).
-
-silent_body_shape(latest(_)).
-silent_body_shape(finalize(_)).
-silent_body_shape(pre(_)).
-silent_body_shape(not(_)).
-silent_body_shape(now(_)).
-silent_body_shape(true).
-silent_body_shape(_ := _).
-silent_body_shape(_ is _).
-silent_body_shape(decode(_, _)).
-silent_body_shape(json_each(_, _)).
-silent_body_shape(Goal) :- comparison_goal(Goal).
+plain_body_atoms([], []).
+plain_body_atoms([event(_, _, Surface, Term) | Rest], Atoms) :-
+    ( Surface == plain_atom
+    -> Atoms = [Term | More]
+    ;  Atoms = More
+    ),
+    plain_body_atoms(Rest, More).
 
 
 substitute_goal((Left0, Right0), Target, (Left, Right)) :- !,

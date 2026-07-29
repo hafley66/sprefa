@@ -133,6 +133,20 @@
     "finalDetail": ""
   },
   {
+    "name": "groupby_two_bare_integer_literals",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "probe_output_comparison_guard",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "diag_scenario_seven_ticks_end_to_end",
     "bucket": "identical",
     "detail": "",

@@ -24,7 +24,10 @@
 % emit_ts"). `just prolog-lint` is the gate that now refuses a re-collision.
 % The file path is unchanged, so `-l v6/prolog/src/emit_ts.pl -g emit(...)`
 % callers such as bench/engines/swi_emit.sh are unaffected.
-:- module(emit_ts_engine_v1, [emit/2, emit/3, go/0]).
+:- module(emit_ts_engine_v1,
+          [ emit/2, emit/3, go/0,
+            decl_ts/2, rule_ts/3, used_helpers/2
+          ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
