@@ -10,13 +10,22 @@ use std::time::Instant;
 
 use clap::Parser;
 
-use sprefa_extract::{dispatch, flatten, source_for, FamilyMask};
+use sprefa_extract::{
+    build_def_index, dispatch, flatten, source_for, BlobHash, CallF, ExtractOutput, FileSet,
+    FlatFact, IndexBag, ManifestMap, ProjectCx, ProjectDigest, ProjectEdge, Resolve, RustSource,
+    Source, TsSource, GoSource, PrologSource, FamilyMask,
+};
 
 /// Self-describing enough that `extract --help` + `extract --schema` are a
 /// complete contract for a fresh caller (human or AI). No outside docs needed.
 const LONG_ABOUT: &str = "\
 Extract normalized graph facts from one source file and stream them as JSONL
 (one JSON object per line) to stdout. No daemon, no database, no network.
+
+PROJECT MODE
+  `--resolve PATH...` extracts every supplied file, builds one definition index,
+  then emits resolved caller-to-callee edges as JSONL. It requires two or more
+  source paths when resolving across files.
 
 OUTPUT
   Each line is one fact tagged by `record` (run `extract --schema` for every
@@ -63,7 +72,7 @@ a language produces without parsing JSONL.";
 )]
 struct Cli {
     #[arg(required_unless_present = "schema", value_name = "PATH", long_help = PATH_LONG)]
-    path: Option<PathBuf>,
+    paths: Vec<PathBuf>,
 
     #[arg(long, value_delimiter = ',', long_help = FAMILY_LONG)]
     family: Option<Vec<String>>,
@@ -71,6 +80,10 @@ struct Cli {
     /// Time extract + flatten and report per-family counts to stderr.
     #[arg(long, long_help = BENCH_LONG)]
     bench: bool,
+
+    /// Resolve caller-to-callee edges across all supplied paths.
+    #[arg(long, conflicts_with = "bench")]
+    resolve: bool,
 
     /// Print the JSONL output contract to stdout and exit (no extraction).
     #[arg(long)]
@@ -85,9 +98,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    // clap enforces PATH unless --schema is present, so this is always Some here.
-    let path = cli.path.expect("PATH is required unless --schema is given");
-    let content = std::fs::read(&path)?;
+    if cli.resolve {
+        resolve_project(&cli.paths)?;
+        return Ok(());
+    }
+
+    if cli.paths.len() != 1 {
+        return Err("exactly one PATH is required unless --resolve is given".into());
+    }
+
+    let path = &cli.paths[0];
+    let content = std::fs::read(path)?;
     let path_str = path.to_string_lossy();
     let mask = cli
         .family
@@ -100,6 +121,93 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         stream(&path_str, &content, mask)?;
     }
     Ok(())
+}
+
+struct ProjectInput {
+    path: String,
+    blob: BlobHash,
+    output: ExtractOutput,
+}
+
+fn resolve_project(paths: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
+    let mut inputs = Vec::with_capacity(paths.len());
+    for path in paths {
+        let content = std::fs::read(path)?;
+        let path = path.to_string_lossy().to_string();
+        if let Some(output) = dispatch(&path, &content, FamilyMask::ALL) {
+            inputs.push(ProjectInput {
+                blob: BlobHash::of(&content),
+                path,
+                output,
+            });
+        }
+    }
+
+    let pairs: Vec<(BlobHash, &ExtractOutput)> = inputs
+        .iter()
+        .map(|input| (input.blob, &input.output))
+        .collect();
+    let files = FileSet;
+    let manifests = ManifestMap;
+    let cx = ProjectCx {
+        files: &files,
+        manifests: &manifests,
+        reader: None,
+        digest: ProjectDigest::default(),
+        indexes: IndexBag::default(),
+    };
+    cx.indexes
+        .def_index
+        .set(build_def_index(&pairs))
+        .expect("fresh project definition index");
+
+    let mut lines = Vec::new();
+    for input in &inputs {
+        for edge in resolve_call_edges(&input.path, &input.output, &cx) {
+            let Some(callee) = inputs.iter().find(|candidate| candidate.blob == edge.dst_blob)
+            else {
+                continue;
+            };
+            let caller_name = input.output.call.as_ref().and_then(|call| {
+                call.node(edge.src)
+                    .name
+                    .map(|name| input.output.strings.lookup(name).to_string())
+            });
+            let callee_name = callee.output.call.as_ref().and_then(|call| {
+                call.nodes
+                    .iter()
+                    .find(|node| node.span == edge.dst_span)
+                    .and_then(|node| node.name)
+                    .map(|name| callee.output.strings.lookup(name).to_string())
+            });
+            lines.push(serde_json::to_string(&FlatFact::ResolvedEdge {
+                caller_path: input.path.clone(),
+                caller_name,
+                callee_path: callee.path.clone(),
+                callee_name,
+                kind: edge.kind.as_str().to_string(),
+            })?);
+        }
+    }
+    lines.sort();
+    for line in lines {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+fn resolve_call_edges(
+    path: &str,
+    output: &ExtractOutput,
+    cx: &ProjectCx,
+) -> Vec<ProjectEdge<CallF>> {
+    match source_for(path).map(Source::name) {
+        Some("ts") => Resolve::<CallF>::resolve(&TsSource, output, cx),
+        Some("rust") => Resolve::<CallF>::resolve(&RustSource, output, cx),
+        Some("go") => Resolve::<CallF>::resolve(&GoSource, output, cx),
+        Some("prolog") => Resolve::<CallF>::resolve(&PrologSource, output, cx),
+        _ => Vec::new(),
+    }
 }
 
 fn parse_mask(families: &[String]) -> FamilyMask {
@@ -163,6 +271,7 @@ RECORD SHAPES
   record=sig    family=type                owner={start,end}  slot=<param|ret>  pos=<u32>  ty=<name>
   record=site   family=call                span={start,end}   callee=<name>  callee_path=<string|null>
   record=const  family=type                owner={start,end}  field=<string|null>  text=<string>  kind=<lit|template>
+  record=resolved_edge  caller_path=<string>  caller_name=<string|null>  callee_path=<string>  callee_name=<string|null>  kind=<slug>
 
 FIELDS
   family       the graph plane: cst (concrete syntax tree), type (declarations),
@@ -191,10 +300,11 @@ KIND VOCABULARIES (the `kind` field)
   const kind  lit (cooked literal) | template (raw source slice, holes intact)
   sig slot    param | ret
 
-PHASE-1 LIMITS (by design)
+PHASE-1 LIMITS (default mode)
   No name resolution: type edges, caller->callee links, and cross-file joins are
   NOT emitted. `site` records carry the callee name as written; `sig` records
-  carry the referenced type's bare name. Resolution is a later layer.";
+  carry the referenced type's bare name. `--resolve PATH...` emits resolved
+  caller->callee `resolved_edge` records.";
 
 fn print_schema() {
     println!("{SCHEMA}");

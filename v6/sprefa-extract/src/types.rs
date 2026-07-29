@@ -1277,6 +1277,16 @@ pub enum FlatFact {
         to_blob: String,
         to: SpanOut,
     },
+    /// A project-mode CLI call edge. Paths and names are top-level fields so
+    /// line-oriented consumers can decode the record without span joins.
+    #[serde(rename = "resolved_edge")]
+    ResolvedEdge {
+        caller_path: String,
+        caller_name: Option<String>,
+        callee_path: String,
+        callee_name: Option<String>,
+        kind: String,
+    },
 }
 
 // flatten / flatten_jsonl live in wire.rs (the logic, not the types).

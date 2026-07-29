@@ -225,6 +225,7 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
             // Module specifier rows are v6-ONLY (no v5 oracle facet): reported
             // by the ledger test below, never asserted.
             FlatFact::Specifier { .. } => {}
+            FlatFact::ResolvedEdge { .. } => {}
         }
     }
     set
