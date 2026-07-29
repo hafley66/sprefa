@@ -1,0 +1,115 @@
+# diag-rail.dl6 -- THE LSP PHASE-4 MILESTONE PROGRAM (golden plan phase 4:
+# "live diagnostics in an editor with ZERO new LSP code"). Watch-driven, over
+# a real corpus, deriving `diag_v5` -- v5's OWN 9-column LSP-compat schema
+# (src/lsp.rs's `--diag-db` reader: path, line, col, end_line, end_col,
+# severity, code, msg, hint, positions 0-based) -- as an ordinary rel this
+# program owns. `dl --lsp --diag-db <this served db>` polls it and republishes
+# every row as a live editor diagnostic; nothing on the v5 side changes for
+# this arc (docs/lsp.md's M5.3 mode was built for exactly this bridge and
+# already ships).
+#
+# THE LOOP, composed from two ALREADY-LANDED rails rather than invented here:
+#
+#   watch(glob, path, digest)            fixtures/extraction-live.dl6's loop
+#     -> file(path, digest)
+#     -> node_fact / call_site           two hosts, one record shape each
+#          (fixtures/flagship-callgraph.dl6's node/site host split, because
+#           TS sources emit `record=specifier` lines that carry the SAME
+#           (kind, name) fields a function def's `record=node` line does --
+#           the `record` column is the stated filter, not a bet on the field
+#           sets never colliding)
+#     -> def / call                      ordinary derived rels
+#     -> unused(name) <- def(_,name), not(call(_,name))     v5's own rule,
+#                                                            copied verbatim
+#     -> diag_v5(...)                    TWO finding classes, one per clause
+#
+# LINE-NUMBER HONESTY (checked before writing a single rule; see ARCH row
+# decode_arc, still open, unowned): `sprefa-extract` emits byte spans as a
+# NESTED json object (`"span":{"start":..,"end":..}`), and the sh-host output
+# decode (`serve/1_hosts.ts` decodeObjectItems) is a projection over TOP-LEVEL
+# declared columns only -- a nested field never reaches a declared int column
+# without `decode/2`, which stays refused. flagship-callgraph.dl6 hit this
+# same wall and dropped `line` entirely rather than fake it. This program does
+# the same: every diag_v5 row below is WHOLE-FILE (line=0, col=0, end_line=0,
+# end_col=0, hint=''). That is the honest zero this arc's brief asked for, not
+# a computed line -- there is no line math anywhere in this file or in the
+# bridge, in or out of the engine.
+#
+# `0 + 0`, NOT bare `0`, IS A NAMED COMPILER-BUG WORKAROUND, not a spelling
+# preference. A bare integer literal head column reaches the emitted
+# support-count recompute's `GROUP BY` verbatim (emit_ts.pl), and SQLite reads
+# a bare-integer-literal GROUP BY term as a 1-based POSITIONAL column
+# reference into its own SELECT list, not a constant -- four `0` columns here
+# throws `SQLITE_ERROR: 2nd GROUP BY term out of range` at the very first
+# insert (reproduced, receipt in the arc's final report: a one-rel probe
+# program with a bare `0` head column fails the identical way; wrapping it
+# `0 + 0` compiles to a parenthesized SQL expression, `(0 + 0)`, which SQLite
+# does NOT treat positionally, and the same probe then runs clean). This is a
+# real defect in the tsv2 emitter's GROUP BY codegen (any rule with two or
+# more bare-integer-literal head columns hits it, whole-file diagnostics
+# being the first program to have four), not owned by this arc (v6/prolog/
+# compile/emit_ts.pl is outside FILES YOU OWN for this brief) -- flagged here
+# for the emitter's own owner, worked around in-language in the meantime.
+#
+# ZERO NEW CONSTRUCTS. Every host/bind/probe/rule shape below already has a
+# graded fixture; see the two rails named above for each one's own header and
+# its own rx lowering. The only new composition is UNIONING two finding rules
+# onto one `diag_v5` head -- an ordinary multi-clause rel (same shape
+# flagship-callgraph.dl6's own `reaches` would use), so its rx lowering is
+# just `merge` of the two source pipelines:
+#
+#   mergedFindings$ = merge(
+#     call$.pipe(filter(row => row.callee === 'eval'),
+#                map(row => diagRow(row.path, 'error', 'no-eval', ...))),
+#     unusedDef$.pipe(map(row => diagRow(row.path, 'warn', 'unused-def', ...))))
+#     .pipe(mergeMap(commitEdbArrival))   // -> diag_v5, the ordinary delta join
+#                                         // the incremental emitter already writes
+
+# ── the world push: one watcher over one glob (extraction-live.dl6's loop) ──
+bind watch(glob: text, path: text, digest: text).
+
+# ── the world pull: two hosts, one record shape each (flagship's split) ─────
+sh call_node(path: text) -> (record: text, kind: text, name: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+
+sh call_ref(path: text) -> (callee: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+
+# ── the program's own file set ──────────────────────────────────────────────
+rel file(path: text, digest: text).
+file(path, digest) <- watch('**/*.ts', path, digest).
+
+# ── node lines (defs + import/export specifiers, undiscriminated) ──────────
+rel node_fact(path: text, record: text, kind: text, name: text).
+node_fact(path, record, kind, name) <-
+  file(path, digest), ? call_node(path, record, kind, name) @ salt(digest: digest).
+
+# ── v5's `def`: every named callable declaration ────────────────────────────
+# The constant match in argument position is the record filter (flagship's
+# own note: "it needs no guard and no second construct").
+rel def(path: text, name: text).
+def(path, name) <- node_fact(path, 'node', _, name).
+
+# ── call sites, content-addressed on the digest (extraction-live's shape) ──
+rel call_site(path: text, digest: text, callee: text).
+call_site(path, digest, callee) <-
+  file(path, digest), ? call_ref(path, callee) @ salt(digest: digest).
+
+rel call(path: text, callee: text).
+call(path, callee) <- call_site(path, _, callee).
+
+# ── v5's `unused`: def with no call anywhere in the watched set ─────────────
+rel unused(name: text).
+unused(name) <- def(_, name), not(call(_, name)).
+
+# ── the bridge itself: v5's diag_v5 schema, verbatim column order ──────────
+rel diag_v5(path: text, line: int, col: int, end_line: int, end_col: int,
+            severity: text, code: text, msg: text, hint: text).
+
+diag_v5(path, 0 + 0, 0 + 0, 0 + 0, 0 + 0, 'error', 'no-eval',
+        'eval() is banned; use a safe alternative', '') <-
+  call(path, callee), callee == 'eval'.
+
+diag_v5(path, 0 + 0, 0 + 0, 0 + 0, 0 + 0, 'warn', 'unused-def',
+        'function defined but never called anywhere in the watched file set', '') <-
+  def(path, name), unused(name).
