@@ -1,0 +1,1 @@
+{"final":{"call":[["a.rs","helper"],["a.rs","missing"]],"calls":[["main","helper"]],"def":[["a.rs","helper","method"],["a.rs","main","function"],["b.rs","helper","function"]],"node_fact":[["a.rs","node","function","main"],["a.rs","node","method","helper"],["a.rs","specifier","named","helper"],["b.rs","node","function","helper"]]}}

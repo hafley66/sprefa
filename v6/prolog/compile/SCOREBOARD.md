@@ -14,8 +14,10 @@ excerpt per compiled fixture).
 
 ## Totals (current)
 
-Refreshed by the TICK PHASE ALIGNMENT arc (2026-07-29, golden plan phase 3
-follow-on), which aligned the emitted mid-tick level plane with engine.pl's
+Refreshed by the FLAGSHIP CALLGRAPH arc (2026-07-29, golden plan phase 3 step
+1), which promoted the flagship rail's derivation core as two fixtures; the
+counts before it were 137 / 85 / 83. The arc before that was TICK PHASE
+ALIGNMENT, which aligned the emitted mid-tick level plane with engine.pl's
 frozen MidLevel and gave the frontier a departure stream. The prose sections
 below this one are historical and were written against the 110-fixture corpus;
 the numbers here and in the two tables that follow come from
@@ -23,17 +25,31 @@ the numbers here and in the two tables that follow come from
 
 | bucket | count |
 |---|---|
-| fixtures swept | 137 |
+| fixtures swept | 139 |
 | UNSUPPORTED (compiler refuses, named construct) | 52 |
-| compiled (lowering + emission succeeded) | 85 |
-| — of which IDENTICAL (tick log byte-identical to oracle) | 83 |
+| compiled (lowering + emission succeeded) | 87 |
+| — of which IDENTICAL (tick log byte-identical to oracle) | 85 |
 | — of which WRONG (diff vs oracle) | 0 |
 | — of which run_error / no_oracle_log (rejection-path fixtures) | 2 |
 
-IDENTICAL + run_error/no_oracle + UNSUPPORTED = 83 + 2 + 52 = 137.
+IDENTICAL + run_error/no_oracle + UNSUPPORTED = 85 + 2 + 52 = 139.
 
 Both emitter modes agree row for row: the incremental default and
-`SPREFA_TSV2_EMITTER_MODE=naive` produce the same 83/0/2.
+`SPREFA_TSV2_EMITTER_MODE=naive` produce the same 85/0/2.
+
+### Named gap found by the flagship arc, unowned
+
+`callgraph_unused_inverts_with_the_call_set` ends on a tick whose level delta
+is NEGATIVE, and its header says why. Ending it one tick earlier — on the
+retraction tick that RE-ASSERTS `unused(main)` through the refCount reseed —
+makes the emitted run mint one extra `{"tick":5,"deltas":{}}` drain tick that
+the oracle does not have: the reseed's re-INSERT stages a next-frontier row,
+`promoteFrontiers` reports `carryPending`, and `TickFold` drains once. It takes
+a non-monotone level rule to observe, which is why the corpus had not hit it;
+the sibling fixture on the same schedule (last tick deletes only) is identical,
+and the three-tick prefix of this one is identical. Repro: truncate this
+fixture's schedule to four ticks. Owner: the arc that owns
+`v6/tsv2/runtime/1_incremental.ts`.
 
 ### The UNSUPPORTED bucket, by named reason (52)
 
