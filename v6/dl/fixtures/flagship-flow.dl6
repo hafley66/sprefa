@@ -79,8 +79,8 @@ df_direct(from, to) <-
   df_edge(path, from_at, to_at),
   decode(from_at, {start: from_start, end: from_end}),
   decode(to_at, {start: to_start, end: to_end}),
-  from = concat([path, ':', from_start, ':', from_end]),
-  to = concat([path, ':', to_start, ':', to_end]).
+  from := concat([path, ':', from_start, ':', from_end]),
+  to := concat([path, ':', to_start, ':', to_end]).
 
 rel type_owner(path: text, name: text, start: int, end: int).
 type_owner(path, name, start, end) <- type_callable(path, at, name), decode(at, {start: start, end: end}).
@@ -90,12 +90,14 @@ type_owner(path, name, start, end) <- type_callable(path, at, name), decode(at, 
 # every enclosing callable, makes a nested parameter an outer callable slot.
 rel smaller_type_owner(path: text, value_start: int, value_end: int, owner_start: int, owner_end: int).
 smaller_type_owner(path, value_start, value_end, owner_start, owner_end) <-
+  df_value(path, value_start, value_end, _),
   type_owner(path, _, owner_start, owner_end),
   type_owner(path, _, inner_start, inner_end),
   value_start >= inner_start, value_end =< inner_end,
   inner_start >= owner_start, inner_end =< owner_end,
   inner_start \== owner_start.
 smaller_type_owner(path, value_start, value_end, owner_start, owner_end) <-
+  df_value(path, value_start, value_end, _),
   type_owner(path, _, owner_start, owner_end),
   type_owner(path, _, inner_start, inner_end),
   value_start >= inner_start, value_end =< inner_end,
@@ -124,14 +126,14 @@ flow_edge(arg, param) <-
   df_param(callee_path, param_at, pos),
   decode(param_at, {start: param_start, end: param_end}),
   value_owner(callee_path, param_start, param_end, callee_path, callee_name),
-  arg = concat([caller_path, ':', arg_start, ':', arg_end]),
-  param = concat([callee_path, ':', param_start, ':', param_end]).
+  arg := concat([caller_path, ':', arg_start, ':', arg_end]),
+  param := concat([callee_path, ':', param_start, ':', param_end]).
 flow_edge(ret, call) <-
   call_target(caller_path, call_start, call_end, callee_path, callee_name),
   value_owner(callee_path, ret_start, ret_end, callee_path, callee_name),
   df_value(callee_path, ret_start, ret_end, 'ret'),
-  ret = concat([callee_path, ':', ret_start, ':', ret_end]),
-  call = concat([caller_path, ':', call_start, ':', call_end]).
+  ret := concat([callee_path, ':', ret_start, ':', ret_end]),
+  call := concat([caller_path, ':', call_start, ':', call_end]).
 
 rel flow_reach(from: text, to: text).
 flow_reach(from, to) <- flow_edge(from, to).
@@ -154,7 +156,7 @@ flow_node_type(node, callee_path, callee_name, ty) <-
   value_owner(callee_path, param_start, param_end, callee_path, callee_name),
   type_owner(callee_path, callee_name, owner_start, owner_end),
   sig(callee_path, owner_start, owner_end, 'param', pos, ty),
-  node = concat([callee_path, ':', param_start, ':', param_end]).
+  node := concat([callee_path, ':', param_start, ':', param_end]).
 
 ? flow_edge(from, to).
 ? flow_reach(from, to).

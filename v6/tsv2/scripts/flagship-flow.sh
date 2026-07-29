@@ -89,7 +89,7 @@ v5_files="$(sqlite3 "$WORK/v5.sqlite" 'select count(*) from rel_src;')"
 say "PASS  v5 hermetic leg: $v5_files files"
 
 for rel in flow_edge flow_reach flow_param_type flow_node_type; do
-  sqlite3 -noheader -separator '	' "$WORK/v5.sqlite" "select distinct * from rel_$rel;" | LC_ALL=C sort -u >"$WORK/v5.$rel.tsv"
+  sqlite3 -noheader -separator '	' "$WORK/v5.sqlite" "select distinct * from rel_${rel}_txt;" | LC_ALL=C sort -u >"$WORK/v5.$rel.tsv"
 done
 
 TSV2_DB=":memory:" TSV2_PORT="$PORT" DL_EXTRACT_BIN="$DL_EXTRACT_BIN" \

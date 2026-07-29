@@ -23,7 +23,12 @@ COMPILE_DIR="../prolog/compile"
 COMPILE_OUT="$COMPILE_DIR/out"
 
 echo "=== stage 1: compile sweep ==="
-swipl -q -l "$COMPILE_DIR/sweep.pl" -g sweep -g halt
+# gc(false): swipl 10.0.2 aborts this batch under -g with
+#   "system error: Mismatch in up phase" (GC compaction bug, deterministic
+#   at the 88th collection once the corpus reached 163 fixtures; the same
+#   goal typed at the toplevel completes). One-shot process, peak RSS is
+#   tens of MB without GC, so disabling it is free. Receipt 2026-07-29.
+swipl -q -l "$COMPILE_DIR/sweep.pl" -g 'set_prolog_flag(gc,false), sweep' -g halt
 
 echo ""
 echo "=== stage 2: oracle dump ==="
