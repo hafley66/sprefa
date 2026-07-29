@@ -1118,3 +1118,25 @@ comment refresh (rides next sweep-touching arc) and the
 json_ticklog regrade (ruled, unowned, S). NEXT PER GOLDEN PLAN:
 Phase 1 runtime bridge (hosts phase 2 + tsv2 engine under a
 served process).
+
+JSON TICKLOG REGRADE LANDED (merge a680b54c, codex luna no-commit
+flow, coordinator re-ran conformance 135/0 + sweep BOTH modes
+70/67/0): ruling json_ticklog_encoding EXECUTED -- oracle ticklog.pl
++ final-state encoder render json values (lists, braces literals,
+obj pairs) as canonical JSON text (sorted keys, no whitespace; NOW
+PART OF THE CROSS-TARGET LOG CONTRACT); tsv2 runtime/ticklog.ts
+canonicalizes identically at the sqlite seam. 244 oracle artifacts:
+12 changed, 232 byte-identical. registry json agg comment cites the
+ruling; emission refusal stays (later arc). TICK-MODEL.md committed
+same sitting (9b50152b): the semiring/grading semantics (B/N/Z
+rings, lifecycle = sign decomposition of the delta derivative, tick
+grades on rule-graph edges), the five cross-plane refusals as its
+hand-proven theorems, phase-5 checker spec; pointer at analyze.pl's
+supported-subset gate. Golden plan gained: float/bool/null
+recommended shapes (float=REAL+avg the one real hole; bool = row
+presence / two-variant enum, never a column type; null NEVER,
+Option = variants/absence) + rev shape (two variant hosts) +
+extractor-is-fixed. STILL RUNNING: runtime bridge (opus), latest()
+edge lowering (sol), doc-truth take 2 (luna, relaunched after a
+correct STOP -- dead spellings reclassify to a legacy SYNTAX
+section, never removed; G2 contract requires recognition).
