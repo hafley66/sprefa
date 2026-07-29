@@ -956,3 +956,13 @@ fill_free_slots :590 is the current exact-fill gate).
   silently. Use `firstValueFrom`, or better, do not leave an `await` to convert.
 - One rel = one rule kind: never head a rel with both a source rule (scan/match/ast/sg/json/cmd/comment) and a derived rule. `rebuild_derived` does a full `DELETE FROM rel` that would wipe the reconciled source rows. The engine now bails; split into two rels and union in a third derived rule. SAME hazard, separately guarded, for a **term-extract** rule (a `json`/`jsonp` body predicate over a bound string) headed together with a derived rule: `eval_extract_rules` fills the extract rows, then `rebuild_derived` (which runs after it so derived rules can read the extract output) drops them. Notably a term-extract rule cannot feed a `@next` carry directly for this reason — route it through its own rel first (the `pr_number -> change_log` split in gh-cache.dl). Engine bails as of the ghcacher-parity arc.
 - Recompute guard: a fn that re-derives a relation/embedding FROM SCRATCH (a global op like `embed_graph`, run on a reactive rule) must early-out when its input is unchanged — a `load_rel_digest` digest skip (see `eval_node2vec_rule`, the scc/closure `ConditionCache.digest`) — or carry a `// @recompute unguarded: <reason>` waiver in its body. `examples/recompute-guard.dl --check` (exit 2) is the rail that enforces it; an unguarded recompute re-runs on every git-checkout re-tick under the daemon lock.
+
+### ALPHA REORIENTATION (user-set 2026-07-29 night): dataflow frontier
+v6 alpha finishes on CODE DATAFLOW ANALYSIS, not reactive wiring:
+ghcacher demoted to phase-1-graded (live loop post-alpha); flagship =
+a ported v5 dataflow program (flow-interproc / callgraph rail) graded
+against v5's own output; alpha spine = extraction hosts + ingest perf
++ CLI + type pass. GOLDEN PLAN doc owed once the two opus reviews
+land (language design review + v5-utility gap review, both in
+flight); plan must carry their receipts. Labs run on OPUS ONLY
+(user-set same night, supersedes the sonnet default for labs).
