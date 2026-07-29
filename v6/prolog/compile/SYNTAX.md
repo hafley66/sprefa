@@ -47,6 +47,11 @@ this reason -- never Prolog's own `~q` "quote only if necessary" -- see
 Generated from `registry.pl` by `1_emit_registry_docs.pl`. The row order is
 the compiler inventory order. Edit the registry, then run the emitter.
 
+`latest/1` is live around one plain relation atom in an edge body. Its
+sampled atom reads the current base table and never becomes a trigger.
+Level-rule use remains `latest_in_level_rule`; wider edge arguments remain
+`edge_body_with_latest`.
+
 <!-- BEGIN GENERATED surface/5 TABLE -->
 | signature | axis | analyze role | lower role | status |
 |---|---|---|---|---|

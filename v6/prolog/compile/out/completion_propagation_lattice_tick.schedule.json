@@ -1,0 +1,1 @@
+[[],[{"rel":"end_a_signal","sign":"add","row":["outer_x"]},{"rel":"end_a_signal","sign":"add","row":["outer_y"]}],[{"rel":"end_c_signal","sign":"add","row":["inner_x"]}],[{"rel":"end_b_signal","sign":"add","row":["outer_x"]},{"rel":"end_b_signal","sign":"add","row":["outer_y"]}],[{"rel":"end_c_signal","sign":"add","row":["inner_y"]}]]

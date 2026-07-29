@@ -567,7 +567,7 @@ column_source_args(_Rules, _Initial, Schedule, Ref, Args) :-
 % Grounded in engine.pl's trigger_items/2: bare positive atoms are triggers,
 % latest/1 and the special body forms are sampled or non-trigger reads.
 % (:112-126, the exact goal classification engine.pl's unmarked fallback
-% walks). Two ACCEPTED shapes, everything else a NAMED refusal:
+% walks). Three ACCEPTED shapes, everything else a NAMED refusal:
 %   marked_single(Atom)      -- Body = Atom, the single trigger source.
 %   unmarked_conjunction(Atoms) -- Body is a plain
 %     comma-conjunction of one or more ordinary positive rel atoms (arity
@@ -580,6 +580,10 @@ column_source_args(_Rules, _Initial, Schedule, Ref, Args) :-
 %     body.pl:96-110). A single atom (N=1) is the degenerate case: no other
 %     atom to join, so lowering it is unchanged from marked_single except
 %     the trigger no longer needs the only/1 wrapper.
+%   sampled_conjunction(TriggerAtoms, SampleAtoms) -- the same positive
+%     conjunction with one or more latest(Atom) goals. TriggerAtoms remain
+%     the only occurrence sources; SampleAtoms are unwrapped plain rel atoms
+%     read from their current base tables by lower.pl.
 % Everything else names the SPECIFIC blocking construct instead of a
 % blanket edge_body_shape reason, so the scoreboard's per-construct tally
 % stays precise as this widens further.
@@ -590,7 +594,21 @@ edge_trigger_shape(Body, unmarked_conjunction(Atoms)) :-
     conjunction_goals(Body, Goals),
     maplist(plain_positive_atom, Goals),
     !, Atoms = Goals.
+edge_trigger_shape(Body, sampled_conjunction(TriggerAtoms, SampleAtoms)) :-
+    conjunction_goals(Body, Goals),
+    edge_sampled_goals(Goals, TriggerAtoms, SampleAtoms),
+    TriggerAtoms \== [],
+    SampleAtoms \== [],
+    !.
 edge_trigger_shape(Body, unsupported(edge_body_shape(Body))).
+
+edge_sampled_goals([], [], []).
+edge_sampled_goals([latest(Atom) | Rest], TriggerAtoms, [Atom | SampleAtoms]) :-
+    plain_positive_rel_atom(Atom),
+    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms).
+edge_sampled_goals([Atom | Rest], [Atom | TriggerAtoms], SampleAtoms) :-
+    plain_positive_atom(Atom),
+    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms).
 
 edge_registered_refusal(Body, Goals, Reason) :-
     findall(Priority-Candidate,
@@ -600,9 +618,8 @@ edge_registered_refusal(Body, Goals, Reason) :-
             Candidates),
     keysort(Candidates, [_-Reason | _]).
 
-edge_goal_refusal(Goal, Body, 1, edge_body_with_latest(Body)) :-
-    body_surface_for_term(Goal, _, sample, refs_of_arg(_, pos, sampled),
-                          wrapper(rel_atom, lower), live).
+edge_goal_refusal(latest(Atom), Body, 1, edge_body_with_latest(Body)) :-
+    \+ plain_positive_rel_atom(Atom).
 edge_goal_refusal(Goal, Body, 2, edge_body_needs_finalize(Body)) :-
     body_surface_for_term(Goal, _, time, refs_of_arg(_, pos, trigger),
                           wrapper(rel_atom, refuse(goal)), refused).
@@ -642,13 +659,20 @@ plain_positive_atom(Goal) :-
     compound(Goal),
     \+ body_surface_for_term(Goal, _, _, _, _, _).
 
+plain_positive_rel_atom(Goal) :-
+    conjunction_goals(Goal, [Goal]),
+    plain_positive_atom(Goal).
+
 % Trigger refs a shape can fire from -- used by the same-key conflict-risk
 % check below. marked_single fires from exactly one ref; unmarked_conjunction
 % fires from ANY of its atoms' refs (engine.pl unmarked_items/2 wraps every
-% one independently).
+% one independently). sampled_conjunction excludes its sampled atoms.
 shape_trigger_refs(marked_single(Atom), [Ref]) :- rel_ref(Atom, Ref).
 shape_trigger_refs(unmarked_conjunction(Atoms), Refs) :-
     findall(Ref, ( member(Atom, Atoms), rel_ref(Atom, Ref) ), Refs0), sort(Refs0, Refs).
+shape_trigger_refs(sampled_conjunction(TriggerAtoms, _), Refs) :-
+    findall(Ref, ( member(Atom, TriggerAtoms), rel_ref(Atom, Ref) ), Refs0),
+    sort(Refs0, Refs).
 
 % ═══ edge head column-type consistency (PHASE C2 RULING 1 x RULING 2) ═══════
 % A real gap the unmarked-trigger widening surfaced, not present in the
@@ -676,6 +700,8 @@ check_edge_head_column_types_for_rule(RelPlans, (Head <+ Body)) :-
     edge_trigger_shape(Body, Shape),
     ( Shape = marked_single(TriggerAtom) -> BodyAtoms = [TriggerAtom]
     ; Shape = unmarked_conjunction(Atoms) -> BodyAtoms = Atoms
+    ; Shape = sampled_conjunction(TriggerAtoms, SampleAtoms)
+      -> append(TriggerAtoms, SampleAtoms, BodyAtoms)
     ; BodyAtoms = []
     ),
     rel_ref(Head, HeadRef),
@@ -695,10 +721,11 @@ check_edge_head_column_types_for_rule(RelPlans, (Head <+ Body)) :-
 % ═══ supported-subset gate ═══════════════════════════════════════════════════
 % Refuses (with a specific term, not a generic failure) any construct wider
 % than what lower.pl knows how to emit: an edge rule body must classify as
-% marked_single or unmarked_conjunction (edge_trigger_shape/2 above); a level
-% rule must not carry an aggregate head (aggregate_head, level_eval.pl) and
-% must not reference pre/1, now/1, decode/2 or json_each/2 (none of the two
-% target fixtures need them; lower.pl has no SQL shape for them yet).
+% marked_single, unmarked_conjunction, or sampled_conjunction
+% (edge_trigger_shape/2 above); a level rule must not carry an aggregate head
+% (aggregate_head, level_eval.pl) and must not reference pre/1, now/1,
+% decode/2 or json_each/2 (none of the two target fixtures need them;
+% lower.pl has no SQL shape for them yet).
 %
 % FORMAL MODEL: TICK-MODEL.md (same directory) is the semiring/grading
 % semantics behind this gate. The cross-plane refusals below

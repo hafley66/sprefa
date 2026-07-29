@@ -626,7 +626,9 @@ quote_ident_local(Name, Quoted) :- format(atom(Quoted), '"~w"', [Name]).
 
 % ═══ edge rule resolution (one resolver function per ARM -- PHASE C2 RULING
 % 2: an unmarked_conjunction rule with N body atoms lowers to N edgestmt
-% entries, one per atom acting as trigger) ═══════════════════════════════
+% entries, one per atom acting as trigger. A sampled_conjunction does the
+% same over its bare trigger atoms; its latest-wrapped atoms are already
+% base-table joins inside ProjectSql and DeltaProjectSql. ═════════════════
 % ProjectSql (from lower.pl) is already aliased AS HeadColumns
 % (lower.pl:edge_statement_single/5 passes HeadColumns, not `none`, to
 % head_select_list/4 for exactly this reason), so the resolver reads each
