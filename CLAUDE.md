@@ -1217,7 +1217,44 @@ code in here") before building anything. ARCH task row: memory_soak
 ARCH.pl made current this save (12 new task rows: incremental_emitter
 /expression_lift/hosts_wiring_p1/edge_carry_seam/match_block/
 latest_edge_sample/runtime_bridge_p1/tick_model done; clock_check/
-extraction_live_p2/memory_soak unbuilt; go ALL PASS). PROLOG ORG
-EVAL still running (codex sol, shell b92297c77, worktree
-../sprefa-codex-prologorg, base 15a25c08, analysis-only ->
-plans/2026-07-29-prolog-org-review.md).
+extraction_live_p2/memory_soak unbuilt; go ALL PASS).
+
+### OVERNIGHT WAVE 2026-07-29 night (user asleep; forks recorded in ARCH.pl fork/5)
+PROLOG ORG EVAL LANDED (codex sol, analysis-only, banked 2c43f931,
+worktree+branch removed): plans/2026-07-29-prolog-org-review.md = 46
+files/15,028 lines, emit_ts module collision (all-load fails), 18 body
+walkers (9 direct-consolidate), 6 mirrored cross-plane checks + 2
+engine-only holes (missing Log retention, aggregate edge head),
+spread-order incompatibility (enum-first erases enum_decl/2 that match
+coverage reads), ranked 10-row refactor table all test-first. ORG
+REFACTOR ARC DISPATCHED on it (opus worktree, base 5a9bfdd8, order
+R10+R6 -> R1 -> R2 -> R3 -> R4+R5 -> R9 -> R7+R8, STILL RUNNING).
+WATCHER BUY RESEARCH LANDED (sonnet, merge 8b0b49a8, ARCH row done):
+VERDICT @parcel/watcher first (native batch callback fits
+engine.submit(IArrivalBatch) one-tick commits, ignore filter below JS,
+prebuilds, 31M weekly dl) > node fs.watch (zero-dep fallback, IS
+chokidar v4/v5's mac/win backend) > chokidar (ergonomics only) >
+watchman (later backend upgrade, not the buy). 3 open residuals in doc.
+Pick gets its fork/5 row at phase-2 dispatch.
+MEMORY SOAK + SQLITE STATS LANDED (sonnet worktree, merged, coordinator
+re-verified EVERYTHING incl 3 own soak runs): GET /stats on the served
+engine (ServeStats: IServeStats; PRAGMA page_count/page_size/
+freelist_count + ONE grouped dbstat statement via json_each bind,
+forkJoin on the existing seam; dbstat PROVEN on @libsql 0.17.4) +
+memory-soak.{sh,ts} churn driver (keyed replace + log keep(count) +
+derived edge rel, 2500 ticks/100s short, TSV2_SOAK_LONG=1 overnight).
+Receipts (coordinator's own runs): rss/heap/page-count flat, 37
+stmts/tick flat, MEMORY SOAK HOLDS exit 0; sabotage keep_all RED exit
+1 (page count 17->33 vs ceiling 19). STEP-0 FINDING: rust has NO
+sqlite3_status wrappers -- v5's whole stats surface is db.rs rel_stats
+dbstat sums + health.rs PRAGMAs; tsv2 mirrors exactly that, nothing
+invented. justfile memory-soak recipe wired into green-all. BANKED
+FINDING: tests/serveHelpers startServed retains every event by design
+(fixture replay needs it) = false-positive growth at soak scale; soak
+uses a private non-retaining subscribe (run-fixture precedent, outside
+the one-subscribe scan paths).
+PHASE 2 HEADER SEEDED (plans/2026-07-29-extraction-live-p2-header.md,
+2976f893): contract + 4 named slots (watcher-event-shape,
+enumerate-scope, extract-granularity, stale-demand); dispatch gated on
+org-arc merge only now (watcher research + soak both down).
+Coordinator task queue #1-#13 tracks the night; phase 3-5 rows seeded.
