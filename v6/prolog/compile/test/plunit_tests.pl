@@ -548,6 +548,10 @@ test(rejects_pre_in_level_rule,
     Prog = prog([], [ (snapshot(X) <- item(X), pre(item(X))) ]),
     check_supported_subset(Prog).
 
+test(rejects_keep_on_non_log_rel,
+     [throws(unsupported_construct(keep_on_non_log_rel(state/1)))]) :-
+    check_supported_subset(prog([keep(state/1, all)], [])).
+
 test(accepts_level_derived_edge_trigger) :-
     Prog = prog(
         [kind(source/1, log), keep(source/1, all),

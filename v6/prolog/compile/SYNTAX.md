@@ -45,7 +45,10 @@ this reason -- never Prolog's own `~q` "quote only if necessary" -- see
 ## Construct table
 
 Generated from `registry.pl` by `1_emit_registry_docs.pl`. The row order is
-the compiler inventory order. Edit the registry, then run the emitter.
+the compiler inventory order. Edit the registry, then run the emitter. The
+status column labels the registry surface: `live` rows have compiler wiring,
+while `refused` and `reserved` rows name refusal-only surface. Context-specific
+theorems can refuse a live row; those cases are listed immediately below.
 
 `latest/1` is live around one plain relation atom in an edge body. Its
 sampled atom reads the current base table and never becomes a trigger.
@@ -53,7 +56,7 @@ Level-rule use remains `latest_in_level_rule`; wider edge arguments remain
 `edge_body_with_latest`.
 
 <!-- BEGIN GENERATED surface/5 TABLE -->
-| signature | axis | analyze role | lower role | status |
+| signature | axis | analyze role | lower role | status (writable surface) |
 |---|---|---|---|---|
 | `latest/1` | `sample` | `refs_of_arg(1,pos,sampled)` | `wrapper(rel_atom,lower)` | `live` |
 | `finalize/1` | `time` | `refs_of_arg(1,pos,trigger)` | `wrapper(rel_atom,refuse(goal))` | `refused` |
@@ -93,7 +96,15 @@ Level-rule use remains `latest_in_level_rule`; wider edge arguments remain
 | `probe/4` | `world` | `no_refs` | `wrapper(host_probe,lower)` | `live` |
 | `bind_decl/2` | `world` | `no_refs` | `decl(bind_plan)` | `live` |
 | `query/1` | `read` | `no_refs` | `decl(query_plan)` | `live` |
+| `ts_query/1` | `world` | `no_refs` | `value(tree_sitter_query)` | `live` |
+| `sg_pattern/3` | `world` | `no_refs` | `value(refuse(slot_sg_metavariable_semantics))` | `refused` |
 <!-- END GENERATED surface/5 TABLE -->
+
+### Context status
+
+| construct | level body | edge body |
+|---|---|---|
+| `latest/1` | refused as `latest_in_level_rule(Ref)` | refused as `edge_body_with_latest(Body)` pending the concurrent edge-lowering lane; this tree still refuses it |
 
 ### Core grammar and input aliases
 
@@ -132,10 +143,19 @@ construct inventory.
 | bind declaration | `bind name(column: type, ...).` | `bind_decl(Name, Columns)`; RX-B1 |
 | query | `? name(args).` | `query(RelAtom)`; RX-Q1 |
 | mutation | `rel!(args)` | `unsupported_surface(mutation(Name/Arity))` |
-| retention marker | `rel(N) Name(...)` | `unsupported_surface(retention_marker(Ref, N))` |
-| column wrapper | `Key(text)` / `Min(int)` / `Max(int)` | `unsupported_surface(column_type_wrapper(Ref, Column, Wrapper))` |
 | `true` / `false` as values | unavailable | bare identifiers remain variables in argument position |
 | `null` | unavailable | no term-form mapping |
+
+### Legacy surface: parsed, then refused
+
+These spellings remain in `parse_dl.pl` because current `.dl6` files use
+them. The parser retains the declaration shape and returns the named finding;
+the compiler does not treat the resulting declaration as writable surface.
+
+| spelling | retained parser shape | finding |
+|---|---|---|
+| `rel(N) Name(...)` | ordinary `rel Name(...)` declaration plus retention value `N` | `unsupported_surface(retention_marker(Ref, N))` |
+| `Key(text)` / `Min(int)` / `Max(int)` | ordinary column position with wrapper type omitted from the term declaration | `unsupported_surface(column_type_wrapper(Ref, Column, Wrapper))` |
 
 ### World term lowering rows
 
@@ -145,6 +165,8 @@ construct inventory.
 | `probe(Name, Inputs, Outputs, Salts)` | RX-H2: mint identity from host plus inputs, mint witness from identity plus salts, deduplicate by witness, then demand the host | lowers to `__host_demand_Name` SQL and a join with keyed EDB relation `__host_response_Name` |
 | `bind_decl(interval, Columns)` | RX-B1: subscribe to the registered interval source while the program is active and commit each row as EDB | emitted as a `bindPlans` data row; schedule arrivals grade phase 1 and live bind execution is named `unsupported_bind_execution_phase_2(Name)` |
 | `query(RelAtom)` | RX-Q1: scan the current SQLite query plan and stream its rows | emitted as a `queryPlans` data row |
+| `ts_query(Patterns)` | RX-TS1: group file demand by content and query identity, run the compiled tree-sitter query, then commit EDB rows | value compiles to query text; phase-2 host execution is named `unsupported_host_execution_phase_2(tree_sitter_query)` |
+| `sg_pattern(language(Language), source(Text), captures(Names))` | RX-SG1: group file demand by content and pattern identity, run ast-grep, then commit EDB rows | retained as a separate pattern family; current compiler refusal is `unmapped_feature(slot_sg_metavariable_semantics, Term)` |
 
 The chosen salt spelling is `@ salt(column: Value)`. Printing and reparsing
 preserve the spelling exactly.
@@ -170,19 +192,18 @@ every ref's name, arity, and column names via `analyze.pl:rel_columns/5`).
 
 ## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
 
-- **G1**: 131 / 131 fixtures round-trip (`parse_dl(print_dl(Term)) =@= Term`
+- **G1**: 136 / 136 fixtures round-trip (`parse_dl(print_dl(Term)) =@= Term`
   for every `fixture/5` in `v6/prolog/conformance/fixtures/*.pl`).
 - **G2**: both real files parse without error.
   - `ghcacher.dl6`: Decls 19, Rules 9, Queries 2, 0 findings. The selected
-    host declarations, probes, and queries reduce the named finding count
-    from 8 to 0.
+    host declarations, probes, and queries are first-class `program/3` terms.
   - `conformance.dl6`: Decls 29, Rules 28, 0 findings (the named/positional
     mix resolves silently, per the construct table above).
-- **G3**: `v6/prolog/conformance/go.pl`, 131 pass / 0 fail.
+- **G3**: `v6/prolog/conformance/go.pl`, 136 pass / 0 fail.
 
 ## What `dl_view/*.dl6` is
 
-Every fixture in the 131-fixture corpus, printed as `.dl6` text by this
+Every fixture in the 136-fixture corpus, printed as `.dl6` text by this
 parser's own printer, committed under `v6/prolog/compile/dl_view/`. This is
 the "language you can see" deliverable: inspect any file there to read a
 conformance fixture's PROGRAM (not its test scaffolding -- `Initial`,

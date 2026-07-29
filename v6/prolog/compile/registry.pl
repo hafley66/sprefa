@@ -76,6 +76,8 @@ surface(sh_decl/4,       world,     no_refs,                      decl(host_plan
 surface(probe/4,         world,     no_refs,                      wrapper(host_probe, lower),             live).
 surface(bind_decl/2,     world,     no_refs,                      decl(bind_plan),                        live).
 surface(query/1,         read,      no_refs,                      decl(query_plan),                       live).
+surface(ts_query/1,      world,     no_refs,                      value(tree_sitter_query),               live).
+surface(sg_pattern/3,    world,     no_refs,                      value(refuse(slot_sg_metavariable_semantics)), refused).
 
 bind_definition(interval, [col(period, int), col(bucket, int)]).
 

@@ -112,6 +112,8 @@ check_program(prog(Decls, Rules)) :-
            throw(log_on_level_headed_rel(Ref))),
     forall(( member(kind(Ref, log), Decls), \+ memberchk(keep(Ref, _), Decls) ),
            throw(missing_retention(Ref))),
+    forall(( member(keep(Ref, _), Decls), rel_kind(Decls, Rules, Ref, Kind), Kind \== log ),
+           throw(keep_on_non_log_rel(Ref))),
     forall(( member((Head <+ _), Rules), aggregate_head(Head, _, _) ),
            throw(aggregate_in_edge_head)),
     forall(( member((_ <- Body), Rules), body_finalize_ref(Body, Ref2) ),

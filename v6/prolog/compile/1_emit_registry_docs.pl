@@ -197,7 +197,7 @@ generated_table(Table) :-
             ),
             RowLines),
     atomic_list_concat(
-        [ '| signature | axis | analyze role | lower role | status |\n',
+        [ '| signature | axis | analyze role | lower role | status (writable surface) |\n',
           '|---|---|---|---|---|\n'
         | RowLines
         ],

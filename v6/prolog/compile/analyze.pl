@@ -750,6 +750,8 @@ check_supported_subset_expanded(prog(Decls, Rules)) :-
     forall(( member(LevelRule, Rules), rule_is_level(LevelRule),
              rule_body(LevelRule, Body), level_body_pre_ref(Body, Ref) ),
            throw(unsupported_construct(pre_in_level_rule(Ref)))),
+    forall(( member(keep(Ref, _), Decls), rel_kind(Decls, Ref, Kind), Kind \== log ),
+           throw(unsupported_construct(keep_on_non_log_rel(Ref)))),
     forall(( member(Rule, Rules), rule_is_edge(Rule) ), check_edge_rule_shape(Rule)),
     forall(( member(Rule, Rules), rule_is_level(Rule) ), check_level_rule_shape(Rule)),
     check_no_edge_head_conflict_risk(Decls, Rules),
