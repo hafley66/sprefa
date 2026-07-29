@@ -57,7 +57,7 @@
 | [sprefa-extract/AGENTS.md](sprefa-extract/AGENTS.md) | 66 | sprefa-extract — Agent Guidance |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 167 | v6 store — retraction perf & completeness report |
-| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
+| [tsv2/CRAWL-BENCH.md](tsv2/CRAWL-BENCH.md) | 122 | Grafana crawl bench |
 | [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
 
 ## Full header index
@@ -827,12 +827,15 @@
 156:## Breakpoint ramp — tight gun 700 MB
 ```
 
-### sprefa-store/bench/out/REPORT.md
+### tsv2/CRAWL-BENCH.md
 ```
-1:# Z-set / IVM head-to-head — feasibility lab
-15:## Charts
-22:## Data
-43:## Takeaways (derived)
+1:# Grafana crawl bench
+9:## Scope
+27:## Exact v5 program
+45:## v6 leg
+62:## Parity table
+84:## Gaps
+108:## Skips and validation
 ```
 
 ### tsv2/SCALE.md
