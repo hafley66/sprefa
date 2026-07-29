@@ -67,7 +67,11 @@
             % The oracle's load-time program gate, exported so the
             % cross_plane_check_parity unit (rank R2) can put the same prog/2
             % term through both doors and compare the two exception terms.
-            check_program/1 ]).
+            check_program/1,
+            % Declaration queries, exported as the declaration_query_parity
+            % seam (rank R9). rel_kind/3 lost the Rules argument no clause
+            % ever read.
+            rel_kind/3, decl_key/3 ]).
 :- reexport(body, [json_canon/2]).
 
 :- use_module(library(lists)).
@@ -77,7 +81,8 @@
 :- use_module('../0_match_expand', [expand_match_program/2]).
 :- use_module('../0_body_walk', [walk_body/3, event_is_relation_atom/2,
                                  body_wrapper_refs/4]).
-:- use_module('../0_program_check', [first_violation/3]).
+:- use_module('../0_program_check',
+              [ first_violation/3, relation_kind/3, declared_key/3 ]).
 :- use_module('../1_host_expand', [prepare_program/5]).
 :- use_module(rulings).
 :- use_module(body).
@@ -99,16 +104,13 @@ drain_cap(100).
 % Bound: count(N) | all      (duration bounds arrive with the clock fixtures)
 
 
-declared_kind(Decls, Ref, Kind) :- memberchk(kind(Ref, Kind), Decls).
+% Both resolvers are shared with the compiler (rank R9 of
+% plans/2026-07-29-prolog-org-review.md). This file used to carry its own
+% clause-for-clause copies, and rel_kind/4's Rules argument was never read by
+% any clause; the declaration_query_parity unit is the receipt.
+rel_kind(Decls, Ref, Kind) :- relation_kind(Decls, Ref, Kind).
 
-rel_kind(Decls, _, Ref, log) :- declared_kind(Decls, Ref, log), !.
-rel_kind(Decls, _, Ref, set) :- declared_kind(Decls, Ref, set), !.
-rel_kind(Decls, _, Ref, set) :- memberchk(keyed(Ref, _), Decls), !.
-rel_kind(_, _, _, set).
-
-level_headed(Rules, Ref) :- member((Head <- _), Rules), rel_ref(Head, Ref), !.
-
-decl_key(Decls, Ref, Positions) :- memberchk(keyed(Ref, Positions), Decls).
+decl_key(Decls, Ref, Positions) :- declared_key(Decls, Ref, Positions).
 
 key_of(Positions, Row, Key) :-
     Row =.. [_ | Args],
@@ -264,10 +266,10 @@ body_pre_ref(Body, Ref) :-
 
 absorb_arrivals(_, _, [], Store, Seq, Store, Seq, []).
 absorb_arrivals(Prog, Tick, [Signed | Rest], Store0, Seq0, Store, Seq, Occurrences) :-
-    Prog = prog(Decls, Rules),
+    Prog = prog(Decls, _),
     (   Signed = +Row
     ->  rel_ref(Row, Ref),
-        rel_kind(Decls, Rules, Ref, Kind),
+        rel_kind(Decls, Ref, Kind),
         (   Kind == log
         ->  Store1 = [lrow(st(Tick, Seq0), Row) | Store0],
             Seq1 is Seq0 + 1,
@@ -279,7 +281,7 @@ absorb_arrivals(Prog, Tick, [Signed | Rest], Store0, Seq0, Store, Seq, Occurrenc
                Occurrences = [occ(st(Tick, Seq0), Row) | More] ) )
     ;   Signed = -Row,
         rel_ref(Row, Ref),
-        rel_kind(Decls, Rules, Ref, Kind),
+        rel_kind(Decls, Ref, Kind),
         ( Kind == log -> throw(retract_from_log(Ref)) ; true ),
         exclude(==(srow(Row)), Store0, Store1),
         Seq1 = Seq0, Occurrences = More
@@ -332,9 +334,9 @@ check_occurrence_conflicts(Decls, Derived) :-
 
 apply_edge_writes(_, _, [], Store, Store, []).
 apply_edge_writes(Prog, Tick, [Row | Rest], Store0, Store, Written) :-
-    Prog = prog(Decls, Rules),
+    Prog = prog(Decls, _),
     rel_ref(Row, Ref),
-    (   rel_kind(Decls, Rules, Ref, log)
+    (   rel_kind(Decls, Ref, log)
     ->  next_seq(Store0, Tick, Seq),
         Store1 = [lrow(st(Tick, Seq), Row) | Store0],
         Written = [Row | More]
@@ -416,7 +418,7 @@ stamp_extra(Tick, [Row | Rest], Seq, [occ(st(Tick, Seq), Row) | More]) :-
 
 % r7: Log rels emit one +Row per new stamp; everything else is a set diff of
 % the full visible state (removed then added).
-boundary_deltas(prog(Decls, Rules), Store0, Store, PrevAll, NextAll, Deltas) :-
+boundary_deltas(prog(Decls, _), Store0, Store, PrevAll, NextAll, Deltas) :-
     findall(Stamp-Row,
             ( member(lrow(Stamp, Row), Store),
               \+ memberchk(lrow(Stamp, Row), Store0) ),
@@ -425,11 +427,11 @@ boundary_deltas(prog(Decls, Rules), Store0, Store, PrevAll, NextAll, Deltas) :-
     findall(+Row, member(_-Row, NewStamped), LogAdds),
     findall(Delta,
             ( set_diff_delta(PrevAll, NextAll, Delta),
-              Delta = -Row, delta_ref_is_set(Decls, Rules, Row) ),
+              Delta = -Row, delta_ref_is_set(Decls, Row) ),
             SetRemovals),
     findall(Delta,
             ( set_diff_delta(PrevAll, NextAll, Delta),
-              Delta = +Row, delta_ref_is_set(Decls, Rules, Row) ),
+              Delta = +Row, delta_ref_is_set(Decls, Row) ),
             SetAdds),
     append([SetRemovals, SetAdds, LogAdds], Deltas).
 
@@ -437,8 +439,8 @@ set_diff_delta(PrevAll, NextAll, Delta) :-
     (   member(Row, PrevAll), \+ memberchk(Row, NextAll), Delta = -Row
     ;   member(Row, NextAll), \+ memberchk(Row, PrevAll), Delta = +Row ).
 
-delta_ref_is_set(Decls, Rules, Row) :-
-    rel_ref(Row, Ref), rel_kind(Decls, Rules, Ref, Kind), Kind == set.
+delta_ref_is_set(Decls, Row) :-
+    rel_ref(Row, Ref), rel_kind(Decls, Ref, Kind), Kind == set.
 
 % ═══ the run loop, engine-owned drains (q5) ═════════════════════════════════
 
@@ -454,11 +456,11 @@ run_program(SugaredProg, Initial, Schedule, FinalAll, DeltaTicks) :-
     append(BaseRows, Level0, All0), sort(All0, PrevAll),
     run_ticks(Prog, state(1, Store0, Level0, PrevAll), [], Schedule, 0, FinalAll, DeltaTicks).
 
-seed_store(prog(Decls, Rules), Initial, Store) :-
+seed_store(prog(Decls, _), Initial, Store) :-
     findall(Entry,
             ( nth1(Position, Initial, Row),
               rel_ref(Row, Ref),
-              ( rel_kind(Decls, Rules, Ref, log)
+              ( rel_kind(Decls, Ref, log)
               -> Entry = lrow(st(0, Position), Row)
               ;  Entry = srow(Row) ) ),
             Store).

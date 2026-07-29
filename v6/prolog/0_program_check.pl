@@ -35,7 +35,14 @@
 :- module(program_check,
           [ program_violation/3,
             first_violation/3,
-            aggregate_head_ref/2
+            aggregate_head_ref/2,
+            % Declaration queries, shared by both doors (rank R9 of the same
+            % review). The oracle and the compiler each carried a clause-for-
+            % clause identical resolver, the oracle's taking an extra Rules
+            % argument it never read.
+            declared_kind/3,
+            relation_kind/3,
+            declared_key/3
           ]).
 
 :- use_module(library(lists)).
@@ -65,6 +72,10 @@ relation_kind(Decls, Ref, log) :- declared_kind(Decls, Ref, log), !.
 relation_kind(Decls, Ref, set) :- declared_kind(Decls, Ref, set), !.
 relation_kind(Decls, Ref, set) :- memberchk(keyed(Ref, _), Decls), !.
 relation_kind(_, _, set).
+
+% Key positions, or FAILURE when the relation carries none. Both doors rely on
+% the failure rather than a default, so this must never fall through to [].
+declared_key(Decls, Ref, Positions) :- memberchk(keyed(Ref, Positions), Decls).
 
 head_ref(Head, Name/Arity) :- functor(Head, Name, Arity).
 

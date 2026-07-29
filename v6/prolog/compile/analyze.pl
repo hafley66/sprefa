@@ -1,6 +1,6 @@
 % analyze.pl : structural analysis of a prog(Decls, Rules) term form. Reads
-% relation kind (mirrors engine.pl:88-93 rel_kind/4, reimplemented here since
-% that predicate is not exported and depends only on Decls), which refs are
+% relation kind (0_program_check.pl:relation_kind/3, shared with the oracle
+% since rank R9 -- this file used to carry its own copy of it), which refs are
 % EDB (an arrival schedule may write them: never a rule head) vs derived
 % (headed by a level or edge rule), and per-ref column names mined from typed
 % declaration entries or the ORIGINAL surface variable names the caller recovers via
@@ -41,7 +41,8 @@
 :- use_module('../0_body_walk',
               [ walk_body/3, event_is_relation_atom/2,
                 body_conjunction_goals/3, body_wrapper_refs/4 ]).
-:- use_module('../0_program_check', [ first_violation/3 ]).
+:- use_module('../0_program_check',
+              [ first_violation/3, relation_kind/3, declared_key/3 ]).
 :- use_module('../conformance/body', [rel_ref/2]).
 :- use_module(registry,
               [ surface_for_term/6,
@@ -52,16 +53,16 @@
 :- op(1150, xfx, <+).
 :- op(700,  xfx, :=).
 
-% ═══ rel kind (mirrors engine.pl declared_kind/rel_kind exactly) ════════════
+% ═══ rel kind ═══════════════════════════════════════════════════════════════
+% Shared with engine.pl rather than mirroring it (rank R9 of
+% plans/2026-07-29-prolog-org-review.md). The header here used to say "mirrors
+% engine.pl exactly", which was true and is exactly the kind of claim that
+% stops being true without anything failing. Both doors now call one
+% implementation, and declaration_query_parity is the receipt.
 
-declared_kind(Decls, Ref, Kind) :- memberchk(kind(Ref, Kind), Decls).
+rel_kind(Decls, Ref, Kind) :- relation_kind(Decls, Ref, Kind).
 
-rel_kind(Decls, Ref, log) :- declared_kind(Decls, Ref, log), !.
-rel_kind(Decls, Ref, set) :- declared_kind(Decls, Ref, set), !.
-rel_kind(Decls, Ref, set) :- memberchk(keyed(Ref, _), Decls), !.
-rel_kind(_, _, set).
-
-decl_key(Decls, Ref, Positions) :- memberchk(keyed(Ref, Positions), Decls).
+decl_key(Decls, Ref, Positions) :- declared_key(Decls, Ref, Positions).
 
 decl_keep(Decls, Ref, Bound) :- memberchk(keep(Ref, Bound), Decls), !.
 decl_keep(_, _, all).

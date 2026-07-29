@@ -1570,3 +1570,65 @@ test(plain_edge_head_still_accepted_by_both_doors) :-
     CompilerVerdict == accepted.
 
 :- end_tests(cross_plane_check_parity).
+
+% ═══════════════════════════════════════════════════════════════════════════
+% DECLARATION QUERY PARITY (rank R9)
+%
+% The oracle and the compiler each carried their own relation-kind resolver,
+% clause for clause identical except that the oracle's took an extra Rules
+% argument it never read. The fallback is the part that matters: an undeclared
+% relation is a Set, and a keyed relation is a Set by construction, so clause
+% ORDER decides what a relation declared both log and keyed resolves to.
+%
+% Written against the two separate implementations and green there, so the
+% parity claim is pinned before one replaces both. The two door_ adapters
+% below are the only lines that moved when the oracle dropped its unused
+% argument; every assertion is unchanged.
+
+:- begin_tests(declaration_query_parity).
+
+oracle_relation_kind(Decls, Ref, Kind) :- engine:rel_kind(Decls, Ref, Kind).
+compiler_relation_kind(Decls, Ref, Kind) :- analyze:rel_kind(Decls, Ref, Kind).
+oracle_key(Decls, Ref, Positions) :- engine:decl_key(Decls, Ref, Positions).
+compiler_key(Decls, Ref, Positions) :- analyze:decl_key(Decls, Ref, Positions).
+
+% Decls, expected kind for r/1.
+kind_case([],                                        set).
+kind_case([kind(r/1, log), keep(r/1, all)],          log).
+kind_case([kind(r/1, set)],                          set).
+kind_case([keyed(r/1, [1])],                         set).
+% Declared kind is consulted BEFORE the keyed fallback, so this is log.
+kind_case([kind(r/1, log), keep(r/1, all), keyed(r/1, [1])], log).
+kind_case([kind(r/1, set), keyed(r/1, [1])],         set).
+% A declaration naming a DIFFERENT relation must not leak onto r/1.
+kind_case([kind(other/1, log), keep(other/1, all)],  set).
+kind_case([keyed(other/1, [1])],                     set).
+
+test(relation_kind_agrees_across_doors) :-
+    forall(kind_case(Decls, Expected),
+           ( oracle_relation_kind(Decls, r/1, OracleKind),
+             compiler_relation_kind(Decls, r/1, CompilerKind),
+             OracleKind == Expected,
+             CompilerKind == Expected )).
+
+% Both doors read the same key positions out of the same declaration, and both
+% FAIL rather than defaulting when the relation carries no key. The `none`
+% below is this test's marker for that failure, never a value either door
+% produces.
+key_case([keyed(r/1, [1])],                    [1]).
+key_case([keyed(r/2, [1, 2]), keyed(r/1, [1])], [1]).
+key_case([kind(r/1, log), keep(r/1, all)],     none).
+key_case([],                                   none).
+
+test(decl_key_agrees_across_doors) :-
+    forall(key_case(Decls, Expected),
+           ( (   oracle_key(Decls, r/1, OraclePositions)
+             ->  true
+             ;   OraclePositions = none ),
+             (   compiler_key(Decls, r/1, CompilerPositions)
+             ->  true
+             ;   CompilerPositions = none ),
+             OraclePositions == Expected,
+             CompilerPositions == Expected )).
+
+:- end_tests(declaration_query_parity).

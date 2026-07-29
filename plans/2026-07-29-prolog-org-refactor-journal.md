@@ -380,3 +380,50 @@ Related asymmetry, also pinned rather than fixed: neither door's finalize scan
 descends `not/1`, so `not(finalize(...))` in a level rule is ACCEPTED by both.
 `nested_not_finalize_is_opaque_to_both_doors` records it, so closing one side
 alone becomes a visible change rather than a silent divergence.
+
+---
+
+## R9: shared declaration queries
+
+Landed. `relation_kind/3` and `declared_key/3` move into
+`0_program_check.pl`, which R2 had already put in both doors' import lists.
+`engine:rel_kind/3` and `analyze:rel_kind/3` are now one-line delegations, and
+both `declared_kind/3` copies are gone.
+
+The oracle's resolver lost the `Rules` argument no clause ever read. Receipt,
+run against the two separate implementations before the change, over the eight
+declaration shapes in the parity test:
+
+| Decls | oracle, no rules | oracle, with rules | compiler |
+|---|---|---|---|
+| `[]` | set | set | set |
+| `[kind(r/1,log), keep(r/1,all)]` | log | log | log |
+| `[kind(r/1,set)]` | set | set | set |
+| `[keyed(r/1,[1])]` | set | set | set |
+| `[kind(r/1,log), keep(r/1,all), keyed(r/1,[1])]` | log | log | log |
+| `[kind(r/1,set), keyed(r/1,[1])]` | set | set | set |
+| `[kind(other/1,log), keep(other/1,all)]` | set | set | set |
+| `[keyed(other/1,[1])]` | set | set | set |
+
+Passing a non-empty rule list changed no answer, which is what licensed
+dropping the argument.
+
+Removing it surfaced five more dead `Rules` bindings that only the compiler's
+singleton warning made visible: `absorb_arrivals/8`, `apply_edge_writes/6`,
+`seed_store/3` and `boundary_deltas/6` destructured `prog(Decls, Rules)` purely
+to forward it, and `delta_ref_is_set/3` existed only to carry it. That last one
+is now `delta_ref_is_set/2`.
+
+`engine:level_headed/2` was left dead by R2 (its only caller was
+`check_program/1`) and is deleted here.
+
+The `analyze.pl` file header said its resolver "mirrors engine.pl:88-93
+rel_kind/4, reimplemented here since that predicate is not exported". That was
+true, and it is exactly the class of claim that stops being true without
+anything failing. It now names the shared predicate.
+
+### Receipts
+
+conformance 137/0, plunit 105/105 (+2), roundtrip ALL PASS,
+TEXT_DOOR 72/72/0, sweep 137/72 RUN identical=70 wrong=0 with a clean artifact
+diff, prolog-lint 10/10 OK.
