@@ -871,12 +871,6 @@ export const IncrementalRuntime: IIncrementalRuntime = {
           // promoteFrontiers reports carryPending from any row in a
           // nextFrontier table, and the reconcile's +1 events had landed
           // there.
-          //
-          // ASYMMETRY, named not hidden: the refCount branch just below still
-          // stages its reconcile rows into nextFrontier phase 1, the shape P3
-          // shipped. No corpus fixture distinguishes the two (every program
-          // whose reconcile INSERTS rows also has edge rules), so this arc did
-          // not change it; if one ever does, this comment is the pointer.
           return applyAggregateLevelStatement(
             seam,
             statement,
@@ -886,11 +880,19 @@ export const IncrementalRuntime: IIncrementalRuntime = {
             nextSequence,
           );
         }
+        // No frontier copies HERE either, for the same reason as the
+        // aggregate branch above: a reconcile row is a correction inside the
+        // same closure, never post-write growth, so it must not reach the
+        // next-tick frontier. The refCount branch shipped from P3 staging
+        // into nextFrontier phase 1; the flagship callgraph fixture is the
+        // corpus member that finally distinguished the two — a schedule
+        // ending on its retraction tick minted one {"deltas":{}} drain the
+        // oracle lacks (extraDrainTick.test.ts holds the fail-first receipt).
         return reconcileSupportStatement(
           seam,
           statement,
           relations,
-          [{ tableName: (plan) => plan.nextFrontierTableName, phase: 1 }],
+          [],
           nextSequence,
         );
       });
