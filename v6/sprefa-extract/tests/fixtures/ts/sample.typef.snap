@@ -8,10 +8,10 @@
 {"record":"node","family":"type","span":{"start":730,"end":794},"kind":"method","name":"scaled"}
 {"record":"node","family":"type","span":{"start":857,"end":894},"kind":"function","name":"sub"}
 {"record":"node","family":"type","span":{"start":937,"end":987},"kind":"function","name":"mirror"}
-{"record":"sig","family":"type","owner":{"start":244,"end":385},"slot":"param","pos":0,"ty":"Point"}
-{"record":"sig","family":"type","owner":{"start":244,"end":385},"slot":"param","pos":1,"ty":"Dir"}
-{"record":"sig","family":"type","owner":{"start":244,"end":385},"slot":"ret","pos":0,"ty":"Vec2"}
-{"record":"sig","family":"type","owner":{"start":730,"end":794},"slot":"param","pos":0,"ty":"Vec"}
-{"record":"sig","family":"type","owner":{"start":730,"end":794},"slot":"ret","pos":0,"ty":"Vec2"}
-{"record":"sig","family":"type","owner":{"start":937,"end":987},"slot":"param","pos":0,"ty":"Point"}
-{"record":"sig","family":"type","owner":{"start":937,"end":987},"slot":"ret","pos":0,"ty":"Point"}
+{"record":"sig","family":"type","owner":{"start":244,"end":385},"owner_start":244,"owner_end":385,"slot":"param","pos":0,"ty":"Point"}
+{"record":"sig","family":"type","owner":{"start":244,"end":385},"owner_start":244,"owner_end":385,"slot":"param","pos":1,"ty":"Dir"}
+{"record":"sig","family":"type","owner":{"start":244,"end":385},"owner_start":244,"owner_end":385,"slot":"ret","pos":0,"ty":"Vec2"}
+{"record":"sig","family":"type","owner":{"start":730,"end":794},"owner_start":730,"owner_end":794,"slot":"param","pos":0,"ty":"Vec"}
+{"record":"sig","family":"type","owner":{"start":730,"end":794},"owner_start":730,"owner_end":794,"slot":"ret","pos":0,"ty":"Vec2"}
+{"record":"sig","family":"type","owner":{"start":937,"end":987},"owner_start":937,"owner_end":987,"slot":"param","pos":0,"ty":"Point"}
+{"record":"sig","family":"type","owner":{"start":937,"end":987},"owner_start":937,"owner_end":987,"slot":"ret","pos":0,"ty":"Point"}

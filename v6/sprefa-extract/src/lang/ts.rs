@@ -25,7 +25,8 @@ use oxc_span::{GetSpan, SourceType};
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfEdgeKind, DfF,
-    DfNodeKind, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind,
+    DfNodeKind, DfParam, DfArg, ProjectEdge, SigSlot, Specifier, SpecifierKind,
+    TypeEdgeCandidate, TypeEdgeKind,
     TypeEntityKind, TypeF,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
@@ -1344,7 +1345,8 @@ fn callee_name(expr: &ts::Expression) -> Option<String> {
 //    HashMap (var name -> NodeRef) for intra-procedural resolution is kept.
 //  - `line_at` / `line_index` / `line_col`: a node is a byte Span, never a line.
 //  - the enrichment aux: `args` (positional slots), `fields` (object/array
-//    field names), `lits` (literal texts), `param_pos`, `loops`, `nests`. The
+//    field names), `lits` (literal texts), `param_pos`, `loops`, `nests`. Args
+//    and parameter positions are emitted as DfArg/DfParam rows. The
 //    EDGES already carry every value flow; the aux only labels slots/names/texts
 //    for the later interprocedural (arg->param) + string-flow queries.
 //  - JSX element/fragment flow (tsx-specific; the catch-all covers it for now).
@@ -1748,9 +1750,19 @@ fn df_flow_call(
     let call_res = df_push(sink, strings, span, DfNodeKind::CallRes, None);
     if let Some(recv) = receiver {
         df_edge(sink, recv, call_res);
+        sink.aux.args.push(DfArg {
+            call: call_res,
+            pos: -1,
+            arg: recv,
+        });
     }
-    for arg_id in arg_ids {
+    for (pos, arg_id) in arg_ids.into_iter().enumerate() {
         df_edge(sink, arg_id, call_res);
+        sink.aux.args.push(DfArg {
+            call: call_res,
+            pos: pos as i64,
+            arg: arg_id,
+        });
     }
     call_res
 }
@@ -1820,8 +1832,13 @@ fn df_flow_expr(
                 }
             }
             let new_node = df_push(sink, strings, span, DfNodeKind::New, type_name.as_deref());
-            for arg_id in arg_ids {
+            for (pos, arg_id) in arg_ids.into_iter().enumerate() {
                 df_edge(sink, arg_id, new_node);
+                sink.aux.args.push(DfArg {
+                    call: new_node,
+                    pos: pos as i64,
+                    arg: arg_id,
+                });
             }
             new_node
         }
@@ -2083,18 +2100,22 @@ fn binding_name(pattern: &ts::BindingPattern) -> Option<String> {
 /// Seed a callable's param nodes into the scope. A bare identifier binds as
 /// itself; an object-destructuring param mints one param node PER property
 /// (whose name is the property key). Port of v5 `ts_seed_params` (the positional
-/// `param_pos` aux is deferred).
+/// `param_pos` aux is emitted as DfParam rows).
 fn df_seed_params(
     params: &ts::FormalParameters,
     strings: &mut Strings,
     scope: &mut Scope,
     sink: &mut FamilyBundle<DfF>,
 ) {
-    for param in &params.items {
+    for (pos, param) in params.items.iter().enumerate() {
         match &param.pattern {
             ts::BindingPattern::BindingIdentifier(binding) => {
                 let name = binding.name.to_string();
                 let node = df_push(sink, strings, param.span, DfNodeKind::Param, Some(&name));
+                sink.aux.params.push(DfParam {
+                    node,
+                    pos: pos as u32,
+                });
                 scope.insert(name, node);
             }
             ts::BindingPattern::ObjectPattern(object) => {
@@ -2107,6 +2128,10 @@ fn df_seed_params(
                         };
                         let node =
                             df_push(sink, strings, binding.span, DfNodeKind::Param, Some(&key));
+                        sink.aux.params.push(DfParam {
+                            node,
+                            pos: pos as u32,
+                        });
                         scope.insert(binding.name.to_string(), node);
                     }
                 }
@@ -2115,6 +2140,10 @@ fn df_seed_params(
                         let name = binding.name.to_string();
                         let node =
                             df_push(sink, strings, binding.span, DfNodeKind::Param, Some(&name));
+                        sink.aux.params.push(DfParam {
+                            node,
+                            pos: pos as u32,
+                        });
                         scope.insert(name, node);
                     }
                 }
@@ -2729,7 +2758,7 @@ impl Resolve<CallF> for TsSource {
                 (Some(n), None) => (n, CallEdgeKind::NameResolve),
                 (None, None) => continue,
             };
-            edges.push(ProjectEdge::new(caller, dst_blob, dst_span, kind));
+            edges.push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
         }
         edges
     }

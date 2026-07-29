@@ -13,7 +13,7 @@ use clap::Parser;
 use sprefa_extract::{
     build_def_index, dispatch, flatten, source_for, BlobHash, CallF, ExtractOutput, FileSet,
     FlatFact, IndexBag, ManifestMap, ProjectCx, ProjectDigest, ProjectEdge, Resolve, RustSource,
-    Source, TsSource, GoSource, PrologSource, FamilyMask,
+    Source, TsSource, GoSource, KotlinSource, PrologSource, FamilyMask,
 };
 
 /// Self-describing enough that `extract --help` + `extract --schema` are a
@@ -185,6 +185,8 @@ fn resolve_project(paths: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> 
                 caller_name,
                 callee_path: callee.path.clone(),
                 callee_name,
+                caller_site_start: edge.call_site.map_or(0, |span| span.start),
+                caller_site_end: edge.call_site.map_or(0, |span| span.end()),
                 kind: edge.kind.as_str().to_string(),
             })?);
         }
@@ -205,6 +207,7 @@ fn resolve_call_edges(
         Some("ts") => Resolve::<CallF>::resolve(&TsSource, output, cx),
         Some("rust") => Resolve::<CallF>::resolve(&RustSource, output, cx),
         Some("go") => Resolve::<CallF>::resolve(&GoSource, output, cx),
+        Some("kotlin") => Resolve::<CallF>::resolve(&KotlinSource, output, cx),
         Some("prolog") => Resolve::<CallF>::resolve(&PrologSource, output, cx),
         _ => Vec::new(),
     }
@@ -268,10 +271,12 @@ Records join across families by matching spans.
 RECORD SHAPES
   record=node   family=<cst|type|call|df>  span={start,end}   kind=<slug>   name=<string|null>
   record=edge   family=<cst|df>            kind=<slug>        from={start,end}  to={start,end}
-  record=sig    family=type                owner={start,end}  slot=<param|ret>  pos=<u32>  ty=<name>
+  record=sig    family=type                owner={start,end}  owner_start=<u32>  owner_end=<u32>  slot=<param|ret>  pos=<u32>  ty=<name>
+  record=param  family=df                  span={start,end}   pos=<u32>
+  record=arg    family=df                  call={start,end}   pos=<i64>  arg={start,end}
   record=site   family=call                span={start,end}   callee=<name>  callee_path=<string|null>
   record=const  family=type                owner={start,end}  field=<string|null>  text=<string>  kind=<lit|template>
-  record=resolved_edge  caller_path=<string>  caller_name=<string|null>  callee_path=<string>  callee_name=<string|null>  kind=<slug>
+  record=resolved_edge  caller_path=<string>  caller_name=<string|null>  callee_path=<string>  callee_name=<string|null>  caller_site_start=<u32>  caller_site_end=<u32>  kind=<slug>
 
 FIELDS
   family       the graph plane: cst (concrete syntax tree), type (declarations),
@@ -280,6 +285,8 @@ FIELDS
   kind         the node/edge slug from the per-family vocabulary below.
   name         the declared identifier, when the node carries one (else null).
   owner        the span of the owning declaration (sig/const joins to its callable).
+  owner_start  flat start byte of the sig owner span; retained alongside owner for text-host joins.
+  owner_end    flat end byte of the sig owner span; retained alongside owner for text-host joins.
   slot         param or ret.
   pos          parameter index (0 for a return slot).
   ty           the referenced type's bare name, UNRESOLVED in phase 1.
@@ -287,6 +294,8 @@ FIELDS
   callee_path  the full qualified path when >1 segment (filled by resolution; else null).
   field        dotted path into an object const, or an enum member (else null).
   text         the resolved string value of a const.
+  caller_site_start  start byte of the call site that produced a resolved edge.
+  caller_site_end    end byte of the call site that produced a resolved edge.
 
 KIND VOCABULARIES (the `kind` field)
   type node   struct enum trait class interface alias function method const

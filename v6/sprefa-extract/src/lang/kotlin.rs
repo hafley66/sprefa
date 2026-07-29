@@ -25,8 +25,7 @@
 //! incl. the `lam_sym` closure naming).
 //!
 //! Deferred follow-ups (the same set the other langs parked): the docs facet
-//! (`walk_kotlin_docs`); the df enrichment aux (args/fields/lits/param_pos/
-//! loops/nests); the type_edge candidates (`kotlin_decl_edges`) +
+//! (`walk_kotlin_docs`); df field/literal/loop/nesting aux; the type_edge candidates (`kotlin_decl_edges`) +
 //! `Resolve<TypeF>`/`Resolve<CallF>` arms - v5 kotlin DOES emit type_edge, and
 //! both resolve arms land with the traits/codegen arc, not this port. The
 //! const facet is NOT ported: v5 kotlin emits no const entities and no
@@ -37,13 +36,13 @@ use std::collections::BTreeSet;
 
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
-    CallF, CallKind, CallSite, CstF, DfEdgeKind, DfF, DfNodeKind, SigSlot, TypeEntityKind, TypeF,
-    TypeSig,
+    CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfNodeKind,
+    DfParam, ProjectEdge, SigSlot, TypeEntityKind, TypeF, TypeSig,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
-use crate::seams::{Parser, Project};
-use crate::shape::{NodeRef, Span, Strings};
-use crate::source::{ExtractOutput, FamilyMask, Source};
+use crate::seams::{corpus_defs, covering_def, def_named, DefIndex, Parser, Project, Resolve};
+use crate::shape::{BlobHash, FamilyTag, NodeRef, Span, Strings};
+use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 
 // ── the tree-sitter-kotlin parse (one parse feeds type/call/df) ─────────────
 
@@ -552,7 +551,7 @@ fn kt_walk_fns(
 }
 
 /// Seed `param` nodes from the parameter list, then walk the body. Port of v5
-/// `kt_flow_fn` (the `param_pos` aux is dropped). EVERY fun - method or not -
+/// `kt_flow_fn` (the `param_pos` aux is emitted as DfParam rows). EVERY fun - method or not -
 /// roots its fn_sym at `{file}::function::{name}` (v5's exact mint, so a
 /// lambda inside a method still joins under the bare fun sym). The body's tail
 /// value is the implicit return: it flows into a `ret` node minted at the
@@ -572,6 +571,7 @@ fn kt_flow_fn(
     let fn_sym = format!("{file}::function::{name}");
     let mut scope = Scope::new();
     if let Some(params) = kt_first_child(fn_node, "function_value_parameters") {
+        let mut param_pos = 0u32;
         let mut cursor = params.walk();
         for p in params
             .children(&mut cursor)
@@ -586,8 +586,13 @@ fn kt_flow_fn(
                     DfNodeKind::Param,
                     Some(&v),
                 );
+                sink.aux.params.push(DfParam {
+                    node: id,
+                    pos: param_pos,
+                });
                 scope.insert(v, id);
             }
+            param_pos += 1;
         }
     }
     if let Some(body) = kt_first_child(fn_node, "function_body") {
@@ -712,9 +717,19 @@ fn flow_kt(
             let id = df_push(sink, strings, start_byte, kind, name);
             if let Some(r) = recv {
                 df_edge(sink, r, id);
+                sink.aux.args.push(DfArg {
+                    call: id,
+                    pos: -1,
+                    arg: r,
+                });
             }
-            for arg_id in arg_ids {
+            for (pos, arg_id) in arg_ids.into_iter().enumerate() {
                 df_edge(sink, arg_id, id);
+                sink.aux.args.push(DfArg {
+                    call: id,
+                    pos: pos as i64,
+                    arg: arg_id,
+                });
             }
             Some(id)
         }
@@ -791,6 +806,7 @@ fn flow_kt(
             let lam_sym = format!("{fn_sym}::closure::{}_{}", pos.row, pos.column);
             let mut seeded = false;
             if let Some(lp) = kt_first_child(node, "lambda_parameters") {
+                let mut param_pos = 0u32;
                 let mut cursor = lp.walk();
                 for vd in lp
                     .children(&mut cursor)
@@ -805,13 +821,19 @@ fn flow_kt(
                             DfNodeKind::Param,
                             Some(&v),
                         );
+                        sink.aux.params.push(DfParam {
+                            node: id,
+                            pos: param_pos,
+                        });
                         scope.insert(v, id);
                         seeded = true;
+                        param_pos += 1;
                     }
                 }
             }
             if !seeded {
                 let id = df_push(sink, strings, start_byte, DfNodeKind::Param, Some("it"));
+                sink.aux.params.push(DfParam { node: id, pos: 0 });
                 scope.insert("it".into(), id);
             }
             let tail = kt_first_child(node, "statements")
@@ -1016,5 +1038,70 @@ impl Source for KotlinSource {
             call,
             df,
         }
+    }
+}
+
+impl KotlinSource {
+    /// Name-only call target lookup for Kotlin. Same-file definitions win via
+    /// their span; otherwise a single corpus blob supplies the target. Kotlin
+    /// has no SCIP arm in this crate, so unresolved or ambiguous names emit no
+    /// edge.
+    pub fn call_name_match(
+        output: &ExtractOutput,
+        index: &DefIndex,
+        callee: &str,
+    ) -> Option<(BlobHash, Span)> {
+        let call = output.call.as_ref()?;
+        if let Some(r) = def_named(call, &output.strings, callee) {
+            let span = call.node(r).span;
+            if let Some(site) = corpus_defs(index, callee)
+                .iter()
+                .find(|site| site.span == span)
+            {
+                return Some((site.blob, site.span));
+            }
+        }
+        let sites = corpus_defs(index, callee);
+        let mut blobs: Vec<BlobHash> = Vec::new();
+        for site in sites {
+            if !blobs.contains(&site.blob) {
+                blobs.push(site.blob);
+            }
+        }
+        let [blob] = blobs.as_slice() else {
+            return None;
+        };
+        let site = sites
+            .iter()
+            .find(|site| site.family == FamilyTag::Call)
+            .unwrap_or(&sites[0]);
+        Some((*blob, site.span))
+    }
+}
+
+impl Resolve<CallF> for KotlinSource {
+    fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<CallF>> {
+        let Some(call) = &output.call else {
+            return Vec::new();
+        };
+        let Some(def_index) = cx.indexes.def_index.get() else {
+            return Vec::new();
+        };
+        let mut edges = Vec::new();
+        for site in &call.aux.sites {
+            let Some(caller) = covering_def(call, site.span) else {
+                continue;
+            };
+            let callee = output.strings.lookup(site.callee);
+            let Some((dst_blob, dst_span)) = KotlinSource::call_name_match(output, def_index, callee)
+            else {
+                continue;
+            };
+            edges.push(
+                ProjectEdge::new(caller, dst_blob, dst_span, CallEdgeKind::NameResolve)
+                    .with_call_site(site.span),
+            );
+        }
+        edges
     }
 }
