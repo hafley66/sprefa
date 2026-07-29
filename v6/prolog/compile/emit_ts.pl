@@ -216,11 +216,11 @@ struct_plane_lines(StructPlans, RelPlans, Lines, true) :-
     maplist(struct_type_plan_line, StructPlans, PlanLines),
     struct_ref_column_entries(RelPlans, RefEntryLines),
     append(
-    [ [ 'const STRUCT_TYPES: readonly IStructTypePlan[] = [' ],
+    [ [ 'export const STRUCT_TYPES: readonly IStructTypePlan[] = [' ],
       PlanLines,
       [ '];',
         '',
-        'const STRUCT_REF_COLUMNS: IStructRefColumns = {' ],
+        'export const STRUCT_REF_COLUMNS: IStructRefColumns = {' ],
       RefEntryLines,
       [ '};' ]
     ], Lines).

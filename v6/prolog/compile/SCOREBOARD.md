@@ -14,28 +14,51 @@ excerpt per compiled fixture).
 
 ## Totals (current)
 
-Refreshed by the FLAGSHIP CALLGRAPH arc (2026-07-29, golden plan phase 3 step
-1), which promoted the flagship rail's derivation core as two fixtures; the
-counts before it were 137 / 85 / 83. The arc before that was TICK PHASE
-ALIGNMENT, which aligned the emitted mid-tick level plane with engine.pl's
-frozen MidLevel and gave the frontier a departure stream. The prose sections
-below this one are historical and were written against the 110-fixture corpus;
-the numbers here and in the two tables that follow come from
-`out/manifest.json` + `out/run-results.json`.
+Refreshed by the STRUCT-AS-ROWS arc (2026-07-29, ruling `compound_storage =
+struct_as_rows`), which added the declared value plane: `type` declarations,
+per-type storage-plane dictionaries, intern-at-arrival, boundary render joins
+and decode/2 as a dictionary join. The counts before it were 139 / 87 / 85.
+The arc before that was FLAGSHIP CALLGRAPH; before that TICK PHASE ALIGNMENT.
+The prose sections below this one are historical and were written against the
+110-fixture corpus; the numbers here and in the two tables that follow come
+from `out/manifest.json` + `out/run-results.json`.
 
 | bucket | count |
 |---|---|
-| fixtures swept | 139 |
-| UNSUPPORTED (compiler refuses, named construct) | 52 |
-| compiled (lowering + emission succeeded) | 87 |
-| — of which IDENTICAL (tick log byte-identical to oracle) | 85 |
+| fixtures swept | 154 |
+| UNSUPPORTED (compiler refuses, named construct) | 61 |
+| compiled (lowering + emission succeeded) | 93 |
+| — of which IDENTICAL (tick log byte-identical to oracle) | 91 |
 | — of which WRONG (diff vs oracle) | 0 |
 | — of which run_error / no_oracle_log (rejection-path fixtures) | 2 |
 
-IDENTICAL + run_error/no_oracle + UNSUPPORTED = 85 + 2 + 52 = 139.
+IDENTICAL + run_error/no_oracle + UNSUPPORTED = 91 + 2 + 61 = 154.
 
 Both emitter modes agree row for row: the incremental default and
-`SPREFA_TSV2_EMITTER_MODE=naive` produce the same 85/0/2.
+`SPREFA_TSV2_EMITTER_MODE=naive` produce the same 91/0/2.
+
+### What the struct-as-rows arc moved
+
++15 fixtures (`conformance/fixtures/4_struct_values.pl`), of which 6 compile
+IDENTICAL in both modes and 9 are named refusals on the new value plane. Zero
+movement in the prior 139: every previously-compiled emitted module is
+byte-identical after the arc (`git diff` over `v6/tsv2/gen_emitted/`).
+
+Two json-family fixtures moved to a SHARPER refusal rather than compiling:
+`decode_open_pattern_binds_nested` and `decode_missing_key_fails_quietly` were
+the generic `level_body_goal(..., decode(...))` and are now
+`decode_source_not_struct` -- decode/2 lowers over a column with a DECLARED
+struct type, and those two read an untyped json column. That is the whole
+difference the acceptance fixture
+(`struct_ghcacher_stars_normalization`) demonstrates against
+`ghcacher_json_normalization`.
+
+The nine `edge_body_needs_json_destructure` fixtures did NOT move and are not
+this arc's to move: they destructure a prolog COMPOUND term
+(`fresh(tag_w1, body1)`), and a compound term renders as canonical prolog text
+where a struct renders as canonical JSON. Accepting the functor form as a
+struct spelling would silently change the graded bytes of a value that already
+has a meaning. SLOT-TERM-STRUCT names that question.
 
 ### Named gap found by the flagship arc, unowned
 
@@ -51,16 +74,19 @@ and the three-tick prefix of this one is identical. Repro: truncate this
 fixture's schedule to four ticks. Owner: the arc that owns
 `v6/tsv2/runtime/1_incremental.ts`.
 
-### The UNSUPPORTED bucket, by named reason (52)
+### The UNSUPPORTED bucket, by named reason (61)
 
 | reason | count |
 |---|---:|
 | `edge_body_needs_pre` | 13 |
 | `edge_body_needs_json_destructure` | 9 |
-| `level_body_goal` (decode/json_each in a level body) | 6 |
+| `type_arrival_shape_mismatch` (the value plane's boundary refusal) | 5 |
+| `level_body_goal` (json_each in a level body) | 4 |
 | `aggregate_head` (json_array / json_object) | 4 |
+| `type_cycle` | 2 |
 | `json_value_expression` | 2 |
-| 18 more, one each (see `out/manifest.json`) | 18 |
+| `decode_source_not_struct` | 2 |
+| 20 more, one each (see `out/manifest.json`) | 20 |
 
 `edge_body_needs_pre` and the json family are what remain of the phase-3
 edge-body list. `edge_body_with_latest`, `edge_body_needs_negation`,

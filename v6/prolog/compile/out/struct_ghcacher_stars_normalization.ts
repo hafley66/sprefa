@@ -62,11 +62,11 @@ function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
 }
 
-const STRUCT_TYPES: readonly IStructTypePlan[] = [
+export const STRUCT_TYPES: readonly IStructTypePlan[] = [
   { name: "repo_body", columns: ["full_name", "stargazers_count"], refs: [null, null], internSql: `INSERT OR IGNORE INTO "__dict_repo_body" ("__semantic", "__rendered", "full_name", "stargazers_count") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)`, lookupSql: `SELECT "__semantic", "__id" FROM "__dict_repo_body" WHERE "__semantic" IN (SELECT value FROM json_each(?))` },
 ];
 
-const STRUCT_REF_COLUMNS: IStructRefColumns = {
+export const STRUCT_REF_COLUMNS: IStructRefColumns = {
   "current_body": [null, "repo_body"],
 };
 
