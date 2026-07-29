@@ -1160,3 +1160,46 @@ footgun fix held: door-handwritten.ts survived the merged-main
 sweep untouched. TICK-MODEL.md section 4 status row updated in the
 same landing. Still running: runtime bridge (opus), doc-truth take
 2 (luna).
+
+DOC TRUTH WAVE LANDED (merge f2be3936, codex luna take 2 after a
+correct STOP; coordinator resolved manifest conflict by regen):
+registry rows for sh_decl/probe/bind_decl/query/ts_query/sg_pattern
+(generated SYNTAX table now covers hosts constructs), hand half
+updated (program/3, ghcacher zero findings), dead spellings
+RECLASSIFIED to a legacy parsed-then-refused section (grammar
+untouched, G2 contract), refused-vs-live split,
+keep_on_non_log_rel refusal (engine+analyze, fail-first fixture --
+theorem six), SCOREBOARD/justfile refreshed. Conformance 136/0.
+RUNTIME BRIDGE PHASE 1 LANDED (merge 22607c08, opus worktree agent;
+coordinator resolved justfile/SCOREBOARD conflicts, installed the
+new tsv2 deps pino + @noble/hashes on main, re-ran EVERYTHING:
+conformance 136/0, sweep 73/70/0, TEXT_DOOR 73/73/0, roundtrip ALL
+PASS, plunit 75/75, tsv2 21/21, import gate 3 gen/8 runtime/7
+serve, dl 96/96, serve-endurance HOLDS, serve-leak 20 swaps clean,
+one-subscribe = 1 per app x2): FORK = PATH A WRAP with evidence
+(adopt = rewrite: DlRuntime welded to interned storage plane +
+langium Program type; wrap = 7 files v6/tsv2/serve/, v6/dl
+byte-untouched). THE GRADED ENGINE IS SERVED: door-handwritten
+over HTTP byte-identical to the oracle; live interval bind + live
+sh host on VirtualTimeScheduler graded TOTAL via replay (world
+rows read back per tick, oracle fed exactly those -- zero excluded
+columns); drain-boundary difference MEASURED and stated (a
+carrying tick with an empty queue drains: 3 ticks fed vs 4 served,
+same deltas); endurance across 4 server generations (answered
+witness exactly-once, unanswered at-least-once, stated); 7
+sabotage receipts incl 2 the agent corrected about its own drafts
++ 1 named blind spot (db.close flips nothing -- libsql registers
+no node handle). New recipes: text-door/one-subscribe in green;
+serve-endurance/serve-leak-soak in green-all. dl6_oracle.pl = .dl6
+text + JSON schedule -> oracle tick log (new grading door). Cracks
+filed: served drain numbering differs when programs carry (not
+fixable in general); replay grading blind to world-side sabotage;
+dl6_oracle maps JSON strings to atoms (double-quoted literals vs
+world columns need fixture terms); __host_witness is serve-owned
+(zero-row answers need a cache row); bare top-level facts refused
+(level_rule_no_positive_body) so seeds go over HTTP; door-
+handwritten had been SILENTLY STALE (its latest-in-level compiled
+module predated the refusal; repaired to plain level rule --
+nothing gated checked-in gen modules, gap noted). PHASE 1 OF THE
+GOLDEN PLAN IS COMPLETE. Next: phase 2 extraction live (fixed
+extractor, watcher buy research, enumerate/enumerate_at hosts).
