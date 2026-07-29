@@ -699,6 +699,13 @@ check_edge_head_column_types_for_rule(RelPlans, (Head <+ Body)) :-
 % rule must not carry an aggregate head (aggregate_head, level_eval.pl) and
 % must not reference pre/1, now/1, decode/2 or json_each/2 (none of the two
 % target fixtures need them; lower.pl has no SQL shape for them yet).
+%
+% FORMAL MODEL: TICK-MODEL.md (same directory) is the semiring/grading
+% semantics behind this gate. The cross-plane refusals below
+% (log_on_level_headed_rel, latest_in_level_rule, pre_in_level_rule, and
+% engine.pl's finalize_in_level_rule / keyed_level_head) are hand-proven
+% instances of its ring/grade discipline; the planned clock checker
+% (TICK-MODEL.md section 6) generalizes them and lives here when built.
 
 check_supported_subset(SugaredProg) :-
     expand_match_program(SugaredProg, ExpandedProg),
