@@ -98,7 +98,15 @@ Exit receipt: flagship rail byte-graded vs v5 on a pinned corpus.
 
 - Type pass hardening: every rel incl derived gets a resolved printed
   decl (kills col3 anonymous columns), open(none) fixpoint made
-  total, float/bool/null RULINGS (design review B7: no avg() today),
+  total, float/bool/null RULINGS (design review B7: no avg() today).
+  RECOMMENDED SHAPES (user thread 2026-07-29 late, "true and false
+  are also same as some and none"): float = REAL storage + avg, the
+  one real hole; bool = NO column type -- row presence is the
+  boolean, two-variant enum when it must be data (decide only
+  whether `bool` sugar for that enum exists); null = NEVER, Option =
+  enum variants / rel decomposition (the enumerate/enumerate_at
+  move), None = row absence; plus the Option-and-invalidation worked
+  examples page (the review's missing-doc gap).
   refusal messages get prolog:message//1 + source location (B4 -- the
   worst part of the cold-author experience, reviewer-verbatim).
 - Ingest perf arc: commit_ms ~10.8ms/file is the named next cost;
