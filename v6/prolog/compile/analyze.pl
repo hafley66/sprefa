@@ -51,6 +51,9 @@
                 body_conjunction_goals/3, body_wrapper_refs/4 ]).
 :- use_module('../0_program_check',
               [ first_violation/3, relation_kind/3, declared_key/3 ]).
+:- use_module('../0_type_plane',
+              [ type_definitions/2, type_definition/4, column_storage/3,
+                declared_type_name/2 ]).
 :- use_module('../conformance/body', [rel_ref/2]).
 :- use_module(registry,
               [ surface_for_term/6,
@@ -363,19 +366,34 @@ rel_column_types(Decls, Rules, Initial, Schedule, Bindings, Ref, Types) :-
     maplist(column_type_at_decl(Decls, Rules, Initial, Schedule, Ref, Columns),
             Positions, Types).
 
+% STRUCT-AS-ROWS: the declared type goes through 0_type_plane.pl:
+% column_storage/3 before it becomes a STORAGE kind, so `int`/`text` are
+% unchanged, `json` resolves to text (the untyped-json inline path, which used
+% to reach lower.pl:column_def/3 with no matching clause at all), and a
+% declared struct type becomes ref(TypeName), the third storage kind
+% types-as-rels verdict Q6 named this slot for.
+%
+% The witness cross-check compares against the STORAGE kind, and only for the
+% two scalar kinds. A ref column has no literal witness by construction (a
+% struct value is compound, never atomic/1), and a struct value in a column
+% declared int is already the type_arrival_shape_mismatch refusal.
 column_type_at_decl(Decls, Rules, Initial, Schedule, Ref, Columns, Position, Type) :-
     nth1(Position, Columns, Column),
     ( memberchk(col_type(Ref, Column, DeclaredType), Decls)
-    -> findall(WitnessType,
+    -> type_definitions(Decls, Types),
+       column_storage(Types, DeclaredType, Storage),
+       findall(WitnessType,
                 ( column_source_args(Rules, Initial, Schedule, Ref, Args),
                   nth1(Position, Args, Witness),
                   atomic(Witness),
                   literal_witness_type(Witness, WitnessType)
                 ), WitnessTypes),
-       ( member(WitnessType, WitnessTypes), WitnessType \== DeclaredType
+       ( Storage = ref(_)
+       -> Type = Storage
+       ; member(WitnessType, WitnessTypes), WitnessType \== Storage
        -> throw(unsupported_construct(
-                    decl_type_conflicts_witness(Ref, Position, DeclaredType, WitnessType)))
-       ; Type = DeclaredType
+                    decl_type_conflicts_witness(Ref, Position, Storage, WitnessType)))
+       ; Type = Storage
        )
     ; column_type_at(Rules, Initial, Schedule, Ref, Position, Type)
     ).
@@ -654,6 +672,20 @@ merge_contribution(_, frozen(Type), frozen(Type)) :- !.
 merge_contribution(Contribution, open(Existing), open(Merged)) :-
     merge_type(Contribution, Existing, Merged).
 
+% STRUCT-AS-ROWS: ref(Type) travels through the fixpoint and these clauses
+% come FIRST, ahead of the scalar widening. A head column fed by a ref body
+% column is itself a ref column -- letting the text clause win would store the
+% dictionary id and RENDER IT AS AN INTEGER at the boundary, which is exactly
+% the "tick log prints ids" failure Edge 1 exists to prevent, and it would be
+% silent. Two different declared types meeting in one column, or a ref meeting
+% a scalar, is a named refusal instead: there is no widening that keeps the
+% rendering honest.
+merge_type(ref(Type), none, ref(Type)) :- !.
+merge_type(none, ref(Type), ref(Type)) :- !.
+merge_type(ref(Type), ref(Type), ref(Type)) :- !.
+merge_type(Left, Right, _) :-
+    ( Left = ref(_) ; Right = ref(_) ), !,
+    throw(unsupported_construct(column_ref_type_conflict(Left, Right))).
 merge_type(text, _, text) :- !.
 merge_type(_, text, text) :- !.
 merge_type(int, _, int) :- !.

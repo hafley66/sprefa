@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"hit":{"add":[["left",{"end":2,"start":1}],["right",{"end":2,"start":1}]],"del":[]}}}
+{"tick":2,"deltas":{"hit":{"add":[],"del":[["left",{"end":2,"start":1}]]}}}
+{"tick":3,"deltas":{"hit":{"add":[],"del":[["right",{"end":2,"start":1}]]}}}

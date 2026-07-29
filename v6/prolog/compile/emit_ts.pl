@@ -46,7 +46,7 @@
 % off the Lowered term this module already renders -- reused, not
 % reimplemented.
 :- use_module(lower, [ relplan_kind/3, departure_frontier_table_name/2,
-                       departure_read_sql/3 ]).
+                       departure_read_sql/3, struct_type_plans/2 ]).
 :- use_module(analyze,
               [ body_ref_uses/2, derived_refs/2, rule_head_ref/2,
                 program_uses_tick/2, listened_departure_refs/2 ]).
@@ -160,18 +160,28 @@ header_lines(Name, Lines) :-
 
 % ═══ imports ═════════════════════════════════════════════════════════════════
 
-imports_lines(_HasEdgeRules, HasRetention, Lines) :-
+imports_lines(HasEdgeRules, HasRetention, Lines) :-
+    imports_lines(HasEdgeRules, HasRetention, false, Lines).
+
+imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, Lines) :-
     ( HasRetention == true
     -> RetentionImport = ['  IIncrementalRetentionStatement,']
     ; RetentionImport = []
+    ),
+    ( HasStructTypes == true
+    -> StructImport = ['import { StructPlane } from "../runtime/structPlane.ts";'],
+       StructTypeImports = ['  IStructRefColumns,', '  IStructTypePlan,']
+    ;  StructImport = [], StructTypeImports = []
     ),
     append(
     [ [ 'import { concatMap, forkJoin, map, of, type Observable } from "rxjs";',
       '',
       'import { IncrementalRuntime } from "../runtime/1_incremental.ts";',
       'import { multisetDiff } from "../runtime/diff.ts";',
-      'import { selectRows } from "../runtime/rows.ts";',
-      'import type {',
+      'import { selectRows } from "../runtime/rows.ts";'
+      ],
+      StructImport,
+      [ 'import type {',
       '  IArrivalBatch,',
       '  IArrivalRow,',
       '  IGenProgram,',
@@ -185,12 +195,78 @@ imports_lines(_HasEdgeRules, HasRetention, Lines) :-
       '  IRelDelta,',
       '  IRow,',
       '  IRowValue,',
-      '  ISqlSeam,',
+      '  ISqlSeam,'
+      ],
+      StructTypeImports,
+      [
       '  ITickDeltas,',
       '  SqlStatement,',
       '} from "../runtime/types.ts";'
       ]
     ], Lines).
+
+% ═══ the declared value plane (STRUCT-AS-ROWS) ══════════════════════════════
+% Emitted ONLY for a program that declares a type. Every other module stays
+% byte-identical to what it was before this arc: no import line, no constant,
+% no wrapper -- the storage plane costs exactly nothing where it is unused,
+% and the sweep's byte-identity discipline is what checks that claim.
+
+struct_plane_lines([], _, [], false) :- !.
+struct_plane_lines(StructPlans, RelPlans, Lines, true) :-
+    maplist(struct_type_plan_line, StructPlans, PlanLines),
+    struct_ref_column_entries(RelPlans, RefEntryLines),
+    append(
+    [ [ 'const STRUCT_TYPES: readonly IStructTypePlan[] = [' ],
+      PlanLines,
+      [ '];',
+        '',
+        'const STRUCT_REF_COLUMNS: IStructRefColumns = {' ],
+      RefEntryLines,
+      [ '};' ]
+    ], Lines).
+
+struct_type_plan_line(structtype(TypeName, Columns, RefTypes, InternSql, LookupSql), Line) :-
+    js_string(TypeName, NameText),
+    maplist(js_string, Columns, ColumnTexts),
+    atomic_list_concat(ColumnTexts, ', ', ColumnsText),
+    maplist(struct_ref_entry, RefTypes, RefTexts),
+    atomic_list_concat(RefTexts, ', ', RefsText),
+    js_template(InternSql, InternTemplate),
+    js_template(LookupSql, LookupTemplate),
+    format(atom(Line),
+           '  { name: ~w, columns: [~w], refs: [~w], internSql: ~w, lookupSql: ~w },',
+           [NameText, ColumnsText, RefsText, InternTemplate, LookupTemplate]).
+
+struct_ref_entry(none, 'null') :- !.
+struct_ref_entry(TypeName, Text) :- js_string(TypeName, Text).
+
+struct_ref_column_entries(RelPlans, Lines) :-
+    findall(Line,
+            ( member(relplan(Ref, _, _, _, ColumnTypes), RelPlans),
+              memberchk(ref(_), ColumnTypes),
+              ref_name(Ref, Name), js_string(Name, NameText),
+              maplist(column_type_ref_entry, ColumnTypes, RefTexts),
+              atomic_list_concat(RefTexts, ', ', RefsText),
+              format(atom(Line), '  ~w: [~w],', [NameText, RefsText]) ),
+            Lines).
+
+column_type_ref_entry(ref(TypeName), Text) :- !, js_string(TypeName, Text).
+column_type_ref_entry(_, 'null').
+
+% The intern wrapper. Interning runs BEFORE the tick's own arrival statements,
+% so everything downstream sees a plain INTEGER ref column and needs to know
+% nothing about the value plane. Both emitter modes route through it: the
+% naive referee and the incremental default absorb the same rewritten batch.
+struct_tick_wrapper_lines(false, _, []) :- !.
+struct_tick_wrapper_lines(true, Name, Lines) :-
+    js_string(Name, _NameText),
+    Lines =
+    [ 'function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
+      '  return StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals).pipe(',
+      '    concatMap((interned) => runTickOnInternedArrivals(seam, interned)),',
+      '  );',
+      '}'
+    ].
     % `of` covers two zero-op shapes, not just the edge-rule forkJoin([])
     % guard it was originally added for: an edge-free tick still needs it for
     % edge_resolver_block/3's `of([])` when EdgeStatements is nonempty, AND
@@ -1210,6 +1286,12 @@ pre_edge_level_reconcile_lines(EdgeStatements,
 
 run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
                               HasRetention, UsesTick, DepartureRefs, Lines) :-
+    run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
+                                  HasRetention, UsesTick, DepartureRefs, false, Lines).
+
+run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
+                              HasRetention, UsesTick, DepartureRefs,
+                              HasStructTypes, Lines) :-
     advance_tick_pipeline_line(UsesTick, AdvanceTickLines),
     departure_stage_incremental_lines(DepartureRefs, DepartureStageLines),
     pre_edge_level_reconcile_lines(EdgeStatements, PreEdgeReconcileLines, PipeSplitLines),
@@ -1220,7 +1302,7 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
        PostEdgeLevelLine = '    concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),'
     ),
     RecomputeLine = '    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK)),',
-    run_tick_dispatch_lines(DerivedEdgeCarryRequired, DispatchLines),
+    run_tick_dispatch_lines(DerivedEdgeCarryRequired, HasStructTypes, DispatchLines),
     ( HasRetention == true
     -> RetentionLines =
        ['    concatMap(() => IncrementalRuntime.applyRetention(seam, INCREMENTAL_RETENTION_STATEMENTS, INCREMENTAL_RELATIONS)),']
@@ -1257,20 +1339,32 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
       DispatchLines
     ], Lines).
 
-run_tick_dispatch_lines(true,
-    [ 'function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
+run_tick_dispatch_lines(DerivedEdgeCarryRequired, Lines) :-
+    run_tick_dispatch_lines(DerivedEdgeCarryRequired, false, Lines).
+
+% STRUCT-AS-ROWS: when the program declares a type, the dispatch function is
+% renamed and StructPlane.intern/4 becomes the one runTick, so BOTH emitter
+% modes absorb the same rewritten batch. Without a type declaration the two
+% clauses below are byte-identical to what they were before this arc.
+run_tick_dispatch_lines(true, HasStructTypes,
+    [ Signature,
       '  // Derived edge triggers consume the P1 current/next frontier, including drain carry.',
       '  return runIncrementalTick(seam, arrivals);',
       '}'
-    ]).
-run_tick_dispatch_lines(false,
-    [ 'function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
+    ]) :- dispatch_signature(HasStructTypes, Signature).
+run_tick_dispatch_lines(false, HasStructTypes,
+    [ Signature,
       '  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {',
       '    return runNaiveTick(seam, arrivals);',
       '  }',
       '  return runIncrementalTick(seam, arrivals);',
       '}'
-    ]).
+    ]) :- dispatch_signature(HasStructTypes, Signature).
+
+dispatch_signature(true,
+    'function runTickOnInternedArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {') :- !.
+dispatch_signature(_,
+    'function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {').
 
 derived_edge_carry_required(
         plan(_, prog(_, Rules), _, _, _, _), EdgeStatements, Required) :-
@@ -1350,7 +1444,10 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     include(is_level_statement, LevelStatements, RuleLevelStatements),
     include(is_retention_statement, LevelStatements, RetentionStatements),
     ( RetentionStatements == [] -> HasRetention = false ; HasRetention = true ),
-    imports_lines(HasEdgeRules, HasRetention, ImportLines),
+    Plan = plan(_, prog(PlanDecls, _), _, _, _, _),
+    struct_type_plans(PlanDecls, StructPlans),
+    struct_plane_lines(StructPlans, RelPlans, StructPlaneLines, HasStructTypes),
+    imports_lines(HasEdgeRules, HasRetention, HasStructTypes, ImportLines),
     local_types_lines(LocalTypeLines),
     world_plan_lines(Plan, WorldPlanLines),
     bind_args_helper_lines(BindArgsHelperLines),
@@ -1393,7 +1490,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
                            IncrementalModeLines),
     run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
                                   HasRetention, UsesTick, DepartureRefs,
-                                  RunIncrementalTickFnLines),
+                                  HasStructTypes, RunIncrementalTickFnLines),
+    struct_tick_wrapper_lines(HasStructTypes, Name, StructTickWrapperLines),
     incremental_plan_export_lines(RetractionGuard, HasRetention,
                                   IncrementalPlanExportLines),
     program_export_lines(Name, ProgramExportLines),
@@ -1401,6 +1499,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     [ HeaderLines, ImportLines, LocalTypeLines, WorldPlanLines,
       BindArgsHelperLines, TriggerOccurrencesHelperLines,
       DepartureOccurrencesHelperLines,
+      StructPlaneLines,
       DdlLines, RelColumnsLines, ArrivalTargetsLines,
       BootLines, SnapshotTypeLines, ReadSnapshotFnLines, FinalSelectLines,
       ArrivalStatementsLines, ArrivalStatementFnLines,
@@ -1409,7 +1508,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
       EdgeConstLines, EdgeFnLines,
       RecomputeLevelsFnLines, NaiveRetentionFnLines, BuildDeltasFnLines,
       AdvanceTickFnLines, RunNaiveTickFnLines,
-      IncrementalModeLines, RunIncrementalTickFnLines, IncrementalPlanExportLines,
+      IncrementalModeLines, RunIncrementalTickFnLines,
+      StructTickWrapperLines, IncrementalPlanExportLines,
       ProgramExportLines
     ],
     exclude(==([]), Sections0, Sections),

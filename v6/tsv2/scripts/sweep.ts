@@ -35,8 +35,9 @@ import { catchError, concatMap, forkJoin, from, map, of, toArray, type Observabl
 
 import { BootRunner } from "../runtime/2_boot.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
+import { TickLogEmitter } from "../runtime/ticklog.ts";
 import { TickFold } from "../runtime/tickLoop.ts";
-import type { IArrivalBatch, IBootStatement, ISqlSeam, IGenProgram } from "../runtime/types.ts";
+import type { IArrivalBatch, IBootStatement, IRowValue, ISqlSeam, IGenProgram } from "../runtime/types.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMPILE_OUT = join(HERE, "..", "..", "prolog", "compile", "out");
@@ -104,15 +105,24 @@ function readOracleFinalLine(name: string): string | null {
 }
 
 /** The oracle side encodes a value with ticklog.pl's `value_json/2`: an
- *  integer as a JSON number, everything else as a JSON string. The emitted
- *  side reads an INTEGER-affinity column back as a JS number and a
- *  TEXT-affinity column as a JS string (rows.ts's own note), so the SAME rule
- *  applied here is what makes a TEXT-collapsed integer ("12" stored in a TEXT
- *  column) show up as a diff instead of passing silently. */
+ *  integer as a JSON number, a json value as canonical JSON text, everything
+ *  else as a JSON string. The emitted side reads an INTEGER-affinity column
+ *  back as a JS number and a TEXT-affinity column as a JS string (rows.ts's
+ *  own note), so the SAME rule applied here is what makes a TEXT-collapsed
+ *  integer ("12" stored in a TEXT column) show up as a diff instead of
+ *  passing silently.
+ *
+ *  This now delegates to `TickLogEmitter.valueText`, the per-tick leg's own
+ *  encoder, rather than restating the rule. The two legs HAD drifted: the
+ *  json_ticklog_encoding regrade taught the per-tick leg to canonicalize
+ *  object/array text and left this copy behind, which no corpus value
+ *  exercised until a struct column arrived whose stored value IS canonical
+ *  JSON text -- the tick log printed the object and the final state printed
+ *  the same bytes wrapped in quotes. */
 function finalValueJson(value: unknown): string {
   if (typeof value === "bigint") return value.toString();
   if (typeof value === "number" && Number.isInteger(value)) return `${value}`;
-  return JSON.stringify(String(value));
+  return TickLogEmitter.valueText(String(value) as IRowValue);
 }
 
 function finalStateLine(rowsByRel: Record<string, readonly (readonly unknown[])[]>): string {

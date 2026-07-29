@@ -25,9 +25,10 @@
 :- use_module(library(apply)).
 :- use_module(library(filesex)).
 :- use_module(compile, [ program_plan/2 ]).
-:- use_module(lower, [ lower_program/2, boot_statements/4 ]).
+:- use_module(lower, [ lower_program/2, boot_statements/5 ]).
 :- use_module(emit_ts, [ emit_program/5 ]).
 :- use_module('../conformance/body', [ rel_ref/2 ]).
+:- use_module('../0_type_plane', [ type_definitions/2, type_canonical_json/4 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -121,14 +122,14 @@ sweep_one(File, Name, Term, Bindings, result(Name, File, Bucket, Reason)) :-
         ( program_plan(Term-Bindings, Plan),
           lower_program(Plan, Lowered),
           Term = fixture(Name, _Prog, Initial, Schedule, _Expectations),
-          Plan = plan(_, _, RelPlans, _, _, _),
+          Plan = plan(_, prog(Decls, _), RelPlans, _, _, _),
           Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-          boot_statements(RelPlans, Initial, LevelStatements, BootStatements),
+          boot_statements(Decls, RelPlans, Initial, LevelStatements, BootStatements),
           call(emit_ts:emit_program, Name, Plan, Lowered, BootStatements, Text),
           out_dir(OutDir),
           format(atom(TsPath), '~w/~w.ts', [OutDir, Name]),
           setup_call_cleanup(open(TsPath, write, TsStream), format(TsStream, "~s", [Text]), close(TsStream)),
-          schedule_json(Schedule, ScheduleJson),
+          schedule_json(Decls, RelPlans, Schedule, ScheduleJson),
           format(atom(SchedulePath), '~w/~w.schedule.json', [OutDir, Name]),
           setup_call_cleanup(open(SchedulePath, write, ScheduleStream), format(ScheduleStream, "~w", [ScheduleJson]), close(ScheduleStream)),
           Bucket = compiled, Reason = none
@@ -148,26 +149,37 @@ classify_error(Error, crash, Error).
 % ═══ schedule -> JSON (the IArrivalBatch[] shape v6/tsv2/runtime/types.ts
 % declares: one array per tick, each entry {rel, sign, row}) ════════════
 
-schedule_json(Schedule, Json) :-
-    maplist(tick_json, Schedule, TickJsons),
+schedule_json(Decls, RelPlans, Schedule, Json) :-
+    type_definitions(Decls, Types),
+    maplist(tick_json(Types, RelPlans), Schedule, TickJsons),
     atomic_list_concat(TickJsons, ',', Inner),
     format(atom(Json), '[~w]', [Inner]).
 
-tick_json(Batch, Json) :-
-    maplist(arrival_json, Batch, ArrivalJsons),
+tick_json(Types, RelPlans, Batch, Json) :-
+    maplist(arrival_json(Types, RelPlans), Batch, ArrivalJsons),
     atomic_list_concat(ArrivalJsons, ',', Inner),
     format(atom(Json), '[~w]', [Inner]).
 
-arrival_json(+Atom, Json) :- !, arrival_json_signed(Atom, add, Json).
-arrival_json(-Atom, Json) :- !, arrival_json_signed(Atom, del, Json).
+arrival_json(Types, RelPlans, +Atom, Json) :- !, arrival_json_signed(Types, RelPlans, Atom, add, Json).
+arrival_json(Types, RelPlans, -Atom, Json) :- !, arrival_json_signed(Types, RelPlans, Atom, del, Json).
 
-arrival_json_signed(Atom, Sign, Json) :-
-    rel_ref(Atom, Name/_Arity),
+arrival_json_signed(Types, RelPlans, Atom, Sign, Json) :-
+    rel_ref(Atom, Ref), Ref = Name/_Arity,
     Atom =.. [_ | Args],
-    maplist(row_value_json, Args, ArgJsons),
+    ( memberchk(relplan(Ref, _, _, _, ColumnTypes), RelPlans) -> true ; ColumnTypes = [] ),
+    maplist(arrival_value_json(Types), ColumnTypes, Args, ArgJsons),
     atomic_list_concat(ArgJsons, ',', RowInner),
     json_string(Name, NameJson),
     format(atom(Json), '{"rel":~w,"sign":"~w","row":[~w]}', [NameJson, Sign, RowInner]).
+
+% STRUCT-AS-ROWS: a ref column's schedule entry is a real JSON OBJECT, not the
+% prolog term text every other compound column gets. The emitted runtime
+% interns it (StructPlane.intern) and the oracle reads the same value out of
+% the fixture term, so the two sides are fed one value in the two spellings
+% each already speaks.
+arrival_value_json(Types, ref(TypeName), Value, Json) :- !,
+    type_canonical_json(Types, TypeName, Value, Json).
+arrival_value_json(_, _, Value, Json) :- row_value_json(Value, Json).
 
 % Mirrors ticklog.pl's value_json/2 (that file is never touched; this is an
 % independent small copy since ticklog.pl declares no module and this file
