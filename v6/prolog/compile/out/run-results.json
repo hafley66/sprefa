@@ -168,6 +168,20 @@
     "finalDetail": ""
   },
   {
+    "name": "flow_arg_param_hop_is_positional_and_site_pinned",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "flow_sig_owner_join_types_the_resolved_callee",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "diag_scenario_seven_ticks_end_to_end",
     "bucket": "identical",
     "detail": "",
@@ -191,7 +205,7 @@
   {
     "name": "log_retraction_rejected",
     "bucket": "run_error",
-    "detail": "retract from log rel 'event'",
+    "detail": "log_retraction_rejected: retract from log rel 'event' (engine.pl retract_from_log)",
     "finalBucket": "final_wrong",
     "finalDetail": "run threw before the final state could be read"
   },
