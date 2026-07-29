@@ -1,0 +1,182 @@
+# flagship-callgraph.dl6 -- THE ALPHA'S HEADLINE PROGRAM (golden plan phase 3):
+# a real v5 rail, `examples/callgraph-ast.dl`, rewritten in the v6 surface and
+# graded against v5's own output on a pinned corpus
+# (v6/tsv2/scripts/flagship-callgraph.sh).
+#
+# THE V5 ORIGINAL, in full, so the port can be read against it:
+#
+#     rel def(name: text, path: file, line: int).
+#     rel call(callee: text, path: file, line: int).
+#     rel calls(caller: text, callee: text).
+#     rel reaches(src: text, dst: text).
+#     rel unused(name: text).
+#
+#     def(name, path, line) <-
+#       scan("WORK", "src/**/*.rs", path, rev),
+#       ast(path, rev, :rust, "(function_item name: (identifier) @name)", line).
+#     call(callee, path, line) <-
+#       scan("WORK", "src/**/*.rs", path, rev),
+#       ast(path, rev, :rust, "(call_expression function: (identifier) @callee)", line).
+#     calls(caller, callee) <-
+#       def(caller, p, _), call(callee, p, _), def(callee, _, _), caller != callee.
+#     reaches(src, dst) <- calls(src, dst).
+#     reaches(src, dst) <- reaches(src, mid), calls(mid, dst).
+#     unused(name) <- def(name, _, _), !call(name, _, _).
+#
+# THE THREE STRUCTURAL DIFFERENCES, all forced, all stated:
+#
+#  1  `scan(...) + ast(...)` is v5's extraction pair: one built-in corpus walk and
+#     one tree-sitter query, both kernel. v6 has no kernel extraction at all -- the
+#     file set is an `sh` host over `git ls-files` and the facts are an `sh` host
+#     over the FIXED `sprefa-extract` binary (ruling spine_residency). So one v5
+#     rule becomes a host declaration plus a probe.
+#
+#  2  v5 carries a LINE on `def` and `call`; v6 carries none. `sprefa-extract`
+#     emits byte spans as a NESTED object (`"span":{"start":..,"end":..}`) and the
+#     sh-host output decode is a projection over TOP-LEVEL keys only, so the span
+#     cannot enter the program as two int columns. `decode/2` is the construct that
+#     would open it and it is refused (ARCH row decode_arc). This is a NAMED GAP,
+#     not a design choice; `calls` and `unused` do not read the line, which is why
+#     the rail is portable today and a span-carrying rail is not.
+#
+#  3  `reaches` (v5's transitive closure) is NOT ported here. `calls` is cyclic on
+#     any real corpus (mutual recursion) and the closure is the graph-algo queue
+#     item, not this arc's subject. The three rels below are the ones the rig
+#     grades.
+#
+# ZERO NEW CONSTRUCTS. Every line is a shipped spelling: `sh` host + `?` probe +
+# `@ salt(...)` (hosts wiring phase 1), comparison guards in level bodies and
+# `not/1` (edge-body arc), colon-typed decls, single-quoted atom constants.
+#
+# THE RX LOWERING, per the "every snippet carries its lowering" law:
+#
+#   want_at$.pipe(                                  // RX-H2, the demand mint
+#     map(mintIdentityAndWitness),
+#     distinct(row => row.witnessDigest),
+#     mergeMap(runShell),                           // RX-H1, `git ls-files`
+#     mergeMap(commitEdbArrival))                   // -> file(path, digest)
+#
+#   file$.pipe(                                     // one probe per host shape
+#     groupBy(row => row.witnessDigest),            // = content-addressed salt
+#     mergeMap(g => g.pipe(take(1), mergeMap(runExtract))),
+#     mergeMap(commitEdbArrival))                   // -> call_node / call_ref rows
+#
+#   combineLatest([def$, call$]).pipe(...)          // the ordinary delta join the
+#                                                   // incremental emitter writes
+#
+# ── the file set: the PINNED twin, because a graded corpus is a pinned corpus ──
+# `enumerate_at` is copied verbatim from fixtures/enumerate-hosts.dl6 (the landed
+# phase-2 feed). The pinned form is the one this rail wants: the rev fixes the
+# answer, so the witness caches forever and two runs of the rig read the same
+# tree by construction rather than by hoping nothing was edited between them.
+#
+# GLOB SEMANTICS DIVERGE between the two engines and the rig states it rather
+# than papering it: v5's `scan` glob is globset, where `*` does NOT cross `/`, so
+# it spells the corpus `src/**/*.rs`; `git ls-files` takes a PATHSPEC, where `*`
+# DOES cross `/` and `**` requires at least one directory component, so the same
+# file set is `src/*.rs` here. The rig asserts the two file sets are equal before
+# it grades anything.
+sh enumerate_at(rev: text, glob: text) -> (path: text, digest: text) =
+  `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
+
+# ── the facts: TWO hosts over ONE binary, because one host is one record shape ──
+# `sprefa-extract --family call` writes a HETEROGENEOUS JSONL stream: `record=node`
+# lines carry (kind, name) and no callee, `record=site` lines carry (callee,
+# callee_path) and no kind. The decode drops any line that does not carry every
+# DECLARED output column, which is what makes a named projection work at all -- and
+# it is also why no single declaration can read both shapes. One host per shape is
+# the shipped rule ("One host declaration is one record shape",
+# fixtures/extraction-live.dl6), and its cost is one subprocess per shape per file.
+#
+# `record` is declared and matched even though `--family call` on Rust emits no
+# third shape today: the stream's own tag is what makes the projection a stated
+# filter instead of a bet on the field sets never colliding. `record=specifier`
+# lines carry name and kind exactly like `record=node` lines do, and TS sources DO
+# emit them.
+sh call_node(path: text) -> (record: text, kind: text, name: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+
+sh call_ref(path: text) -> (callee: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+
+# ── the demand seed, posted as an ordinary EDB arrival by the rig ──────────────
+rel want_at(rev: text, glob: text).
+
+# ── the corpus, v5's `seen`/`scan` ────────────────────────────────────────────
+rel file(path: text, digest: text).
+file(path, digest) <- want_at(rev, glob), ? enumerate_at(rev, glob, path, digest).
+
+# ── the extractor's node lines, as their own rel ──────────────────────────────
+# The digest is a SALT: it never reaches the command line (the extractor opens the
+# file itself) but it IS the cache identity, so an edited file re-extracts and an
+# unchanged one is served from `__host_witness` forever (ruling salt_minting =
+# content_addressed).
+#
+# THIS REL EXISTS BECAUSE OF A NAMED COMPILER GAP, not because the program wants
+# it. The natural spelling folds the record filter into the probe's own rule:
+#
+#     def(path, name, kind) <-
+#       file(path, digest),
+#       ? call_node(path, record, kind, name) @ salt(digest: digest),
+#       record == 'node'.
+#
+# and that is REFUSED, `unsupported_construct(unbound_head_var(_G))`. Minimal
+# repro (any comparison operator, head membership irrelevant):
+#
+#     sh h(p: text) -> (o: text) = `echo {p}`.
+#     rel a(p: text).
+#     rel b(p: text, o: text).
+#     b(p, o) <- a(p), ? h(p, o), o == 'k'.        % refused
+#
+# A guard over a NON-probe variable in the same body compiles; a guard over a
+# probe OUTPUT variable does not. The probe expands to a demand atom plus a keyed
+# response atom, and `compile_guard_goals` runs against a bound set that does not
+# carry the response atom's output columns (lower.pl:383 is where it throws). The
+# message names the wrong thing and carries no location, which is design-review
+# finding B4 in the wild.
+rel node_fact(path: text, record: text, kind: text, name: text).
+node_fact(path, record, kind, name) <-
+  file(path, digest),
+  ? call_node(path, record, kind, name) @ salt(digest: digest).
+
+# ── v5's `def`: every named callable declaration ──────────────────────────────
+# The constant match in argument position IS the record filter; it needs no guard
+# and no second construct.
+#
+# `kind` is kept as a column rather than dropped because it is the axis the two
+# extractors disagree on: v5's `(function_item ...)` query matches a body-carrying
+# definition, while `sprefa-extract` also emits body-less TRAIT METHOD SIGNATURES.
+# The rig classifies on it; the rail does not filter on it, because filtering to
+# make a diff smaller is the thing the grading protocol forbids.
+rel def(path: text, name: text, kind: text).
+def(path, name, kind) <- node_fact(path, 'node', kind, name).
+
+# ── v5's `call`: every call site's callee, as written ─────────────────────────
+rel call(path: text, callee: text).
+call(path, callee) <-
+  file(path, digest),
+  ? call_ref(path, callee) @ salt(digest: digest).
+
+# ── v5's `calls`: FILE-SCOPED co-occurrence, ported exactly ───────────────────
+# This is v5's own heuristic, not a resolved call graph: any def in a file is
+# treated as a caller of any callee named in that file that is itself a def
+# somewhere in the corpus. It is reproduced rule for rule -- including the
+# imprecision -- because the grade is "does v6 compute what v5 computes", and a
+# better rule here would be a different program.
+rel calls(caller: text, callee: text).
+calls(caller, callee) <-
+  def(path, caller, _),
+  call(path, callee),
+  def(_, callee, _),
+  caller \== callee.
+
+# ── v5's `unused`: the negated leg, and the interesting one ───────────────────
+# `not/1` over a level body lowers to NOT EXISTS. This rel is ANTI-monotone in
+# `call`, so where the two extractors' `call` sets differ by containment, `unused`
+# differs by containment the OTHER WAY. The rig reports that inversion as its own
+# row rather than as a surprise.
+rel unused(name: text).
+unused(name) <- def(_, name, _), not(call(_, name)).
+
+? calls(caller, callee).
+? unused(name).

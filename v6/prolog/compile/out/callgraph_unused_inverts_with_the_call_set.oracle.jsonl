@@ -1,0 +1,5 @@
+{"tick":1,"deltas":{"def":{"add":[["a.rs","helper","method"],["a.rs","main","function"]],"del":[]},"node_fact":{"add":[["a.rs","node","function","main"],["a.rs","node","method","helper"],["a.rs","specifier","named","helper"]],"del":[]},"unused":{"add":[["helper"],["main"]],"del":[]}}}
+{"tick":2,"deltas":{"call":{"add":[["a.rs","helper"],["a.rs","missing"]],"del":[]},"unused":{"add":[],"del":[["helper"]]}}}
+{"tick":3,"deltas":{"call":{"add":[["b.rs","main"]],"del":[]},"def":{"add":[["b.rs","helper","function"]],"del":[]},"node_fact":{"add":[["b.rs","node","function","helper"]],"del":[]},"unused":{"add":[],"del":[["main"]]}}}
+{"tick":4,"deltas":{"call":{"add":[],"del":[["b.rs","main"]]},"unused":{"add":[["main"]],"del":[]}}}
+{"tick":5,"deltas":{"call":{"add":[["a.rs","main"]],"del":[]},"unused":{"add":[],"del":[["main"]]}}}

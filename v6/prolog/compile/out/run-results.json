@@ -63,6 +63,20 @@
     "finalDetail": ""
   },
   {
+    "name": "callgraph_derivation_over_extraction",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "callgraph_unused_inverts_with_the_call_set",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "diag_scenario_seven_ticks_end_to_end",
     "bucket": "identical",
     "detail": "",
