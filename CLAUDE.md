@@ -1096,3 +1096,25 @@ enumeration) -> Phase 3 dataflow flagship (edge-body arc latest
 FIRST, flow-interproc port graded vs v5) -> Phase 4 CLI + LSP
 milestone -> Phase 5 type pass + ingest perf. Alpha exit = 6
 receipts listed in the plan. Out-of-alpha list recorded.
+
+KEYED-DIVERGENCE FIX LANDED (merge after 69708b89, codex sol
+no-commit flow, coordinator re-ran in worktree AND merged main:
+conformance 135/0, sweep both modes 70 compiled/67 identical/0
+wrong (final 67/2 pre-existing), plunit 70/70, TEXT_DOOR 70/70/0,
+roundtrip ALL PASS, dl 96/96, main clean): review-A4 live bug
+CLOSED -- keyed arrival targets emit PK over KEY columns + INSERT
+OR REPLACE + old-row staging so the incremental minus delta
+matches absorb_set_arrival; lower.pl false-premise headers
+rewritten; fail-first fixture world_fed_keyed_arrival_replaces
+(red both modes -> green). Review-B2 refusals LIVE in oracle AND
+compiler with fail-first receipts: log_on_level_headed_rel,
+latest_in_level_rule, pre_in_level_rule (3 refusal fixtures;
+pre fixture moved generic->named reason). SWEEP FOOTGUN CLOSED:
+sweep.sh removes only the fixture module it rewrites;
+door-handwritten.ts survives (4 prior eatings, receipt = clean
+git diff post-sweep). Corpus now 135; zero movement in the prior
+131 buckets. ALPHA P0 = COMPLETE except SCOREBOARD/justfile
+comment refresh (rides next sweep-touching arc) and the
+json_ticklog regrade (ruled, unowned, S). NEXT PER GOLDEN PLAN:
+Phase 1 runtime bridge (hosts phase 2 + tsv2 engine under a
+served process).
