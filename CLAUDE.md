@@ -1258,3 +1258,33 @@ PHASE 2 HEADER SEEDED (plans/2026-07-29-extraction-live-p2-header.md,
 enumerate-scope, extract-granularity, stale-demand); dispatch gated on
 org-arc merge only now (watcher research + soak both down).
 Coordinator task queue #1-#13 tracks the night; phase 3-5 rows seeded.
+ORG REFACTOR ARC LANDED (opus worktree, 12 commits, merge 9186f1ad;
+coordinator re-ran EVERYTHING in worktree AND merged main): ALL 10
+review ranks. prolog-lint gate (ratcheted baseline 1, wired into
+`just green` by coordinator) + emit_ts collision renamed;
+0_body_walk.pl walk_body/3 consolidates 10 traversal sites;
+0_program_check.pl = 6 mirrored cross-plane checks one impl + BOTH
+engine-only holes closed compiler-side (missing Log retention,
+aggregate edge head; fail-first receipts) -- log_without_retention's
+checked-in gen module (a program the oracle rejects) DELETED, the
+gen-modules-staleness gap's first real casualty; 1_expansion.pl
+declared phase order + enum metadata context (analyzer double-
+expansion gone, spread = placeholder rows); expression operator
+inventory (5 local lists dead); R9 shared decl queries; R7 14 dead
+exports removed of 44 classified; R8 private call sites 10 -> 1;
+R4 oracle aggregates on registry axis (oracle stays wider than
+compiler). Battery: conformance 137/0, plunit 124/124, TEXT_DOOR
+72/72/0, sweep both modes 72/70/0-wrong, dl 96/96, store 74/74,
+green exit 0, memory-soak HOLDS on merged main. Justfile expect
+comments refreshed (were 3 landings stale). 4 findings banked
+test-pinned (ARCH row org_banked_findings). Disclosed deviation:
+3 module qualifiers in sprefa-store/bench/v1-scale-gen.pl (rename
+fallout, output byte-identical). Journal:
+plans/2026-07-29-prolog-org-refactor-journal.md. Agent note worth
+keeping: findall/3 copies its template, bit twice with far-away
+failure messages.
+PHASE 2 DISPATCHED (opus worktree, forks watcher_first_impl +
+phase2_agent_tier in ARCH.pl): fs.watch behind the bind seam first
+(@parcel/watcher upgrade = one adapter, pending user word on the
+dep), extraction hosts live, enumerate/enumerate_at, exit receipt =
+sg-rail diag rail retick on a real file edit.
