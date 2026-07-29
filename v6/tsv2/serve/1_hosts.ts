@@ -350,7 +350,7 @@ export class ShHostRunner implements IShHostRunner {
   }
 
   private claimOnce(demand: HostDemand): boolean {
-    const key = `${demand.plan.name} ${demand.witnessDigest}`;
+    const key = `${demand.plan.name}|${demand.witnessDigest}`;
     if (this.claimed.has(key)) return false;
     this.claimed.add(key);
     return true;

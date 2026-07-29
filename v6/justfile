@@ -18,7 +18,7 @@ default:
 
 # ── prolog side ──
 
-# the fixture corpus vs the oracle engine (expect: 110 PASS, nothing else)
+# the fixture corpus vs the oracle engine (expect: 135 PASS, nothing else)
 conformance:
 	cd {{v6}}/prolog/conformance && swipl -q -l go.pl -g go -g halt
 
@@ -26,7 +26,11 @@ conformance:
 roundtrip:
 	cd {{v6}}/prolog/compile && bash scripts/roundtrip.sh
 
-# compiler unit tests (expect: 17/17)
+# term door vs .dl6 text door, byte-identical emitted modules (expect: 70/70/0)
+text-door:
+	cd {{v6}}/prolog && bash compile/scripts/text_door_receipt.sh
+
+# compiler unit tests (expect: 70/70)
 plunit:
 	cd {{v6}}/prolog/compile && swipl -q -l test/plunit_tests.pl -g run_tests -g halt
 
@@ -37,11 +41,11 @@ arch:
 # ── tsv2 (prolog compiles TO TypeScript) ──
 
 # full corpus sweep: compile every fixture, replay vs oracle tick logs
-# (expect: RUN total=31 identical=28 wrong=0; slow, minutes)
+# (expect: RUN total=70 identical=67 wrong=0; slow, minutes)
 sweep:
 	cd {{v6}}/tsv2 && bash scripts/sweep.sh
 
-# tsv2 runtime tests (expect: 6/6)
+# tsv2 runtime + served-engine tests (expect: 21/21, leak soak skipped)
 tsv2-test:
 	cd {{v6}}/tsv2 && npm test
 
@@ -67,6 +71,19 @@ endurance:
 leak-soak:
 	bash {{v6}}/dl/scripts/leak-soak.sh
 
+# the SERVED TSV2 engine's own end goal: kill -9 mid-nap, restart, answered
+# witnesses never refire (runtime-bridge arc receipt 5)
+serve-endurance:
+	cd {{v6}}/tsv2 && bash scripts/endurance.sh
+
+# the served tsv2 engine's leak gate: 20 program swaps, handles/timers/SSE flat
+serve-leak-soak:
+	cd {{v6}}/tsv2 && bash scripts/leak-soak.sh
+
+# exactly one terminal subscription per app (dl/src and tsv2/serve)
+one-subscribe:
+	bash {{v6}}/tools/one-subscribe.sh
+
 # ── benches ──
 
 # the house scale-test rig (engines/*.sh emit a shared CSV protocol)
@@ -76,7 +93,7 @@ bench:
 # ── batteries ──
 
 # the review-gate battery minus the slow sweep; what a merge must pass
-green: conformance roundtrip plunit tsv2-test import-gate dl-test store-test
+green: conformance roundtrip text-door plunit tsv2-test import-gate one-subscribe dl-test store-test
 
 # everything, including the sweep
-green-all: green endurance leak-soak sweep
+green-all: green endurance leak-soak serve-endurance serve-leak-soak sweep

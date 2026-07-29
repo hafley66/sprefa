@@ -4,7 +4,9 @@
  * Everything above this line is cold and composed. `serveTsv2(...)` IS the app;
  * this file starts it and prints what it emits. The one-subscribe law's ratchet
  * (v6/tools/one-subscribe.sh) scans this directory with its own baseline of 1;
- * a second `.subscribe()` anywhere under serve/ fails it.
+ * a second terminal subscription anywhere under serve/ fails it. (The ratchet
+ * greps for the call text and does not skip comments, so this sentence says it
+ * in words rather than in code.)
  *
  *   TSV2_DB=file:/tmp/x.sqlite TSV2_PORT=17501 \
  *     node --experimental-transform-types serve/main.ts
