@@ -208,3 +208,55 @@ verification(direct_trigger_identity_context_lab, passed(8)).
 verification(direct_trigger_identity_plunit, passed(147)).
 next_action(1,
             'lab automatic target-match injection for a relation-shaped head term lacking an explicit target atom, including recursive level fixpoint timing').
+
+% Sol clock/type/calculus shakedown requested alongside the relation-edge
+% fixpoint.
+touched('plans/2026-07-29-clock-checker-proof-payoff.md',
+        'actual-world audit of implemented DL6 static proofs, runtime receipts, and proof gaps against Rust, Lustre, and Esterel').
+touched('v6/prolog/ARCH.pl',
+        'clock_checker_proof_payoff task row with ranked zero-surface checker iteration').
+observed(clock_checker_static_proofs,
+         'current compiler statically proves negative and aggregate stratification, rejects positive recursive SQL strata, rejects five named cross-plane placements, and validates declaration/key shape').
+observed(clock_checker_runtime_only,
+         'general tick placement, arrival/level seam behavior, keyed batch order, provider response timing, and oracle/emitter equality are fixture or runtime properties rather than inferred program-wide theorems').
+observed(rust_comparison,
+         'relation references are durable integer graph edges rather than borrowed memory locations; the applicable lifetime property is live parent endpoint implies live target membership at a transaction boundary, expressible as an antijoin').
+observed(lustre_comparison,
+         'DL6 rule-graph grade corresponds to synchronous delay while B/N/Z ring composition adds relational cardinality; current named refusals are hand-coded instances of the combined calculus').
+observed(esterel_comparison,
+         'monotone B least fixpoint plus stratified absence supplies restricted constructive same-tick semantics; labelled zero-grade SCC analysis is absent for occurrence, sign, sampling, and effect dependencies').
+leading_hypothesis(clock_checker_fixpoint,
+                   'derive labelled dependency facts from existing AST and registry, infer clock offsets, then check zero-grade SCC constructiveness before adding any language spelling').
+leading_hypothesis(reference_lifetime_check,
+                   'compile live-parent and absent-target into an incremental boundary antijoin; defer cascade, retention, ownership, and per-edge policy until an actual lifecycle receipt requires one').
+verification(clock_checker_plan_options,
+             passed('four decision cards, each containing no more than five options')).
+next_action(clock_checker_1,
+            'select D1 and add internal ring/sign/grade metadata with no parser or surface change').
+next_action(clock_checker_2,
+            'derive tick offsets for existing edge-chain and pipe fixtures and compare them with observed tick logs').
+next_action(clock_checker_3,
+            'grade monotone, negative, occurrence-sensitive, and positive-delay SCC counterexamples through the real parser and analyzer').
+
+touched('v6/prolog/0_relation_edge_expand.pl',
+        'shared post-match expansion from relation-shaped head values to visible target membership dependencies').
+touched('v6/prolog/1_expansion.pl',
+        'phase 50 relation_edge after enum, spread placeholders, and match').
+touched('v6/prolog/labs/rel_value_unification/10_reference_fixpoint_clock.pl',
+        'six oracle/compiler receipts for same-tick target creation, missing targets, and keyed replacement').
+locked(automatic_derived_reference_match,
+       'a relation-shaped value in a level head adds an ordinary target atom; an edge head adds latest(target) so membership is sampled without adding a trigger').
+locked(derived_missing_target,
+       'missing target membership yields no parent derivation through ordinary join semantics').
+locked(derived_reference_clock,
+       'an edge-written keyed target and a level-derived parent settle in the same tick; replacing the target retracts old parent and adds new parent in that tick').
+observed(automatic_match_checker_visibility,
+         'the generated target dependency enters shared expansion before program checks, stratification, SQL planning, oracle evaluation, and emitted lowering').
+observed(automatic_match_feature_cost,
+         'one shared expansion phase and no surface syntax or runtime primitive').
+verification(reference_edge_expansion_plunit, passed(150)).
+verification(reference_edge_expansion_conformance, passed(164)).
+verification(reference_fixpoint_clock_lab, passed(6)).
+verification(reference_construction_context_lab, passed(8)).
+next_action(1,
+            'replace boot/world full-row StructPlane semantics with key-driven batched target resolution and named conflicts').

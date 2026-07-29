@@ -2024,16 +2024,48 @@ exhaustive_match(Program) :-
 nonexhaustive_match(Program) :-
     enum_program([ match(resp(Id), (body_page(Id, v) <- true)) ], Program).
 
-% The declared order is the spreading verdict's order, and the two spread
-% phases are placeholders with no expander until spreading is wired.
+% The declared order is the spreading verdict's order followed by the
+% relation-edge dependency expansion. The two spread phases remain
+% placeholders until spreading is wired.
 test(declared_phase_order) :-
     findall(Order-Name, expansion_phase(Order, Name, _), Unordered),
     msort(Unordered, Ordered),
-    Ordered == [10-enum, 20-decl_spread, 30-row_spread, 40-match].
+    Ordered == [10-enum, 20-decl_spread, 30-row_spread, 40-match,
+                50-relation_edge].
 
 test(spread_phases_are_placeholders) :-
     expansion_phase(20, decl_spread, unwired),
     expansion_phase(30, row_spread, unwired).
+
+test(level_relation_value_adds_target_membership) :-
+    Program = prog(
+        [ type_decl(user, [col(id, int), col(name, text)]),
+          col_type(post/1, author, user) ],
+        [ (post(user(Id, Name)) <- source(Id, Name)) ]),
+    expand_program(Program, prog(_, [Expanded]), _),
+    Expanded =@=
+        (post(user(Id, Name)) <- (source(Id, Name), user(Id, Name))).
+
+test(edge_relation_value_samples_target_membership) :-
+    Program = prog(
+        [ type_decl(user, [col(id, int), col(name, text)]),
+          col_type(post/1, author, user) ],
+        [ (post(user(Id, Name)) <+ source(Id, Name)) ]),
+    expand_program(Program, prog(_, [Expanded]), _),
+    Expanded =@=
+        (post(user(Id, Name)) <+
+            (source(Id, Name), latest(user(Id, Name)))).
+
+test(existing_target_membership_is_not_duplicated) :-
+    Program = prog(
+        [ type_decl(user, [col(id, int), col(name, text)]),
+          col_type(post/1, author, user) ],
+        [ (post(user(Id, Name)) <-
+              (source(Id, Name), user(Id, Name))) ]),
+    expand_program(Program, prog(_, [Expanded]), _),
+    Expanded =@=
+        (post(user(Id, Name)) <-
+            (source(Id, Name), user(Id, Name))).
 
 % Enum-first through the driver produces exactly what match-first produced.
 test(enum_first_preserves_expanded_terms) :-

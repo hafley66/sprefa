@@ -56,15 +56,15 @@ check(direct_target_edge_trigger_projects_joined_identity,
         sub_atom(ProjectSql, _, _, _, 'FROM "user" b0'),
         \+ sub_atom(ProjectSql, _, _, _, 'json_object') )).
 
-check(missing_target_constructor_currently_has_no_existence_join,
+check(missing_target_constructor_injects_membership_join,
       ( Text = "rel user(id: int, name: text) key(1).\nrel post(author: user).\nrel source(id: int, name: text).\npost(user(Id, Name)) <- source(Id, Name).\n",
         lower_text(missing_target, Text, [], _,
                    lowered(_, _, _, _, Levels, _, _, _)),
         member(levelstmt(post/1, _, Inserts, _, _, _), Levels),
         member(Sql, Inserts),
-        sub_atom(Sql, _, _, _, 'FROM "source"'),
-        \+ sub_atom(Sql, _, _, _, 'FROM "user"'),
-        \+ sub_atom(Sql, _, _, _, 'JOIN "user"') )).
+        sub_atom(Sql, _, _, _, 'FROM "source" b0, "user" b1'),
+        sub_atom(Sql, _, _, _, 'b1."__id"'),
+        \+ sub_atom(Sql, _, _, _, 'json_object') )).
 
 check(runtime_intern_and_lookup_use_every_target_column_not_the_key,
       ( program_text(Text),

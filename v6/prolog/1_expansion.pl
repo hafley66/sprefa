@@ -54,6 +54,7 @@
 :- use_module(library(lists)).
 :- use_module('0_enum_expand', [enum_context/2]).
 :- use_module('0_match_expand', []).
+:- use_module('0_relation_edge_expand', []).
 
 % ── the order, stated once ───────────────────────────────────────────────────
 
@@ -61,6 +62,8 @@ expansion_phase(10, enum,        enum_expand:expand_enum_in_context).
 expansion_phase(20, decl_spread, unwired).
 expansion_phase(30, row_spread,  unwired).
 expansion_phase(40, match,       match_expand:expand_match_program_in_context).
+expansion_phase(50, relation_edge,
+                relation_edge_expand:expand_relation_edges_in_context).
 
 % ── the fold ─────────────────────────────────────────────────────────────────
 
