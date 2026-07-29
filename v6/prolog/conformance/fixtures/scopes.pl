@@ -49,6 +49,26 @@ fixture(switch_as_keyed_replace,
     final(route_view/2, [ route_view(profile, body_profile) ]),
     ticks(3) ]).
 
+% A negative world delta retracts the exact row it names. After a newer row
+% has replaced an older row at the same key, a delayed retraction of the old
+% observation is silent and cannot delete the replacement. Retracting the
+% current exact row still removes it. This keeps signed-row occurrence
+% identity separate from keyed positive-write replacement.
+fixture(stale_keyed_retraction_keeps_replacement,
+  prog([ keyed(current_value/2, [1]) ], []),
+  [],
+  [ [ +current_value(item, v1) ],
+    [ +current_value(item, v2) ],
+    [ -current_value(item, v1) ],
+    [ -current_value(item, v2) ] ],
+  [ deltas(current_value/2,
+      [ [ +current_value(item, v1) ],
+        [ -current_value(item, v1), +current_value(item, v2) ],
+        [],
+        [ -current_value(item, v2) ] ]),
+    final(current_value/2, []),
+    ticks(4) ]).
+
 % 2. merge policy (switch_flow.pl section 7.3: keyed(open_tab/2, [1, 2]) is
 % "the three derived policies share every rule"'s merge row). Key = [outer,
 % value]: two scopes under the same outer identity coexist as siblings, and

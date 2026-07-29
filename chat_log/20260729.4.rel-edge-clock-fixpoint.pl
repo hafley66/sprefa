@@ -13,6 +13,7 @@
 :- discontiguous observed/2.
 :- discontiguous touched/2.
 :- discontiguous verification/2.
+:- discontiguous next_action/2.
 
 session(id, '20260729.4').
 session(date, '2026-07-29').
@@ -139,3 +140,16 @@ verification(key_validation_conformance, passed(163)).
 verification(key_validation_census, passed(12)).
 next_action(1,
             'pin keyed replacement and exact-row retraction against current tick logs, including stale old-row removal after replacement').
+
+touched('v6/prolog/conformance/fixtures/scopes.pl',
+        'paired oracle and emitted-SQL receipt for delayed old-row retraction after keyed replacement').
+locked(keyed_signed_row_clock,
+       'positive arrival replaces the row at its key; negative arrival retracts the exact row named; delayed -old is silent after +new; -current removes current').
+observed(keyed_clock_cost,
+         'four scheduled ticks: +v1; replacement -v1/+v2; delayed -v1 produces no delta; -v2 removes current').
+observed(key_delete_surface,
+         'the language has signed full rows and no distinct key-delete operation; exact negative rows preserve occurrence identity without another primitive').
+verification(stale_keyed_retraction_oracle, passed(3)).
+verification(stale_keyed_retraction_sql, passed(3)).
+next_action(1,
+            'grade reference construction contexts: existing target query, missing target, nested world arrival, and same-key conflicting non-key fields').
