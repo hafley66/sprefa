@@ -97,3 +97,26 @@ touched('chat_log/20260729.4.rel-edge-clock-fixpoint.pl',
         'this cross-session fixpoint ledger').
 touched('v6/prolog/ARCH.pl',
         'rel_edge_clock_fixpoint task, locked model, iteration order, and exit contract').
+touched('v6/prolog/labs/rel_value_unification/8_key_edge_case_census.pl',
+        'twelve actual compiler checks for key DDL, replacement/retraction asymmetry, cycles, invalid positions, and current JSON construction').
+
+observed(key_edge_case_census,
+         '12 checks pass against the current parser, plan, and lowerer').
+observed(key_ddl_ready,
+         'single and composite key positions already become UNIQUE constraints on public referenced target tables').
+observed(key_write_asymmetry,
+         'positive keyed arrival uses INSERT OR REPLACE by key; negative arrival deletes by every row column, so a stale old-row retraction does not remove its replacement').
+observed(key_position_validation_hole,
+         'key(0), key(arity+1), and duplicate key positions all survive plan construction').
+observed(key_cycle_overreach,
+         'single and mutual keyed entity cycles are both rejected by the inherited content-DAG check').
+observed(key_constructor_hole,
+         'typed reference construction still consumes the full relation arity and emits JSON despite key DDL already existing').
+
+iteration_gate(2, valid_key_positions,
+               'reject zero, out-of-range, and duplicate positions before DDL or runtime code generation').
+iteration_gate(2, replacement_retraction_clock,
+               'pin whether stale exact-row retraction is the intended occurrence contract for keyed entity state').
+iteration_gate(2, constructor_conflict,
+               'pin behavior when one key is constructed with non-key fields that disagree with the current target row').
+verification(key_edge_case_census, passed(12)).
