@@ -133,3 +133,13 @@ group: cargo test in v6/sprefa-extract + fixture snaps. Full battery at end.
 - `Var = expr` (prolog's `=`) is unregistered and dies as unbound_head_var —
   wrong name, no mention of `=`. Whatever the ruling, `=` must refuse (or bind)
   BY NAME; it is the first spelling a prolog reader types (terra typed it).
+- SLOT-TYPE-DECL-DISTINGUISHABILITY (user 2026-07-29: "types and rels are
+  indistinguishable to a fucking human"): `type span(start: int, end: int).`
+  and `rel file(path: text, digest: text).` share one visual shape with
+  opposite semantics (value shape vs fact table); use sites are equally
+  blind (`at: span` reads like `path: text`). Candidate spellings to price:
+  (a) braces for value shapes: `type span = {start: int, end: int}` (JSON
+  word for a value, parens stay tables); (b) uppercase type names + a
+  lint (`at: Span` — rust/TS convention, zero grammar change); (c) status
+  quo + editor semantic tokens only (weakest). Decl AND use-site legibility
+  both graded. The type keyword itself was agent-chosen, never ruled.
