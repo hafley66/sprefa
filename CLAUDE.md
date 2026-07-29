@@ -789,9 +789,40 @@ libsql_fuse_and_delta_deopt. STILL AWAITING USER (re-asked with
 explanations): keyed-on-level-head refuse-vs-define, keep(count)
 lowering choice.
 RECURRING FOOTGUN, unowned: sweep regen DELETES non-fixture modules
-from gen_emitted/ (door-handwritten.ts dropped twice this sitting,
-restored both times); fix is sweep.ts leaving unknown files alone
-or door-handwritten becoming a fixture.
+from gen_emitted/ (door-handwritten.ts dropped THREE times this
+sitting, restored each time); fix is sweep.ts leaving unknown files
+alone or door-handwritten becoming a fixture.
+MATCH + RULINGS LANE LANDED (merge 05f8ad29, codex sol no-commit
+flow, coordinator re-ran in worktree AND merged main: conformance
+126/0, sweep both modes 66 compiled/63 identical/0 wrong (final
+63/2, both pre-existing runtime-error fixtures), plunit 54/54, tsv2
+14/14, TEXT_DOOR 66/66/0, roundtrip ALL PASS, dl 96/96): match/2
+block sugar via ONE shared expand_match_program
+(v6/prolog/0_match_expand.pl, oracle + compiler both consult, the
+enum-expansion precedent), arms expand to ordinary rules, enum
+coverage checked (match_nonexhaustive refusal), sugar vs
+hand-desugared tick logs byte-identical (sha b93e3028);
+keyed_level_head refusal LIVE in oracle + compiler (fail-first
+inert-accumulation receipt recorded; keyed edge head still
+replaces); keep(count) LOWERED: one set-based DELETE...RETURNING
+into the negative-delta path pre-P3, 12 statements flat at 3 vs 100
+arrivals, retention_count_prunes_oldest final_wrong -> IDENTICAL.
++6 fixtures (4 compiled + 2 named refusals). Parser/printer/
+registry/SYNTAX/tmLanguage all carry match blocks.
+RULED same sitting (rulings.pl tail): keyed_level_head =
+named_refusal; retention_count_lowering = retracting_rule_over_log
+(both executed by this lane). ALSO RULED: json_ticklog_encoding =
+canonical_json_text (regrade arc pending, unowned); udf_residency =
+libsql_fuse_and_delta_deopt. USER DIRECTIVES 2026-07-29 late: CLI
+("the bop") gates the 6.2.0 push -- registry.pl grows a cli command
+table, emitter targets COMMANDER (required) on the TS side + clap
+derive later, verbs serve/run/check/load/q, run+check boot the
+server in-process (server-calls-itself, no daemon concept); spine
+stays hosted per spine_residency with worktree as the UNMARKED
+default source (no "WORK" atom -- pinned rev is the marked case);
+kwargs partial application queued (task: body atoms may omit
+columns = fresh wildcard, heads stay total; parse_dl
+fill_free_slots :590 is the current exact-fill gate).
 
 ### Hands-on findings 2026-07-29 (coordinator wrote+ran a cold program; scratch fixture, receipts in chat)
 - **keyed() on a level-rule head is SILENTLY INERT** (F8/retention-inert
