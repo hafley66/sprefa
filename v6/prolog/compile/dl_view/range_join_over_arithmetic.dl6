@@ -1,1 +1,4 @@
+rel eprintln_hit(path: text, line_number: int).
+rel eprintln_waiver_line(path: text, waiver_line: int).
+
 eprintln_waived(Path, LineNumber) <- eprintln_waiver_line(Path, WaiverLine), eprintln_hit(Path, LineNumber), WaiverLine >= LineNumber - 1, WaiverLine =< LineNumber.

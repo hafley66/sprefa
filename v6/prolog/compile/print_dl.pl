@@ -18,11 +18,13 @@
 % full reasoning), strings double-quoted, decls spelled
 % `rel Name(cols[: type]) log [keep(...)] [key(...)].`.
 
-:- module(print_dl, [ print_dl_program/3, print_dl_to_file/3 ]).
+:- module(print_dl, [ print_dl_program/3, print_dl_to_file/3,
+                      augmented_decls/6, print_dl_program_with_edb_types/7
+                    ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
-:- use_module(analyze, [ rel_columns/5 ]).
+:- use_module(analyze, [ rel_columns/5, declared_refs/2 ]).
 :- use_module(registry,
               [ body_surface_for_term/6,
                 wrapper_lower_role/3
@@ -49,6 +51,112 @@ print_dl_program(prog(Decls, Rules), Bindings, Text) :-
     ( RuleLines == [] -> RuleBlock = "" ; atomic_list_concat(RuleLines, RuleBlock) ),
     ( Rules == [] -> Sep = "" ; DeclLines == [] -> Sep = "" ; Sep = "\n" ),
     format(atom(Text), "~w~w~w", [DeclBlock, Sep, RuleBlock]).
+
+% ═══ EDB decl synthesis (the text-door fix) ══════════════════════════════════
+%
+% print_dl_program/3 above only ever prints a decl line for a ref that
+% literally has a Decls entry (module header's own note above
+% decl_ref_order/2: fabricating one would break the =@= round-trip check).
+% That is correct for G1's own grade, but it means an EDB ref whose only
+% typing evidence is a Schedule/Initial LITERAL WITNESS (PHASE C2 RULING 1's
+% own inference path, analyze.pl:column_type_at_decl/6) prints with ZERO
+% decls at all -- e.g. expressions.pl's comparison_filters_rows fixture,
+% Decls=[], callee_set_size/2 and shared_count/3 typed only by their Initial
+% rows' literal ints. Re-parsing that printed text through compile_dl6/2
+% (v6/prolog/compile/compile.pl) then infers every untyped column as TEXT
+% (the C2a "zero witnesses -> text" default -- there IS no witness inside
+% the text door's own input, since decls are the only thing the text door
+% ever reads) and refuses on the fixture's own `Union > 0` int comparison:
+% unsupported_construct(arith_operand_not_int(...,text)). The TERM door
+% compiles the same fixture fine because compile.pl:program_plan/2 sees the
+% original Initial/Schedule rows directly, never round-tripping through
+% printed text.
+%
+% Fix: a CALLER holding the compile plan (compile.pl:program_plan/2's
+% RelPlans + ArrivalTargets, both already computed once per fixture) can
+% synthesize `col_type(Ref, Column, Type)` decl facts for exactly the EDB
+% refs (ArrivalTargets: rule-headless, so per the one-rel-one-rule-kind law
+% their typing can never come from a rule body, only from decls or literal
+% witnesses) that the ORIGINAL surface program left undeclared, and hand
+% the AUGMENTED decl list to the unmodified print_dl_program/3 above.
+% print_decl_column/3 and rel_columns/5 (analyze.pl) already know how to
+% render a col_type/3 entry into `col: type` text and to prefer decl-typed
+% column names over mined ones -- nothing about print_dl_program/3 itself
+% changes; this predicate only widens what Decls list it is handed.
+%
+% DECL AUTHORITY (never duplicate or contradict an explicit decl): a ref
+% counts as "already declared" if declared_refs/2 (analyze.pl) finds ANY
+% kind/2, keyed/2, keep/2, or col_type/3 entry for it in the EXPANDED decls
+% -- Plan's own Prog field is already enum-expanded
+% (compile.pl:program_plan/2 calls expand_enum_program/2 first), so an
+% enum's variant refs (body_page/2, body_redirect/2, ...) already carry
+% col_type/keyed entries THERE even though the RAW surface Decls list this
+% predicate augments only ever shows the single `enum_decl(body, ...)`
+% sugar term -- checking coverage against the expanded decls is what keeps
+% this predicate from fabricating a redundant, sugar-contradicting
+% `rel body_page(...)` line next to the enum decl.
+%
+% ONLY EDB refs are covered on purpose (compile.pl:program_plan/2's own
+% ArrivalTargets = AllRefs minus DerivedRefs): a derived (rule-headed) ref's
+% column types are re-inferred by the type fixpoint from its rule bodies
+% every time regardless of what a decl says, so synthesizing a decl for one
+% would be inert at best and misleading at worst.
+%
+% WITNESSED refs only, a SECOND and sharper restriction found by running
+% the receipt, not assumed up front: an EDB ref that has ZERO rows in
+% EITHER Initial or Schedule anywhere in a given fixture (dead alternative
+% source -- e.g. timeless_rail.pl's clean_state_no_diags declares TWO
+% rules feeding eprintln_waiver_line, one from waiver_block_comment, one
+% from waiver_trailing_comment, but only the LATTER ever receives an
+% Initial row in that fixture) types via analyze.pl's C2a fallback with
+% NO real evidence -- contribution `open(none)`, the fixpoint's neutral
+% "no opinion yet" placeholder (analyze.pl:seed_column_contribution/7).
+% That placeholder is INERT in a union: analyze.pl:merge_type/3 only
+% treats a concrete `text`/`int` contribution as sticky, so a witness-less
+% sibling never overrides a genuinely-witnessed one merged into the same
+% derived rel (eprintln_waiver_line correctly comes out `int` in the real
+% term door, from waiver_trailing_comment's witnessed row alone).
+% Synthesizing a col_type/3 decl for the WITNESS-LESS ref changes its
+% contribution from that inert placeholder to a FROZEN, concrete `text`
+% (analyze.pl:contribution_to_type/2's own "none -> text" default, now
+% pinned instead of deferred) -- and a frozen contribution is sticky
+% (merge_contribution/3's first clause never revises it), so it silently
+% overrides the sibling's real `int` witness in the union and the SAME
+% comparison the real term door accepts refuses in the text door with
+% comparison_operand_not_int(...). This is a synthesis-caused regression,
+% not a pre-existing gap, so WitnessedRefs (computed by the caller from
+% the fixture's own Initial/Schedule, see text_door_receipt.pl and
+% roundtrip.sh's write_one_view/6) restricts synthesis to refs that
+% actually have a row somewhere -- a witness-less ref is left exactly as
+% undeclared as print_dl_program/3 always left it, so both doors
+% independently keep it neutral instead of one door pinning it.
+%
+% RESIDUAL, named rather than silently widened further: this check is
+% REF-granular (does the ref have any row at all), not per-column. A ref
+% with rows where one column happens to hold only non-atomic values (a
+% braces/list literal, never observed in the current corpus for an EDB
+% ref) would still get that column's decl synthesized and could in
+% principle hit the same freeze hazard at column granularity. No fixture
+% in the current corpus exercises this; a future one that does is a real
+% finding, not a silent gap.
+
+augmented_decls(RawDecls, ExpandedDecls, RelPlans, ArrivalTargets, WitnessedRefs, AugmentedDecls) :-
+    declared_refs(ExpandedDecls, CoveredRefs),
+    subtract(ArrivalTargets, CoveredRefs, NeedsDeclCandidates),
+    intersection(NeedsDeclCandidates, WitnessedRefs, NeedsDeclRefs),
+    findall(col_type(Ref, Column, Type),
+            ( member(Ref, NeedsDeclRefs),
+              memberchk(relplan(Ref, _Kind, Columns, _KeyOrNone, ColumnTypes), RelPlans),
+              nth1(Position, Columns, Column),
+              nth1(Position, ColumnTypes, Type)
+            ),
+            NewColTypeDecls),
+    append(RawDecls, NewColTypeDecls, AugmentedDecls).
+
+print_dl_program_with_edb_types(prog(RawDecls, RawRules), Bindings,
+                                ExpandedDecls, RelPlans, ArrivalTargets, WitnessedRefs, Text) :-
+    augmented_decls(RawDecls, ExpandedDecls, RelPlans, ArrivalTargets, WitnessedRefs, AugmentedDecls),
+    print_dl_program(prog(AugmentedDecls, RawRules), Bindings, Text).
 
 % Decl lines print ONLY for refs that literally appear in Decls, in
 % first-occurrence order -- NOT the declared_refs/program_refs union

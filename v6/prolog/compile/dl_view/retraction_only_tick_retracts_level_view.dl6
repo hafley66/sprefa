@@ -1,1 +1,3 @@
+rel source_row(item: text).
+
 mirror(Item) <- source_row(Item).

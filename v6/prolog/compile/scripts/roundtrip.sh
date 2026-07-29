@@ -37,6 +37,7 @@ trap 'rm -f "$GRADER"' EXIT
 cat > "$GRADER" <<PLEOF
 :- use_module('$COMPILE_DIR/parse_dl').
 :- use_module('$COMPILE_DIR/print_dl').
+:- use_module('$COMPILE_DIR/compile', [program_plan/2]).
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(filesex)).
@@ -71,14 +72,21 @@ read_all_fixtures(File, Entries) :-
     open(File, read, Stream),
     call_cleanup(scan_fixtures(Stream, Entries), close(Stream)).
 
+% entry/5 carries Initial/Schedule alongside Prog/Bindings now (previously
+% entry/3, Prog/Bindings only) -- write_one_view/6 below needs the real
+% fixture rows to compute compile.pl:program_plan/2's plan and, from it,
+% which EDB refs actually have evidence (print_dl.pl:augmented_decls/6's
+% WitnessedRefs argument). g1_one/4's own round-trip check still only
+% ever touches Prog/Bindings, unchanged.
 scan_fixtures(Stream, Entries) :-
     read_term(Stream, Candidate, [variable_names(Bindings)]),
     ( Candidate == end_of_file
     -> Entries = []
     ; Candidate = (:- Directive)
     -> call(Directive), scan_fixtures(Stream, Entries)
-    ; Candidate = fixture(Name, Prog, _, _, _)
-    -> Entries = [entry(Name, Prog, Bindings) | Rest], scan_fixtures(Stream, Rest)
+    ; Candidate = fixture(Name, Prog, Initial, Schedule, _)
+    -> Entries = [entry(Name, Prog, Bindings, Initial, Schedule) | Rest],
+       scan_fixtures(Stream, Rest)
     ; scan_fixtures(Stream, Entries)
     ).
 
@@ -88,7 +96,7 @@ g1 :-
     fixture_files(Files),
     findall(File-Entries, ( member(File, Files), read_all_fixtures(File, Entries) ), Pairs),
     findall(result(File, Name, Status),
-            ( member(File-Entries, Pairs), member(entry(Name, Prog, Bindings), Entries),
+            ( member(File-Entries, Pairs), member(entry(Name, Prog, Bindings, _Initial, _Schedule), Entries),
               g1_one(Name, Prog, Bindings, Status)
             ),
             Results),
@@ -121,18 +129,57 @@ write_dl_views(Pairs) :-
     dl_view_dir(ViewDir),
     ( exists_directory(ViewDir) -> true ; make_directory(ViewDir) ),
     forall(member(_File-Entries, Pairs),
-           forall(member(entry(Name, Prog, Bindings), Entries),
-                  write_one_view(ViewDir, Name, Prog, Bindings))).
+           forall(member(entry(Name, Prog, Bindings, Initial, Schedule), Entries),
+                  write_one_view(ViewDir, Name, Prog, Bindings, Initial, Schedule))).
 
-write_one_view(ViewDir, Name, Prog, Bindings) :-
+% Every fixture's view is regenerated, not just the ~60 that compile
+% through compile.pl:program_plan/2 -- the "language you can see"
+% deliverable covers the FULL conformance corpus (120 fixtures), most of
+% which use constructs compile.pl's term-door subset does not support yet
+% (recursive/departure/derived-edge fixtures named in the compiled-vs-
+% unsupported sweep). augmented_view_text/6 below renders the EDB-decl-
+% synthesized text (print_dl.pl:print_dl_program_with_edb_types/7, same
+% predicate the text-door receipt uses) for a fixture program_plan/2
+% accepts; anything program_plan/2 refuses (unsupported_construct or any
+% other error) falls back to the PLAIN print_dl_program/3 rendering this
+% file always produced, unaugmented -- write_one_view/6 never leaves a
+% fixture without a view just because it is outside the term door's
+% supported subset.
+write_one_view(ViewDir, Name, Prog, Bindings, Initial, Schedule) :-
+    atomic_list_concat([ViewDir, '/', Name, '.dl6'], OutPath),
+    ( catch(augmented_view_text(Name, Prog, Bindings, Initial, Schedule, Text), _, fail)
+    -> true
+    ; catch(print_dl_program(Prog, Bindings, Text), _, fail)
+    ),
+    !,
     catch(
-        ( print_dl_program(Prog, Bindings, Text),
-          atomic_list_concat([ViewDir, '/', Name, '.dl6'], OutPath),
-          setup_call_cleanup(open(OutPath, write, S), format(S, "~w", [Text]), close(S))
-        ),
+        setup_call_cleanup(open(OutPath, write, S), format(S, "~w", [Text]), close(S)),
         _,
         true
     ).
+write_one_view(_, _, _, _, _, _).
+
+augmented_view_text(Name, Prog, Bindings, Initial, Schedule, Text) :-
+    program_plan(fixture(Name, Prog, Initial, Schedule, [])-Bindings, Plan),
+    Plan = plan(_, ExpandedProg, RelPlans, ArrivalTargets, _, _),
+    ExpandedProg = prog(ExpandedDecls, _),
+    witnessed_refs(Initial, Schedule, WitnessedRefs),
+    print_dl_program_with_edb_types(Prog, Bindings, ExpandedDecls, RelPlans, ArrivalTargets,
+                                    WitnessedRefs, Text).
+
+% Same evidence check as text_door_receipt.pl:witnessed_refs/3 (see that
+% predicate's header, and print_dl.pl:augmented_decls/6's, for why a
+% witness-less EDB ref must NOT get a synthesized decl).
+witnessed_refs(Initial, Schedule, Refs) :-
+    findall(Ref,
+            ( ( member(Row, Initial), functor(Row, RowName, RowArity)
+              ; member(Batch, Schedule), member(Signed, Batch),
+                ( Signed = +Atom ; Signed = -Atom ), functor(Atom, RowName, RowArity)
+              ),
+              Ref = RowName/RowArity
+            ),
+            Refs0),
+    sort(Refs0, Refs).
 
 % ═══ G2 : real-file parse (ghcacher.dl6, conformance.dl6) ══════════════════
 

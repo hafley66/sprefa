@@ -1,1 +1,3 @@
+rel spend(team: text, _item: text, cost: int).
+
 budget(Team, sum(Cost)) <- spend(Team, _Item, Cost).

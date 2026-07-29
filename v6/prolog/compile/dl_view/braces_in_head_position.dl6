@@ -1,1 +1,3 @@
+rel seed(name: text).
+
 doc_out({repo: Name}) <- seed(Name).
