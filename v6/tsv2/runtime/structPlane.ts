@@ -85,6 +85,18 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/** Host and HTTP arrivals carry JSON through IRowValue's text side. Schedule
+ * fixtures may still inject the already-decoded object. Both spellings enter
+ * the same shape check and canonicalization path before interning. */
+function decodedStructValue(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
+}
+
 /**
  * The runtime half of SLOT-ARRIVAL-MALFORMED. The oracle door checks the same
  * shapes over a fixture's static Initial + Schedule
@@ -151,8 +163,9 @@ function collect(
   value: unknown,
   perType: Map<string, Map<string, ICollected>>,
 ): string {
-  checkShape(plan, byName, value);
-  const object = value as Record<string, unknown>;
+  const decoded = decodedStructValue(value);
+  checkShape(plan, byName, decoded);
+  const object = decoded as Record<string, unknown>;
   const fields = plan.columns.map((column, index) => {
     const refType = plan.refs[index];
     if (refType === null || refType === undefined) return object[column] as IRowValue;
@@ -180,7 +193,7 @@ function rewriteRow(
   return row.map((value, index) => {
     const refType = refs[index];
     if (refType === null || refType === undefined) return value;
-    const rendered = canonicalText(value);
+    const rendered = canonicalText(decodedStructValue(value));
     const id = ids.get(semanticKey(refType, rendered));
     if (id === undefined) {
       throw new Error(`struct intern lost the id for ${refType} value ${rendered}`);

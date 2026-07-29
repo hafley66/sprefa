@@ -36,15 +36,36 @@
  */
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { VirtualTimeScheduler } from "rxjs";
+import { VirtualTimeScheduler, firstValueFrom } from "rxjs";
 
+import { ScratchStore } from "../runtime/scratchStore.ts";
 import { oracleLog, logOfTicks, postArrivals, postProgram, request, scheduleFromTicks, startServed, tickEvents } from "./serveHelpers.ts";
 
 const HOST_CLOCK_DL6 = fileURLToPath(new URL("../../dl/fixtures/served-host-clock.dl6", import.meta.url));
+
+const STRUCT_HOST_DL6 = `
+type span(end: int, start: int).
+rel source_path(path: text).
+rel host_span(path: text, at: span).
+rel host_start(path: text, start: int).
+
+sh scan_span(path: text) -> (at: span) =
+  \`printf '%s\\n' '{"at":{"start":17,"end":42}}'; : "$path"\`.
+
+host_span(Path, At) <-
+  source_path(Path),
+  ? scan_span(Path, At).
+
+host_start(Path, Start) <-
+  host_span(Path, At),
+  decode(At, {start: Start}).
+`;
 
 /** Advance an injected virtual scheduler by whole seconds and flush. `maxFrames`
  *  is bounded on purpose: a live `interval` reschedules itself every firing, so
@@ -132,5 +153,79 @@ test("receipt (b) teardown: a program swap stops the previous program's interval
     await waitUntil(() => scheduler.actions.length === 0, "the swapped-out program's interval to be torn down");
   } finally {
     await served.stop();
+  }
+});
+
+/**
+ * HOST-OUTPUT-SEAM FAIL-FIRST RECEIPT:
+ *   1. Before decl-B parser acceptance, POST /program returned 400 with
+ *      unsupported_surface(column_type_wrapper(scan_span,at,none)).
+ *   2. With parser acceptance alone, the host effect settled as error because
+ *      StructPlane received canonical JSON text and refused
+ *      type_arrival_shape_mismatch: not_an_object(span, ...).
+ *
+ * The file-backed injected seam lets this one receipt inspect the dictionary
+ * count after the live host tick without exposing dictionaries through /idb.
+ */
+test("declared-struct live host output interns once and tick logs render the canonical value", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "tsv2-struct-host-"));
+  const dbUrl = `file:${join(directory, "served.sqlite")}`;
+  const served = await startServed(17533, undefined, dbUrl);
+  try {
+    const loaded = await postProgram(served.port, STRUCT_HOST_DL6);
+    assert.equal(loaded.statusCode, 200, loaded.body);
+
+    await postArrivals(served.port, [
+      { rel: "source_path", sign: "add", row: ["a.rs"] },
+    ]);
+    await waitUntil(async () => {
+      const rows = JSON.parse((await request(served.port, "/idb/host_start", "GET")).body) as {
+        rows: readonly (readonly (string | number)[])[];
+      };
+      return rows.rows.length === 1;
+    }, "the struct-typed host answer to land");
+
+    const hostSpan = JSON.parse((await request(served.port, "/idb/host_span", "GET")).body) as {
+      rows: readonly (readonly (string | number)[])[];
+    };
+    const hostStart = JSON.parse((await request(served.port, "/idb/host_start", "GET")).body) as {
+      rows: readonly (readonly (string | number)[])[];
+    };
+    assert.deepEqual(hostSpan.rows, [["a.rs", '{"end":42,"start":17}']]);
+    assert.deepEqual(hostStart.rows, [["a.rs", 17]]);
+
+    const outcomes = tickEvents(served.events);
+    assert.equal(outcomes.length, 2, `expected source / host ticks, got ${outcomes.length}`);
+    const hostTick = JSON.parse(outcomes[1]!.line) as {
+      deltas: Record<string, { add: readonly (readonly unknown[])[]; del: readonly (readonly unknown[])[] }>;
+    };
+    assert.deepEqual(hostTick.deltas["__host_response_scan_span"]?.add, [
+      [
+        "witness|scan_span|path:text=a.rs",
+        0,
+        "a.rs",
+        { end: 42, start: 17 },
+      ],
+    ]);
+    assert.deepEqual(hostTick.deltas.host_span?.add, [
+      ["a.rs", { end: 42, start: 17 }],
+    ]);
+    assert.deepEqual(hostTick.deltas.host_start?.add, [["a.rs", 17]]);
+
+    const inspection = ScratchStore.open(dbUrl);
+    try {
+      const dictionaryRows = await firstValueFrom(
+        inspection.runner.scalar(
+          inspection.db,
+          'SELECT count(*) FROM "__dict_span"',
+        ),
+      );
+      assert.equal(dictionaryRows, 1);
+    } finally {
+      inspection.db.close();
+    }
+  } finally {
+    await served.stop();
+    rmSync(directory, { recursive: true, force: true });
   }
 });

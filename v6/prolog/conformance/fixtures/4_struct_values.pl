@@ -52,6 +52,33 @@ fixture(struct_column_type_unknown_rejected,
   [],
   [ throws(column_type_unknown(spann)) ]).
 
+% HOST-OUTPUT-SEAM FAIL-FIRST RECEIPT, compiler refusal direction:
+% before parse_dl.pl admitted a declared type name in a decl-B host column,
+% the text door reported
+%   unsupported_surface(column_type_wrapper(scan_span,at,none))
+% for `at: span`. After acceptance, the adjacent `spann` spelling below must
+% continue through parsing and stop as column_type_unknown(spann), preserving
+% the declared-type-name boundary in both directions.
+fixture(struct_host_output_type_unknown_rejected,
+  program(
+    [ type_decl(span, [col(end, int), col(start, int)]),
+      col_type(source_path/1, path, text),
+      col_type(host_span/2, path, text),
+      col_type(host_span/2, at, span),
+      sh_decl(scan_span,
+              [col(path, text)],
+              [col(at, spann)],
+              template("scan {path}"))
+    ],
+    [ (host_span(Path, At) <-
+          (source_path(Path),
+           probe(scan_span, [Path], [At], [])))
+    ],
+    []),
+  [],
+  [],
+  [ throws(column_type_unknown(spann)) ]).
+
 % SLOT-ARRIVAL-MALFORMED. A world row whose value is missing a declared field.
 fixture(struct_arrival_missing_key_rejected,
   prog([ type_decl(span, [col(start, int), col(end, int)]),
@@ -281,13 +308,9 @@ fixture(struct_decode_field_unknown_rejected,
 %     distinctUntilChanged(sameRowSet),
 %   );
 %
-% WHAT IS STILL MISSING for the real rails is stated in the arc report and is
-% NOT in this file's scope: an sh host's OUTPUT column may now be declared with
-% a struct type (1_host_expand.pl accepts it, and column_type_unknown catches a
-% name no type declares), but serve/1_hosts.ts's coerce/3 JSON-stringifies a
-% nested object before it reaches the arrival row, so the struct value arrives
-% as TEXT rather than as the object StructPlane interns. That one seam is what
-% stands between this fixture and a real line number.
+% The host-output seam fixture below closes the remaining arrival spelling:
+% live sh JSON crosses serve/1_hosts.ts as text, then StructPlane parses and
+% interns that text for the response relation's emitted ref column.
 fixture(struct_span_columns_are_int_after_decode,
   prog([ type_decl(span, [col(end, int), col(start, int)]),
          col_type(node_fact/3, path, text),
@@ -305,6 +328,45 @@ fixture(struct_span_columns_are_int_after_decode,
   [ deltas(def_start/2, [ [ +def_start('a.rs', 17) ], [ +def_start('b.rs', 3) ] ]),
     final(def_start/2, [ def_start('a.rs', 17), def_start('b.rs', 3) ]),
     ticks(2) ]).
+
+% HOST-OUTPUT-SEAM FAIL-FIRST RECEIPT, acceptance direction:
+% the term/oracle door already accepted this program and its canned response.
+% Printing the same program to .dl6 and compiling the text refused `at: span`
+% as unsupported_surface(column_type_wrapper(scan_span,at,none)). This fixture
+% keeps the oracle and emitter on the same arc: the host answer is schedule-fed
+% in the canned-rows form, its struct value is interned before arrival SQL, and
+% the boundary renders the canonical value in both emitter modes.
+fixture(struct_host_output_schedule_answer_interned,
+  program(
+    [ type_decl(span, [col(end, int), col(start, int)]),
+      col_type(source_path/1, path, text),
+      col_type(host_span/2, path, text),
+      col_type(host_span/2, at, span),
+      col_type(host_start/2, path, text),
+      col_type(host_start/2, start, int),
+      sh_decl(scan_span,
+              [col(path, text)],
+              [col(at, span)],
+              template("scan {path}"))
+    ],
+    [ (host_span(Path, At) <-
+          (source_path(Path),
+           probe(scan_span, [Path], [At], []))),
+      (host_start(Path, Start) <-
+          (host_span(Path, At),
+           decode(At, {start: Start})))
+    ],
+    [query(host_start(Path, Start))]),
+  [source_path('a.rs')],
+  [ [ +'__host_response_scan_span'(
+          'witness|scan_span|path:text=a.rs',
+          0, 'a.rs', obj([end-42, start-17]))
+    ]
+  ],
+  [ final(host_span/2,
+          [host_span('a.rs', obj([end-42, start-17]))]),
+    final(host_start/2, [host_start('a.rs', 17)]),
+    ticks(1) ]).
 
 % THE SHARED CHILD (types-as-rels verdict Q3, domination_shared_child_survives
 % / domination_sole_owner_cascades) as a compiled fixture. Two parents hold the

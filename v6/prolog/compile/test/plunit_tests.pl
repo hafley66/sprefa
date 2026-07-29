@@ -1162,6 +1162,55 @@ test(host_duplicate_column_refusal,
               template("{ep}")),
       _).
 
+% HOST-OUTPUT-SEAM FAIL-FIRST RECEIPT, acceptance direction:
+% parse_dl/4 returned
+%   [unsupported_surface(column_type_wrapper(scan_span,at,none))]
+% and recorded the output as col(at,none). The term door already accepts the
+% same declaration. The green contract covers the text parser, generated
+% response-column lowering, and emitted host plan together.
+test(host_declared_struct_output_parses_and_lowers_as_ref) :-
+    string_codes(
+      "type span(end: int, start: int).\nrel source_path(path: text).\nrel host_span(path: text, at: span).\nsh scan_span(path: text) -> (at: span) = `scan {path}`.\nhost_span(Path, At) <- source_path(Path), ? scan_span(Path, At).\n",
+      Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    program_plan(
+      fixture(host_declared_struct_output_parses_and_lowers_as_ref,
+              Program, [], [], [])-Bindings,
+      Plan),
+    Plan = plan(_, _, RelPlans, _, _, _),
+    memberchk(
+      relplan('__host_response_scan_span'/4, set,
+              [witness_digest, ordinal, path, at],
+              key([1, 2]), [text, int, text, ref(span)]),
+      RelPlans),
+    lower_program(Plan, Lowered),
+    Plan = plan(_, prog(Decls, _), _, _, _, _),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    boot_statements(Decls, RelPlans, [], LevelStatements, Boot),
+    emit_program(
+      host_declared_struct_output_parses_and_lowers_as_ref,
+      Plan, Lowered, Boot, Text),
+    once(sub_atom(Text, _, _, _, '{ name: "at", type: "span" }')),
+    once(sub_atom(
+      Text, _, _, _,
+      '"__host_response_scan_span": [null, null, null, "span"]')),
+    !.
+
+% HOST-OUTPUT-SEAM FAIL-FIRST RECEIPT, refusal direction:
+% the former decl-B fallback erased `spann` to none and stopped at the generic
+% column_type_wrapper finding. The parser now preserves the spelling so the
+% shared program check names column_type_unknown(spann).
+test(host_unknown_struct_output_refuses_by_type_name,
+     [throws(unsupported_construct(column_type_unknown(spann)))]) :-
+    string_codes(
+      "type span(end: int, start: int).\nrel source_path(path: text).\nrel host_span(path: text, at: span).\nsh scan_span(path: text) -> (at: spann) = `scan {path}`.\nhost_span(Path, At) <- source_path(Path), ? scan_span(Path, At).\n",
+      Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    program_plan(
+      fixture(host_unknown_struct_output_refuses_by_type_name,
+              Program, [], [], [])-Bindings,
+      _).
+
 test(probe_arity_refusal,
      [throws(probe_mismatch(probe(fetch, [repo], [], [])))]) :-
     prepare_program(

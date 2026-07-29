@@ -133,6 +133,13 @@
     "finalDetail": ""
   },
   {
+    "name": "struct_host_output_schedule_answer_interned",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "struct_shared_child_survives_one_release",
     "bucket": "identical",
     "detail": "",
@@ -184,7 +191,7 @@
   {
     "name": "log_retraction_rejected",
     "bucket": "run_error",
-    "detail": "log_retraction_rejected: retract from log rel 'event' (engine.pl retract_from_log)",
+    "detail": "retract from log rel 'event'",
     "finalBucket": "final_wrong",
     "finalDetail": "run threw before the final state could be read"
   },
