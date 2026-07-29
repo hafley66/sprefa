@@ -1,7 +1,20 @@
-# door-handwritten.dl6 -- text-door receipt program.
+# door-handwritten.dl6 -- text-door receipt program, and the served engine's
+# receipt (a) program (plans/2026-07-29-runtime-bridge-header.md scope 4a).
+#
+# REPAIRED 2026-07-29 (runtime bridge arc). The rule used to read
+#
+#   current(Id, Kind) <- latest(event(Id, Kind)).
+#
+# and that spelling COMPILES NOWHERE at HEAD: `latest_in_level_rule` refuses it
+# in a level rule (the review-B2 refusal), and `edge_body_with_latest` refuses
+# the `<+` form too. Both refusals landed after this file was written and
+# nothing gated it, so the checked-in emitted module went stale in silence. The
+# rule is now the plain level rule; `latest`'s missing compiling form is the
+# open review finding A12/B1 (lower latest as the negation path minus NOT
+# EXISTS), not something this file works around.
 
 rel result(ok(value: text) ; error(message: text)).
 rel event(id: int, kind: text) log keep(all).
 rel current(id: int, kind: text).
 
-current(Id, Kind) <- latest(event(Id, Kind)).
+current(Id, Kind) <- event(Id, Kind).

@@ -64,3 +64,6 @@ vendor/heptagon/
 vendor/trealla/
 v6/prolog/compile/out/text-door/
 v6/prolog/compile/scripts/out/text-door/
+
+# tsv2 served-program compile output (one emitted module per loaded .dl6)
+v6/tsv2/gen_served/

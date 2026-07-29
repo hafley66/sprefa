@@ -16,7 +16,7 @@
  * (engine/types.ts) rather than re-declaring them.
  */
 
-import type { Observable } from "rxjs";
+import type { Observable, SchedulerLike } from "rxjs";
 import type { ISqlRunner, QueryResult, SqliteDb, SqlStatement, TraceStatement } from "sprefa-store-engine/src/engine/types.ts";
 
 // re-exported so runtime/gen files can name the connection and statement
@@ -319,4 +319,226 @@ export interface ITickLogEmitter {
    *  spaces, LF terminated by the caller (this returns the line WITHOUT a
    *  trailing newline). */
   line(tick: number, deltas: ITickDeltas): ITickLogLine;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE SERVED ENGINE (serve/*.ts). One header per package, so the serve layer's
+// contracts are declared here beside the runtime's, each name exactly once.
+//
+// Everything below is about running a compiled program as a LIVE process --
+// arrivals over HTTP, sh hosts that really spawn, interval binds that really
+// tick. The schedule-fed grading path above is untouched and stays the referee.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One declared world column, exactly as emit_ts.pl writes it. */
+export interface IHostColumnPlan {
+  readonly name: string;
+  readonly type: "int" | "text" | "json";
+}
+
+/**
+ * One `sh_decl` as emitted data. `execution` names the executor the served
+ * runtime dispatches on ("live_sh" since the runtime-bridge arc); a plan whose
+ * executor this runtime does not know is refused BY NAME rather than skipped.
+ */
+export interface IHostPlan {
+  readonly name: string;
+  readonly inputs: readonly IHostColumnPlan[];
+  readonly outputs: readonly IHostColumnPlan[];
+  readonly template: string;
+  readonly demandRel: string;
+  readonly responseRel: string;
+  readonly execution: string;
+}
+
+/**
+ * One `bind_decl` as emitted data. `periods` is the program's own statement
+ * about cadence: the distinct integer literals its rules read in the bind
+ * atom's first column (emit_ts.pl `bind_read_periods/4`). An empty list means
+ * the program declared the bind and never asked for a cadence, so no timer is
+ * owed -- never a default period invented out here.
+ */
+export interface IBindPlan {
+  readonly name: string;
+  readonly columns: readonly IHostColumnPlan[];
+  readonly periods: readonly number[];
+  readonly execution: string;
+}
+
+export interface IQueryPlan {
+  readonly rel: string;
+  readonly arity: number;
+  readonly snapshot: "current";
+}
+
+/**
+ * What a compiled `.dl6` module actually exports: `IGenProgram`'s five pinned
+ * fields plus the extra fields emit_ts.pl adds. The sweep and run-emitted
+ * harnesses each declared their own local slice of this shape; the served
+ * engine needs all of it, so the whole thing is declared once, here.
+ */
+export interface IServedProgram extends IGenProgram {
+  readonly boot: readonly IBootStatement[];
+  readonly finalSelect: Readonly<Record<string, string>>;
+  readonly hostPlans: readonly IHostPlan[];
+  readonly bindPlans: readonly IBindPlan[];
+  readonly queryPlans: readonly IQueryPlan[];
+  readonly unsupportedExecution: readonly string[];
+}
+
+export interface IProgramCompiler {
+  /** `.dl6` source text -> the compiled, imported program module. One swipl
+   *  run per call (compile.pl `compile_dl6/2`), then a dynamic import of the
+   *  emitted file. Errors carry swipl's own stderr text. */
+  compile(source: string): Observable<IServedProgram>;
+}
+
+/** One tick as the served engine reports it: the number, the deltas, and the
+ *  canonical log line those deltas serialize to (the same envelope the
+ *  schedule-fed grading path prints, so a served run diffs against the oracle
+ *  byte-for-byte). */
+export interface ITickOutcome {
+  readonly tick: number;
+  readonly line: ITickLogLine;
+  readonly deltas: ITickDeltas;
+}
+
+/**
+ * The live tick loop over one compiled program.
+ *
+ * `ticks$` is the single shared source; the loop turns only while something
+ * subscribes it (the same law `DlRuntime.deltas$` states in v6/dl). `submit`
+ * enqueues one arrival batch and reports the ticks THAT BATCH caused -- the
+ * settle tick plus any drain ticks that follow it.
+ */
+export interface ILiveEngine {
+  readonly program: IServedProgram;
+  readonly ticks$: Observable<ITickOutcome>;
+  submit(arrivals: IArrivalBatch): Observable<ITickOutcome>;
+  /** Current rows of one rel, through the program's own emitted decode SELECT
+   *  (`finalSelect`). Unknown rel names fail loudly. */
+  rows(rel: string): Observable<readonly IRow[]>;
+}
+
+/** Durable per-witness effect record, in the served db beside the program's
+ *  own tables. The response rel alone cannot serve as the cache: a host that
+ *  legitimately answers with ZERO rows leaves no response row and would refire
+ *  on every boot. */
+export interface IWitnessCache {
+  ddl(): readonly string[];
+  /** Drop rows left in 'pending' by a process that died mid-run: the cache row
+   *  IS the in-flight lock, and at subscribe time this single-process runner
+   *  cannot have anything in flight. */
+  clearDeadLocks(seam: ISqlSeam): Observable<void>;
+  /** Witness digests already answered ('done') for one host. */
+  answered(seam: ISqlSeam, host: string): Observable<ReadonlySet<string>>;
+  claim(seam: ISqlSeam, host: string, witnessDigest: string): Observable<void>;
+  settle(seam: ISqlSeam, host: string, witnessDigest: string, state: "done" | "error", rows: number): Observable<void>;
+}
+
+/** One finished host run, as the app graph carries it. */
+export interface IHostEffectDone {
+  readonly host: string;
+  readonly witnessDigest: string;
+  readonly responseRows: number;
+  readonly outcome: "done" | "cache_hit" | "error";
+}
+
+export interface IShHostRunner {
+  /** Cold. Boot-replays every live demand row, then follows the tick stream's
+   *  demand deltas; each unanswered witness spawns its template once and its
+   *  decoded rows land as an EDB arrival on the response rel. */
+  readonly effects$: Observable<IHostEffectDone>;
+}
+
+/** One finished bind firing. */
+export interface IBindFired {
+  readonly rel: string;
+  readonly period: number;
+  readonly bucket: number;
+  readonly tick: number;
+}
+
+export interface IIntervalBindRunner {
+  /** Cold. One rx `interval` per declared period; each firing commits one
+   *  arrival row. Unsubscribing IS the whole of teardown (rxjs's own
+   *  `clearInterval` on the scheduled action), so a program swap's `switchMap`
+   *  stops every timer with no bookkeeping here. */
+  readonly firings$: Observable<IBindFired>;
+}
+
+/** Every value the served app's one stream carries. */
+export type IServeEvent =
+  | {
+      readonly kind: "listening";
+      readonly port: number;
+      /** Live SSE client count; the leak receipt asserts it returns to zero. */
+      readonly activeSubscribeCount: () => number;
+      readonly close: () => Observable<void>;
+    }
+  | { readonly kind: "loaded"; readonly program: string }
+  | { readonly kind: "tick"; readonly outcome: ITickOutcome }
+  | { readonly kind: "effect"; readonly done: IHostEffectDone }
+  | { readonly kind: "bind"; readonly fired: IBindFired }
+  | { readonly kind: "served"; readonly method: string; readonly path: string };
+
+export interface IServeConfig {
+  readonly dbUrl: string;
+  readonly port: number;
+  /** rxjs's own scheduler seam (the F3 precedent in v6/dl's BindConfig): real
+   *  serving defaults to `asyncScheduler`, a test injects a `TestScheduler` so
+   *  a bind's cadence runs on virtual time and no test sleeps on a wall clock. */
+  readonly scheduler?: SchedulerLike;
+}
+
+export interface IServeTsv2 {
+  (config: IServeConfig): Observable<IServeEvent>;
+}
+
+// ── Self-diagnosis (serve/0_trace.ts, on the shared sprefa: channel spine) ────
+
+export interface IServeTickEvent {
+  readonly tick: number;
+  readonly rels: number;
+  readonly rows: number;
+  readonly statements: number;
+  readonly ms: number;
+}
+
+export interface IServeEffectEvent {
+  readonly host: string;
+  readonly witnessDigest: string;
+  readonly outcome: "done" | "cache_hit" | "error";
+  readonly rows: number;
+  readonly ms: number;
+  readonly error?: string;
+}
+
+export interface IServeBindEvent {
+  readonly rel: string;
+  readonly period: number;
+  readonly bucket: number;
+}
+
+/** One JSONL line per tick: the tick's own span plus every effect and bind
+ *  firing observed since the previous line. */
+export interface IServeTickLine extends IServeTickEvent {
+  readonly effects: readonly IServeEffectEvent[];
+  readonly binds: readonly IServeBindEvent[];
+}
+
+export interface IServeTrace {
+  tick(tick: number, rels: number, rows: number, statements: number, ms: number): void;
+  effect(
+    host: string,
+    witnessDigest: string,
+    outcome: "done" | "cache_hit" | "error",
+    rows: number,
+    ms: number,
+    failure?: unknown,
+  ): void;
+  bind(rel: string, period: number, bucket: number): void;
+  /** Idempotent. Installs the one subscriber per channel when DL_PERF_LOG names
+   *  a file; a second call with the same env is a no-op. */
+  installFromEnv(): void;
 }
