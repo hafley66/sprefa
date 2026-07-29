@@ -252,6 +252,13 @@ print_enum_field(Field, Text) :-
 
 % ═══ rule line : `HeadText <- BodyText.` / `HeadText <+ BodyText.` ══════════
 
+rule_line(Bindings, match(SourceAtom, Arms), Text) :-
+    !,
+    print_term(SourceAtom, Bindings, 0, top, SourceText),
+    match_arm_terms(Arms, ArmList),
+    maplist(print_match_arm(Bindings), ArmList, ArmTexts),
+    atomic_list_concat(ArmTexts, "\n  ; ", ArmsText),
+    format(atom(Text), "match ~w (\n    ~w\n).~n", [SourceText, ArmsText]).
 rule_line(Bindings, (Head <- Body), Line) :- !,
     print_term(Head, Bindings, 0, top, HeadText),
     print_body(Body, Bindings, BodyText),
@@ -260,6 +267,23 @@ rule_line(Bindings, (Head <+ Body), Line) :- !,
     print_term(Head, Bindings, 0, top, HeadText),
     print_body(Body, Bindings, BodyText),
     format(atom(Line), "~w <+ ~w.~n", [HeadText, BodyText]).
+
+match_arm_terms((Left ; Right), Arms) :-
+    !,
+    match_arm_terms(Left, LeftArms),
+    match_arm_terms(Right, RightArms),
+    append(LeftArms, RightArms, Arms).
+match_arm_terms(Arm, [Arm]).
+
+print_match_arm(Bindings, (Head <- Guards), Text) :-
+    !,
+    print_term(Head, Bindings, 0, top, HeadText),
+    print_body(Guards, Bindings, GuardsText),
+    format(atom(Text), "~w <- ~w", [HeadText, GuardsText]).
+print_match_arm(Bindings, (Head <+ Guards), Text) :-
+    print_term(Head, Bindings, 0, top, HeadText),
+    print_body(Guards, Bindings, GuardsText),
+    format(atom(Text), "~w <+ ~w", [HeadText, GuardsText]).
 
 % ═══ body : split the comma-conjunction, print each item, join with ", " ════
 

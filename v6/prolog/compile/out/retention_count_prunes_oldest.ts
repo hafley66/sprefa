@@ -30,6 +30,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IIncrementalRetentionStatement,
   IRelDelta,
   IRow,
   IRowValue,
@@ -118,13 +119,22 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
+const INCREMENTAL_RETENTION_STATEMENTS: readonly IIncrementalRetentionStatement[] = [
+  { rel: "event", count: 2, deleteSql: `DELETE FROM "event" WHERE rowid NOT IN (SELECT rowid FROM "event" ORDER BY rowid DESC LIMIT 2) RETURNING "col1"` },
+];
+
 function recomputeLevels(seam: ISqlSeam): Observable<void> {
   void seam;
   return of(undefined);
 }
 
+function applyNaiveRetention(seam: ISqlSeam): Observable<void> {
+  const statements: SqlStatement[] = INCREMENTAL_RETENTION_STATEMENTS.map((statement) => ({ sql: statement.deleteSql, args: [] }));
+  return seam.runner.batch(seam.db, statements).pipe(map(() => undefined));
+}
+
 function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const event = multisetDiff(before.event, after.event);
+  const eventDiff = multisetDiff(before.event, after.event); const event = { add: eventDiff.add, del: [] };
   return {
     rels: [
       { rel: "event", add: event.add, del: event.del },
@@ -137,6 +147,7 @@ function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITick
   return readSnapshot(seam).pipe(
     concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
+    concatMap((before) => applyNaiveRetention(seam).pipe(map(() => before))),
     concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
   );
   // retention_count_prunes_oldest: no edge rules -- absorb arrivals, recompute levels, diff.
@@ -153,6 +164,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
     concatMap(() => IncrementalRuntime.applyEdges(seam, INCREMENTAL_EDGE_STATEMENTS, INCREMENTAL_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+    concatMap(() => IncrementalRuntime.applyRetention(seam, INCREMENTAL_RETENTION_STATEMENTS, INCREMENTAL_RELATIONS)),
     concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.readBoundary(seam, INCREMENTAL_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, INCREMENTAL_RELATIONS).pipe(
@@ -175,6 +187,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
   relations: INCREMENTAL_RELATIONS,
   edges: INCREMENTAL_EDGE_STATEMENTS,
   levels: INCREMENTAL_LEVEL_STATEMENTS,
+  retention: INCREMENTAL_RETENTION_STATEMENTS,
 };
 
 export const program: IGenProgramWithBoot = {

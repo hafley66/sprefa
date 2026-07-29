@@ -14,11 +14,39 @@
     "finalDetail": ""
   },
   {
+    "name": "match_classify_response",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "match_classify_response_desugared",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "match_edge_arm_keeps_edge_semantics",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "keyed_edge_head_still_replaces",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "retention_count_prunes_oldest",
     "bucket": "identical",
     "detail": "",
-    "finalBucket": "final_wrong",
-    "finalDetail": "actual={\"final\":{\"event\":[[\"one\"],[\"three\"],[\"two\"]]}} oracle={\"final\":{\"event\":[[\"three\"],[\"two\"]]}}"
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "log_without_retention_rejected",

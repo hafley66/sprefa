@@ -68,6 +68,7 @@ surface(enum_decl/2,     decl,      no_refs,                      decl(enum_vari
 surface(';' /2,          decl,      no_refs,                      decl(enum_variant_separator),           live).
 surface(col_type/3,      decl,      no_refs,                      decl(column_type),                      live).
 surface(set/0,           decl,      no_refs,                      decl(refuse(removed_word)),            refused).
+surface(match/2,         sugar,     no_refs,                      block(match_arms),                      live).
 
 surface_for_term(Term, Functor/Arity, Axis, AnalyzeRole, LowerRole, Status) :-
     nonvar(Term),

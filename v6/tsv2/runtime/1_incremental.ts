@@ -6,6 +6,7 @@ import type {
   IIncrementalEdgeStatement,
   IIncrementalLevelStatement,
   IIncrementalRelationPlan,
+  IIncrementalRetentionStatement,
   IIncrementalRuntime,
   IRelDelta,
   IRow,
@@ -402,6 +403,33 @@ function sequenceWork<Item>(
   );
 }
 
+function applyRetentionStatement(
+  seam: ISqlSeam,
+  statement: IIncrementalRetentionStatement,
+  relationByName: ReadonlyMap<string, IIncrementalRelationPlan>,
+  nextSequence: () => number,
+): Observable<void> {
+  const relation = relationByName.get(statement.rel);
+  if (relation === undefined) {
+    throw new Error(`incremental retention relation missing: ${statement.rel}`);
+  }
+  return seam.runner.execute(seam.db, statement.deleteSql).pipe(
+    concatMap((result) => {
+      const rows = resultRows(result, relation.columns);
+      if (rows.length === 0) return of(undefined);
+      const events = rows.map(
+        (row): DeltaEvent => ({
+          rel: statement.rel,
+          sign: -1,
+          sequence: nextSequence(),
+          row,
+        }),
+      );
+      return stageEvents(seam, [relation], events, []);
+    }),
+  );
+}
+
 function boundaryDelta(
   relation: IIncrementalRelationPlan,
   result: QueryResult,
@@ -418,7 +446,9 @@ function boundaryDelta(
   const del: IRow[] = [];
   for (const { row, weight } of weights.values()) {
     for (let count = 0; count < weight; count += 1) add.push(row);
-    for (let count = 0; count > weight; count -= 1) del.push(row);
+    if (relation.kind === "set") {
+      for (let count = 0; count > weight; count -= 1) del.push(row);
+    }
   }
   return { rel: relation.rel, add, del };
 }
@@ -585,6 +615,25 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     return sequenceWork(
       statements,
       (statement) => applyLevelStatement(seam, statement, relationByName, true, nextSequence),
+    );
+  },
+
+  applyRetention(
+    seam: ISqlSeam,
+    statements: readonly IIncrementalRetentionStatement[],
+    relations: readonly IIncrementalRelationPlan[],
+  ): Observable<void> {
+    const relationByName = new Map(relations.map((relation) => [relation.rel, relation]));
+    let sequence = 0;
+    const nextSequence = (): number => {
+      const current = sequence;
+      sequence += 1;
+      return current;
+    };
+    return sequenceWork(
+      statements,
+      (statement) =>
+        applyRetentionStatement(seam, statement, relationByName, nextSequence),
     );
   },
 

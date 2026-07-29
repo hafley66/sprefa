@@ -120,8 +120,13 @@ header_lines(Name, Lines) :-
 
 % ═══ imports ═════════════════════════════════════════════════════════════════
 
-imports_lines(_HasEdgeRules,
-    [ 'import { concatMap, forkJoin, map, of, type Observable } from "rxjs";',
+imports_lines(_HasEdgeRules, HasRetention, Lines) :-
+    ( HasRetention == true
+    -> RetentionImport = ['  IIncrementalRetentionStatement,']
+    ; RetentionImport = []
+    ),
+    append(
+    [ [ 'import { concatMap, forkJoin, map, of, type Observable } from "rxjs";',
       '',
       'import { IncrementalRuntime } from "../runtime/1_incremental.ts";',
       'import { multisetDiff } from "../runtime/diff.ts";',
@@ -133,7 +138,10 @@ imports_lines(_HasEdgeRules,
       '  IIncrementalEdgeStatement,',
       '  IIncrementalLevelStatement,',
       '  IIncrementalProgramPlan,',
-      '  IIncrementalRelationPlan,',
+      '  IIncrementalRelationPlan,'
+      ],
+      RetentionImport,
+      [
       '  IRelDelta,',
       '  IRow,',
       '  IRowValue,',
@@ -141,7 +149,8 @@ imports_lines(_HasEdgeRules,
       '  ITickDeltas,',
       '  SqlStatement,',
       '} from "../runtime/types.ts";'
-    ]).
+      ]
+    ], Lines).
     % `of` covers two zero-op shapes, not just the edge-rule forkJoin([])
     % guard it was originally added for: an edge-free tick still needs it for
     % edge_resolver_block/3's `of([])` when EdgeStatements is nonempty, AND
@@ -450,6 +459,24 @@ incremental_level_statement_entry_line(RelPlans,
            [HeadName, DeltaTable, ColumnsText, DeltaInsertTemplate,
             SelectTemplate, RecomputeTemplate, SupportText, AggregateText]).
 
+incremental_retention_statement_lines([], []) :- !.
+incremental_retention_statement_lines(RetentionStatements, Lines) :-
+    maplist(incremental_retention_statement_entry_line,
+            RetentionStatements, EntryLines),
+    append(
+        [ ['const INCREMENTAL_RETENTION_STATEMENTS: readonly IIncrementalRetentionStatement[] = ['],
+          EntryLines,
+          ['];']
+        ], Lines).
+
+incremental_retention_statement_entry_line(
+        retentionstmt(Ref, Limit, DeleteSql), Line) :-
+    ref_name(Ref, Name),
+    js_template(DeleteSql, DeleteTemplate),
+    format(atom(Line),
+           '  { rel: "~w", count: ~w, deleteSql: ~w },',
+           [Name, Limit, DeleteTemplate]).
+
 optional_sql_template(none, null) :- !.
 optional_sql_template(Sql, Template) :- js_template(Sql, Template).
 
@@ -659,8 +686,10 @@ recompute_levels_fn_lines(LevelStatements, Lines) :-
 
 % ═══ buildDeltas ═════════════════════════════════════════════════════════════
 
-build_deltas_fn_lines(RelPlans, EdgeStatements, Lines) :-
-    maplist(diff_local_line, RelPlans, DiffLines),
+build_deltas_fn_lines(RelPlans, EdgeStatements, RetentionStatements, Lines) :-
+    findall(Ref, member(retentionstmt(Ref, _, _), RetentionStatements),
+            RetentionRefs),
+    maplist(diff_local_line(RetentionRefs), RelPlans, DiffLines),
     maplist(rel_entry_line, RelPlans, RelEntryLines),
     carry_pending_expr(EdgeStatements, CarryExpr),
     format(atom(CarryLine), '    carryPending: ~w,', [CarryExpr]),
@@ -672,9 +701,16 @@ build_deltas_fn_lines(RelPlans, EdgeStatements, Lines) :-
           ['    ],', CarryLine, '  };', '}']
         ], Lines).
 
-diff_local_line(relplan(Ref, _Kind, _Columns, _Key, _ColumnTypes), Line) :-
+diff_local_line(RetentionRefs,
+                relplan(Ref, _Kind, _Columns, _Key, _ColumnTypes), Line) :-
     ref_name(Ref, Name),
-    format(atom(Line), '  const ~w = multisetDiff(before.~w, after.~w);', [Name, Name, Name]).
+    ( memberchk(Ref, RetentionRefs)
+    -> format(atom(Line),
+              '  const ~wDiff = multisetDiff(before.~w, after.~w); const ~w = { add: ~wDiff.add, del: [] };',
+              [Name, Name, Name, Name, Name])
+    ; format(atom(Line), '  const ~w = multisetDiff(before.~w, after.~w);',
+             [Name, Name, Name])
+    ).
 
 rel_entry_line(relplan(Ref, _Kind, _Columns, _Key, _ColumnTypes), Line) :-
     ref_name(Ref, Name),
@@ -708,19 +744,31 @@ carry_pending_expr(EdgeStatements, Expr) :-
 
 % ═══ tick() + program export ════════════════════════════════════════════════
 
-run_naive_tick_fn_lines(Name, [], Lines) :- !,
-    format(atom(NameCommentLine), '  // ~w: no edge rules -- absorb arrivals, recompute levels, diff.', [Name]),
-    Lines =
-    [ 'function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
-      '  return readSnapshot(seam).pipe(',
-      '    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),',
-      '    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),',
-      '    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),',
-      '  );',
-      NameCommentLine,
+naive_retention_fn_lines([], []) :- !.
+naive_retention_fn_lines(_RetentionStatements,
+    [ 'function applyNaiveRetention(seam: ISqlSeam): Observable<void> {',
+      '  const statements: SqlStatement[] = INCREMENTAL_RETENTION_STATEMENTS.map((statement) => ({ sql: statement.deleteSql, args: [] }));',
+      '  return seam.runner.batch(seam.db, statements).pipe(map(() => undefined));',
       '}'
-    ].
-run_naive_tick_fn_lines(Name, EdgeStatements, Lines) :-
+    ]).
+
+run_naive_tick_fn_lines(Name, [], HasRetention, Lines) :- !,
+    format(atom(NameCommentLine), '  // ~w: no edge rules -- absorb arrivals, recompute levels, diff.', [Name]),
+    retention_tick_lines(HasRetention, RetentionLines),
+    append(
+    [ [ 'function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
+        '  return readSnapshot(seam).pipe(',
+        '    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),',
+        '    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),'
+      ],
+      RetentionLines,
+      [ '    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),',
+        '  );',
+        NameCommentLine,
+        '}'
+      ]
+    ], Lines).
+run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, Lines) :-
     EdgeStatements \== [],
     edge_resolve_call_exprs(EdgeStatements, ResolveCallExprs),
     ( ResolveCallExprs = [SingleCall]
@@ -730,8 +778,9 @@ run_naive_tick_fn_lines(Name, EdgeStatements, Lines) :-
     ),
     format(atom(EdgeWritesLine), '      ~w.pipe(', [EdgeWritesExpr]),
     format(atom(NameCommentLine), '  // ~w: engine.pl process_occurrences -> level_closure -> boundary_deltas.', [Name]),
-    Lines =
-    [ 'function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
+    retention_tick_lines(HasRetention, RetentionLines),
+    append(
+    [ [ 'function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
       '  return readSnapshot(seam).pipe(',
       '    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),',
       '    concatMap((before) =>',
@@ -740,12 +789,20 @@ run_naive_tick_fn_lines(Name, EdgeStatements, Lines) :-
       '        map(() => before),',
       '      ),',
       '    ),',
-      '    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),',
+      '    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),'
+      ],
+      RetentionLines,
+      [
       '    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),',
       '  );',
       NameCommentLine,
       '}'
-    ].
+      ]
+    ], Lines).
+
+retention_tick_lines(true,
+    ['    concatMap((before) => applyNaiveRetention(seam).pipe(map(() => before))),']).
+retention_tick_lines(false, []).
 
 incremental_mode_lines(IncrementalSafe, ReconcileEveryTick,
     [ SafeLine, ReconcileLine,
@@ -755,16 +812,25 @@ incremental_mode_lines(IncrementalSafe, ReconcileEveryTick,
     format(atom(ReconcileLine), 'const RECONCILE_EVERY_TICK = ~w;',
            [ReconcileEveryTick]).
 
-incremental_plan_export_lines(RetractionGuard,
-    [ 'export const incrementalPlan: IIncrementalProgramPlan = {',
+incremental_plan_export_lines(RetractionGuard, HasRetention, Lines) :-
+    ( HasRetention == true
+    -> RetentionLine = ['  retention: INCREMENTAL_RETENTION_STATEMENTS,']
+    ; RetentionLine = []
+    ),
+    append(
+    [ [ 'export const incrementalPlan: IIncrementalProgramPlan = {',
       '  safe: INCREMENTAL_PROGRAM_SAFE,',
       '  reconcileEveryTick: RECONCILE_EVERY_TICK,',
       GuardLine,
       '  relations: INCREMENTAL_RELATIONS,',
       '  edges: INCREMENTAL_EDGE_STATEMENTS,',
-      '  levels: INCREMENTAL_LEVEL_STATEMENTS,',
+      '  levels: INCREMENTAL_LEVEL_STATEMENTS,'
+      ],
+      RetentionLine,
+      [
       '};'
-    ]) :-
+      ]
+    ], Lines),
     format(atom(GuardLine), '  retractionGuard: "~w",', [RetractionGuard]).
 
 incremental_carry_expr([], 'false') :- !.
@@ -780,7 +846,8 @@ incremental_carry_expr(EdgeStatements, Expr) :-
            '[~w].includes(delta.rel) && (delta.add.length > 0 || delta.del.length > 0)',
            [NamesText]).
 
-run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired, Lines) :-
+run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
+                              HasRetention, Lines) :-
     ( EdgeStatements == []
     -> MergeLine = '    concatMap(() => of(undefined)),',
        PostEdgeLevelLine = '    concatMap(() => of(undefined)),'
@@ -789,14 +856,22 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired, Lines) :
     ),
     RecomputeLine = '    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK)),',
     run_tick_dispatch_lines(DerivedEdgeCarryRequired, DispatchLines),
-    Lines =
-    [ 'function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
+    ( HasRetention == true
+    -> RetentionLines =
+       ['    concatMap(() => IncrementalRuntime.applyRetention(seam, INCREMENTAL_RETENTION_STATEMENTS, INCREMENTAL_RELATIONS)),']
+    ; RetentionLines = []
+    ),
+    append(
+    [ [ 'function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
       '  return IncrementalRuntime.prepareTick(seam, INCREMENTAL_RELATIONS).pipe(',
       '    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, INCREMENTAL_RELATIONS)),',
       '    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),',
       '    concatMap(() => IncrementalRuntime.applyEdges(seam, INCREMENTAL_EDGE_STATEMENTS, INCREMENTAL_RELATIONS)),',
       MergeLine,
-      PostEdgeLevelLine,
+      PostEdgeLevelLine
+      ],
+      RetentionLines,
+      [
       RecomputeLine,
       '    concatMap(() => IncrementalRuntime.readBoundary(seam, INCREMENTAL_RELATIONS)),',
       '    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, INCREMENTAL_RELATIONS).pipe(',
@@ -805,7 +880,9 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired, Lines) :
       '  );',
       '}',
       ''
-    | DispatchLines ].
+      ],
+      DispatchLines
+    ], Lines).
 
 run_tick_dispatch_lines(true,
     [ 'function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
@@ -893,7 +970,10 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     Lowered = lowered(Name, Ddl, ArrivalStatements, EdgeStatements, LevelStatements, DeltaStatements, RelPlans, ArrivalTargets),
     header_lines(Name, HeaderLines),
     ( EdgeStatements == [] -> HasEdgeRules = false ; HasEdgeRules = true ),
-    imports_lines(HasEdgeRules, ImportLines),
+    include(is_level_statement, LevelStatements, RuleLevelStatements),
+    include(is_retention_statement, LevelStatements, RetentionStatements),
+    ( RetentionStatements == [] -> HasRetention = false ; HasRetention = true ),
+    imports_lines(HasEdgeRules, HasRetention, ImportLines),
     local_types_lines(LocalTypeLines),
     bind_args_helper_lines(BindArgsHelperLines),
     ( EdgeStatements == [] -> TriggerOccurrencesHelperLines = [] ; trigger_occurrences_helper_lines(TriggerOccurrencesHelperLines) ),
@@ -908,32 +988,40 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     arrival_statement_fn_lines(Name, ArrivalStatementFnLines),
     incremental_relation_lines(RelPlans, ArrivalStatements, DeltaStatements, IncrementalRelationLines),
     incremental_edge_statement_lines(EdgeStatements, RelPlans, IncrementalEdgeStatementLines),
-    incremental_level_statement_lines(LevelStatements, RelPlans, IncrementalLevelStatementLines),
+    incremental_level_statement_lines(RuleLevelStatements, RelPlans, IncrementalLevelStatementLines),
+    incremental_retention_statement_lines(RetentionStatements,
+                                          IncrementalRetentionStatementLines),
     ( EdgeStatements == []
     -> EdgeConstLines = [], EdgeFnLines = []
     ; edge_resolver_blocks(EdgeStatements, RelPlans, EdgeConstLines, EdgeFnLines)
     ),
-    recompute_levels_fn_lines(LevelStatements, RecomputeLevelsFnLines),
-    build_deltas_fn_lines(RelPlans, EdgeStatements, BuildDeltasFnLines),
-    run_naive_tick_fn_lines(Name, EdgeStatements, RunNaiveTickFnLines),
-    incremental_program_safe(Plan, EdgeStatements, LevelStatements, IncrementalSafe),
+    recompute_levels_fn_lines(RuleLevelStatements, RecomputeLevelsFnLines),
+    naive_retention_fn_lines(RetentionStatements, NaiveRetentionFnLines),
+    build_deltas_fn_lines(RelPlans, EdgeStatements, RetentionStatements,
+                          BuildDeltasFnLines),
+    run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention,
+                            RunNaiveTickFnLines),
+    incremental_program_safe(Plan, EdgeStatements, RuleLevelStatements, IncrementalSafe),
     reconcile_every_tick(Plan, ReconcileEveryTick),
     derived_edge_carry_required(Plan, EdgeStatements, DerivedEdgeCarryRequired),
     retraction_guard(Plan, RetractionGuard),
     incremental_mode_lines(IncrementalSafe, ReconcileEveryTick,
                            IncrementalModeLines),
     run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
-                                  RunIncrementalTickFnLines),
-    incremental_plan_export_lines(RetractionGuard, IncrementalPlanExportLines),
+                                  HasRetention, RunIncrementalTickFnLines),
+    incremental_plan_export_lines(RetractionGuard, HasRetention,
+                                  IncrementalPlanExportLines),
     program_export_lines(Name, ProgramExportLines),
     Sections0 =
     [ HeaderLines, ImportLines, LocalTypeLines, BindArgsHelperLines, TriggerOccurrencesHelperLines,
       DdlLines, RelColumnsLines, ArrivalTargetsLines,
       BootLines, SnapshotTypeLines, ReadSnapshotFnLines, FinalSelectLines,
       ArrivalStatementsLines, ArrivalStatementFnLines,
-      IncrementalRelationLines, IncrementalEdgeStatementLines, IncrementalLevelStatementLines,
+      IncrementalRelationLines, IncrementalEdgeStatementLines,
+      IncrementalLevelStatementLines, IncrementalRetentionStatementLines,
       EdgeConstLines, EdgeFnLines,
-      RecomputeLevelsFnLines, BuildDeltasFnLines, RunNaiveTickFnLines,
+      RecomputeLevelsFnLines, NaiveRetentionFnLines, BuildDeltasFnLines,
+      RunNaiveTickFnLines,
       IncrementalModeLines, RunIncrementalTickFnLines, IncrementalPlanExportLines,
       ProgramExportLines
     ],
@@ -941,3 +1029,6 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     maplist(lines_block, Sections, SectionTexts),
     atomic_list_concat(SectionTexts, '\n\n', Body),
     format(atom(Text), '~w\n', [Body]).
+
+is_level_statement(levelstmt(_, _, _, _, _, _)).
+is_retention_statement(retentionstmt(_, _, _)).

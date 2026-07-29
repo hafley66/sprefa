@@ -1,0 +1,1 @@
+{"final":{"fetch_result_error":[["worker",503]],"fetch_result_fresh":[["api","etag_1","payload_1"]],"fetch_result_unchanged":[["api"]],"resp_raw":[["api",200,"etag_1","payload_1"],["api",304,"etag_1","payload_1"],["worker",503,"none","unavailable"]]}}

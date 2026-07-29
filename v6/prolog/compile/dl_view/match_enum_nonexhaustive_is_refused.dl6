@@ -1,0 +1,5 @@
+rel body(page(view: text) ; redirect(to: text)).
+
+match decoded_body(Id, Tag, Value) (
+    body_page(Id, Value) <+ Tag == 'page'
+).

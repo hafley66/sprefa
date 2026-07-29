@@ -31,7 +31,7 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
-:- use_module('../0_enum_expand', [expand_enum_program/2]).
+:- use_module('../0_match_expand', [expand_match_program/2]).
 :- use_module('../conformance/body', [rel_ref/2]).
 :- use_module(registry,
               [ surface_for_term/6,
@@ -701,7 +701,7 @@ check_edge_head_column_types_for_rule(RelPlans, (Head <+ Body)) :-
 % target fixtures need them; lower.pl has no SQL shape for them yet).
 
 check_supported_subset(SugaredProg) :-
-    expand_enum_program(SugaredProg, ExpandedProg),
+    expand_match_program(SugaredProg, ExpandedProg),
     check_supported_subset_expanded(ExpandedProg).
 
 check_supported_subset_expanded(prog(Decls, Rules)) :-
@@ -710,6 +710,9 @@ check_supported_subset_expanded(prog(Decls, Rules)) :-
     forall(( member(Rule, Rules), rule_is_edge(Rule) ), check_edge_rule_shape(Rule)),
     forall(( member(Rule, Rules), rule_is_level(Rule) ), check_level_rule_shape(Rule)),
     check_no_edge_head_conflict_risk(Decls, Rules),
+    forall(( member(keyed(Ref, _), Decls), member(LevelRule, Rules),
+             rule_is_level(LevelRule), rule_head_ref(LevelRule, Ref) ),
+           throw(unsupported_construct(keyed_level_head(Ref)))),
     forall(( member(keyed(Ref, Positions), Decls), rel_kind(Decls, Ref, log) ),
            throw(unsupported_construct(keyed_log_rel(Ref, Positions)))).
 

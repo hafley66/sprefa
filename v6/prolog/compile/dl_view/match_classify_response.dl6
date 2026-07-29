@@ -1,0 +1,7 @@
+rel resp_raw(endpoint: text, status: int, tag: text, body: text) log keep(all).
+
+match resp_raw(Endpoint, Status, Tag, Body) (
+    fetch_result_fresh(Endpoint, Tag, Body) <- Status == 200
+  ; fetch_result_unchanged(Endpoint) <- Status == 304
+  ; fetch_result_error(Endpoint, Status) <- Status >= 400
+).
