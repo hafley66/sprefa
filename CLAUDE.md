@@ -1318,3 +1318,32 @@ exercises the correct resolution order (DL_EXTRACT_BIN -> in-tree
 release -> build), the shape 4_ingest should adopt. Watcher
 restart+delete retraction gap + one-shape-per-host-decl limits named
 in ARCH row. PHASE 2 OF THE GOLDEN PLAN IS COMPLETE.
+PHASE 3 EDGE-BODY ARC LANDED (opus worktree, 4 commits, merged;
+coordinator re-verified: green exit 0 on merged main, sweep both
+modes 82 compiled/80 identical/0 wrong, TEXT_DOOR 82/82/0, plunit
+134/134, conformance 137/0): negation/comparisons/binds guard seam,
+now/1 = emitted tick counter, edge heads inherit column types from
+feeding bodies (5 rev-pin/diag fixtures flipped). THREE HONEST
+STOPS, all receipted: (1) pre-in-edge REFUSED -- the dispatch
+premise (pre = sampled read) was MEASURED WRONG; pre is a chained
+mid-tick read through ordered occurrences (pre-as-sampled projects
+[1,1] where oracle pins 2, SCOREBOARD.md receipt); needs an ordered
+occurrence loop = new execution shape, ARCH row pre_occurrence_loop.
+(2) finalize-in-edge = runtime seam owed (frontier staging drops
+sign=-1; signed departure frontier for listened_departure_refs).
+(3) json destructure blocked BELOW the arm: compound-arrival term
+text vs json1 tagged form -- the encoding decision precedes any
+decode/2 lowering, ARCH row decode_arc, user-level call. NEW REFUSAL
+THAT GATES THE FLAGSHIP: edge_body_joins_arrival_fed_level (emitted
+mid-tick level plane is insert-only vs oracle's freeze-after-
+arrivals-before-edges; clock_rel_join_storms 3 rows vs oracle 1).
+TICK PHASE ALIGNMENT ARC DISPATCHED on exactly that + the signed
+frontier (ARCH task tick_phase_alignment, fork tick_alignment_tier).
+Fallout fixes in the landing: seeded_refs Initial-only silent row
+drop (final-state leg caught it), print_dl col_type synthesis.
+ALSO: `just arch` cwd bug fixed by coordinator (covers_endpoints_
+ground read a repo-root-relative path; now resolves via
+prolog_load_context, passes from any cwd). TWO FLAKE CLASSES seen
+tonight, both pre-existing: store golden.test 1-in-N under parallel
+load (ledger'd before), one node segfault in a sweep run (clean on
+rerun, experimental transform-types under load suspected).

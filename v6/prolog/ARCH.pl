@@ -460,9 +460,17 @@ covers(r6_pre_visibility,         pre_read).
 covers(s2_file_rels,              key_type).
 covers(s3_dirtiness,              level_rule).
 
+% Resolve fixtures relative to THIS file, not the process cwd: `just arch`
+% runs swipl from v6/ and the old repo-root-relative path made
+% covers_endpoints_ground fail there while passing from the repo root
+% (bit the coordinator and a worktree agent the same night, 2026-07-29).
+:- dynamic arch_dir/1.
+:- prolog_load_context(directory, Dir), asserta(arch_dir(Dir)).
+
 covers_endpoint_exists(Subject) :- ruling(Subject, _, _, _), !.
 covers_endpoint_exists(Subject) :-
-    format(atom(Path), "v6/prolog/conformance/fixtures/~w.pl", [Subject]),
+    arch_dir(Dir),
+    format(atom(Path), "~w/conformance/fixtures/~w.pl", [Dir, Subject]),
     exists_file(Path), !.
 
 % ═════════════════════════════════════════════════════════════════════════════
@@ -488,6 +496,10 @@ fork('2026-07-29', phase3_split, edge_body_arc_first_flagship_pick_deferred, dis
      "the edge-body construct buckets (pre 12, negation 6, now 5, finalize 2) gate what the flagship can express; picking flow-interproc vs a callgraph rail before those land risks picking blind; deferring the pick costs nothing and the golden plan already orders it this way").
 fork('2026-07-29', phase3_agent_tier, opus_worktree, sonnet_lane,
      "edge-body lowering is the exact terrain of every silent-wrong cross-plane defect this project has logged; TICK-MODEL semantics + fail-first fixtures need mid-task judgment; third opus lane accepted knowingly against the sparingly word, reasoning recorded").
+fork('2026-07-29', pre_lowering_premise, refusal_with_measured_receipt, force_sampled_read_lowering,
+     "coordinator's dispatch premise (pre = sampled read like latest) was WRONG -- agent measured pre-as-sampled projecting [1,1] where the oracle pins 2; pre is a chained mid-tick read through ordered occurrences; the honest refusal + receipt beats a silently-wrong lowering, and pre_occurrence_loop is now a priced arc instead of a hidden defect").
+fork('2026-07-29', tick_alignment_tier, opus_worktree_fourth_lane, sonnet_or_wait_for_user,
+     "runtime tick phase order vs the oracle freeze IS the semantics of the engine; a wrong ordering grades wrong only on join-storm shapes (exactly the flagship shape), so the misfire cost dwarfs the tier cost; flagship is gated on it and the night has hours left").
 
 % ═════════════════════════════════════════════════════════════════════════════
 % BUILD ORDER — task(Name, Status, Needs). `roadmap` topsorts it; learning
@@ -539,6 +551,10 @@ task(prolog_org_refactor, done, []).                       % LANDED 2026-07-29 n
 task(org_banked_findings, unbuilt, [prolog_org_refactor]). % 4 findings banked in the org journal, each PINNED BY A TEST so drift is loud: (1) trigger_items/body_atoms misclassify next/combine/comparisons/lifecycle wrappers as relation atoms; (2) goal_rel_refs reports next/1+combine/2 as positive refs; (3) finalize_in_level_rule diagnostic drift + both doors accept not(finalize(...)); (4) 3 private cross-module calls in sprefa-store/bench/v1-scale-gen.pl outside the lint gate's load set. Fix wave = one small lane, unowned
 task(watcher_buy_research, done, []).                      % LANDED 2026-07-29 night (merge 8b0b49a8): plans/2026-07-29-watcher-buy-research.md. VERDICT @parcel/watcher first (native batch callback matches engine.submit(IArrivalBatch) one-tick commits, ignore-filter below JS, prebuilds all platforms, MIT, 31M weekly dl); node fs.watch = zero-dep fallback (IS chokidar v4/v5's mac/win backend); watchman = optional backend upgrade later, not the buy. Open residuals in doc: node ignore walk-vs-receive time on linux, watchman atomic-save, parcel symlink default. Pick gets its fork/5 row at phase-2 dispatch
 task(save_session_pl,     unbuilt, []).                    % user idea 2026-07-29 night: session saves as consultable .pl facts alongside chat_log md so a new session can consult/1 prior state; spell at next save
+task(edge_body_constructs, done, [latest_edge_sample]).    % LANDED 2026-07-29 night (opus worktree, 4 commits, coordinator re-verified; sweep 72/70 -> 82/80 identical, 0 wrong, TEXT_DOOR 82/82/0, plunit 134/134): negation/comparisons/binds guard seam + now/1 emitted tick counter + edge-head column typing from feeding bodies. Refusals removed: edge_body_needs_{negation,bind,comparison,now} + edge_head_column_type_mismatch; added: edge_body_with_negation (not/1 beyond one plain atom), edge_body_with_now, now_in_level_rule (compiler-only, oracle solves it), edge_body_joins_arrival_fed_level (SEE tick_phase_alignment). Fallout fixes: analyze seeded_refs Initial-only refs silently dropped final-state rows; print_dl type synthesis keyed off missing col_type (48 dl_view regen). Receipts in SCOREBOARD.md
+task(tick_phase_alignment, in_flight, [edge_body_constructs]). % THE FLAGSHIP BLOCKER: (a) emitted mid-tick level plane is insert-only vs oracle's freeze-after-arrivals-before-edges (clock_rel_join_storms: 3 rows vs oracle 1) -- fix runtime phase order, remove edge_body_joins_arrival_fed_level; (b) frontier staging drops sign=-1 so finalize-in-edge arms never fire -- signed departure frontier for listened_departure_refs, emitter half rides on top (2 fixtures). Both graded vs oracle both modes. DISPATCHED 2026-07-29 night, opus worktree
+task(pre_occurrence_loop,  unbuilt, [edge_body_constructs]). % pre-in-edge (13 fixtures) needs an ORDERED OCCURRENCE LOOP with writes applied between occurrences (engine.pl process_occurrences chaining; cross-arm in arrival order, so no per-arm CTE reaches it) -- a new execution shape in the emitted runtime, NOT a sampled read (dispatch premise measured wrong: pre-as-sampled projects [1,1] where oracle pins 2, receipt in SCOREBOARD.md). Own arc, unowned
+task(decode_arc,           unbuilt, []).                   % compound-arrival-vs-json1 encoding split blocks json destructure in edge (9) AND level (6) bodies: arrived compounds stored as canonical term text while compiled destructure reads the json1 tagged form. The encoding DECISION comes first (cross-target log contract implications), then decode/2 lowering. Coordinator/user-level call, then dispatchable
 
 roadmap :-
     findall(Name-Needs, task(Name, _, Needs), Pairs),
