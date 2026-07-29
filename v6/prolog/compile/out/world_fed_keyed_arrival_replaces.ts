@@ -93,7 +93,7 @@ const finalSelect: Record<string, string> = {
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  world_mode: { kind: "set", addSql: `INSERT OR REPLACE INTO "world_mode" ("col1", "col2") VALUES (?, ?)`, delSql: `DELETE FROM "world_mode" WHERE "col1" = ? AND "col2" = ?` },
+  world_mode: { kind: "set", addSql: `INSERT INTO "world_mode" ("col1", "col2") VALUES (?, ?) ON CONFLICT ("col1") DO UPDATE SET "col2" = excluded."col2"`, delSql: `DELETE FROM "world_mode" WHERE "col1" = ? AND "col2" = ?` },
 };
 
 function arrivalStatement(arrival: IArrivalRow): SqlStatement {
@@ -119,7 +119,7 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "world_mode", kind: "set", tableName: "world_mode", deltaTableName: "__delta_world_mode", frontierTableName: "__frontier_world_mode", nextFrontierTableName: "__next_frontier_world_mode", columns: ["col1", "col2"], keyIndices: [0], arrivalAddSql: `INSERT OR REPLACE INTO "world_mode" ("col1", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "col1", "col2"`, arrivalDelSql: `DELETE FROM "world_mode" WHERE ("col1", "col2") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "col1", "col2"`, boundarySql: `SELECT "col1", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' THEN json_extract("col2", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col2", '$.args')) || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_world_mode" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "col2", "_sign"` },
+  { rel: "world_mode", kind: "set", tableName: "world_mode", deltaTableName: "__delta_world_mode", frontierTableName: "__frontier_world_mode", nextFrontierTableName: "__next_frontier_world_mode", columns: ["col1", "col2"], keyIndices: [0], arrivalAddSql: `INSERT INTO "world_mode" ("col1", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("col1") DO UPDATE SET "col2" = excluded."col2" RETURNING "col1", "col2"`, arrivalDelSql: `DELETE FROM "world_mode" WHERE ("col1", "col2") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "col1", "col2"`, boundarySql: `SELECT "col1", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' THEN json_extract("col2", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col2", '$.args')) || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_world_mode" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "col2", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

@@ -66,7 +66,8 @@ check(keyed_arrival_replaces_by_key,
         lower_text(keyed_arrival, Text, _,
                    lowered(_, _, Arrivals, _, _, _, _, _)),
         member(arrivalstmt(user/2, set, AddSql, DelSql, _, _), Arrivals),
-        sub_atom(AddSql, 0, _, _, 'INSERT OR REPLACE'),
+        sub_atom(AddSql, 0, _, _, 'INSERT INTO'),
+        sub_atom(AddSql, _, _, _, 'ON CONFLICT ("id") DO UPDATE SET "name" = excluded."name"'),
         sub_atom(DelSql, _, _, _, '"id" = ?'),
         sub_atom(DelSql, _, _, _, '"name" = ?') )).
 
@@ -130,11 +131,11 @@ check(duplicate_key_positions_are_rejected_before_lowering,
               Refused = yes),
         Refused == yes )).
 
-check(construction_still_uses_full_relation_arity_and_json,
+check(existing_target_construction_projects_dense_identity,
       ( Text = "rel user(id: int, name: text) key(1).\nrel post(author: user).\npost(user(Id, Name)) <- user(Id, Name).\n",
         lower_text(full_constructor, Text, _,
                    lowered(_, _, _, _, Levels, _, _, _)),
         member(levelstmt(post/1, _, Inserts, _, _, _), Levels),
         member(Sql, Inserts),
-        sub_atom(Sql, _, _, _, 'json_object'),
-        sub_atom(Sql, _, _, _, '''user''') )).
+        sub_atom(Sql, _, _, _, 'b0."__id"'),
+        \+ sub_atom(Sql, _, _, _, 'json_object') )).

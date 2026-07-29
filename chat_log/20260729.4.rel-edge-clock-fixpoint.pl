@@ -299,3 +299,28 @@ next_action(2,
             'split identity dependency cycles from non-key relation-edge cycles and grade self and mutual reference cases').
 next_action(3,
             'run the opaque identity transport cases; retain ref only if a current program cannot express the required edge through relation matching and modes').
+
+touched('v6/prolog/labs/rel_value_unification/11_ref_necessity.pl',
+        'seven actual compiler receipts for identity capture, incremental projection, forwarding, decode, graph cycles, inline-cycle refusal, and ref registration').
+closed(keyed_replace_changes_dense_id,
+       'keyed arrivals now use SQLite ON CONFLICT DO UPDATE instead of INSERT OR REPLACE, preserving target __id while changing non-key fields').
+closed(incremental_identity_projection_divergence,
+       'a referenced target frontier now rejoins the current target row by all fields and projects rN.__id; the default incremental path no longer emits JSON where full recomputation emits an endpoint').
+locked(ref_current_verdict,
+       'no ref surface construct: scanning a target captures __id, typed variables forward it without a target rejoin, and existing decode joins __ref_<target> when fields are required').
+locked(graph_cycle_encoding,
+       'arbitrary graph cycles use an ordinary edge rel with two entity-reference columns; recursive inline entity columns retain type_cycle refusal because recursive full-value boundary rendering is circular').
+observed(ref_cycle_prototype_failure,
+         'relaxing the cycle check for non-key references creates recursively defined __ref_<target> render views and no finite nested boundary value; the prototype was discarded').
+observed(stable_id_requirement,
+         'INSERT OR REPLACE deletes and recreates a keyed target row, which can change __id and strand stored parent endpoints; ON CONFLICT DO UPDATE preserves endpoint identity').
+verification(ref_necessity_lab, passed(7)).
+verification(stable_target_id_runtime_receipt, passed).
+verification(stable_target_id_plunit, passed(150)).
+verification(stable_target_id_sweep,
+             result(103,101,0,2,
+                    'compiled, identical, wrong, recorded run errors')).
+next_action(1,
+            'resolve the target-membership boundary: materialized world targets are public final rows but currently produce no target arrival delta').
+next_action(2,
+            'rename remaining StructPlane and dictionary-era internal vocabulary after the membership ruling fixes the runtime boundary').

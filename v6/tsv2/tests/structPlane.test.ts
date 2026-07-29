@@ -309,6 +309,23 @@ test("key: an existing key with different non-key fields refuses before insertio
   assert.deepEqual(Object.keys(ids), ['[7,"Ada"]']);
 });
 
+test("key: an UPSERT replacement preserves the target id held by parents", async () => {
+  const seam = await userSeam();
+  const first = await firstValueFrom(
+    StructPlane.intern(seam, USER_TYPES, USER_REF_COLUMNS, userBatch({ id: 7, name: "Ada" })),
+  );
+  const targetId = Number(first[0]!.row[0]);
+  await firstValueFrom(seam.runner.execute(
+    seam.db,
+    { sql: `INSERT INTO "user" ("id", "name") VALUES (?, ?) ON CONFLICT ("id") DO UPDATE SET "name" = excluded."name"`, args: [7, "Grace"] },
+  ));
+  const row = await firstValueFrom(
+    seam.runner.execute(seam.db, `SELECT "__id", "name" FROM "user" WHERE "id" = 7`),
+  );
+  assert.equal(Number(row.rows[0]!["__id"]), targetId);
+  assert.equal(row.rows[0]!["name"], "Grace");
+});
+
 test("key: two different rows with one key in the same batch refuse before SQL", async () => {
   const base = await userSeam();
   const { seam, statements } = countingSeam(base);

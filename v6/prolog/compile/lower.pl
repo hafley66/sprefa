@@ -984,7 +984,7 @@ arrival_statement(relplan(Ref, log, Columns, _, _),
     length(Columns, N), placeholders(N, Placeholders),
     atomic_list_concat(Placeholders, ', ', PlaceholdersSql),
     format(atom(AddSql), 'INSERT INTO ~w (~w) VALUES (~w)', [QuotedTable, ColumnsSql, PlaceholdersSql]),
-    incremental_arrival_add_sql('INSERT INTO', QuotedTable, ColumnsSql, QuotedColumns,
+    incremental_arrival_add_sql('INSERT INTO', '', QuotedTable, ColumnsSql, QuotedColumns,
                                 IncrementalAddSql).
 arrival_statement(relplan(Ref, set, Columns, KeyOrNone, _),
                   arrivalstmt(Ref, set, AddSql, DelSql, IncrementalAddSql, IncrementalDelSql)) :-
@@ -993,13 +993,13 @@ arrival_statement(relplan(Ref, set, Columns, KeyOrNone, _),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
     length(Columns, N), placeholders(N, Placeholders),
     atomic_list_concat(Placeholders, ', ', PlaceholdersSql),
-    set_arrival_insert(KeyOrNone, Insert),
-    format(atom(AddSql), '~w ~w (~w) VALUES (~w)',
-           [Insert, QuotedTable, ColumnsSql, PlaceholdersSql]),
+    set_arrival_sql_parts(KeyOrNone, QuotedColumns, Insert, ConflictSql),
+    format(atom(AddSql), '~w ~w (~w) VALUES (~w)~w',
+           [Insert, QuotedTable, ColumnsSql, PlaceholdersSql, ConflictSql]),
     maplist(eq_placeholder, QuotedColumns, EqParts),
     atomic_list_concat(EqParts, ' AND ', WhereSql),
     format(atom(DelSql), 'DELETE FROM ~w WHERE ~w', [QuotedTable, WhereSql]),
-    incremental_arrival_add_sql(Insert, QuotedTable, ColumnsSql, QuotedColumns,
+    incremental_arrival_add_sql(Insert, ConflictSql, QuotedTable, ColumnsSql, QuotedColumns,
                                 IncrementalAddSql),
     incremental_json_select_exprs(QuotedColumns, 0, DeleteSelectExprs),
     atomic_list_concat(DeleteSelectExprs, ', ', DeleteSelectSql),
@@ -1007,15 +1007,35 @@ arrival_statement(relplan(Ref, set, Columns, KeyOrNone, _),
            'DELETE FROM ~w WHERE (~w) IN (SELECT ~w FROM json_each(?)) RETURNING ~w',
            [QuotedTable, ColumnsSql, DeleteSelectSql, ColumnsSql]).
 
-set_arrival_insert(key(_), 'INSERT OR REPLACE INTO') :- !.
-set_arrival_insert(none, 'INSERT OR IGNORE INTO').
+set_arrival_sql_parts(none, _, 'INSERT OR IGNORE INTO', '') :- !.
+set_arrival_sql_parts(key(KeyPositions), QuotedColumns, 'INSERT INTO', ConflictSql) :-
+    nth1_list(KeyPositions, QuotedColumns, QuotedKeyColumns),
+    atomic_list_concat(QuotedKeyColumns, ', ', KeySql),
+    findall(UpdateColumn,
+            ( nth1(Position, QuotedColumns, UpdateColumn),
+              \+ memberchk(Position, KeyPositions) ),
+            UpdateColumns),
+    (   UpdateColumns == []
+    ->  format(atom(ConflictSql), ' ON CONFLICT (~w) DO NOTHING', [KeySql])
+    ;   findall(Assignment,
+                ( member(UpdateColumn, UpdateColumns),
+                  format(atom(Assignment), '~w = excluded.~w',
+                         [UpdateColumn, UpdateColumn]) ),
+                Assignments),
+        atomic_list_concat(Assignments, ', ', AssignmentSql),
+        format(atom(ConflictSql),
+               ' ON CONFLICT (~w) DO UPDATE SET ~w',
+               [KeySql, AssignmentSql])
+    ).
 
-incremental_arrival_add_sql(Insert, QuotedTable, ColumnsSql, QuotedColumns, Sql) :-
+incremental_arrival_add_sql(Insert, ConflictSql, QuotedTable, ColumnsSql, QuotedColumns, Sql) :-
     incremental_json_select_exprs(QuotedColumns, 0, SelectExprs),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
+    ( ConflictSql == '' -> SelectTail = '' ; SelectTail = ' WHERE true' ),
     format(atom(Sql),
-           '~w ~w (~w) SELECT ~w FROM json_each(?) RETURNING ~w',
-           [Insert, QuotedTable, ColumnsSql, SelectSql, ColumnsSql]).
+           '~w ~w (~w) SELECT ~w FROM json_each(?)~w~w RETURNING ~w',
+           [Insert, QuotedTable, ColumnsSql, SelectSql, SelectTail,
+            ConflictSql, ColumnsSql]).
 
 incremental_json_select_exprs([], _, []).
 incremental_json_select_exprs([_ | Rest], Index, [Expr | More]) :-
@@ -1868,7 +1888,10 @@ level_delta_select_arm(RelPlans, Head, Body, use(DeltaRef, DeltaArgs, pos, _),
     relplan_columns(RelPlans, DeltaRef, DeltaColumns),
     relplan_column_types(RelPlans, DeltaRef, DeltaColumnTypes),
     compile_atom_args(DeltaArgs, DeltaColumns, DeltaColumnTypes, d0, [],
-                      DeltaBound, DeltaWhereParts),
+                      DeltaFieldBound, DeltaWhereParts),
+    delta_reference_identity(RelPlans, DeltaRef, DeltaArgs, DeltaColumns,
+                             DeltaFieldBound, DeltaBound,
+                             IdentityFromParts, IdentityWhereTexts),
     maplist(where_text, DeltaWhereParts, DeltaWhereTexts),
     compile_positive_uses(RelPlans, OtherPosUses, DeltaBound, Bound0,
                           OtherFromParts, OtherWhereTexts),
@@ -1877,13 +1900,30 @@ level_delta_select_arm(RelPlans, Head, Body, use(DeltaRef, DeltaArgs, pos, _),
     head_select_list(Head, Bound, none, SelectExprs),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
     format(atom(DeltaFrom), '~w d0', [QuotedFrontierTable]),
-    append([DeltaFrom], OtherFromParts, FromParts),
+    append([[DeltaFrom], IdentityFromParts, OtherFromParts], FromParts),
     atomic_list_concat(FromParts, ', ', FromSql),
-    append(['d0."_phase" >= 0' | DeltaWhereTexts], OtherWhereTexts, PositiveWhereTexts),
+    append([['d0."_phase" >= 0' | DeltaWhereTexts], IdentityWhereTexts,
+            OtherWhereTexts], PositiveWhereTexts),
     append([PositiveWhereTexts, GuardWhereTexts, NegWhereTexts], WhereTexts),
     atomic_list_concat(WhereTexts, ' AND ', WhereSql),
     format(atom(DeltaArm), 'SELECT DISTINCT ~w FROM ~w WHERE ~w',
            [SelectSql, FromSql, WhereSql]).
+
+delta_reference_identity(RelPlans, Name/Arity, Args, Columns,
+                         Bound0, Bound, [From], Equalities) :-
+    reference_target_ref(RelPlans, Name/Arity),
+    !,
+    quote_ident(Name, QuotedTable),
+    format(atom(From), '~w r0', [QuotedTable]),
+    findall(Equality,
+            ( member(Column, Columns),
+              format(atom(Equality), 'r0."~w" = d0."~w"',
+                     [Column, Column]) ),
+            Equalities),
+    length(Args, Arity),
+    Atom =.. [Name | Args],
+    Bound = [Atom-typed('r0."__id"', ref(Name)) | Bound0].
+delta_reference_identity(_, _, _, _, Bound, Bound, [], []).
 
 is_positive_use(use(_, _, pos, _)).
 is_negative_use(use(_, _, neg, _)).

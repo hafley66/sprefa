@@ -236,9 +236,9 @@ test(world_fed_keyed_arrival_uses_key_constraint_and_replace) :-
         arrivalstmt(
             world_mode/2,
             set,
-            'INSERT OR REPLACE INTO "world_mode" ("col1", "col2") VALUES (?, ?)',
+            'INSERT INTO "world_mode" ("col1", "col2") VALUES (?, ?) ON CONFLICT ("col1") DO UPDATE SET "col2" = excluded."col2"',
             'DELETE FROM "world_mode" WHERE "col1" = ? AND "col2" = ?',
-            'INSERT OR REPLACE INTO "world_mode" ("col1", "col2") SELECT json_extract(value, \'$[0]\'), json_extract(value, \'$[1]\') FROM json_each(?) RETURNING "col1", "col2"',
+            'INSERT INTO "world_mode" ("col1", "col2") SELECT json_extract(value, \'$[0]\'), json_extract(value, \'$[1]\') FROM json_each(?) WHERE true ON CONFLICT ("col1") DO UPDATE SET "col2" = excluded."col2" RETURNING "col1", "col2"',
             'DELETE FROM "world_mode" WHERE ("col1", "col2") IN (SELECT json_extract(value, \'$[0]\'), json_extract(value, \'$[1]\') FROM json_each(?)) RETURNING "col1", "col2"'),
         ArrivalStatements).
 
@@ -277,7 +277,7 @@ test(demand_laziness_incremental_arrival_is_one_batch_statement) :-
     memberchk(arrivalstmt(open_feed/2, set, _, _, IncrementalAddSql, _),
               ArrivalStatements),
     IncrementalAddSql ==
-      'INSERT OR REPLACE INTO "open_feed" ("session_id", "target") SELECT json_extract(value, \'$[0]\'), json_extract(value, \'$[1]\') FROM json_each(?) RETURNING "session_id", "target"'.
+      'INSERT INTO "open_feed" ("session_id", "target") SELECT json_extract(value, \'$[0]\'), json_extract(value, \'$[1]\') FROM json_each(?) WHERE true ON CONFLICT ("session_id") DO UPDATE SET "target" = excluded."target" RETURNING "session_id", "target"'.
 
 test(demand_laziness_level_sql) :-
     lowered_for(demand_laziness_effect_rows, Lowered),
