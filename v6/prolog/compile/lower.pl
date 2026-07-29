@@ -639,9 +639,14 @@ placeholders(N, ['?' | Rest]) :- N > 0, N1 is N - 1, placeholders(N1, Rest).
 % unmarked_conjunction(Atoms) (N >= 1 plain positive atoms, no only/1
 % anywhere -- engine.pl's unmarked fallback wraps EVERY one as its own
 % independent trigger, body.pl:96-110/153-155), or
-% sampled_conjunction(TriggerAtoms, SampleAtoms), where latest/1 removes the
-% SampleAtoms from the trigger set while retaining them as current-state
-% base-table reads. Lowering produces ONE
+% sampled_conjunction(TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals), where
+% latest/1 removes the SampleAtoms from the trigger set while retaining them
+% as current-state base-table reads, not/1 contributes a NOT EXISTS over the
+% negated rel's current table, and the comparison/bind goals become WHERE
+% conditions and SELECT-expression bindings (the same three compilers a level
+% body uses: compile_positive_uses/6, compile_guard_goals/4,
+% compile_negative_uses/4, folded in that order so a `:=` can read a variable
+% an earlier atom bound and a NOT EXISTS can read either). Lowering produces ONE
 % edgestmt/6 PER CANDIDATE TRIGGER ATOM (edge_statements_for_rule/3): for
 % marked_single that is the existing single edgestmt, unchanged; for
 % unmarked_conjunction with N atoms it is N edgestmt entries, one per atom
@@ -662,18 +667,19 @@ edge_statements_for_rule(RelPlans, (Head <+ Body), EdgeStatements) :-
     -> rel_ref(TriggerAtom, TriggerRef),
        ( relplan_kind(RelPlans, TriggerRef, log) -> true
        ; throw(unsupported_construct(edge_trigger_not_log(TriggerRef))) ),
-       edge_statement_single(RelPlans, Head, TriggerAtom, [], EdgeStmt),
+       edge_statement_single(RelPlans, Head, TriggerAtom, [], [], [], EdgeStmt),
        EdgeStatements = [EdgeStmt]
     ; Shape = unmarked_conjunction(Atoms)
     -> findall(EdgeStmt,
                ( select(TriggerAtom, Atoms, OtherAtoms),
-                 edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, EdgeStmt) ),
+                 edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, [], [], EdgeStmt) ),
                EdgeStatements)
-    ; Shape = sampled_conjunction(TriggerAtoms, SampleAtoms)
+    ; Shape = sampled_conjunction(TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals)
     -> findall(EdgeStmt,
                ( select(TriggerAtom, TriggerAtoms, OtherTriggerAtoms),
                  append(OtherTriggerAtoms, SampleAtoms, OtherAtoms),
-                 edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, EdgeStmt) ),
+                 edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms,
+                                       NegAtoms, GuardGoals, EdgeStmt) ),
                EdgeStatements)
     ).
 
@@ -691,7 +697,7 @@ edge_statements_for_rule(RelPlans, (Head <+ Body), EdgeStatements) :-
 % too, since a Log head's resolver must NOT collapse multiple derived rows
 % into one Map entry the way a Set head's last-write-wins fold does (every
 % key would otherwise be the same empty `[]`).
-edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms,
+edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms, GuardGoals,
                       edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns,
                                ProjectSql, WriteSql, DeltaProjectSql)) :-
     rel_ref(TriggerAtom, TriggerRef),
@@ -705,21 +711,23 @@ edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms,
     TriggerAtom =.. [_ | TriggerArgs],
     relplan_column_types(RelPlans, TriggerRef, TriggerBoundColumnTypes),
     compile_trigger_bound(TriggerArgs, TriggerBoundColumnTypes, TriggerBound),
-    ( OtherAtoms == []
-    -> Bound = TriggerBound, FromSql = none, WhereSql = none
-    ;  % maplist, NEVER findall (analyze.pl:ref_occurrence_args/3's own
-       % comment names this exact hazard): findall copies its template per
-       % solution, which would sever OtherArgs from the SAME variable
-       % objects Head's arguments share -- head_select_list's bound_lookup
-       % would then never find them, throwing unbound_head_var even though
-       % the variables genuinely ARE bound (confirmed empirically: this
-       % bug shipped in an earlier draft and unmarked_edge_replays_backlog
-       % is the fixture that caught it).
-       maplist(other_atom_use, OtherAtoms, OtherUses),
-       compile_positive_uses(RelPlans, OtherUses, TriggerBound, Bound, FromParts, WhereTexts),
-       atomic_list_concat(FromParts, ', ', FromSql),
-       ( WhereTexts == [] -> WhereSql = none ; atomic_list_concat(WhereTexts, ' AND ', WhereSql) )
-    ),
+    % maplist, NEVER findall (analyze.pl:ref_occurrence_args/3's own
+    % comment names this exact hazard): findall copies its template per
+    % solution, which would sever OtherArgs from the SAME variable
+    % objects Head's arguments share -- head_select_list's bound_lookup
+    % would then never find them, throwing unbound_head_var even though
+    % the variables genuinely ARE bound (confirmed empirically: this
+    % bug shipped in an earlier draft and unmarked_edge_replays_backlog
+    % is the fixture that caught it).
+    maplist(other_atom_use, OtherAtoms, OtherUses),
+    compile_positive_uses(RelPlans, OtherUses, TriggerBound, PositiveBound,
+                          FromParts, PositiveWhereTexts),
+    compile_guard_goals(GuardGoals, PositiveBound, Bound, GuardWhereTexts),
+    maplist(negated_atom_use, NegAtoms, NegUses),
+    compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
+    append([PositiveWhereTexts, GuardWhereTexts, NegWhereTexts], WhereTexts),
+    ( FromParts == [] -> FromSql = none ; atomic_list_concat(FromParts, ', ', FromSql) ),
+    ( WhereTexts == [] -> WhereSql = none ; atomic_list_concat(WhereTexts, ' AND ', WhereSql) ),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     % Aliased AS HeadColumns (not `none`, unlike a level rule's SELECT,
     % which has an explicit INSERT column list and does not need aliases):
@@ -730,13 +738,20 @@ edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms,
     % identical to expression-list separators to any naive re-splitter.
     head_select_list(Head, Bound, HeadColumns, SelectExprs),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
-    ( FromSql == none
+    % A FROM-less SELECT with a WHERE is the guard-only arm (every body goal
+    % past the trigger is a comparison, a bind or a NOT EXISTS): SQLite
+    % evaluates it over the one implicit row and returns zero rows when the
+    % condition is false, which is exactly "this occurrence derives nothing".
+    ( FromSql == none, WhereSql == none
     -> format(atom(ProjectSql), 'SELECT ~w', [SelectSql])
+    ; FromSql == none
+    -> format(atom(ProjectSql), 'SELECT ~w WHERE ~w', [SelectSql, WhereSql])
     ; WhereSql == none
     -> format(atom(ProjectSql), 'SELECT ~w FROM ~w', [SelectSql, FromSql])
     ; format(atom(ProjectSql), 'SELECT ~w FROM ~w WHERE ~w', [SelectSql, FromSql, WhereSql])
     ),
-    edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, HeadColumns, DeltaProjectSql),
+    edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms,
+                           GuardGoals, HeadColumns, DeltaProjectSql),
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
@@ -765,7 +780,8 @@ edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms,
               [QuotedHeadTable, HeadColumnsSql, ValuePlaceholdersSql, ConflictClause])
     ).
 
-edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, HeadColumns, DeltaProjectSql) :-
+edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms, GuardGoals,
+                       HeadColumns, DeltaProjectSql) :-
     rel_ref(TriggerAtom, TriggerRef),
     TriggerAtom =.. [_ | TriggerArgs],
     frontier_table_name(TriggerRef, FrontierTable),
@@ -777,13 +793,18 @@ edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, HeadColumns, Del
                       TriggerBound, TriggerWhereParts),
     maplist(where_text, TriggerWhereParts, TriggerWhereTexts),
     maplist(other_atom_use, OtherAtoms, OtherUses),
-    compile_positive_uses(RelPlans, OtherUses, TriggerBound, Bound, OtherFromParts, OtherWhereTexts),
+    compile_positive_uses(RelPlans, OtherUses, TriggerBound, PositiveBound,
+                          OtherFromParts, OtherWhereTexts),
+    compile_guard_goals(GuardGoals, PositiveBound, Bound, GuardWhereTexts),
+    maplist(negated_atom_use, NegAtoms, NegUses),
+    compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
     head_select_list(Head, Bound, HeadColumns, SelectExprs),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
     format(atom(DeltaFrom), '~w ~w', [QuotedFrontierTable, DeltaAlias]),
     append([DeltaFrom], OtherFromParts, FromParts),
     atomic_list_concat(FromParts, ', ', FromSql),
-    append(['d0."_phase" >= 0' | TriggerWhereTexts], OtherWhereTexts, WhereTexts),
+    append([['d0."_phase" >= 0' | TriggerWhereTexts], OtherWhereTexts,
+            GuardWhereTexts, NegWhereTexts], WhereTexts),
     atomic_list_concat(WhereTexts, ' AND ', WhereSql),
     format(atom(DeltaProjectSql),
            'SELECT ~w FROM ~w WHERE ~w ORDER BY d0."_phase", d0."_sequence"',
@@ -792,6 +813,8 @@ edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, HeadColumns, Del
 excluded_assignment(QuotedColumn, Text) :- format(atom(Text), '~w = excluded.~w', [QuotedColumn, QuotedColumn]).
 
 other_atom_use(Atom, use(Ref, Args, pos, unmarked)) :- rel_ref(Atom, Ref), Atom =.. [_ | Args].
+
+negated_atom_use(Atom, use(Ref, Args, neg, unmarked)) :- rel_ref(Atom, Ref), Atom =.. [_ | Args].
 
 % Numbered placeholders (?1, ?2, ...), one per trigger argument position, in
 % TRIGGER-argument order -- the emitter passes `arrival.row` (already in

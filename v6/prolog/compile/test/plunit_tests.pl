@@ -496,13 +496,42 @@ test(rejects_guard_under_negation,
     Prog = prog([], [ (flagged(Name) <- item(Name, Size), not((budget(Name, Cap), Size > Cap))) ]),
     check_supported_subset(Prog).
 
-% PHASE C2 RULING 2 renamed this refusal from the blanket edge_body_shape to
-% the precise edge_body_needs_negation (analyze.pl:edge_trigger_shape/2):
-% a marked-single trigger with any extra body goal is the OUT-OF-SCOPE
-% "marked + extra guard" bucket (SCOREBOARD.md's 9-fixture tally), distinct
-% from the unmarked-conjunction shape this ruling widened.
-test(rejects_edge_body_with_extra_goal, [throws(unsupported_construct(edge_body_needs_negation(_)))]) :-
+% FAIL-FIRST RECEIPT: not/1 in an edge body.
+%
+% This test read `throws(unsupported_construct(edge_body_needs_negation(_)))`
+% until the edge-body negation lowering landed, and that refusal is what went
+% RED first:
+%   RED (before the lowering, this exact clause as an acceptance test):
+%     [.../125] accepts_negated_atom_in_edge_body
+%       unsupported_construct(edge_body_needs_negation((open(_),not(closed(_)))))
+%   RED (after the lowering, the old refusal clause left in place):
+%     ERROR: test supported_subset_gate:rejects_edge_body_with_extra_goal:
+%            no_exception
+%   GREEN: both directions below.
+% engine.pl solves not(Goal) as \+ solve(Goal, Ctx) against the SAME Visible
+% the positive atoms read, so NOT EXISTS over the negated rel's current table
+% is the lowering; scopes.pl:exhaust_policy is the fixture.
+test(accepts_negated_atom_in_edge_body) :-
     Prog = prog([keyed(scope/1, [1])], [ (scope(X) <+ (open(X), not(closed(X)))) ]),
+    check_supported_subset(Prog).
+
+% not/1 around anything but ONE plain relation atom stays refused:
+% compile_negative_uses/4 renders rel atoms only, so a nested comparison
+% would vanish from the emitted condition instead of being refused.
+test(rejects_negated_conjunction_in_edge_body,
+     [throws(unsupported_construct(edge_body_with_negation(_)))]) :-
+    Prog = prog([keyed(scope/1, [1])],
+                [ (scope(X) <+ (open(X), not((closed(X), budget(X))))) ]),
+    check_supported_subset(Prog).
+
+% Comparisons and `:=` binds in an edge body were their own named refusals
+% (edge_body_needs_comparison / edge_body_needs_bind) until this arc; they now
+% ride the same guard fold a level body uses.
+test(accepts_comparison_and_bind_in_edge_body) :-
+    Prog = prog([kind(hit/2, log), keep(hit/2, all),
+                 kind(loud/2, log), keep(loud/2, all)],
+                [ (loud(Name, Doubled) <+ hit(Name, Score), Score > 10,
+                                          Doubled := Score * 2) ]),
     check_supported_subset(Prog).
 
 % FAIL-FIRST RECEIPT: latest/1 in an edge body.

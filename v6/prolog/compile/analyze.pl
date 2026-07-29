@@ -607,10 +607,15 @@ column_source_args(_Rules, _Initial, Schedule, Ref, Args) :-
 %     body.pl:96-110). A single atom (N=1) is the degenerate case: no other
 %     atom to join, so lowering it is unchanged from marked_single except
 %     the trigger no longer needs the only/1 wrapper.
-%   sampled_conjunction(TriggerAtoms, SampleAtoms) -- the same positive
-%     conjunction with one or more latest(Atom) goals. TriggerAtoms remain
-%     the only occurrence sources; SampleAtoms are unwrapped plain rel atoms
-%     read from their current base tables by lower.pl.
+%   sampled_conjunction(TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals) --
+%     the same positive conjunction plus any mix of latest(Atom) samples,
+%     not(Atom) negations, and comparison/bind guards. TriggerAtoms remain
+%     the only occurrence sources. Everything past them is read against the
+%     CURRENT store exactly as engine.pl:solve/2 reads it once the firing
+%     atom's own arguments are bound: SampleAtoms and NegAtoms are unwrapped
+%     plain rel atoms (joined, or NOT EXISTS'd, by lower.pl), GuardGoals are
+%     the WHERE conditions and the `:=` bindings, folded left to right the
+%     way solve/2 resolves a conjunction.
 % Everything else names the SPECIFIC blocking construct instead of a
 % blanket edge_body_shape reason, so the scoreboard's per-construct tally
 % stays precise as this widens further.
@@ -621,21 +626,37 @@ edge_trigger_shape(Body, unmarked_conjunction(Atoms)) :-
     conjunction_goals(Body, Goals),
     maplist(plain_positive_atom, Goals),
     !, Atoms = Goals.
-edge_trigger_shape(Body, sampled_conjunction(TriggerAtoms, SampleAtoms)) :-
+edge_trigger_shape(Body,
+                   sampled_conjunction(TriggerAtoms, SampleAtoms, NegAtoms,
+                                       GuardGoals)) :-
     conjunction_goals(Body, Goals),
-    edge_sampled_goals(Goals, TriggerAtoms, SampleAtoms),
+    edge_sampled_goals(Goals, TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals),
     TriggerAtoms \== [],
-    SampleAtoms \== [],
+    ( SampleAtoms \== [] ; NegAtoms \== [] ; GuardGoals \== [] ),
     !.
 edge_trigger_shape(Body, unsupported(edge_body_shape(Body))).
 
-edge_sampled_goals([], [], []).
-edge_sampled_goals([latest(Atom) | Rest], TriggerAtoms, [Atom | SampleAtoms]) :-
-    plain_positive_rel_atom(Atom),
-    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms).
-edge_sampled_goals([Atom | Rest], [Atom | TriggerAtoms], SampleAtoms) :-
+% The four goal classes are disjoint by construction: plain_positive_atom/1
+% is exactly "no registry row", and latest/1, not/1 and every comparison or
+% bind operator each carry one. The cuts say so; without them a failure
+% deeper in the list would backtrack into a classification that cannot hold.
+edge_sampled_goals([], [], [], [], []).
+edge_sampled_goals([latest(Atom) | Rest], TriggerAtoms, [Atom | SampleAtoms],
+                   NegAtoms, GuardGoals) :-
+    plain_positive_rel_atom(Atom), !,
+    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals).
+edge_sampled_goals([not(Atom) | Rest], TriggerAtoms, SampleAtoms,
+                   [Atom | NegAtoms], GuardGoals) :-
+    plain_positive_rel_atom(Atom), !,
+    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals).
+edge_sampled_goals([Goal | Rest], TriggerAtoms, SampleAtoms, NegAtoms,
+                   [Goal | GuardGoals]) :-
+    guard_or_bind_goal(Goal), !,
+    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals).
+edge_sampled_goals([Atom | Rest], [Atom | TriggerAtoms], SampleAtoms, NegAtoms,
+                   GuardGoals) :-
     plain_positive_atom(Atom),
-    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms).
+    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals).
 
 edge_registered_refusal(Body, Goals, Reason) :-
     findall(Priority-Candidate,
@@ -656,19 +677,14 @@ edge_goal_refusal(Goal, Body, 3, edge_body_needs_pre(Body)) :-
 edge_goal_refusal(Goal, Body, 4, edge_body_needs_now(Body)) :-
     body_surface_for_term(Goal, _, time, no_refs,
                           wrapper(expr, refuse(goal)), refused).
-edge_goal_refusal(Goal, Body, 5, edge_body_needs_negation(Body)) :-
-    body_surface_for_term(Goal, _, sign, arm(neg),
-                          wrapper(body_item, lower), live).
-% Binds and comparisons are LIVE in a level body as of the expression lift,
-% and still refused in an EDGE body: an edge arm projects ONE arrival row
-% through numbered placeholders and joins the other atoms against their
-% current tables (edge_statement_single/5), a shape the guard walk has no
-% seam in yet. Refused by the precise name rather than falling through to the
-% blanket edge_body_shape, so the scoreboard tally stays readable.
-edge_goal_refusal(Goal, Body, 6, edge_body_needs_bind(Body)) :-
-    bind_goal(Goal, _, _).
-edge_goal_refusal(Goal, Body, 7, edge_body_needs_comparison(Body)) :-
-    guard_goal(Goal).
+% Negation is LIVE around ONE plain relation atom (lowered to NOT EXISTS
+% against that rel's current table, the same text compile_negative_uses/4
+% emits for a level body). not/1 around a conjunction, a comparison or
+% another wrapper stays refused: compile_negative_uses/4 walks rel atoms
+% only, and a nested guard would be silently dropped from the emitted
+% condition rather than refused.
+edge_goal_refusal(not(Atom), Body, 5, edge_body_with_negation(Body)) :-
+    \+ plain_positive_rel_atom(Atom).
 edge_goal_refusal(Goal, Body, 8, edge_body_needs_json_destructure(Body)) :-
     body_surface_for_term(Goal, _, guard, no_refs,
                           wrapper(expr_pair, refuse(goal)), refused).
@@ -695,11 +711,12 @@ plain_positive_rel_atom(Goal) :-
 % Trigger refs a shape can fire from -- used by the same-key conflict-risk
 % check below. marked_single fires from exactly one ref; unmarked_conjunction
 % fires from ANY of its atoms' refs (engine.pl unmarked_items/2 wraps every
-% one independently). sampled_conjunction excludes its sampled atoms.
+% one independently). sampled_conjunction excludes its sampled, negated and
+% guard goals: none of them is an occurrence source.
 shape_trigger_refs(marked_single(Atom), [Ref]) :- rel_ref(Atom, Ref).
 shape_trigger_refs(unmarked_conjunction(Atoms), Refs) :-
     findall(Ref, ( member(Atom, Atoms), rel_ref(Atom, Ref) ), Refs0), sort(Refs0, Refs).
-shape_trigger_refs(sampled_conjunction(TriggerAtoms, _), Refs) :-
+shape_trigger_refs(sampled_conjunction(TriggerAtoms, _, _, _), Refs) :-
     findall(Ref, ( member(Atom, TriggerAtoms), rel_ref(Atom, Ref) ), Refs0),
     sort(Refs0, Refs).
 
@@ -729,7 +746,10 @@ check_edge_head_column_types_for_rule(RelPlans, (Head <+ Body)) :-
     edge_trigger_shape(Body, Shape),
     ( Shape = marked_single(TriggerAtom) -> BodyAtoms = [TriggerAtom]
     ; Shape = unmarked_conjunction(Atoms) -> BodyAtoms = Atoms
-    ; Shape = sampled_conjunction(TriggerAtoms, SampleAtoms)
+    % NegAtoms deliberately excluded: compile_negative_atom_args/6 runs in
+    % `check` mode and never binds a head variable, so a negated atom's
+    % column types cannot be the source of a head column's value.
+    ; Shape = sampled_conjunction(TriggerAtoms, SampleAtoms, _, _)
       -> append(TriggerAtoms, SampleAtoms, BodyAtoms)
     ; BodyAtoms = []
     ),

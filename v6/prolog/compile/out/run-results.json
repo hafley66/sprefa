@@ -280,6 +280,13 @@
     "finalDetail": ""
   },
   {
+    "name": "repeat_is_a_self_carry_chain",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "fork_join_is_a_conjunctive_body",
     "bucket": "identical",
     "detail": "",
@@ -302,6 +309,13 @@
   },
   {
     "name": "merge_policy",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "exhaust_policy",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
