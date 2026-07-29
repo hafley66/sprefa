@@ -25,21 +25,21 @@ from `out/manifest.json` + `out/run-results.json`.
 
 | bucket | count |
 |---|---|
-| fixtures swept | 154 |
+| fixtures swept | 155 |
 | UNSUPPORTED (compiler refuses, named construct) | 61 |
-| compiled (lowering + emission succeeded) | 93 |
-| — of which IDENTICAL (tick log byte-identical to oracle) | 91 |
+| compiled (lowering + emission succeeded) | 94 |
+| — of which IDENTICAL (tick log byte-identical to oracle) | 92 |
 | — of which WRONG (diff vs oracle) | 0 |
 | — of which run_error / no_oracle_log (rejection-path fixtures) | 2 |
 
-IDENTICAL + run_error/no_oracle + UNSUPPORTED = 91 + 2 + 61 = 154.
+IDENTICAL + run_error/no_oracle + UNSUPPORTED = 92 + 2 + 61 = 155.
 
 Both emitter modes agree row for row: the incremental default and
-`SPREFA_TSV2_EMITTER_MODE=naive` produce the same 91/0/2.
+`SPREFA_TSV2_EMITTER_MODE=naive` produce the same 92/0/2.
 
 ### What the struct-as-rows arc moved
 
-+15 fixtures (`conformance/fixtures/4_struct_values.pl`), of which 6 compile
++16 fixtures (`conformance/fixtures/4_struct_values.pl`), of which 7 compile
 IDENTICAL in both modes and 9 are named refusals on the new value plane. Zero
 movement in the prior 139: every previously-compiled emitted module is
 byte-identical after the arc (`git diff` over `v6/tsv2/gen_emitted/`).

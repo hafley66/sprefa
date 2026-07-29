@@ -112,6 +112,13 @@
     "finalDetail": ""
   },
   {
+    "name": "struct_span_columns_are_int_after_decode",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "struct_shared_child_survives_one_release",
     "bucket": "identical",
     "detail": "",

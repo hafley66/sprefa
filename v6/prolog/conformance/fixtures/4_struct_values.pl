@@ -253,6 +253,54 @@ fixture(struct_decode_field_unknown_rejected,
   [ [ +mark(obj([end-2, start-1])) ] ],
   [ final(seen/1, []), ticks(1) ]).
 
+% SPANS (arc header scope item 5). `sprefa-extract` emits byte spans as a
+% NESTED json object -- `SpanOut { start: u32, end: u32 }` in
+% v6/sprefa-extract/src/types.rs, serialized `"span":{"start":..,"end":..}` --
+% and both flagship-callgraph.dl6 and diag-rail.dl6 dropped line numbers
+% entirely rather than fake them, because a nested field could not reach a
+% declared int column. Under struct-as-rows the shape is expressible exactly:
+% the span is a declared type, its fields ARE int columns, and decode/2 gets
+% them out by join. This fixture is that shape end to end with the value
+% arriving as an ordinary world row.
+%
+%   type span(end: int, start: int).
+%   rel node_fact(path: text, name: text, at: span) log keep(all).
+%   rel def_start(path: text, offset: int).
+%   def_start(path, offset) <- node_fact(path, name, at), decode(at, {start: offset}).
+%
+%   const defStart$ = combineLatest([nodeFact$, spanDict$]).pipe(
+%     map(([facts, spans]) => facts.flatMap((fact) => {
+%       const at = spans.get(fact.at);
+%       return at ? [{ path: fact.path, offset: at.start }] : [];
+%     })),
+%     distinctUntilChanged(sameRowSet),
+%   );
+%
+% WHAT IS STILL MISSING for the real rails is stated in the arc report and is
+% NOT in this file's scope: an sh host's OUTPUT column may now be declared with
+% a struct type (1_host_expand.pl accepts it, and column_type_unknown catches a
+% name no type declares), but serve/1_hosts.ts's coerce/3 JSON-stringifies a
+% nested object before it reaches the arrival row, so the struct value arrives
+% as TEXT rather than as the object StructPlane interns. That one seam is what
+% stands between this fixture and a real line number.
+fixture(struct_span_columns_are_int_after_decode,
+  prog([ type_decl(span, [col(end, int), col(start, int)]),
+         col_type(node_fact/3, path, text),
+         col_type(node_fact/3, name, text),
+         col_type(node_fact/3, at, span),
+         kind(node_fact/3, log), keep(node_fact/3, all),
+         col_type(def_start/2, path, text),
+         col_type(def_start/2, offset, int) ],
+       [ (def_start(Path, Offset) <-
+            node_fact(Path, _Name, At),
+            decode(At, {start: Offset})) ]),
+  [],
+  [ [ +node_fact('a.rs', main, obj([end-42, start-17])) ],
+    [ +node_fact('b.rs', helper, obj([end-9, start-3])) ] ],
+  [ deltas(def_start/2, [ [ +def_start('a.rs', 17) ], [ +def_start('b.rs', 3) ] ]),
+    final(def_start/2, [ def_start('a.rs', 17), def_start('b.rs', 3) ]),
+    ticks(2) ]).
+
 % THE SHARED CHILD (types-as-rels verdict Q3, domination_shared_child_survives
 % / domination_sole_owner_cascades) as a compiled fixture. Two parents hold the
 % SAME child value; releasing one leaves the survivor's rendering intact, and
