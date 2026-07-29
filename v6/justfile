@@ -130,6 +130,14 @@ memory-soak:
 one-subscribe:
 	bash {{v6}}/tools/one-subscribe.sh
 
+# checked-in gen_emitted modules with no fixture row (door-handwritten.ts)
+# regenerated + diffed against their .dl6 source; target/release/dl and
+# sprefa-extract's release binary refused if a source .rs/Cargo.toml is
+# newer than the built binary -- both classes went silently stale before
+# (expect: STALENESS_GATE_OK, exit 0)
+staleness-gate:
+	bash {{v6}}/tools/staleness-gate.sh
+
 # ── benches ──
 
 # the house scale-test rig (engines/*.sh emit a shared CSV protocol)
@@ -142,4 +150,4 @@ bench:
 green: conformance roundtrip text-door plunit prolog-lint tsv2-test import-gate one-subscribe dl-test store-test
 
 # everything, including the sweep
-green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate flagship lsp-diags sweep
+green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate flagship lsp-diags sweep staleness-gate
