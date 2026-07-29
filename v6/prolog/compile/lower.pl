@@ -654,9 +654,10 @@ rel_ddl(Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
               [QuotedTable, ColumnsSql, SupportColumn, PkSql]),
        dictionary_table_name(Name, ReferenceView),
        quote_ident(ReferenceView, QuotedReferenceView),
+       relation_render_expr(Types, Columns, ColumnTypes, RenderExpr),
        format(atom(ViewDdl),
-              'CREATE TEMP VIEW ~w AS SELECT "__id", ~w FROM ~w',
-              [QuotedReferenceView, SelectColumnsSql, QuotedTable]),
+              'CREATE TEMP VIEW ~w AS SELECT t."__id", ~w, ~w AS "__rendered" FROM ~w t',
+              [QuotedReferenceView, SelectColumnsSql, RenderExpr, QuotedTable]),
        Ddls = [Ddl, ViewDdl]
     ;  format(atom(Ddl),
               'CREATE TABLE ~w (~w~w, PRIMARY KEY (~w)) WITHOUT ROWID',
@@ -671,47 +672,49 @@ rel_ddl(Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
 % compound-term columns stay inline-flat text, never their own storage
 % type).
 column_def(QuotedColumn, int, Def) :- !, format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
-% STRUCT-AS-ROWS: a ref column stores the dense dictionary id and nothing
-% else. No FOREIGN KEY clause and no ON DELETE clause, ever: the retraction
+% A ref column stores the dense target-row id and nothing else. No FOREIGN
+% KEY clause and no ON DELETE clause: the retraction
 % lab measured SQL cascade deleting a shared child out from under a live
 % second parent and leaving dangling refs (types-as-rels verdict finding 6,
 % plans/2026-07-28-sqlite-retraction-verdict.md fk_cascade WRONG).
 column_def(QuotedColumn, ref(_), Def) :- !, format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
 column_def(QuotedColumn, text, Def) :- format(atom(Def), '~w TEXT NOT NULL', [QuotedColumn]).
 
-% ═══ the value plane's storage (STRUCT-AS-ROWS) ═════════════════════════════
+% ═══ relation reference projection ═════════════════════════════════════════
 %
-% One dictionary table per declared type. It is NOT a rel: it never appears in
-% relColumns, never gets a delta table, never gets a boundarySql, and never
-% reaches the tick log (arc header Edge 2). The oracle holds real terms and
-% has no dictionary at all, so a dictionary row crossing the boundary would be
-% a row the oracle can never produce.
+% A referenced relation remains one public table. Typed columns carry the
+% entity row, the declared key or full-row fallback is UNIQUE, and hidden
+% `__id INTEGER PRIMARY KEY` supplies compact parent endpoints. No semantic or
+% rendered JSON column is stored.
 %
-% Three columns beyond the content columns, the round-2 surrogate-mate ruling
-% made concrete:
-%
-%   "__id"        the dense storage mate. INTEGER PRIMARY KEY, so SQLite
-%                 assigns it as the rowid: dense, monotone, and free. It is
-%                 build-order dependent and therefore never crosses the
-%                 boundary (verdict surrogate_reintern_changes_dense_not_
-%                 semantic).
-%   "__semantic"  the content key, UNIQUE. Type name plus canonical content,
-%                 where every CHILD contributes its own canonical content --
-%                 never its dense id, which would make a parent's key
-%                 build-order dependent (verdict
-%                 parent_hash_from_dense_would_be_order_dependent).
-%   "__rendered"  the memoized canonical JSON, written ONCE at intern time
-%                 (Edge 1). Children intern before parents, so a parent's
-%                 rendering is one concat over finished child renderings and
-%                 the boundary read is a single indexed lookup, not a
-%                 recursion.
-%
-% A plain rowid table, deliberately, not WITHOUT ROWID: INTEGER PRIMARY KEY
-% is what makes SQLite hand out the dense id, and the boundary lookup is then
-% a rowid SEARCH, the cheapest probe the engine has.
+% `__ref_<name>` is a TEMP view used by decode and boundary rendering. It
+% exposes `__id`, typed columns, and a computed `__rendered` expression.
 
 dictionary_table_name(TypeName, Table) :-
     atomic_list_concat(['__ref_', TypeName], Table).
+
+relation_render_expr(Types, Columns, ColumnTypes, Expr) :-
+    pairs_keys_values(Pairs, Columns, ColumnTypes),
+    findall(Part,
+            ( member(Column-ColumnType, Pairs),
+              sql_literal(Column, ColumnLiteral),
+              relation_render_column_expr(Types, Column, ColumnType, ValueExpr),
+              format(atom(Part), '~w, ~w', [ColumnLiteral, ValueExpr]) ),
+            Parts),
+    atomic_list_concat(Parts, ', ', PartsSql),
+    format(atom(Expr), 'json_object(~w)', [PartsSql]).
+
+relation_render_column_expr(_, Column, ref(TypeName), Expr) :-
+    !,
+    quote_ident(Column, QuotedColumn),
+    dictionary_table_name(TypeName, ReferenceView),
+    quote_ident(ReferenceView, QuotedReferenceView),
+    format(atom(Expr),
+           'json((SELECT c."__rendered" FROM ~w c WHERE c."__id" = t.~w))',
+           [QuotedReferenceView, QuotedColumn]).
+relation_render_column_expr(_, Column, _, Expr) :-
+    quote_ident(Column, QuotedColumn),
+    format(atom(Expr), 't.~w', [QuotedColumn]).
 
 dictionary_storage_kind(Types, DeclaredType, Storage) :-
     column_storage(Types, DeclaredType, Storage).
@@ -725,9 +728,12 @@ dictionary_storage_kind(Types, DeclaredType, Storage) :-
 % EXPLAIN receipt (v6/tsv2/tests/structPlane.test.ts): the inner query plans as
 % `SEARCH d USING INTEGER PRIMARY KEY (rowid=?)`, never a SCAN.
 dictionary_render_expr(TypeName, Column, Expr) :-
-    dictionary_table_name(TypeName, _Table),
+    dictionary_table_name(TypeName, Table),
+    quote_ident(Table, QuotedTable),
     quote_ident(Column, QuotedColumn),
-    format(atom(Expr), '~w', [QuotedColumn]).
+    format(atom(Expr),
+           '(SELECT d."__rendered" FROM ~w d WHERE d."__id" = ~w) AS ~w',
+           [QuotedTable, QuotedColumn, QuotedColumn]).
 
 % The per-type plan the emitter hands the runtime, in TOPOLOGICAL order:
 % children before parents, so the post-order intern is one pass down the list
@@ -743,12 +749,19 @@ struct_type_plans(Decls, Plans) :-
     ->  Plans = []
     ;   type_topological_order(Types, Ordered),
         findall(Plan, ( member(TypeName, Ordered),
-                        struct_type_plan(Types, TypeName, Plan) ), Plans)
+                        struct_type_plan(Decls, Types, TypeName, Plan) ), Plans)
     ).
 
-struct_type_plan(Types, TypeName,
-                 structtype(TypeName, Columns, RefTypes, InternSql, LookupSql)) :-
+struct_type_plan(Decls, Types, TypeName,
+                 structtype(TypeName, Columns, RefTypes, KeyIndices,
+                            ConflictSql, InternSql, LookupSql)) :-
     type_definition(Types, TypeName, Columns, ColumnTypes),
+    length(Columns, Arity),
+    ( decl_key(Decls, TypeName/Arity, KeyPositions)
+    -> true
+    ;  numlist(1, Arity, KeyPositions)
+    ),
+    maplist(one_based_to_zero_based, KeyPositions, KeyIndices),
     maplist(dictionary_ref_type(Types), ColumnTypes, RefTypes),
     quote_ident(TypeName, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
@@ -761,12 +774,30 @@ struct_type_plan(Types, TypeName,
            [QuotedTable, ColumnsSql, SelectSql]),
     findall(JsonArg,
             ( member(QuotedColumn, QuotedColumns),
-              format(atom(JsonArg), '~w', [QuotedColumn]) ),
+              format(atom(JsonArg), 't.~w', [QuotedColumn]) ),
             JsonArgs),
     atomic_list_concat(JsonArgs, ', ', JsonArgsSql),
+    key_join_equalities(KeyPositions, QuotedColumns, 'i.value', t,
+                        KeyEqualities),
+    atomic_list_concat(KeyEqualities, ' AND ', KeyWhereSql),
+    format(atom(ConflictSql),
+           'SELECT i.value AS "__requested", json_array(~w) AS "__stored" FROM json_each(?) i JOIN ~w t ON ~w WHERE json_array(~w) <> i.value',
+           [JsonArgsSql, QuotedTable, KeyWhereSql, JsonArgsSql]),
     format(atom(LookupSql),
-           'SELECT json_array(~w) AS "__lookup", "__id" FROM ~w WHERE json_array(~w) IN (SELECT value FROM json_each(?))',
-           [JsonArgsSql, QuotedTable, JsonArgsSql]).
+           'SELECT i.value AS "__lookup", t."__id", json_array(~w) AS "__stored" FROM json_each(?) i JOIN ~w t ON ~w',
+           [JsonArgsSql, QuotedTable, KeyWhereSql]).
+
+one_based_to_zero_based(Position, Index) :- Index is Position - 1.
+
+key_join_equalities([], _, _, _, []).
+key_join_equalities([Position | Rest], QuotedColumns, JsonExpr, TableAlias,
+                    [Equality | More]) :-
+    nth1(Position, QuotedColumns, QuotedColumn),
+    Index is Position - 1,
+    format(atom(Equality),
+           '~w.~w = json_extract(~w, ''$[~w]'')',
+           [TableAlias, QuotedColumn, JsonExpr, Index]),
+    key_join_equalities(Rest, QuotedColumns, JsonExpr, TableAlias, More).
 
 dictionary_ref_type(Types, DeclaredType, RefType) :-
     column_storage(Types, DeclaredType, Storage),
@@ -2022,15 +2053,15 @@ canonical_column_expr(Column, Expr) :-
 % it runs `boot` after DDL and before the tick fold, confirmed by that
 % script's own header comment.
 
-boot_seed_statement(Types, relplan(Ref, log, Columns, _, ColumnTypes), Initial, Statements) :- !,
-    boot_rows_statements(Types, 'INSERT INTO', Ref, Columns, ColumnTypes, Initial, Statements).
-boot_seed_statement(Types, relplan(Ref, set, Columns, _, ColumnTypes), Initial, Statements) :-
-    boot_rows_statements(Types, 'INSERT OR IGNORE INTO', Ref, Columns, ColumnTypes, Initial, Statements).
+boot_seed_statement(Decls, Types, relplan(Ref, log, Columns, _, ColumnTypes), Initial, Statements) :- !,
+    boot_rows_statements(Decls, Types, 'INSERT INTO', Ref, Columns, ColumnTypes, Initial, Statements).
+boot_seed_statement(Decls, Types, relplan(Ref, set, Columns, _, ColumnTypes), Initial, Statements) :-
+    boot_rows_statements(Decls, Types, 'INSERT OR IGNORE INTO', Ref, Columns, ColumnTypes, Initial, Statements).
 
-boot_rows_statements(Types, Insert, Ref, Columns, ColumnTypes, Initial, Statements) :-
+boot_rows_statements(Decls, Types, Insert, Ref, Columns, ColumnTypes, Initial, Statements) :-
     findall(Group,
             ( member(Row, Initial), rel_ref(Row, Ref), Row =.. [_ | Values],
-              boot_row_statements(Types, Insert, Ref, Columns, ColumnTypes, Values, Group) ),
+              boot_row_statements(Decls, Types, Insert, Ref, Columns, ColumnTypes, Values, Group) ),
             Groups),
     append(Groups, Statements).
 
@@ -2038,52 +2069,75 @@ boot_rows_statements(Types, Insert, Ref, Columns, ColumnTypes, Initial, Statemen
 % VALUE, and the dense id it must store does not exist until the dictionary
 % row does. So one seed row becomes: the intern statements for every value in
 % its ref columns (children before parents), then the row insert itself, whose
-% ref parameter is a `SELECT "__id" ... WHERE "__semantic" = ?` subquery
-% rather than a bind. Arrivals take the same shape at runtime; this is the
-% same plan with the values known at compile time.
-boot_row_statements(Types, Insert, Ref, Columns, ColumnTypes, Values, Statements) :-
+% ref parameter is a `SELECT "__id" ... WHERE <declared key>` subquery rather
+% than a bind. Arrivals take the same shape at runtime; this is the same plan
+% with the values known at compile time.
+boot_row_statements(Decls, Types, Insert, Ref, Columns, ColumnTypes, Values, Statements) :-
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
-    foldl(boot_column_slot(Types), ColumnTypes, Values,
-          slots([], [], []), slots(RevSlots, RevParams, RevIntern)),
-    reverse(RevSlots, Slots), reverse(RevParams, Params),
-    reverse(RevIntern, InternGroups), append(InternGroups, InternStatements),
+    boot_column_slots(Decls, Types, ColumnTypes, Values, Descs, InternStatements),
+    maplist(slot_desc_slot, Descs, Slots),
+    slot_desc_params(Descs, Params),
     atomic_list_concat(Slots, ', ', SlotsSql),
     format(atom(Sql), '~w ~w (~w) VALUES (~w)', [Insert, QuotedTable, ColumnsSql, SlotsSql]),
     append(InternStatements, [bootstmt(Sql, Params)], Statements).
 
-boot_column_slot(Types, ColumnType, Value,
-                 slots(Slots, Params, Intern), slots([Slot | Slots], NewParams, [Group | Intern])) :-
+boot_column_slots(_, _, [], [], [], []).
+boot_column_slots(Decls, Types, [ColumnType | ColumnTypes], [Value | Values],
+                  [Desc | Descs], Statements) :-
+    boot_column_slot(Decls, Types, ColumnType, Value, Desc, Group),
+    boot_column_slots(Decls, Types, ColumnTypes, Values, Descs, More),
+    append(Group, More, Statements).
+
+boot_column_slot(Decls, Types, ColumnType, Value, slot_desc(Slot, Params), Statements) :-
     (   ColumnType = ref(TypeName)
-    ->  struct_intern_statements(Types, TypeName, Value, Semantic, Group),
-        dictionary_table_name(TypeName, DictTable), quote_ident(DictTable, QuotedDict),
-        format(atom(Slot), '(SELECT "__id" FROM ~w WHERE "__semantic" = ?)', [QuotedDict]),
-        NewParams = [Semantic | Params]
-    ;   Slot = '?', NewParams = [Value | Params], Group = []
+    ->  struct_intern_statements(Decls, Types, TypeName, Value, Slot, Params, Statements)
+    ;   Slot = '?', Params = [Value], Statements = []
     ).
 
-% Post-order: every child's intern statement precedes its parent's, so a
-% parent's ref column can resolve by subquery against a row that already
-% exists. The DAG guarantee (0_program_check.pl:type_cycle) is what makes this
-% terminate.
-struct_intern_statements(Types, TypeName, Value, Semantic, Statements) :-
+slot_desc_slot(slot_desc(Slot, _), Slot).
+
+slot_desc_params([], []).
+slot_desc_params([slot_desc(_, Params) | Rest], All) :-
+    slot_desc_params(Rest, More),
+    append(Params, More, All).
+
+% Post-order: every referenced target insert precedes its parent's insert, so
+% a parent's ref column can resolve by declared key against a row that already
+% exists. The current type-cycle refusal is what makes this terminate.
+struct_intern_statements(Decls, Types, TypeName, Value, LookupSlot, LookupParams, Statements) :-
     type_definition(Types, TypeName, Columns, ColumnTypes),
     type_field_values(Types, TypeName, Value, FieldValues),
-    type_canonical_json(Types, TypeName, Value, Rendered),
-    atomic_list_concat([TypeName, Rendered], Semantic),
-    foldl(boot_column_slot(Types), ColumnTypes, FieldValues,
-          slots([], [], []), slots(RevSlots, RevParams, RevIntern)),
-    reverse(RevSlots, Slots), reverse(RevParams, Params),
-    reverse(RevIntern, ChildGroups), append(ChildGroups, ChildStatements),
-    dictionary_table_name(TypeName, DictTable), quote_ident(DictTable, QuotedDict),
+    boot_column_slots(Decls, Types, ColumnTypes, FieldValues, Descs, ChildStatements),
+    maplist(slot_desc_slot, Descs, Slots),
+    slot_desc_params(Descs, Params),
+    quote_ident(TypeName, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
     atomic_list_concat(Slots, ', ', SlotsSql),
     format(atom(Sql),
-           'INSERT OR IGNORE INTO ~w ("__semantic", "__rendered", ~w) VALUES (?, ?, ~w)',
-           [QuotedDict, ColumnsSql, SlotsSql]),
-    append(ChildStatements, [bootstmt(Sql, [Semantic, Rendered | Params])], Statements).
+           'INSERT OR IGNORE INTO ~w (~w) VALUES (~w)',
+           [QuotedTable, ColumnsSql, SlotsSql]),
+    length(Columns, Arity),
+    ( decl_key(Decls, TypeName/Arity, KeyPositions)
+    -> true
+    ;  numlist(1, Arity, KeyPositions)
+    ),
+    findall(KeyColumn, (member(Position, KeyPositions), nth1(Position, QuotedColumns, KeyColumn)), KeyColumns),
+    findall(KeyDesc, (member(Position, KeyPositions), nth1(Position, Descs, KeyDesc)), KeyDescs),
+    maplist(slot_desc_slot, KeyDescs, KeySlots),
+    slot_desc_params(KeyDescs, LookupParams),
+    findall(Equality,
+            ( nth1(Index, KeyColumns, KeyColumn),
+              nth1(Index, KeySlots, KeySlot),
+              format(atom(Equality), '~w = ~w', [KeyColumn, KeySlot]) ),
+            Equalities),
+    atomic_list_concat(Equalities, ' AND ', WhereSql),
+    format(atom(LookupSlot),
+           '(SELECT "__id" FROM ~w WHERE ~w)',
+           [QuotedTable, WhereSql]),
+    append(ChildStatements, [bootstmt(Sql, Params)], Statements).
 
 % ═══ top level ═══════════════════════════════════════════════════════════════
 
@@ -2146,13 +2200,13 @@ arrival_target_relplan(ArrivalTargets, relplan(Ref, _, _, _, _)) :- memberchk(Re
 % at tick 1 without this.
 boot_statements(Decls, RelPlans, Initial, LevelStatements, BootStatements) :-
     type_definitions(Decls, Types),
-    maplist(boot_seed_statement_for(Types, Initial), RelPlans, SeedGroups),
+    maplist(boot_seed_statement_for(Decls, Types, Initial), RelPlans, SeedGroups),
     append(SeedGroups, SeedStatements),
     boot_level_recompute_statements(LevelStatements, LevelBootStatements),
     append(SeedStatements, LevelBootStatements, BootStatements).
 
-boot_seed_statement_for(Types, Initial, RelPlan, Statements) :-
-    boot_seed_statement(Types, RelPlan, Initial, Statements).
+boot_seed_statement_for(Decls, Types, Initial, RelPlan, Statements) :-
+    boot_seed_statement(Decls, Types, RelPlan, Initial, Statements).
 
 % engine.pl:run_program computes level_closure(PlainLevel, AggRules, BaseRows,
 % 0, Level0) ONCE, immediately after seeding Initial rows and before tick 1's

@@ -16,6 +16,7 @@
 :- discontiguous next_action/2.
 :- discontiguous locked/2.
 :- discontiguous leading_hypothesis/2.
+:- discontiguous closed/2.
 
 session(id, '20260729.4').
 session(date, '2026-07-29').
@@ -261,3 +262,40 @@ verification(reference_fixpoint_clock_lab, passed(6)).
 verification(reference_construction_context_lab, passed(8)).
 next_action(1,
             'replace boot/world full-row StructPlane semantics with key-driven batched target resolution and named conflicts').
+
+touched('v6/prolog/compile/lower.pl',
+        'key-driven batched target plans, computed target render views, and key-based boot target resolution').
+touched('v6/tsv2/runtime/structPlane.ts',
+        'three-statement target resolution: conflict preflight, set insert, key lookup').
+touched('v6/tsv2/tests/structPlane.test.ts',
+        'ten runtime receipts including flat statement count and three key-conflict cases').
+closed(boot_semantic_blob_path,
+       'boot recursively inserts target relation rows and resolves parent endpoints by declared key or full-row fallback; generated SQL contains no __semantic or __rendered storage column').
+locked(world_reference_conflict,
+       'same key plus equal full row reuses one id; same key plus different non-key fields refuses relation_reference_conflict before parent rewriting; a conflicting same-batch pair executes zero SQL statements').
+locked(reference_boundary_render,
+       'relation rows store only typed columns and __id; __ref_<rel> is a temporary computed view that reconstructs boundary JSON without storing JSON').
+observed(reference_resolution_cost,
+         'three set-based SQL statements per referenced target relation with values in a tick, flat from 3 through 50 requested rows').
+observed(reference_target_visibility_diff,
+         'nine former struct fixtures now expose resolver-created target rows in final state because referenced declarations are public rels; old oracle final state suppresses those rows').
+observed(reference_tick_visibility,
+         'resolver-created target rows are immediately queryable current membership but are not staged as outside-arrival deltas; corpus tick logs remain byte-identical').
+observed(reference_transaction_constraint,
+         'wrapping target resolution and the whole emitted tick in SqlRunner.inTransaction fails because incremental tick paths call executeMultiple, whose driver rollback guard closes the transaction').
+verification(world_reference_runtime_receipts, passed(10)).
+verification(world_reference_construction_lab, passed(8)).
+verification(world_reference_plunit, passed(150)).
+verification(world_reference_typecheck, passed).
+verification(world_reference_sweep,
+             result(103,101,0,2,
+                    'compiled, identical, wrong, recorded run errors')).
+verification(world_reference_final_state,
+             result(103,92,9,2,
+                    'compiled, identical, target-visibility diffs, recorded run errors')).
+next_action(1,
+            'pin whether resolver-created target membership crosses the delta boundary or remains silent identity materialization, then update the oracle final-state contract').
+next_action(2,
+            'split identity dependency cycles from non-key relation-edge cycles and grade self and mutual reference cases').
+next_action(3,
+            'run the opaque identity transport cases; retain ref only if a current program cannot express the required edge through relation matching and modes').

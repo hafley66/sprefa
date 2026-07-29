@@ -1,55 +1,20 @@
 /**
- * structPlane.ts — the declared value plane at runtime (ruling
- * compound_storage = struct_as_rows; arc header
- * plans/2026-07-29-struct-as-rows-header.md).
+ * Resolves relation-shaped values arriving in reference columns.
  *
- * A declared struct value is a dictionary row referenced by content id. Every
- * arriving struct value is interned before the tick's own arrival statements
- * run, and the arrival row's ref column is rewritten from the VALUE to the
- * dense id. Everything downstream — arrival SQL, level joins, edge arms,
- * frontier staging, retraction — then handles a plain INTEGER column and
- * needs to know nothing about the value plane at all.
+ * The wire carries a complete target row. Before the parent tick runs, this
+ * module validates the row shape, recursively resolves referenced children,
+ * checks the target relation for a same-key/full-row conflict, inserts missing
+ * targets, looks up their `__id`, and replaces each parent wire value with that
+ * integer endpoint.
  *
- * ── the two things this file exists to guarantee ────────────────────────────
+ * Each target relation costs three set-based SQL statements for a non-empty
+ * batch: conflict preflight, INSERT OR IGNORE, and key lookup. Statement count
+ * is flat in requested row count. The target table stores typed columns plus
+ * `__id`; canonical JSON exists only as transient wire and comparison text.
  *
- * EDGE 1, values not ids. Each dictionary row carries `__rendered`, the
- * value's canonical JSON, written ONCE here at intern time. Values are
- * immutable and children intern before parents, so a parent's rendering is one
- * concat over finished child renderings. The boundary read (lower.pl
- * dictionary_render_expr/3) is then a single rowid probe per row with no
- * recursion, whatever the nesting depth.
- *
- * EDGE 2, dictionaries are invisible. Nothing in this file writes a delta
- * table, a frontier, or a boundary row. `__dict_*` never appears in
- * `relColumns`, so the tick log cannot mention it. That is not tidiness: the
- * oracle holds real terms and has no dictionary, so a dictionary row in the
- * log would be a row the oracle can never produce and the byte grade would be
- * unwinnable.
- *
- * ── statement count ─────────────────────────────────────────────────────────
- *
- * Exactly TWO statements per declared type per tick that carries any struct
- * value — one set-based INSERT OR IGNORE over `json_each(?)`, one lookup of
- * the semantic keys — and ZERO statements on a tick that carries none. Flat in
- * the number of arriving values; there is no per-row shape to fall into.
- * `tests/structPlane.test.ts` is the count receipt.
- *
- * ── SLOT-GC-TIMING, decided: monotone dictionaries, named debt ──────────────
- *
- * Dictionary rows are never deleted. The decisive argument is Edge 2 itself:
- * because the dictionary is boundary-invisible, GC timing is UNOBSERVABLE in
- * the tick log — a collected and an uncollected implementation print the same
- * bytes for every program. What it costs is storage, and only for values that
- * are never seen again: interning is content-addressed, so a value that
- * re-arrives reuses its row and a churning program (keyed replace over a fixed
- * value set, the memory-soak shape) grows by exactly zero. The debt is real
- * for a program streaming ever-new distinct struct values, where the
- * dictionary grows with the number of DISTINCT values ever seen rather than
- * the number live; one row costs its canonical JSON twice (`__semantic` and
- * `__rendered`) plus the flattened columns. Collecting it means refcounting
- * every ref column across arrivals, level heads, edge heads, frontier staging
- * and retention — the derived planes copy ids, so an arrival-plane-only count
- * would delete rows a derived row still renders — and that is its own arc.
+ * Resolver-created targets are queryable relation state. This path does not
+ * synthesize target arrival deltas. A process interruption before the parent
+ * write can therefore leave an unreferenced target row, and replay reuses it.
  */
 
 import { concatMap, map, of, type Observable } from "rxjs";
@@ -249,20 +214,42 @@ function internOneType(
   ids: Map<string, number>,
 ): Observable<unknown> {
   const lookupToSemantic = new Map<string, string>();
+  const tupleByKey = new Map<string, string>();
   const tuples = [...bucket.entries()].map(([semantic, collected]) => {
     const fields = collected.fields.map((field) =>
       typeof field === "object" && field !== null && "childSemantic" in field
         ? idFor(ids, field.childSemantic)
         : field
     );
-    lookupToSemantic.set(JSON.stringify(fields), semantic);
+    const tuple = JSON.stringify(fields);
+    const key = JSON.stringify(plan.keyIndices.map((index) => fields[index]));
+    const prior = tupleByKey.get(key);
+    if (prior !== undefined && prior !== tuple) {
+      throw new Error(`relation_reference_conflict(${plan.name}, ${key}, ${prior}, ${tuple})`);
+    }
+    tupleByKey.set(key, tuple);
+    lookupToSemantic.set(tuple, semantic);
     return fields;
   });
-  return seam.runner.execute(seam.db, { sql: plan.internSql, args: [JSON.stringify(tuples)] }).pipe(
-    concatMap(() => seam.runner.execute(seam.db, { sql: plan.lookupSql, args: [JSON.stringify(tuples)] })),
+  const encoded = JSON.stringify(tuples);
+  return seam.runner.execute(seam.db, { sql: plan.conflictSql, args: [encoded] }).pipe(
+    map((result) => {
+      if (result.rows.length === 0) return undefined;
+      const row = result.rows[0]!;
+      throw new Error(
+        `relation_reference_conflict(${plan.name}, ${String(row["__requested"])}, ${String(row["__stored"])})`,
+      );
+    }),
+    concatMap(() => seam.runner.execute(seam.db, { sql: plan.internSql, args: [encoded] })),
+    concatMap(() => seam.runner.execute(seam.db, { sql: plan.lookupSql, args: [encoded] })),
     map((result) => {
       for (const row of result.rows) {
-        const semantic = lookupToSemantic.get(row["__lookup"] as string);
+        const lookup = row["__lookup"] as string;
+        const stored = row["__stored"] as string;
+        if (stored !== lookup) {
+          throw new Error(`relation_reference_conflict(${plan.name}, ${lookup}, ${stored})`);
+        }
+        const semantic = lookupToSemantic.get(lookup);
         if (semantic === undefined) {
           throw new Error(`relation reference lookup returned an unknown row ${String(row["__lookup"])}`);
         }

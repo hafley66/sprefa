@@ -225,17 +225,21 @@ struct_plane_lines(StructPlans, RelPlans, Lines, true) :-
       [ '};' ]
     ], Lines).
 
-struct_type_plan_line(structtype(TypeName, Columns, RefTypes, InternSql, LookupSql), Line) :-
+struct_type_plan_line(structtype(TypeName, Columns, RefTypes, KeyIndices,
+                                ConflictSql, InternSql, LookupSql), Line) :-
     js_string(TypeName, NameText),
     maplist(js_string, Columns, ColumnTexts),
     atomic_list_concat(ColumnTexts, ', ', ColumnsText),
     maplist(struct_ref_entry, RefTypes, RefTexts),
     atomic_list_concat(RefTexts, ', ', RefsText),
+    atomic_list_concat(KeyIndices, ', ', KeyIndicesText),
+    js_template(ConflictSql, ConflictTemplate),
     js_template(InternSql, InternTemplate),
     js_template(LookupSql, LookupTemplate),
     format(atom(Line),
-           '  { name: ~w, columns: [~w], refs: [~w], internSql: ~w, lookupSql: ~w },',
-           [NameText, ColumnsText, RefsText, InternTemplate, LookupTemplate]).
+           '  { name: ~w, columns: [~w], refs: [~w], keyIndices: [~w], conflictSql: ~w, internSql: ~w, lookupSql: ~w },',
+           [NameText, ColumnsText, RefsText, KeyIndicesText,
+            ConflictTemplate, InternTemplate, LookupTemplate]).
 
 struct_ref_entry(none, 'null') :- !.
 struct_ref_entry(TypeName, Text) :- js_string(TypeName, Text).

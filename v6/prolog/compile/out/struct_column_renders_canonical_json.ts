@@ -63,7 +63,7 @@ function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
 }
 
 export const STRUCT_TYPES: readonly IStructTypePlan[] = [
-  { name: "span", columns: ["start", "end"], refs: [null, null], internSql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)`, lookupSql: `SELECT json_array("start", "end") AS "__lookup", "__id" FROM "span" WHERE json_array("start", "end") IN (SELECT value FROM json_each(?))` },
+  { name: "span", columns: ["start", "end"], refs: [null, null], keyIndices: [0, 1], conflictSql: `SELECT i.value AS "__requested", json_array(t."start", t."end") AS "__stored" FROM json_each(?) i JOIN "span" t ON t."start" = json_extract(i.value, '$[0]') AND t."end" = json_extract(i.value, '$[1]') WHERE json_array(t."start", t."end") <> i.value`, internSql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)`, lookupSql: `SELECT i.value AS "__lookup", t."__id", json_array(t."start", t."end") AS "__stored" FROM json_each(?) i JOIN "span" t ON t."start" = json_extract(i.value, '$[0]') AND t."end" = json_extract(i.value, '$[1]')` },
 ];
 
 export const STRUCT_REF_COLUMNS: IStructRefColumns = {
@@ -73,7 +73,7 @@ export const STRUCT_REF_COLUMNS: IStructRefColumns = {
 const ddl: readonly string[] = [
   `CREATE TABLE "finding" ("path" TEXT NOT NULL, "at" INTEGER NOT NULL, PRIMARY KEY ("path", "at")) WITHOUT ROWID`,
   `CREATE TABLE "span" ("__id" INTEGER PRIMARY KEY, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, UNIQUE ("start", "end"))`,
-  `CREATE TEMP VIEW "__ref_span" AS SELECT "__id", "start", "end" FROM "span"`,
+  `CREATE TEMP VIEW "__ref_span" AS SELECT t."__id", "start", "end", json_object('start', t."start", 'end', t."end") AS "__rendered" FROM "span" t`,
   `CREATE TABLE "touched" ("path" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_finding" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_finding_sign" ON "__delta_finding" ("_sign")`,
@@ -117,14 +117,14 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    finding: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "at" FROM "finding"`, relColumns.finding!),
+    finding: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at" FROM "finding"`, relColumns.finding!),
     span: selectRows(seam, `SELECT "start", "end" FROM "span"`, relColumns.span!),
     touched: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path" FROM "touched"`, relColumns.touched!),
   });
 }
 
 const finalSelect: Record<string, string> = {
-  finding: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "at" FROM "finding"`,
+  finding: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at" FROM "finding"`,
   span: `SELECT "start", "end" FROM "span"`,
   touched: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path" FROM "touched"`,
 };
@@ -157,7 +157,7 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "finding", kind: "set", tableName: "finding", deltaTableName: "__delta_finding", frontierTableName: "__frontier_finding", nextFrontierTableName: "__next_frontier_finding", columns: ["path", "at"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "finding" ("path", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "at"`, arrivalDelSql: `DELETE FROM "finding" WHERE ("path", "at") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "at"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_finding" WHERE "_sign" IN (-1, 1) GROUP BY "path", "at", "_sign"` },
+  { rel: "finding", kind: "set", tableName: "finding", deltaTableName: "__delta_finding", frontierTableName: "__frontier_finding", nextFrontierTableName: "__next_frontier_finding", columns: ["path", "at"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "finding" ("path", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "at"`, arrivalDelSql: `DELETE FROM "finding" WHERE ("path", "at") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "at"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_finding" WHERE "_sign" IN (-1, 1) GROUP BY "path", "at", "_sign"` },
   { rel: "span", kind: "set", tableName: "span", deltaTableName: "__delta_span", frontierTableName: "__frontier_span", nextFrontierTableName: "__next_frontier_span", columns: ["start", "end"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "start", "end"`, arrivalDelSql: `DELETE FROM "span" WHERE ("start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "start", "end"`, boundarySql: `SELECT "start", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" WHERE "_sign" IN (-1, 1) GROUP BY "start", "end", "_sign"` },
   { rel: "touched", kind: "set", tableName: "touched", deltaTableName: "__delta_touched", frontierTableName: "__frontier_touched", nextFrontierTableName: "__next_frontier_touched", columns: ["path"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_touched" WHERE "_sign" IN (-1, 1) GROUP BY "path", "_sign"` },
 ];

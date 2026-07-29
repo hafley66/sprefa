@@ -282,9 +282,12 @@ export interface IStructTypePlan {
   readonly name: string;
   readonly columns: readonly string[];
   readonly refs: readonly (string | null)[];
-  /** `INSERT OR IGNORE INTO "__dict_<name>" (...) SELECT ... FROM json_each(?)` */
+  readonly keyIndices: readonly number[];
+  /** Reports a requested row whose key exists with different non-key fields. */
+  readonly conflictSql: string;
+  /** Batched insertion of target rows absent at their declared key. */
   readonly internSql: string;
-  /** `SELECT "__semantic", "__id" FROM "__dict_<name>" WHERE "__semantic" IN (...)` */
+  /** Batched dense-ID lookup by declared key. */
   readonly lookupSql: string;
 }
 
@@ -294,10 +297,10 @@ export type IStructRefColumns = Readonly<Record<string, readonly (string | null)
 
 export interface IStructPlane {
   /**
-   * Interns every struct value the batch carries and returns the batch with
-   * each ref column rewritten from the VALUE to its dense dictionary id.
+   * Resolves every relation-shaped reference value and returns parent rows
+   * with each reference replaced by the target relation's dense `__id`.
    * Returns the batch unchanged, running zero statements, when the program
-   * declares no types or the batch carries no struct value.
+   * declares no referenced relations or the batch carries no reference value.
    */
   intern(
     seam: ISqlSeam,

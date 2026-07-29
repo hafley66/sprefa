@@ -111,12 +111,13 @@ function deltaPayloads(lines: readonly string[]): string[] {
   return lines.map((line) => line.replace(/^\{"tick":\d+,/, "{"));
 }
 
-function denseIds(seam: ISqlSeam, table: string): Promise<Record<string, number>> {
+function denseIds(seam: ISqlSeam, table: string, columns: readonly string[]): Promise<Record<string, number>> {
+  const tuple = `json_array(${columns.map((column) => `"${column}"`).join(", ")})`;
   return firstValueFrom(
-    seam.runner.execute(seam.db, `SELECT "__semantic", "__id" FROM "${table}"`).pipe(
+    seam.runner.execute(seam.db, `SELECT ${tuple} AS "__tuple", "__id" FROM "${table}"`).pipe(
       map((result) => {
         const ids: Record<string, number> = {};
-        for (const row of result.rows) ids[row["__semantic"] as string] = Number(row["__id"]);
+        for (const row of result.rows) ids[row["__tuple"] as string] = Number(row["__id"]);
         return ids;
       }),
     ),
@@ -128,13 +129,13 @@ function denseIds(seam: ISqlSeam, table: string): Promise<Record<string, number>
 test("edge 1: two build orders render identically while their dense ids differ", async () => {
   const seamA = await bootedSeam(orderA.program as EmittedProgram);
   const linesA = await runSchedule(orderA.program as EmittedProgram, seamA, ORDER_A_SCHEDULE);
-  const idsA = await denseIds(seamA, "__dict_span");
+  const idsA = await denseIds(seamA, "span", ["start", "end"]);
 
   const seamB = await bootedSeam(orderB.program as EmittedProgram);
   const linesB = await runSchedule(orderB.program as EmittedProgram, seamB, ORDER_B_SCHEDULE);
-  const idsB = await denseIds(seamB, "__dict_span");
+  const idsB = await denseIds(seamB, "span", ["start", "end"]);
 
-  const shared_semantic = 'span{"end":2,"start":1}';
+  const shared_semantic = "[1,2]";
   assert.notEqual(
     idsA[shared_semantic],
     idsB[shared_semantic],
@@ -176,12 +177,12 @@ test("edge 2: the log's rel-name set matches the oracle while sqlite_master hold
   assert.deepEqual(
     [...logged].sort(),
     ["hit"],
-    "the tick log may name only value-plane rels; the oracle has no dictionary and can never produce one",
+    "resolver-created target rows are queryable current state but do not synthesize outside-arrival deltas",
   );
   assert.deepEqual(
     Object.keys(shared.program.relColumns).sort(),
-    ["hit"],
-    "a dictionary must not be reachable through relColumns either",
+    ["hit", "span"],
+    "the referenced target is an ordinary queryable relation",
   );
 
   const tables = await firstValueFrom(
@@ -190,8 +191,8 @@ test("edge 2: the log's rel-name set matches the oracle while sqlite_master hold
       .pipe(map((result) => result.rows.map((row) => row["name"] as string))),
   );
   assert.ok(
-    tables.includes("__dict_span"),
-    `the assertion above is vacuous unless the dictionary really exists: ${tables.join(", ")}`,
+    tables.includes("span"),
+    `the target relation table must exist: ${tables.join(", ")}`,
   );
 });
 
@@ -222,6 +223,32 @@ function countingSeam(seam: ISqlSeam): { seam: ISqlSeam; statements: string[] } 
 
 const SPAN_TYPES: readonly IStructTypePlan[] = orderA.STRUCT_TYPES;
 const SPAN_REF_COLUMNS: IStructRefColumns = orderA.STRUCT_REF_COLUMNS;
+const USER_TYPES: readonly IStructTypePlan[] = [{
+  name: "user",
+  columns: ["id", "name"],
+  refs: [null, null],
+  keyIndices: [0],
+  conflictSql: `SELECT i.value AS "__requested", json_array(t."id", t."name") AS "__stored" FROM json_each(?) i JOIN "user" t ON t."id" = json_extract(i.value, '$[0]') WHERE json_array(t."id", t."name") <> i.value`,
+  internSql: `INSERT OR IGNORE INTO "user" ("id", "name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)`,
+  lookupSql: `SELECT i.value AS "__lookup", t."__id", json_array(t."id", t."name") AS "__stored" FROM json_each(?) i JOIN "user" t ON t."id" = json_extract(i.value, '$[0]')`,
+}];
+const USER_REF_COLUMNS: IStructRefColumns = { post: ["user"] };
+
+async function userSeam(): Promise<ISqlSeam> {
+  const seam = ScratchStore.open(":memory:");
+  await firstValueFrom(ScratchStore.boot(seam, [
+    `CREATE TABLE "user" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "name" TEXT NOT NULL, UNIQUE ("id"))`,
+  ]));
+  return seam;
+}
+
+function userBatch(...users: readonly { readonly id: number; readonly name: string }[]): IArrivalBatch {
+  return users.map((user) => ({
+    rel: "post",
+    sign: "add" as const,
+    row: [user as unknown as string],
+  }));
+}
 
 function markBatch(count: number): IArrivalBatch {
   return Array.from({ length: count }, (_unused, index) => ({
@@ -238,10 +265,10 @@ async function internStatementCount(count: number): Promise<number> {
   return statements.length;
 }
 
-test("count: interning is two statements per type, flat in the number of values", async () => {
+test("count: resolving is three statements per target relation, flat in the number of values", async () => {
   const three = await internStatementCount(3);
   const fifty = await internStatementCount(50);
-  assert.equal(three, 2, `three values must intern in two statements, got ${three}`);
+  assert.equal(three, 3, `three values must resolve in three statements, got ${three}`);
   assert.equal(fifty, three, `fifty values must cost what three did, got ${fifty} vs ${three}`);
 });
 
@@ -252,24 +279,71 @@ test("count: a tick carrying no struct value runs zero intern statements", async
   assert.equal(statements.length, 0, `a tick with no struct value must run zero intern statements: ${statements.length}`);
 });
 
-test("plan: the boundary render of a ref column SEARCHes the dictionary by rowid", async () => {
+test("key: equal key and equal row reuse one target id", async () => {
+  const seam = await userSeam();
+  const rewritten = await firstValueFrom(
+    StructPlane.intern(
+      seam,
+      USER_TYPES,
+      USER_REF_COLUMNS,
+      userBatch({ id: 7, name: "Ada" }, { id: 7, name: "Ada" }),
+    ),
+  );
+  assert.equal(rewritten[0]!.row[0], rewritten[1]!.row[0]);
+  const ids = await denseIds(seam, "user", ["id", "name"]);
+  assert.deepEqual(Object.keys(ids), ['[7,"Ada"]']);
+});
+
+test("key: an existing key with different non-key fields refuses before insertion", async () => {
+  const seam = await userSeam();
+  await firstValueFrom(
+    StructPlane.intern(seam, USER_TYPES, USER_REF_COLUMNS, userBatch({ id: 7, name: "Ada" })),
+  );
+  await assert.rejects(
+    firstValueFrom(
+      StructPlane.intern(seam, USER_TYPES, USER_REF_COLUMNS, userBatch({ id: 7, name: "Grace" })),
+    ),
+    /relation_reference_conflict\(user,/,
+  );
+  const ids = await denseIds(seam, "user", ["id", "name"]);
+  assert.deepEqual(Object.keys(ids), ['[7,"Ada"]']);
+});
+
+test("key: two different rows with one key in the same batch refuse before SQL", async () => {
+  const base = await userSeam();
+  const { seam, statements } = countingSeam(base);
+  await assert.rejects(
+    firstValueFrom(StructPlane.intern(
+      seam,
+      USER_TYPES,
+      USER_REF_COLUMNS,
+      userBatch({ id: 7, name: "Ada" }, { id: 7, name: "Grace" }),
+    )),
+    /relation_reference_conflict\(user,/,
+  );
+  assert.equal(statements.length, 0);
+  const ids = await denseIds(seam, "user", ["id", "name"]);
+  assert.deepEqual(ids, {});
+});
+
+test("plan: the boundary render of a ref column SEARCHes the target view by rowid", async () => {
   const seam = await bootedSeam(orderA.program as EmittedProgram);
   const sql = orderA.incrementalPlan.relations.find((relation) => relation.rel === "mark")!.boundarySql;
-  assert.ok(sql.includes('"__dict_span"'), `this fixture's boundary read must touch the dictionary: ${sql}`);
+  assert.ok(sql.includes('"__ref_span"'), `this fixture's boundary read must touch the target view: ${sql}`);
   const plan = await firstValueFrom(
     seam.runner
       .execute(seam.db, `EXPLAIN QUERY PLAN ${sql}`)
       .pipe(map((result) => result.rows.map((row) => row["detail"] as string).join(" | "))),
   );
   assert.ok(
-    /CORRELATED SCALAR SUBQUERY/.test(plan) && /SEARCH d USING INTEGER PRIMARY KEY \(rowid=\?\)/.test(plan),
-    `the dictionary render must be a rowid SEARCH, never a SCAN, got: ${plan}`,
+    /CORRELATED SCALAR SUBQUERY/.test(plan) && /SEARCH t USING INTEGER PRIMARY KEY \(rowid=\?\)/.test(plan),
+    `the target render must be a rowid SEARCH, never a SCAN, got: ${plan}`,
   );
 });
 
 // ── CRASH: what a kill mid-intern can leave behind ───────────────────────────
 
-test("crash: a kill between intern and the arrival write leaves only an unreferenced dictionary row", async () => {
+test("crash: a kill between target resolution and the parent write leaves only an unreferenced target row", async () => {
   const directory = mkdtempSync(join(tmpdir(), "struct-plane-"));
   const path = `file:${join(directory, "crash.sqlite")}`;
   try {
@@ -280,8 +354,8 @@ test("crash: a kill between intern and the arrival write leaves only an unrefere
     // direction that WOULD break the boundary render, is unreachable.
     const crashed = await bootedSeam(orderA.program as EmittedProgram, path);
     await firstValueFrom(StructPlane.intern(crashed, SPAN_TYPES, SPAN_REF_COLUMNS, markBatch(1)));
-    const orphanIds = await denseIds(crashed, "__dict_span");
-    assert.deepEqual(Object.keys(orphanIds), ['span{"end":2,"start":1}']);
+    const orphanIds = await denseIds(crashed, "span", ["start", "end"]);
+    assert.deepEqual(Object.keys(orphanIds), ["[1,2]"]);
     const marks = await firstValueFrom(
       crashed.runner.execute(crashed.db, `SELECT count(*) AS n FROM "mark"`).pipe(map((r) => Number(r.rows[0]!["n"]))),
     );
@@ -291,7 +365,7 @@ test("crash: a kill between intern and the arrival write leaves only an unrefere
     // the orphan harmless: the retry finds the existing row, does not mint a
     // second one, and the log is what a clean run would have printed.
     const replayed = await runSchedule(orderA.program as EmittedProgram, crashed, ORDER_A_SCHEDULE);
-    const afterIds = await denseIds(crashed, "__dict_span");
+    const afterIds = await denseIds(crashed, "span", ["start", "end"]);
     assert.equal(
       Object.keys(afterIds).length,
       2,

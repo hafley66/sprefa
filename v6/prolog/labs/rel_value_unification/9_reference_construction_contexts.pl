@@ -66,25 +66,29 @@ check(missing_target_constructor_injects_membership_join,
         sub_atom(Sql, _, _, _, 'b1."__id"'),
         \+ sub_atom(Sql, _, _, _, 'json_object') )).
 
-check(runtime_intern_and_lookup_use_every_target_column_not_the_key,
+check(runtime_plan_carries_declared_key_and_full_row_conflict_check,
       ( program_text(Text),
         plan_text(runtime_full_row, Text, [],
                   plan(_, prog(Decls, _), _, _, _, _)),
         struct_type_plans(Decls,
-                          [structtype(user, [id, name], [none, none],
-                                      InternSql, LookupSql)]),
+                          [structtype(user, [id, name], [none, none], [0],
+                                      ConflictSql, InternSql, LookupSql)]),
         sub_atom(InternSql, _, _, _, '"id", "name"'),
-        sub_atom(LookupSql, _, _, _, 'json_array("id", "name")') )).
+        sub_atom(ConflictSql, _, _, _, 't."id" = json_extract(i.value, ''$[0]'')'),
+        sub_atom(ConflictSql, _, _, _, 'json_array(t."id", t."name") <> i.value'),
+        sub_atom(LookupSql, _, _, _, 't."id" = json_extract(i.value, ''$[0]'')') )).
 
-check(same_key_conflicting_non_key_field_has_no_lookup_row,
+check(same_key_conflicting_non_key_field_has_named_preflight_query,
       ( program_text(Text),
         plan_text(conflict_lookup, Text, [],
                   plan(_, prog(Decls, _), _, _, _, _)),
         struct_type_plans(Decls,
-                          [structtype(user, _, _, InternSql, LookupSql)]),
+                          [structtype(user, _, _, _, ConflictSql,
+                                      InternSql, LookupSql)]),
         sub_atom(InternSql, 0, _, _, 'INSERT OR IGNORE'),
-        sub_atom(LookupSql, _, _, _, 'json_array("id", "name")'),
-        \+ sub_atom(LookupSql, _, _, _, 'WHERE "id" IN') )).
+        sub_atom(ConflictSql, 0, _, _, 'SELECT i.value AS "__requested"'),
+        sub_atom(ConflictSql, _, _, _, 'WHERE json_array(t."id", t."name") <> i.value'),
+        sub_atom(LookupSql, _, _, _, 'i.value AS "__lookup"') )).
 
 check(key_only_constructor_is_not_a_current_relation_term,
       ( Text = "rel user(id: int, name: text) key(1).\nrel post(author: user).\nrel source(id: int).\npost(user(Id)) <- source(Id).\n",
@@ -95,7 +99,7 @@ check(key_only_constructor_is_not_a_current_relation_term,
         sub_atom(Sql, _, _, _, 'json_object'),
         sub_atom(Sql, _, _, _, '''user''') )).
 
-check(boot_parent_reference_still_asks_removed_semantic_column,
+check(boot_parent_reference_resolves_declared_key_without_semantic_blob,
       ( program_text(Text),
         Initial = [user(1, alice),
                    post(obj([id-1, name-alice]))],
@@ -103,7 +107,9 @@ check(boot_parent_reference_still_asks_removed_semantic_column,
                    plan(_, prog(Decls, _), RelPlans, _, _, _),
                    lowered(_, Ddl, _, _, Levels, _, _, _)),
         boot_statements(Decls, RelPlans, Initial, Levels, Boot),
-        member(bootstmt(BootSql, _), Boot),
-        sub_atom(BootSql, _, _, _, '"__semantic"'),
+        member(bootstmt(BootSql, [1]), Boot),
+        sub_atom(BootSql, _, _, _, '(SELECT "__id" FROM "user" WHERE "id" = ?)'),
+        \+ ( member(bootstmt(Sql, _), Boot),
+             sub_atom(Sql, _, _, _, '"__semantic"') ),
         atomic_list_concat(Ddl, '\n', DdlSql),
         \+ sub_atom(DdlSql, _, _, _, '"__semantic"') )).
