@@ -966,3 +966,26 @@ against v5's own output; alpha spine = extraction hosts + ingest perf
 land (language design review + v5-utility gap review, both in
 flight); plan must carry their receipts. Labs run on OPUS ONLY
 (user-set same night, supersedes the sonnet default for labs).
+
+REL SPREADING LAB LANDED (merge 9220555c, lab-death c8eab9ed, last
+copy 5bc5b6a4, verdict plans/2026-07-29-rel-spreading-verdict.md;
+54 PASS x3 + conformance 126/0 re-run by coordinator): spread =
+compile-time column splice via one expand module, spelling
+`rel b(...a, extra: int)` SELECTED over `include a` (decisive:
+splice POSITION changes the positional program, include cannot
+state it) and term-form-only (no registry row, no text door).
+Collisions refuse even when types agree (TS silent last-wins is the
+graded negative); width subtyping refused by arity both directions;
+planes/keys NEVER travel (inheriting keyed turns a loadable program
+into keyed_level_head; inheriting keep is INVISIBLE to tick-log
+grading -- the retention-grading gap class again); derived sources
+refused (spread_source_not_declared -- the real line is GENERATED
+vs INFERRED: enum variant rels legal after expansion, derived never);
+row spread = fresh var per column, width from the TARGET atom's
+declared arity. STRUCTURAL: spread rel arity stops being syntactic
+(modifiers get computed arity, explicit arity checked); expansion
+order FORCED enum -> decl spread -> row spread -> match. Cross-lang
+receipts (real tsc/rustc/go) in the verdict. 6 named slots incl
+slot_spread_marker_position + slot_spread_and_kwargs_overlap.
+NOT WIRED -- design record only, wiring queues behind the alpha
+priorities.
