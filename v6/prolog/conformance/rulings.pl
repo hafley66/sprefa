@@ -353,3 +353,16 @@ ruling(keyed_level_head, named_refusal, user,
 % smallest-honest spelling. Closes the final_wrong retention rows.
 ruling(retention_count_lowering, retracting_rule_over_log, user,
        'user 2026-07-29: chose "Lower it for real" from the second multiple-choice round').
+
+% 2026-07-29 morning. Compound/struct column storage: STRUCT-AS-ROWS
+% (the types-as-rels lab design executed). A declared struct value is
+% a rel row referenced by content id; parent columns store the ref,
+% never an inline blob. decode/2 dissolves into joins. The inline
+% json-vs-term-text double spelling (the decode_arc blocker) ends.
+% json1 remains for UNTYPED json only (the lab's SLOT-JSON1-FATE
+% fill); typed fields are always refs. Log contract prerequisite
+% carried from the lab as a hard requirement: the tick log prints
+% rendered canonical value text, NEVER ids
+% (rendered_text_stable_under_both_policies is the receipt shape).
+ruling(compound_storage, struct_as_rows, user,
+       'user 2026-07-29: "lol d" -- struct-as-rel over json-blob patch; tick-log + dictionary edges worked in plans/2026-07-29-struct-as-rows-header.md').
