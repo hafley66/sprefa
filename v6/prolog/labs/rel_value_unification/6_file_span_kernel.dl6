@@ -1,0 +1,28 @@
+rel rev_file(rev_file_id: int, blob_id: int).
+rel file_span(file_span_id: int, rev_file_id: int, start: int, end: int).
+rel newline(blob_id: int, offset: int).
+rel slice_request(file_span_id: int, relative_start: int, relative_end: int).
+
+rel sliced_span(file_span_id: int, rev_file_id: int, start: int, end: int).
+rel newline_before(file_span_id: int, offset: int).
+rel preceding_newline_count(file_span_id: int, count: int).
+rel preceding_newline_max(file_span_id: int, offset: int).
+
+sliced_span(FileSpanId, RevFileId, Start + RelativeStart, Start + RelativeEnd) <-
+    file_span(FileSpanId, RevFileId, Start, End),
+    slice_request(FileSpanId, RelativeStart, RelativeEnd),
+    RelativeStart >= 0,
+    RelativeEnd >= RelativeStart,
+    Start + RelativeEnd =< End.
+
+newline_before(FileSpanId, Offset) <-
+    file_span(FileSpanId, RevFileId, Start, End),
+    rev_file(RevFileId, BlobId),
+    newline(BlobId, Offset),
+    Offset < Start.
+
+preceding_newline_count(FileSpanId, count(Offset)) <-
+    newline_before(FileSpanId, Offset).
+
+preceding_newline_max(FileSpanId, max(Offset)) <-
+    newline_before(FileSpanId, Offset).

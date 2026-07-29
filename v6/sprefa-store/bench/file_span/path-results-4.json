@@ -1,0 +1,52 @@
+[
+  {
+    "bytes_per_reference": 15.941702550513416,
+    "cell": "whole",
+    "db_bytes": 962560,
+    "filter_ms": 0.03807458095252514,
+    "ingest_ms": 37.97008306719363,
+    "paths": 3019,
+    "plan": [
+      "SEARCH path USING COVERING INDEX sqlite_autoindex_path_1 (text>? AND text<?)"
+    ],
+    "references": 60380
+  },
+  {
+    "bytes_per_reference": 17.162769128850613,
+    "cell": "strings",
+    "db_bytes": 1036288,
+    "filter_ms": 0.14722124906256795,
+    "ingest_ms": 40.24145903531462,
+    "paths": 3019,
+    "plan": [
+      "SEARCH s USING COVERING INDEX sqlite_autoindex_strings_1 (content>? AND content<?)",
+      "SEARCH p USING COVERING INDEX sqlite_autoindex_path_1 (string_id=?)"
+    ],
+    "references": 60380
+  },
+  {
+    "bytes_per_reference": 19.062206028486255,
+    "cell": "segments",
+    "db_bytes": 1150976,
+    "filter_ms": 0.05902708042412996,
+    "ingest_ms": 51.754541927948594,
+    "paths": 3019,
+    "plan": [
+      "SEARCH s USING COVERING INDEX sqlite_autoindex_segment_1 (text=?)",
+      "SEARCH ps USING COVERING INDEX path_segment_value (segment_id=?)"
+    ],
+    "references": 60380
+  },
+  {
+    "bytes_per_reference": 57.59364027823783,
+    "cell": "repeated",
+    "db_bytes": 3477504,
+    "filter_ms": 1.032824170542881,
+    "ingest_ms": 48.235292080789804,
+    "paths": 3019,
+    "plan": [
+      "SEARCH fact USING PRIMARY KEY (path>? AND path<?)"
+    ],
+    "references": 60380
+  }
+]

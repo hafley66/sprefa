@@ -19,6 +19,7 @@
 :- discontiguous directive/2.
 :- discontiguous verification/2.
 :- discontiguous leading_hypothesis/3.
+:- discontiguous leading_verdict/3.
 
 session(id, '20260729.3').
 session(topic, file_span_storage_lab).
@@ -307,3 +308,49 @@ leading_hypothesis(no_new_concept,
                    'column domain names the target rel; key names semantic identity; unkeyed set defaults to full-row identity; existing rules and clocks govern edges and lifetime').
 next_fixpoint(keyed_reference_identity,
               'make existing key positions drive insert, lookup, replacement, and cycle admissibility; test single and composite keys before changing any surface').
+
+% Kernel/host/reference boundary continuation.
+touched('plans/2026-07-29-file-span-kernel-host-boundary-lab.md',
+        'actual-world boundary plan with reference proof matrix, batching costs, self-host split, and bounded decision options').
+touched('v6/prolog/labs/rel_value_unification/6_file_span_kernel.dl6',
+        'current-language file_span slicing, newline count, and preceding-newline max fixture').
+touched('v6/prolog/labs/rel_value_unification/7_kernel_host_ref_holes.pl',
+        'nine actual compiler checks for self-hostable span rules, byte-slice absence, automatic edge failure, opaque identity failure, and unregistered ref').
+touched('v6/sprefa-store/bench/file_span/4_strings.py',
+        'actual extractor comparison of universal strings against separate path and name domains').
+touched('v6/sprefa-store/bench/file_span/string-results-1.json',
+        'first 200-file string-domain measurement').
+touched('v6/sprefa-store/bench/file_span/string-results-2.json',
+        'second 200-file string-domain measurement').
+
+observed(file_span_kernel_rules,
+         'current arithmetic and guards express relative slice; count(newline before start) expresses line ordinal; max preceding newline plus subtraction expresses column').
+observed(file_span_text_gap,
+         'current pure expression compiler has no byte substring route; attempted substring expression reaches an actual unsupported construct').
+observed(automatic_edge_bug,
+         'a relation-shaped constructor in a relation-domain column lowers to JSON compound text even though physical storage is INTEGER').
+observed(opaque_identity_gap,
+         'a top-level target relation scan cannot bind its hidden row identity; placing an otherwise unbound variable in the parent head is refused').
+observed(ref_current_behavior,
+         'ref/1 has no parser or registry semantics and lowers as an ordinary JSON compound term').
+observed(string_cross_domain_census,
+         '200 extracted files produced 39642 name occurrences, 6269 distinct names, and zero texts shared by path and name domains').
+observed(string_storage_result,
+         'separate path/name and universal strings cells both used 1728512 bytes and about 4.7-4.9 microseconds per exact name lookup in two runs').
+observed(universal_path_cost,
+         '3019 paths x20 references: dedicated whole path 962560 bytes and 0.0374/0.0381ms prefix; universal strings plus path edge 1036288 bytes and 0.1476/0.1472ms').
+observed(host_n_plus_one,
+         'current TypeScript shell host performs one spawn per witness; blob and span demand requires a registered batched executor behind the existing demand/response plan').
+
+leading_verdict(reference_construction, automatic_keyed_edge,
+                'typed destination plus relation-shaped constructor contains enough information; repair JSON emission and make existing key metadata drive row resolution').
+leading_verdict(ref_surface, unselected,
+                'current ref has no behavior; remaining possible need is opaque row identity capture and transport, which requires an actual compiler receipt before syntax').
+leading_verdict(string_policy, physical_interner_domain_relations,
+                'keep domain relations and dense IDs; resident interning plus batched durable mirror is store policy; measured universal visible relation gave no cross-domain saving').
+leading_verdict(span_text_boundary, batched_relation_provider,
+                'ordinary span_text demand/response relation grouped by blob; provider acquires bytes and slices; DL6 derives slice coordinates and line/column from newline rows').
+
+verification(file_span_kernel_host_ref_holes, passed(9)).
+next_fixpoint(reference_identity_receipts,
+              'implement key-driven automatic edge construction, then test opaque identity capture, missing targets, retraction, single/composite keys, and keyed cycles before selecting ref').

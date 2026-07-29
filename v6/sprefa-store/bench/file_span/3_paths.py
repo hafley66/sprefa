@@ -45,6 +45,45 @@ def measure(paths, references, cell):
             )
             sql = "SELECT count(*) FROM path WHERE text GLOB ?"
             params = ("v6/*",)
+        elif cell == "strings":
+            db.executescript(
+                """
+                CREATE TABLE strings(
+                  string_id INTEGER PRIMARY KEY,
+                  content TEXT NOT NULL UNIQUE
+                );
+                CREATE TABLE path(
+                  path_id INTEGER PRIMARY KEY,
+                  string_id INTEGER NOT NULL UNIQUE
+                );
+                CREATE TABLE fact(
+                  path_id INTEGER NOT NULL,
+                  ordinal INTEGER NOT NULL,
+                  PRIMARY KEY(path_id,ordinal)
+                ) WITHOUT ROWID;
+                """
+            )
+            db.executemany(
+                "INSERT INTO strings VALUES (?,?)", enumerate(paths, 1)
+            )
+            db.executemany(
+                "INSERT INTO path VALUES (?,?)",
+                ((path_id, path_id) for path_id in range(1, len(paths) + 1)),
+            )
+            db.executemany(
+                "INSERT INTO fact VALUES (?,?)",
+                (
+                    (path_id, ordinal)
+                    for path_id in range(1, len(paths) + 1)
+                    for ordinal in range(references)
+                ),
+            )
+            sql = """
+              SELECT count(*)
+              FROM path p JOIN strings s ON s.string_id=p.string_id
+              WHERE s.content GLOB ?
+            """
+            params = ("v6/*",)
         elif cell == "segments":
             segments = sorted({part for path in paths for part in path.split("/")})
             segment_id = {part: ix + 1 for ix, part in enumerate(segments)}
@@ -133,7 +172,7 @@ if __name__ == "__main__":
     paths = subprocess.check_output(["git", "ls-files"], cwd=root, text=True).splitlines()
     results = [
         measure(paths, args.references, cell)
-        for cell in ("whole", "segments", "repeated")
+        for cell in ("whole", "strings", "segments", "repeated")
     ]
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)

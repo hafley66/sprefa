@@ -1,0 +1,33 @@
+{
+  "cells": [
+    {
+      "bytes_per_occurrence": 43.60304727309419,
+      "cell": "separate",
+      "cross_domain_shared_texts": 0,
+      "db_bytes": 1728512,
+      "distinct_names": 6269,
+      "ingest_ms": 52.828958025202155,
+      "lookup_us": 4.736915929242969,
+      "name_occurrences": 39642,
+      "paths": 200,
+      "plan": [
+        "SEARCH name USING COVERING INDEX sqlite_autoindex_name_1 (text=?)"
+      ]
+    },
+    {
+      "bytes_per_occurrence": 43.60304727309419,
+      "cell": "universal",
+      "cross_domain_shared_texts": 0,
+      "db_bytes": 1728512,
+      "distinct_names": 6269,
+      "ingest_ms": 52.44062503334135,
+      "lookup_us": 4.849457996897399,
+      "name_occurrences": 39642,
+      "paths": 200,
+      "plan": [
+        "SEARCH strings USING COVERING INDEX sqlite_autoindex_strings_1 (content=?)"
+      ]
+    }
+  ],
+  "failures": []
+}

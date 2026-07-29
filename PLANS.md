@@ -47,8 +47,8 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `decision` plans/2026-07-29-file-identity-span-spine.md:370 — Choose the user-visible declaration spelling for standard library value views separately from their rel declarations. No spelling is introduced by this plan.
 - `decision` plans/2026-07-29-file-span-storage-lab.md:531 — Choose the surface spelling for generic relation-reference columns after accepting or rejecting the generic ref(Relation) semantics.
 - `decision` plans/2026-07-29-file-span-storage-lab.md:534 — Choose the authoring spelling for registered typed host executors; implementation may reuse IHostPlan internally without exposing new syntax first.
-- `decision` plans/2026-07-29-rel-value-unification-lab.md:394 — Decide automatic versus explicit relation-reference spelling only after both forms run through the real parser and compiler.
-- `decision` plans/2026-07-29-rel-value-unification-lab.md:397 — Decide rel A-to-B versus ordinary rel plus modes only after deterministic, multi-row, keyed-update, cached, and host-produced real fixtures establish its SQL and Rx meaning.
+- `decision` plans/2026-07-29-rel-value-unification-lab.md:478 — Decide automatic versus explicit relation-reference spelling only after both forms run through the real parser and compiler.
+- `decision` plans/2026-07-29-rel-value-unification-lab.md:481 — Decide rel A-to-B versus ordinary rel plus modes only after deterministic, multi-row, keyed-update, cached, and host-produced real fixtures establish its SQL and Rx meaning.
 - `docs` plans/2026-07-10-change-cost-friction-inventory.md:151 — item 6 — a generated per-language coverage table (which node kinds each TypeLang lift emits, tested counts on a fixture) in docs/reference
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:105 — match() trailing positional is a match ID not captured text — rename convention to match_id in shipped examples, show named-capture form in the op quickref
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:106 — comment_node.text strips comment tokens — state it in the relations table row, not only the buried authoring bullet
@@ -267,8 +267,8 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-29-file-identity-span-spine.md:370 `decision` — Choose the user-visible declaration spelling for standard library value views separately from their rel declarations. No spelling is introduced by this plan.
 - plans/2026-07-29-file-span-storage-lab.md:531 `decision` — Choose the surface spelling for generic relation-reference columns after accepting or rejecting the generic ref(Relation) semantics.
 - plans/2026-07-29-file-span-storage-lab.md:534 `decision` — Choose the authoring spelling for registered typed host executors; implementation may reuse IHostPlan internally without exposing new syntax first.
-- plans/2026-07-29-rel-value-unification-lab.md:394 `decision` — Decide automatic versus explicit relation-reference spelling only after both forms run through the real parser and compiler.
-- plans/2026-07-29-rel-value-unification-lab.md:397 `decision` — Decide rel A-to-B versus ordinary rel plus modes only after deterministic, multi-row, keyed-update, cached, and host-produced real fixtures establish its SQL and Rx meaning.
+- plans/2026-07-29-rel-value-unification-lab.md:478 `decision` — Decide automatic versus explicit relation-reference spelling only after both forms run through the real parser and compiler.
+- plans/2026-07-29-rel-value-unification-lab.md:481 `decision` — Decide rel A-to-B versus ordinary rel plus modes only after deterministic, multi-row, keyed-update, cached, and host-produced real fixtures establish its SQL and Rx meaning.
 <!-- END: plans-by-plan -->
 
 ## By code file
