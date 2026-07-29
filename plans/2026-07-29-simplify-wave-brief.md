@@ -124,3 +124,12 @@ group: cargo test in v6/sprefa-extract + fixture snaps. Full battery at end.
   open flake hunt (ARCH golden_flake_hunt); leave until that closes.
 - Prolog canonical-JSON triplication (ticklog.pl script copy): disclosed,
   pinned, structural reason stands.
+
+## Added post-review (coordinator, flow-rig contact 2026-07-29)
+- SLOT-BIND-SPELLING (user ruling): `:=` is the bind-goal spelling (registry.pl:72,
+  16 fixture files) but is not an rxjs/prolog/SQL word — the vocabulary-law class
+  review-B8 flagged. Prolog's own candidates: `is` (arith) or `=` (unification).
+  Rename = registry + parse/print + engine op + 16 fixtures, mechanical.
+- `Var = expr` (prolog's `=`) is unregistered and dies as unbound_head_var —
+  wrong name, no mention of `=`. Whatever the ruling, `=` must refuse (or bind)
+  BY NAME; it is the first spelling a prolog reader types (terra typed it).
