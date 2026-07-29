@@ -15,16 +15,43 @@
 :- use_module(library(apply)).
 :- use_module('../compile', [ read_fixture_term/4, program_plan/2 ]).
 :- use_module('../strat', [ stratum_groups/2 ]).
-:- use_module('../lower', [ lower_program/2 ]).
+:- use_module('../lower',
+              [ lower_program/2, compile_expr/4, compile_comparison/3,
+                canonical_column_expr/2, level_support_sql/4 ]).
 :- use_module('../analyze', [ check_supported_subset/1 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
+:- use_module('../../1_expansion', [ expansion_phase/3, expand_program/3 ]).
 :- use_module('../parse_dl', [ parse_dl/4 ]).
-:- use_module('../print_dl', [ print_dl_program/3 ]).
+:- use_module('../print_dl', [ print_dl_program/3, print_term/5 ]).
+:- use_module('../registry', [ surface/5, expression/5 ]).
 :- use_module('../../1_host_expand',
               [ prepare_program/5, compile_host_decl/2, compile_ts_query/2 ]).
-:- use_module('../emit_ts', [ emit_program/5 ]).
+:- use_module('../emit_ts',
+              [ emit_program/5,
+                % The emitter-mode seam (rank R8): which statement family a
+                % plan compiles to, asserted by the incremental_mode unit.
+                incremental_program_safe/4, reconcile_every_tick/2,
+                derived_edge_carry_required/3, retraction_guard/2 ]).
 :- use_module('../lower', [ boot_statements/4 ]).
+
+% Body-walk characterization (rank R1) reaches the traversals on BOTH sides of
+% the oracle/compiler split, because the review's central claim is that
+% several of them are the same predicate written twice. Each of these was
+% added to its module's export list for exactly this test rather than being
+% called as a private qualified goal, which `just prolog-lint` refuses.
+:- use_module('../analyze',
+              [ body_ref_uses/2, conjunction_goals/2,
+                level_body_latest_ref/2, level_body_pre_ref/2,
+                reserved_construct_in_body/2, body_forbidden_goal/2 ]).
+:- use_module('../../conformance/engine',
+              [ trigger_items/2, body_finalize_ref/2,
+                body_latest_ref/2, body_pre_ref/2,
+                check_program/1 ]).
+:- use_module('../../conformance/level_eval',
+              [ goal_rel_refs/3, split_rules/4 ]).
+:- use_module('../../conformance/body', [ body_atoms/2, comparison_goal/1 ]).
+:- use_module('../../1_host_expand', [ body_goals/2 ]).
 
 % Resolved relative to this file's own load-time directory (mirrors
 % sweep.pl's compile_dir/1 pattern -- prolog_load_context/2 only answers
@@ -291,7 +318,7 @@ test(level_derived_trigger_reads_same_tick_frontier) :-
 % json_valid/json_type guard, the AS alias) instead.
 
 test(canonical_column_expr_shape) :-
-    lower:canonical_column_expr(target, Expr),
+    canonical_column_expr(target, Expr),
     Expr ==
       'CASE WHEN json_valid("target") AND json_type("target") = \'object\' THEN json_extract("target", \'$.fn\') || \'(\' || (SELECT group_concat(value, \',\') FROM json_each("target", \'$.args\')) || \')\' ELSE "target" END AS "target"'.
 
@@ -356,14 +383,14 @@ test(positive_edge_level_program_is_incremental) :-
     load_plan(switch_as_keyed_replace, Plan),
     lower_program(Plan, Lowered),
     Lowered = lowered(_, _, _, EdgeStatements, LevelStatements, _, _, _),
-    emit_ts:incremental_program_safe(Plan, EdgeStatements, LevelStatements, true).
+    incremental_program_safe(Plan, EdgeStatements, LevelStatements, true).
 
 test(negative_level_body_uses_incremental_reconcile) :-
     load_plan(merge_policy, Plan),
     lower_program(Plan, Lowered),
     Lowered = lowered(_, _, _, EdgeStatements, LevelStatements, _, _, _),
-    emit_ts:incremental_program_safe(Plan, EdgeStatements, LevelStatements, true),
-    emit_ts:reconcile_every_tick(Plan, true).
+    incremental_program_safe(Plan, EdgeStatements, LevelStatements, true),
+    reconcile_every_tick(Plan, true).
 
 test(derived_edge_trigger_requires_incremental_carry_path) :-
     fixture_file('engine_core.pl', File),
@@ -371,13 +398,13 @@ test(derived_edge_trigger_requires_incremental_carry_path) :-
            program_plan(Term-Bindings, Plan),
            lower_program(Plan, Lowered) )),
     Lowered = lowered(_, _, _, EdgeStatements, _, _, _, _),
-    emit_ts:derived_edge_carry_required(Plan, EdgeStatements, true).
+    derived_edge_carry_required(Plan, EdgeStatements, true).
 
 test(edb_edge_trigger_keeps_naive_referee_available) :-
     load_plan(switch_as_keyed_replace, Plan),
     lower_program(Plan, Lowered),
     Lowered = lowered(_, _, _, EdgeStatements, _, _, _, _),
-    emit_ts:derived_edge_carry_required(Plan, EdgeStatements, false).
+    derived_edge_carry_required(Plan, EdgeStatements, false).
 
 test(acyclic_support_count_statements_are_emitted) :-
     lowered_for(shared_demand_refcount, Lowered),
@@ -404,7 +431,7 @@ test(self_recursive_support_uses_recursive_cte_reseed) :-
         (path(Node) <- root(Node)),
         (path(Child) <- path(Parent), edge(Parent, Child))
     ],
-    lower:level_support_sql(
+    level_support_sql(
         RelPlans, path/1, Rules,
         supportsql(_, SeedSql, _, _, _)),
     once(sub_atom(
@@ -412,7 +439,7 @@ test(self_recursive_support_uses_recursive_cte_reseed) :-
         'WITH RECURSIVE "path" ("node") AS')),
     once(sub_atom(SeedSql, _, _, _, 'FROM "path" b0')),
     Plan = plan(test, prog([], Rules), RelPlans, [], Rules, []),
-    emit_ts:retraction_guard(Plan, 'recursive-cte-reseed').
+    retraction_guard(Plan, 'recursive-cte-reseed').
 
 test(set_delete_arrival_is_one_json_batch_statement) :-
     lowered_for(shared_demand_refcount, Lowered),
@@ -1001,3 +1028,875 @@ test(emitter_carries_world_plans_and_demand_sql) :-
     !.
 
 :- end_tests(hosts_wiring).
+
+% ═══════════════════════════════════════════════════════════════════════════
+% BODY WALK CHARACTERIZATION (rank R1 of plans/2026-07-29-prolog-org-review.md)
+%
+% Written BEFORE the shared walker existed, against the fourteen independent
+% body traversals the review inventoried, and committed green so the
+% consolidation has an exact contract to preserve. Every golden below was
+% computed from the pre-refactor implementations, not hand-written: a
+% consolidation that changes ANY of these values changes observable compiler
+% or oracle behavior, whatever the tick logs happen to say.
+%
+% The battery covers every shape the review named: comma association in both
+% nestings, nested not/1, not over a conjunction, a not whose inner
+% conjunction mixes signs, next/1, variadic combine, latest, finalize, pre, a
+% reserved lifecycle wrapper, a := bind, a comparison, a plain relation atom,
+% the true word, and one body carrying all of them at once.
+%
+% Bodies are GROUND on purpose. Every golden is then an exact literal and the
+% comparison is ==, with no variable-identity slack to hide a reordering.
+%
+% THREE DRIFTS THESE GOLDENS PIN, all pre-existing and all preserved by the
+% refactor rather than silently fixed (each is a registry row the hardcoded
+% lists never learned about):
+%
+%   1. engine:trigger_items/2 makes an ARRIVAL out of next/1, combine, a
+%      comparison, and a reserved lifecycle wrapper. See the `mixed` golden:
+%      arrival(next(d(4))), arrival(combine(e(5),f(6))), arrival(8<9). These
+%      are inert downstream because occurrence_trigger/4 unifies the item
+%      against a real stored row and none of these shapes can match one, but
+%      the classification is wrong at the source.
+%   2. level_eval:goal_rel_refs/3 reports next/1 and combine/2 as POSITIVE
+%      relation references, so stratification carries constraints naming
+%      relations that cannot exist.
+%   3. body:body_atoms/2 repeats drift 1 in its own hardcoded list.
+%
+% AND ONE ORDERING CONTRACT that is the reason goal_rel_refs/3 keeps a local
+% not/1 recursion instead of projecting from the shared walker: see the
+% `not_mixed` golden. For not((not(a(1)), b(2))) it answers [b/1,a/1], not
+% source order, because its not/1 clause appends inner-positive before
+% inner-negative. A source-ordered projection would answer [a/1,b/1] and
+% change stratification constraint order.
+
+:- begin_tests(body_walk_characterization).
+
+walk_case(comma_right,   (a(1), (b(2), c(3)))).
+walk_case(comma_left,    ((a(1), b(2)), c(3))).
+walk_case(nested_not,    not(not(a(1)))).
+walk_case(not_over_conj, not((a(1), latest(b(2))))).
+walk_case(not_mixed,     not((not(a(1)), b(2)))).
+walk_case(next_wrapper,  next(a(1))).
+walk_case(combine3,      combine(a(1), b(2), c(3))).
+walk_case(latest_only,   latest(a(1))).
+walk_case(finalize_only, finalize(a(1))).
+walk_case(pre_only,      pre(a(1))).
+walk_case(lifecycle,     unsubscribe(a(1))).
+walk_case(bind_goal,     (zz := 1)).
+walk_case(comparison,    (1 < 9)).
+walk_case(plain_atom,    a(1)).
+walk_case(true_word,     true).
+walk_case(mixed, ( a(1), not((b(2), latest(c(3)))), next(d(4)),
+                   combine(e(5), f(6)), zz := 7, 8 < 9,
+                   finalize(g(10)), pre(h(11)) )).
+
+walk_golden(comma_right,
+  [ body_ref_uses-[use(a/1,[1],pos,trigger),use(b/1,[2],pos,trigger),use(c/1,[3],pos,trigger)],
+    conjunction_goals-[a(1),b(2),c(3)],
+    trigger_items-[arrival(a(1)),arrival(b(2)),arrival(c(3))],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([a/1,b/1,c/1]-[]),
+    body_atoms-[a(1),b(2),c(3)],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[a(1),b(2),c(3)]
+  ]).
+
+walk_golden(comma_left,
+  [ body_ref_uses-[use(a/1,[1],pos,trigger),use(b/1,[2],pos,trigger),use(c/1,[3],pos,trigger)],
+    conjunction_goals-[a(1),b(2),c(3)],
+    trigger_items-[arrival(a(1)),arrival(b(2)),arrival(c(3))],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([a/1,b/1,c/1]-[]),
+    body_atoms-[a(1),b(2),c(3)],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[a(1),b(2),c(3)]
+  ]).
+
+walk_golden(nested_not,
+  [ body_ref_uses-[use(a/1,[1],neg,trigger)],
+    conjunction_goals-[not(not(a(1)))],
+    trigger_items-[],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([]-[a/1]),
+    body_atoms-[],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[not(not(a(1)))]
+  ]).
+
+walk_golden(not_over_conj,
+  [ body_ref_uses-[use(a/1,[1],neg,trigger),use(b/1,[2],neg,sampled)],
+    conjunction_goals-[not((a(1),latest(b(2))))],
+    trigger_items-[],
+    engine_finalize_refs-[],
+    engine_latest_refs-[b/1],
+    engine_pre_refs-[],
+    analyze_latest_refs-[b/1],
+    analyze_pre_refs-[],
+    goal_rel_refs-([]-[a/1,b/1]),
+    body_atoms-[],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[not((a(1),latest(b(2))))]
+  ]).
+
+walk_golden(not_mixed,
+  [ body_ref_uses-[use(a/1,[1],neg,trigger),use(b/1,[2],neg,trigger)],
+    conjunction_goals-[not((not(a(1)),b(2)))],
+    trigger_items-[],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([]-[b/1,a/1]),
+    body_atoms-[],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[not((not(a(1)),b(2)))]
+  ]).
+
+walk_golden(next_wrapper,
+  [ body_ref_uses-[use(a/1,[1],pos,trigger)],
+    conjunction_goals-[a(1)],
+    trigger_items-[arrival(next(a(1)))],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([next/1]-[]),
+    body_atoms-[next(a(1))],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[next(a(1))]
+  ]).
+
+walk_golden(combine3,
+  [ body_ref_uses-[use(a/1,[1],pos,trigger),use(b/1,[2],pos,trigger),use(c/1,[3],pos,trigger)],
+    conjunction_goals-[a(1),b(2),c(3)],
+    trigger_items-[arrival(combine(a(1),b(2),c(3)))],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([combine/3]-[]),
+    body_atoms-[combine(a(1),b(2),c(3))],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[combine(a(1),b(2),c(3))]
+  ]).
+
+walk_golden(latest_only,
+  [ body_ref_uses-[use(a/1,[1],pos,sampled)],
+    conjunction_goals-[latest(a(1))],
+    trigger_items-[],
+    engine_finalize_refs-[],
+    engine_latest_refs-[a/1],
+    engine_pre_refs-[],
+    analyze_latest_refs-[a/1],
+    analyze_pre_refs-[],
+    goal_rel_refs-([a/1]-[]),
+    body_atoms-[],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[latest(a(1))]
+  ]).
+
+walk_golden(finalize_only,
+  [ body_ref_uses-[use(a/1,[1],pos,trigger)],
+    conjunction_goals-[finalize(a(1))],
+    trigger_items-[departure(a(1))],
+    engine_finalize_refs-[a/1],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([]-[]),
+    body_atoms-[],
+    reserved_constructs-[],
+    forbidden_goals-[finalize(a(1))],
+    host_body_goals-[finalize(a(1))]
+  ]).
+
+walk_golden(pre_only,
+  [ body_ref_uses-[use(a/1,[1],pos,sampled)],
+    conjunction_goals-[pre(a(1))],
+    trigger_items-[],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[a/1],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[a/1],
+    goal_rel_refs-([]-[]),
+    body_atoms-[],
+    reserved_constructs-[],
+    forbidden_goals-[pre(a(1))],
+    host_body_goals-[pre(a(1))]
+  ]).
+
+walk_golden(lifecycle,
+  [ body_ref_uses-[use(a/1,[1],pos,trigger)],
+    conjunction_goals-[unsubscribe(a(1))],
+    trigger_items-[arrival(unsubscribe(a(1)))],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([unsubscribe/1]-[]),
+    body_atoms-[unsubscribe(a(1))],
+    reserved_constructs-[lifecycle_arm(unsubscribe)],
+    forbidden_goals-[],
+    host_body_goals-[unsubscribe(a(1))]
+  ]).
+
+walk_golden(bind_goal,
+  [ body_ref_uses-[],
+    conjunction_goals-[zz:=1],
+    trigger_items-[],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([]-[]),
+    body_atoms-[],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[zz:=1]
+  ]).
+
+walk_golden(comparison,
+  [ body_ref_uses-[],
+    conjunction_goals-[1<9],
+    trigger_items-[arrival(1<9)],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([]-[]),
+    body_atoms-[],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[1<9]
+  ]).
+
+walk_golden(plain_atom,
+  [ body_ref_uses-[use(a/1,[1],pos,trigger)],
+    conjunction_goals-[a(1)],
+    trigger_items-[arrival(a(1))],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([a/1]-[]),
+    body_atoms-[a(1)],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[a(1)]
+  ]).
+
+walk_golden(true_word,
+  [ body_ref_uses-[],
+    conjunction_goals-[true],
+    trigger_items-[],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([]-[]),
+    body_atoms-[],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[true]
+  ]).
+
+walk_golden(mixed,
+  [ body_ref_uses-[use(a/1,[1],pos,trigger),use(b/1,[2],neg,trigger),use(c/1,[3],neg,sampled),use(d/1,[4],pos,trigger),use(e/1,[5],pos,trigger),use(f/1,[6],pos,trigger),use(g/1,[10],pos,trigger),use(h/1,[11],pos,sampled)],
+    conjunction_goals-[a(1),not((b(2),latest(c(3)))),d(4),e(5),f(6),zz:=7,8<9,finalize(g(10)),pre(h(11))],
+    trigger_items-[arrival(a(1)),arrival(next(d(4))),arrival(combine(e(5),f(6))),arrival(8<9),departure(g(10))],
+    engine_finalize_refs-[g/1],
+    engine_latest_refs-[c/1],
+    engine_pre_refs-[h/1],
+    analyze_latest_refs-[c/1],
+    analyze_pre_refs-[h/1],
+    goal_rel_refs-([a/1,next/1,combine/2]-[b/1,c/1]),
+    body_atoms-[a(1),next(d(4)),combine(e(5),f(6))],
+    reserved_constructs-[],
+    forbidden_goals-[finalize(g(10)),pre(h(11))],
+    host_body_goals-[a(1),not((b(2),latest(c(3)))),next(d(4)),combine(e(5),f(6)),zz:=7,8<9,finalize(g(10)),pre(h(11))]
+  ]).
+
+% Actual value of one projection over one case, as the golden records it.
+walk_actual(body_ref_uses,       Body, Uses)  :- body_ref_uses(Body, Uses).
+walk_actual(conjunction_goals,   Body, Goals) :- conjunction_goals(Body, Goals).
+walk_actual(trigger_items,       Body, Items) :- trigger_items(Body, Items).
+walk_actual(engine_finalize_refs,  Body, Refs) :- findall(R, body_finalize_ref(Body, R), Refs).
+walk_actual(engine_latest_refs,    Body, Refs) :- findall(R, body_latest_ref(Body, R), Refs).
+walk_actual(engine_pre_refs,       Body, Refs) :- findall(R, body_pre_ref(Body, R), Refs).
+walk_actual(analyze_latest_refs,   Body, Refs) :- findall(R, level_body_latest_ref(Body, R), Refs).
+walk_actual(analyze_pre_refs,      Body, Refs) :- findall(R, level_body_pre_ref(Body, R), Refs).
+walk_actual(goal_rel_refs,       Body, Pos-Neg) :- goal_rel_refs(Body, Pos, Neg).
+walk_actual(body_atoms,          Body, Atoms) :- body_atoms(Body, Atoms).
+walk_actual(reserved_constructs, Body, Found) :- findall(C, reserved_construct_in_body(Body, C), Found).
+walk_actual(forbidden_goals,     Body, Found) :- findall(G, body_forbidden_goal(Body, G), Found).
+walk_actual(host_body_goals,     Body, Goals) :- body_goals(Body, Goals).
+
+% Every case, one projection, compared with ==. The failure message names the
+% case and both values, so a consolidation regression says which shape broke.
+check_projection(Projection) :-
+    forall(( walk_case(Name, Body), walk_golden(Name, Rows),
+             memberchk(Projection-Expected, Rows) ),
+           ( walk_actual(Projection, Body, Actual),
+             (   Actual == Expected
+             ->  true
+             ;   format("~n~w/~w~n  expected ~q~n  actual   ~q~n",
+                        [Projection, Name, Expected, Actual]),
+                 fail
+             ) )).
+
+test(body_ref_uses)        :- check_projection(body_ref_uses).
+test(conjunction_goals)    :- check_projection(conjunction_goals).
+test(trigger_items)        :- check_projection(trigger_items).
+test(engine_finalize_refs) :- check_projection(engine_finalize_refs).
+test(engine_latest_refs)   :- check_projection(engine_latest_refs).
+test(engine_pre_refs)      :- check_projection(engine_pre_refs).
+test(analyze_latest_refs)  :- check_projection(analyze_latest_refs).
+test(analyze_pre_refs)     :- check_projection(analyze_pre_refs).
+test(goal_rel_refs)        :- check_projection(goal_rel_refs).
+test(body_atoms)           :- check_projection(body_atoms).
+test(reserved_constructs)  :- check_projection(reserved_constructs).
+test(forbidden_goals)      :- check_projection(forbidden_goals).
+test(host_body_goals)      :- check_projection(host_body_goals).
+
+% The engine and the compiler ship SEPARATE latest/1 and pre/1 body scans.
+% The review's rank 1 claim is that they are the same predicate twice; this
+% pins that equality directly, so a consolidation onto one implementation is
+% checked against the claim rather than against one side's own golden.
+test(engine_and_compiler_latest_scans_agree) :-
+    forall(walk_case(_, Body),
+           ( findall(R, body_latest_ref(Body, R), EngineRefs),
+             findall(R, level_body_latest_ref(Body, R), CompilerRefs),
+             EngineRefs == CompilerRefs )).
+
+test(engine_and_compiler_pre_scans_agree) :-
+    forall(walk_case(_, Body),
+           ( findall(R, body_pre_ref(Body, R), EngineRefs),
+             findall(R, level_body_pre_ref(Body, R), CompilerRefs),
+             EngineRefs == CompilerRefs )).
+
+:- end_tests(body_walk_characterization).
+
+% ═══════════════════════════════════════════════════════════════════════════
+% CROSS-PLANE PROGRAM CHECK PARITY (rank R2)
+%
+% The review found six invalid-program trigger classes implemented twice, once
+% in the oracle's engine:check_program/1 and once in the compiler's
+% analyze:check_supported_subset/1, plus two classes the ORACLE alone checks.
+% These tests state, per class, what each door does with the same prog/2 term.
+%
+% Both doors keep their own exception vocabulary on purpose. The oracle throws
+% a bare term; the compiler wraps in unsupported_construct/1 and, for keyed
+% Log, carries the key positions the emitter would have needed. Those terms are
+% fixture-visible data, so the shared trigger implementation must not
+% normalize them.
+%
+% TWO OF THESE WERE WRITTEN RED. Before the shared check module existed the
+% compiler ACCEPTED both programs the oracle rejects:
+%
+%   compiler_refuses_log_without_retention
+%     was: check_supported_subset/1 succeeded, so the program compiled and
+%     v6/prolog/compile/out/manifest.json carried
+%     log_without_retention_rejected in bucket "compiled" with an empty
+%     reason, against an oracle that throws missing_retention(event/1).
+%   compiler_refuses_aggregate_in_edge_head
+%     was: check_supported_subset/1 succeeded on (total(count(N)) <+ hit(N)),
+%     so a compound aggregate argument reached generic head-expression
+%     lowering, against an oracle that throws aggregate_in_edge_head.
+%
+% Both are green below and the manifest bucket moved with them.
+
+:- begin_tests(cross_plane_check_parity).
+
+% Throws Term, or the atom accepted if the door lets the program through.
+door_verdict(oracle, Prog, Verdict) :-
+    (   catch(check_program(Prog), Thrown, true)
+    ->  ( var(Thrown) -> Verdict = accepted ; Verdict = Thrown )
+    ;   Verdict = failed
+    ).
+door_verdict(compiler, Prog, Verdict) :-
+    (   catch(check_supported_subset(Prog), Thrown, true)
+    ->  ( var(Thrown) -> Verdict = accepted ; Verdict = Thrown )
+    ;   Verdict = failed
+    ).
+
+% ── the six mirrored classes ─────────────────────────────────────────────────
+
+test(keyed_level_head_both_doors) :-
+    Prog = prog([ keyed(current/2, [1]) ], [ (current(Id, Tag) <- src(Id, Tag)) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == keyed_level_head(current/2),
+    CompilerVerdict == unsupported_construct(keyed_level_head(current/2)).
+
+% The compiler payload carries the key POSITIONS as well as the reference; the
+% oracle's carries only the reference. Pinned so the shared trigger cannot
+% quietly normalize one door's payload into the other's.
+test(keyed_log_rel_payloads_differ_by_design) :-
+    Prog = prog([ kind(latest/2, log), keep(latest/2, all),
+                  keyed(latest/2, [1]) ], []),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == keyed_log_rel(latest/2),
+    CompilerVerdict == unsupported_construct(keyed_log_rel(latest/2, [1])).
+
+test(log_on_level_headed_rel_both_doors) :-
+    Prog = prog([ kind(view/1, log), keep(view/1, all) ],
+                [ (view(Item) <- src(Item)) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == log_on_level_headed_rel(view/1),
+    CompilerVerdict == unsupported_construct(log_on_level_headed_rel(view/1)).
+
+test(keep_on_non_log_rel_both_doors) :-
+    Prog = prog([ keep(state/1, all) ], []),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == keep_on_non_log_rel(state/1),
+    CompilerVerdict == unsupported_construct(keep_on_non_log_rel(state/1)).
+
+test(latest_in_level_rule_both_doors) :-
+    Prog = prog([], [ (out(Item) <- (src(Item), latest(cfg(Item)))) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == latest_in_level_rule(cfg/1),
+    CompilerVerdict == unsupported_construct(latest_in_level_rule(cfg/1)).
+
+test(pre_in_level_rule_both_doors) :-
+    Prog = prog([], [ (out(Item) <- (src(Item), pre(cfg(Item)))) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == pre_in_level_rule(cfg/1),
+    CompilerVerdict == unsupported_construct(pre_in_level_rule(cfg/1)).
+
+% ── the finalize diagnostic drift, stated rather than repaired ───────────────
+% Both doors refuse a finalize/1 in a level rule, and they name it differently:
+% the oracle has a dedicated check, the compiler reaches it through the generic
+% refused-goal path and reports the enclosing head. The review flagged this as
+% diagnostic drift; it is fixture-visible on both sides, so R2 preserves it and
+% records it here instead.
+test(finalize_in_level_rule_diagnostics_drift) :-
+    Prog = prog([], [ (out(Item) <- (src(Item), finalize(gone(Item)))) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == finalize_in_level_rule(gone/1),
+    % =@= over a term whose variable is SHARED between the head and the
+    % finalize atom, because that is how the compiler reports it: the payload
+    % keeps the rule's own variable rather than copying. Two anonymous holes
+    % are not a variant of one repeated hole, so writing `out(_)` and
+    % `gone(_)` here would fail for the wrong reason.
+    Expected = unsupported_construct(
+                 level_body_goal(out(Item), finalize(gone(Item)))),
+    CompilerVerdict =@= Expected.
+
+% ── nested not/1 parity ─────────────────────────────────────────────────────
+% Both level-rule scans descend not/1, so a latest or pre buried under any
+% depth of negation still refuses, and both doors agree on which reference is
+% named. This is the shared-walker property (rank R1) read through the checks
+% that consume it.
+test(nested_not_latest_parity) :-
+    Prog = prog([], [ (out(Item) <- (src(Item),
+                                     not(not(latest(cfg(Item)))))) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == latest_in_level_rule(cfg/1),
+    CompilerVerdict == unsupported_construct(latest_in_level_rule(cfg/1)).
+
+test(nested_not_pre_parity) :-
+    Prog = prog([], [ (out(Item) <- (src(Item),
+                                     not(not(pre(cfg(Item)))))) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == pre_in_level_rule(cfg/1),
+    CompilerVerdict == unsupported_construct(pre_in_level_rule(cfg/1)).
+
+% A finalize under not/1 is opaque to BOTH doors, which is the asymmetry the
+% review named: the finalize scan does not descend negation on either side.
+% Pinned so closing one side alone becomes a visible change.
+test(nested_not_finalize_is_opaque_to_both_doors) :-
+    Prog = prog([], [ (out(Item) <- (src(Item), not(finalize(gone(Item))))) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == accepted,
+    CompilerVerdict == accepted.
+
+% ── the two classes the oracle alone used to check ──────────────────────────
+
+% FAIL-FIRST: CompilerVerdict was `accepted` before the shared check module.
+test(compiler_refuses_log_without_retention) :-
+    Prog = prog([ kind(event/1, log) ], []),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == missing_retention(event/1),
+    CompilerVerdict == unsupported_construct(missing_retention(event/1)).
+
+% FAIL-FIRST: CompilerVerdict was `accepted` before the shared check module.
+test(compiler_refuses_aggregate_in_edge_head) :-
+    Prog = prog([ kind(hit/1, log), keep(hit/1, all) ],
+                [ (total(count(Item)) <+ hit(Item)) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == aggregate_in_edge_head,
+    CompilerVerdict == unsupported_construct(aggregate_in_edge_head(total/1)).
+
+% A plain edge head is untouched by the aggregate-edge closure.
+test(plain_edge_head_still_accepted_by_both_doors) :-
+    Prog = prog([ kind(hit/1, log), keep(hit/1, all),
+                  keyed(total/1, [1]) ],
+                [ (total(Item) <+ hit(Item)) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == accepted,
+    CompilerVerdict == accepted.
+
+:- end_tests(cross_plane_check_parity).
+
+% ═══════════════════════════════════════════════════════════════════════════
+% DECLARATION QUERY PARITY (rank R9)
+%
+% The oracle and the compiler each carried their own relation-kind resolver,
+% clause for clause identical except that the oracle's took an extra Rules
+% argument it never read. The fallback is the part that matters: an undeclared
+% relation is a Set, and a keyed relation is a Set by construction, so clause
+% ORDER decides what a relation declared both log and keyed resolves to.
+%
+% Written against the two separate implementations and green there, so the
+% parity claim is pinned before one replaces both. The two door_ adapters
+% below are the only lines that moved when the oracle dropped its unused
+% argument; every assertion is unchanged.
+
+:- begin_tests(declaration_query_parity).
+
+oracle_relation_kind(Decls, Ref, Kind) :- engine:rel_kind(Decls, Ref, Kind).
+compiler_relation_kind(Decls, Ref, Kind) :- analyze:rel_kind(Decls, Ref, Kind).
+oracle_key(Decls, Ref, Positions) :- engine:decl_key(Decls, Ref, Positions).
+compiler_key(Decls, Ref, Positions) :- analyze:decl_key(Decls, Ref, Positions).
+
+% Decls, expected kind for r/1.
+kind_case([],                                        set).
+kind_case([kind(r/1, log), keep(r/1, all)],          log).
+kind_case([kind(r/1, set)],                          set).
+kind_case([keyed(r/1, [1])],                         set).
+% Declared kind is consulted BEFORE the keyed fallback, so this is log.
+kind_case([kind(r/1, log), keep(r/1, all), keyed(r/1, [1])], log).
+kind_case([kind(r/1, set), keyed(r/1, [1])],         set).
+% A declaration naming a DIFFERENT relation must not leak onto r/1.
+kind_case([kind(other/1, log), keep(other/1, all)],  set).
+kind_case([keyed(other/1, [1])],                     set).
+
+test(relation_kind_agrees_across_doors) :-
+    forall(kind_case(Decls, Expected),
+           ( oracle_relation_kind(Decls, r/1, OracleKind),
+             compiler_relation_kind(Decls, r/1, CompilerKind),
+             OracleKind == Expected,
+             CompilerKind == Expected )).
+
+% Both doors read the same key positions out of the same declaration, and both
+% FAIL rather than defaulting when the relation carries no key. The `none`
+% below is this test's marker for that failure, never a value either door
+% produces.
+key_case([keyed(r/1, [1])],                    [1]).
+key_case([keyed(r/2, [1, 2]), keyed(r/1, [1])], [1]).
+key_case([kind(r/1, log), keep(r/1, all)],     none).
+key_case([],                                   none).
+
+test(decl_key_agrees_across_doors) :-
+    forall(key_case(Decls, Expected),
+           ( (   oracle_key(Decls, r/1, OraclePositions)
+             ->  true
+             ;   OraclePositions = none ),
+             (   compiler_key(Decls, r/1, CompilerPositions)
+             ->  true
+             ;   CompilerPositions = none ),
+             OraclePositions == Expected,
+             CompilerPositions == Expected )).
+
+:- end_tests(declaration_query_parity).
+
+% ═══════════════════════════════════════════════════════════════════════════
+% EXPANSION ORDER (rank R3)
+%
+% The spreading verdict fixes the order as
+% enum -> declaration spread -> row spread -> match, which puts ENUM BEFORE
+% MATCH. The old single call ran match first, and moving the calls alone
+% silently breaks match exhaustiveness:
+%
+%   expand_enum_program/2 removes every enum_decl/2 entry, and match coverage
+%   used to read enum_decl/2 straight out of the declarations. Enum-first
+%   therefore left the coverage check looking at declarations that no longer
+%   mention any enum.
+%
+% RECEIPT taken against the unmodified expanders, before 1_expansion.pl
+% existed. For a two-variant enum with a ONE-arm match:
+%
+%   expand_match_program/2                    threw
+%     unsupported_construct(match_nonexhaustive(body, redirect))
+%   expand_enum_program/2 then
+%     expand_match_program/2                  SUCCEEDED
+%
+% and for the exhaustive twin the two orders produced IDENTICAL expanded
+% terms. So no output diff and no tick log could have caught the loss; only
+% the refusal disappears. That is what these tests hold onto.
+
+:- begin_tests(expansion_order).
+
+enum_program(Rules, prog([ enum_decl(body, (page(view:text)
+                                            ; redirect(to:text))) ], Rules)).
+
+exhaustive_match(Program) :-
+    enum_program([ match(resp(Id),
+                     ( (body_page(Id, v) <- true)
+                     ; (body_redirect(Id, t) <- true) )) ], Program).
+
+nonexhaustive_match(Program) :-
+    enum_program([ match(resp(Id), (body_page(Id, v) <- true)) ], Program).
+
+% The declared order is the spreading verdict's order, and the two spread
+% phases are placeholders with no expander until spreading is wired.
+test(declared_phase_order) :-
+    findall(Order-Name, expansion_phase(Order, Name, _), Unordered),
+    msort(Unordered, Ordered),
+    Ordered == [10-enum, 20-decl_spread, 30-row_spread, 40-match].
+
+test(spread_phases_are_placeholders) :-
+    expansion_phase(20, decl_spread, unwired),
+    expansion_phase(30, row_spread, unwired).
+
+% Enum-first through the driver produces exactly what match-first produced.
+test(enum_first_preserves_expanded_terms) :-
+    exhaustive_match(Program),
+    expand_match_program(Program, MatchFirst),
+    expand_program(Program, EnumFirst, _),
+    EnumFirst =@= MatchFirst.
+
+% The property the context exists to save.
+test(enum_first_still_refuses_nonexhaustive_match) :-
+    nonexhaustive_match(Program),
+    catch(expand_program(Program, _, _), Thrown, true),
+    Thrown == unsupported_construct(match_nonexhaustive(body, redirect)).
+
+% The context is computed from the SURFACE declarations, and it names the
+% generated variant relations rather than the surface variant terms, so a
+% later phase can check coverage against what enum expansion actually made.
+test(context_carries_generated_variant_refs) :-
+    exhaustive_match(Program),
+    expand_program(Program, _, Context),
+    Context == [ body-[ body_page/2-page, body_redirect/2-redirect ] ].
+
+% A program with no enum still expands, and its context is empty rather than
+% failing.
+test(program_without_enum_has_empty_context) :-
+    Program = prog([], [ (out(Item) <- src(Item)) ]),
+    expand_program(Program, Expanded, Context),
+    Context == [],
+    Expanded == Program.
+
+% The driver is the whole pipeline: a program with neither sugar comes back
+% unchanged, and one with both comes back fully desugared.
+test(driver_expands_enum_and_match_together) :-
+    exhaustive_match(Program),
+    expand_program(Program, prog(Decls, Rules), _),
+    \+ member(enum_decl(_, _), Decls),
+    \+ member(match(_, _), Rules).
+
+:- end_tests(expansion_order).
+
+% ═══════════════════════════════════════════════════════════════════════════
+% EXPRESSION OPERATOR INVENTORY (rank R5)
+%
+% The eleven arithmetic and comparison operators were listed in five places:
+% body.pl's comparison_goal/1, lower.pl's arithmetic_expr/4 and
+% comparison_operator_sql/5, print_dl.pl's arith_op/2, and two memberchk lists
+% in analyze.pl. registry.pl's expression/5 is now the inventory, and these
+% tests are its totality check: every row is reachable from every consumer
+% that has an opinion about it, and no consumer knows an operator the table
+% does not.
+
+:- begin_tests(expression_inventory).
+
+% The full inventory, written out rather than derived, so a row appearing or
+% disappearing is a visible edit here.
+expected_row('+'/2,    arithmetic,          1, infix('+'),            both_int).
+expected_row('-'/2,    arithmetic,          1, infix('-'),            both_int).
+expected_row('*'/2,    arithmetic,          2, infix('*'),            both_int).
+expected_row('/'/2,    arithmetic,          2, infix('/'),            both_int).
+expected_row(mod/2,    arithmetic,          2, sign_corrected_modulo, both_int).
+expected_row('<'/2,    ordered_comparison,  0, infix('<'),            both_int).
+expected_row('=<'/2,   ordered_comparison,  0, infix('<='),           both_int).
+expected_row('>'/2,    ordered_comparison,  0, infix('>'),            both_int).
+expected_row('>='/2,   ordered_comparison,  0, infix('>='),           both_int).
+expected_row('=='/2,   identity_comparison, 0, infix('='),            same_type).
+expected_row('\\=='/2, identity_comparison, 0, infix('<>'),           same_type).
+
+test(inventory_is_exactly_the_expected_rows) :-
+    findall(Signature-Family-Precedence-Sql-Type,
+            expression(Signature, Family, Precedence, Sql, Type), Actual),
+    findall(Signature-Family-Precedence-Sql-Type,
+            expected_row(Signature, Family, Precedence, Sql, Type), Expected),
+    msort(Actual, SortedActual),
+    msort(Expected, SortedExpected),
+    SortedActual == SortedExpected.
+
+% Every comparison row must ALSO be a registry surface row in the guard axis,
+% and every surface guard row that is an infix operator must have an
+% expression row. The two tables share these eleven functors and must not
+% disagree about which ones exist.
+test(expression_table_agrees_with_surface_rows) :-
+    findall(Signature,
+            ( expression(Signature, Family, _, _, _),
+              memberchk(Family, [ordered_comparison, identity_comparison]) ),
+            ComparisonRows),
+    findall(Signature,
+            surface(Signature, guard, no_refs, infix(_), _),
+            SurfaceGuardRows),
+    msort(ComparisonRows, SortedComparisons),
+    msort(SurfaceGuardRows, SortedSurface),
+    SortedComparisons == SortedSurface.
+
+% The oracle's comparison_goal/1 recognizes exactly the comparison rows.
+test(oracle_comparison_recognizer_is_total) :-
+    forall(( expression(Name/2, Family, _, _, _),
+             memberchk(Family, [ordered_comparison, identity_comparison]) ),
+           ( Goal =.. [Name, 1, 2], comparison_goal(Goal) )),
+    forall(( expression(Name/2, arithmetic, _, _, _) ),
+           ( Goal =.. [Name, 1, 2], \+ comparison_goal(Goal) )).
+
+% Every arithmetic row lowers to SQL, and mod's sign-corrected template is
+% distinguishable from a plain infix rendering.
+test(every_arithmetic_row_lowers_to_sql) :-
+    forall(expression(Name/2, arithmetic, _, _, _),
+           ( Expr =.. [Name, 1, 2],
+             compile_expr(Expr, [], Sql, Type),
+             Type == int,
+             atom(Sql) )).
+
+test(modulo_lowers_sign_corrected) :-
+    compile_expr(mod(7, 3), [], Sql, _),
+    Sql == '(((7 % 3) + 3) % 3)'.
+
+% Every comparison row lowers to its declared SQL operator.
+test(every_comparison_row_lowers_to_its_sql_operator) :-
+    forall(( expression(Name/2, Family, _, infix(SqlOperator), _),
+             memberchk(Family, [ordered_comparison, identity_comparison]) ),
+           ( Goal =.. [Name, 1, 2],
+             compile_comparison(Goal, [], Text),
+             atomic_list_concat(['(1 ', SqlOperator, ' 2)'], Expected),
+             Text == Expected )).
+
+% The printer parenthesizes by the table's precedence: a tighter operator
+% nested inside a looser one needs no parens, the reverse does.
+test(printer_precedence_comes_from_the_table) :-
+    print_term((1 + 2) * 3, [], 0, top, Tight),
+    Tight == '(1 + 2) * 3',
+    print_term(1 + 2 * 3, [], 0, top, Loose),
+    Loose == '1 + 2 * 3'.
+
+:- end_tests(expression_inventory).
+
+% ═══════════════════════════════════════════════════════════════════════════
+% REGISTRY ROW TO ORACLE CLASSIFICATION (rank R4)
+%
+% level_eval.pl carried its own aggregate list, [count, sum, min, max,
+% json_array] plus a json_object/2 clause, while analyze.pl already read the
+% same set off registry.pl's aggregate rows. Adding an aggregate row updated
+% the compiler and silently missed the oracle.
+%
+% THE CONSTRAINT THIS TABLE EXISTS TO PROTECT: the oracle is deliberately
+% WIDER than the compiler. json_array/1 and json_object/2 carry
+% head(refuse(aggregate)) in registry.pl and the compiler refuses them, but the
+% reference engine EXECUTES both. So the oracle's classification must key off
+% the aggregate AXIS and ignore the Status field entirely. A lookup that
+% filtered on `live` would silently stop treating a json aggregate head as an
+% aggregate, and it would stop QUIETLY: the rule would fall through to plain
+% level evaluation and derive a row per body derivation instead of one grouped
+% row.
+%
+% Tested through split_rules/4 rather than the classifier directly, so the
+% assertion is about oracle BEHAVIOR and needs no new export.
+
+:- begin_tests(oracle_aggregate_classification).
+
+% One head term per registry aggregate row, arity taken from the row.
+aggregate_head_term(Signature, Head) :-
+    expression_free_aggregate(Signature, Name/Arity),
+    length(Args, Arity),
+    AggregateTerm =.. [Name | Args],
+    Head =.. [total, AggregateTerm].
+
+expression_free_aggregate(Signature, Signature) :-
+    surface(Signature, aggregate, _, _, _).
+
+% =@= and not ==: split_rules/4 collects through findall/3, which copies, so
+% the returned rule is a VARIANT of the one passed in rather than the same
+% term. == would fail here for a reason that has nothing to do with
+% classification.
+test(every_registry_aggregate_row_is_an_oracle_aggregate) :-
+    forall(aggregate_head_term(_, Head),
+           ( Rule = (Head <- src(1)),
+             split_rules([Rule], AggregateRules, PlainLevel, _),
+             AggregateRules =@= [Rule],
+             PlainLevel == [] )).
+
+% The registry has to actually carry the six, or the test above is vacuous.
+test(registry_carries_the_six_aggregate_rows) :-
+    findall(Signature, surface(Signature, aggregate, _, _, _), Rows),
+    msort(Rows, Sorted),
+    Sorted == [ count/1, json_array/1, json_object/2, max/1, min/1, sum/1 ].
+
+% The oracle stays WIDER than the compiler. Both json rows are refused by the
+% compiler and both are still oracle aggregates.
+test(refused_json_aggregates_stay_live_in_the_oracle) :-
+    forall(member(Signature, [json_array/1, json_object/2]),
+           surface(Signature, aggregate, _, head(refuse(aggregate)), refused)),
+    forall(( member(Name/Arity, [json_array/1, json_object/2]),
+             length(Args, Arity),
+             AggregateTerm =.. [Name | Args],
+             Head =.. [total, AggregateTerm] ),
+           ( Rule = (Head <- src(1)),
+             split_rules([Rule], AggregateRules, PlainLevel, EdgeRules),
+             AggregateRules =@= [Rule],
+             PlainLevel == [],
+             EdgeRules == [] )).
+
+% A head with no aggregate argument is a plain level rule, so the classifier
+% has not become "any compound argument is an aggregate".
+test(plain_head_is_not_an_aggregate) :-
+    Rule = (total(1) <- src(1)),
+    split_rules([Rule], [], [Rule], []).
+
+% A compound head argument that is NOT a registry aggregate stays plain.
+test(non_aggregate_compound_head_argument_stays_plain) :-
+    Rule = (total(wrapped(1)) <- src(1)),
+    split_rules([Rule], [], [Rule], []).
+
+:- end_tests(oracle_aggregate_classification).

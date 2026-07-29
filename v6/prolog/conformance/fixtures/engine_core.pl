@@ -21,6 +21,23 @@ fixture(log_without_retention_rejected,
   [ [ +event(one) ] ],
   [ throws(missing_retention(event/1)) ]).
 
+% An aggregate in an edge head is a load error. Aggregates are a grouped
+% recomputation over a bag of derivations; an edge rule fires once per
+% occurrence and has no bag to aggregate.
+%
+% This law had no fixture before rank R2 of
+% plans/2026-07-29-prolog-org-review.md, and the compiler had no matching
+% check at all: check_supported_subset/1 ACCEPTED this program, so a compound
+% aggregate argument reached generic head-expression lowering. Both doors
+% refuse it now, the compiler naming the offending head as
+% unsupported_construct(aggregate_in_edge_head(total/1)).
+fixture(aggregate_in_edge_head_rejected,
+  prog([ kind(hit/1, log), keep(hit/1, all) ],
+       [ (total(count(Item)) <+ hit(Item)) ]),
+  [],
+  [ [ +hit(one) ] ],
+  [ throws(aggregate_in_edge_head) ]).
+
 % Retention is meaningful only on Log relations. A keep clause on a Set was
 % previously accepted and had no effect.
 fixture(keep_on_non_log_rel_rejected,

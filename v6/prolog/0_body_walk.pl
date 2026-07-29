@@ -1,0 +1,176 @@
+% 0_body_walk.pl : one registry-driven traversal of a rule body, shared by the
+% reference engine and the compiler.
+%
+% Rank 1 of plans/2026-07-29-prolog-org-review.md. The review inventoried
+% fourteen independent body traversals across five modules, each carrying its
+% own hardcoded list of which functors are "not a relation atom". Adding a
+% surface/5 row updated some of them and silently missed the rest; the drifts
+% that produced are pinned as goldens in the body_walk_characterization unit
+% of compile/test/plunit_tests.pl.
+%
+% The contract:
+%
+%   walk_body(+Body, +WalkPolicy, -Events)
+%
+%   Events is a LEFT-TO-RIGHT list of
+%
+%       event(Path, Polarity, Surface, Term)
+%
+%     Path      list of argument indices from the body root, [] at the root,
+%               innermost index last. Diagnostics can name a position with it.
+%     Polarity  pos, or neg once the walk has descended through a not/1.
+%               Absorbing, never flipping: both consumers that care read a
+%               doubly negated atom as negative, matching what
+%               analyze:body_ref_uses/2 and level_eval:goal_rel_refs/3 did
+%               before this file existed.
+%     Surface   surface(Signature, Axis, AnalyzeRole, LowerRole, Status) when
+%               registry.pl knows the functor, or the atom plain_atom when it
+%               does not. plain_atom is what makes a bare relation atom a
+%               relation atom: refusal by absence stays the registry's job.
+%     Term      the term at that node, unchanged.
+%
+%   WalkPolicy is walk_policy(DescendNot, SpliceBare):
+%
+%     DescendNot   descend_not(true)  walk not/1's argument, marking neg
+%                  descend_not(false) emit the not/1 node and stop there
+%     SpliceBare   splice_bare(true)  walk the arguments of the splice roles,
+%                                     which are next/1 and variadic combine
+%                  splice_bare(false) emit the wrapper node and stop there
+%
+% A wrapper node is ALWAYS emitted, whether or not the walk descends through
+% it. Consumers that only want leaves filter on Surface. That is what lets one
+% traversal serve both the projections that read the wrapper (latest/1's
+% argument is the sampled reference) and the projections that read past it.
+%
+% Conjunction is the one form the walk always flattens, and it is flattened by
+% shape rather than by registry row: ','/2 carries no surface/5 row because it
+% is not a construct, it is the body's spine. Left-nested and right-nested
+% conjunctions therefore produce the same event list, which the
+% comma_left/comma_right goldens pin.
+%
+% WHAT DELIBERATELY DOES NOT USE THIS FILE, with reasons, so a later reader
+% does not read the remaining traversals as oversights:
+%
+%   body:solve/2                  executes goals. Binding order, backtracking
+%                                 and negation-as-failure are its semantics; a
+%                                 structural walk cannot carry them.
+%   body:substitute_goal/3        a rewrite that must leave wrappers opaque:
+%                                 descending could delete a sampled or negated
+%                                 goal that is not the firing occurrence.
+%   host_expand:compile_value_terms/2
+%                                 a whole-term rewrite over every compound
+%                                 argument, wider than a body walk.
+%   level_eval:goal_rel_refs/3    keeps its own not/1 recursion. Its clause
+%                                 appends inner-positive before inner-negative,
+%                                 so for not((not(a), b)) it answers [b/1,a/1]
+%                                 and NOT source order. The not_mixed golden
+%                                 pins that. Projecting it from this file's
+%                                 source-ordered events would reorder
+%                                 stratification constraints.
+%   print_dl:print_body/3         rendering policy, including a fallback for
+%                                 left-nested conjunctions that the parser
+%                                 never produces.
+%   parse_dl construction, enum and match semicolon flattens
+%                                 different shapes, not rule bodies.
+%   src/ cluster walkers          a separate AST (\+/1, cmp_op/4) belonging to
+%                                 the superseded engine-v1 experiment.
+
+:- module(body_walk,
+          [ walk_body/3,
+            body_conjunction_goals/3,
+            body_wrapper_refs/4
+          ]).
+
+:- use_module(library(lists)).
+:- use_module('compile/registry', [body_surface_for_term/6]).
+
+% ── the walk ─────────────────────────────────────────────────────────────────
+
+walk_body(Body, Policy, Events) :-
+    walk_node(Body, [], pos, Policy, Events, []).
+
+% Difference list, so left-to-right order costs no appends.
+walk_node(Term, Path, Polarity, Policy, Events, Tail) :-
+    nonvar(Term),
+    Term = (Left, Right),
+    !,
+    walk_node(Left,  [1 | Path], Polarity, Policy, Events, Middle),
+    walk_node(Right, [2 | Path], Polarity, Policy, Middle, Tail).
+walk_node(Term, Path, Polarity, Policy, [Event | Rest], Tail) :-
+    node_surface(Term, Surface),
+    reverse(Path, ForwardPath),
+    Event = event(ForwardPath, Polarity, Surface, Term),
+    walk_children(Surface, Term, Path, Polarity, Policy, Rest, Tail).
+
+node_surface(Term, surface(Signature, Axis, AnalyzeRole, LowerRole, Status)) :-
+    body_surface_for_term(Term, Signature, Axis, AnalyzeRole, LowerRole,
+                          Status),
+    !.
+node_surface(_, plain_atom).
+
+% not/1 descends under descend_not(true), absorbing polarity to neg.
+walk_children(surface(_, _, arm(neg), _, _), Term, Path, _Polarity,
+              Policy, Events, Tail) :-
+    Policy = walk_policy(descend_not(true), _),
+    !,
+    arg(1, Term, Inner),
+    walk_node(Inner, [1 | Path], neg, Policy, Events, Tail).
+% next/1 and variadic combine splice their arguments in under
+% splice_bare(true); polarity carries through unchanged.
+walk_children(surface(_, _, splice_bare, _, _), Term, Path, Polarity,
+              Policy, Events, Tail) :-
+    Policy = walk_policy(_, splice_bare(true)),
+    !,
+    Term =.. [_ | Arguments],
+    walk_arguments(Arguments, 1, Path, Polarity, Policy, Events, Tail).
+walk_children(_, _, _, _, _, Events, Events).
+
+walk_arguments([], _, _, _, _, Events, Events).
+walk_arguments([Argument | Rest], Index, Path, Polarity, Policy,
+               Events, Tail) :-
+    walk_node(Argument, [Index | Path], Polarity, Policy, Events, Middle),
+    Next is Index + 1,
+    walk_arguments(Rest, Next, Path, Polarity, Policy, Middle, Tail).
+
+% ── projections shared by more than one consumer ─────────────────────────────
+
+% The ordered goal list of a body: one entry per node the walk reached that is
+% not a conjunction. With splice_bare(true) a next/1 or combine contributes its
+% ARGUMENTS and not itself, which is what analyze:conjunction_goals/2 means by
+% splicing.
+% Collected by recursion and NEVER by findall/3: findall copies its template,
+% and every consumer of a goal list needs the goals to keep sharing the body's
+% own variables.
+body_conjunction_goals(Body, Policy, Goals) :-
+    walk_body(Body, Policy, Events),
+    events_goals(Events, Policy, Goals).
+
+events_goals([], _, []).
+events_goals([Event | Rest], Policy, Goals) :-
+    (   spliced_goal(Event, Policy, Goal)
+    ->  Goals = [Goal | RestGoals]
+    ;   Goals = RestGoals
+    ),
+    events_goals(Rest, Policy, RestGoals).
+
+% Under splice_bare(true) the wrapper itself is dropped and its arguments,
+% already walked in, stand in for it. That is what splicing means.
+spliced_goal(event(_, _, Surface, Term), walk_policy(_, splice_bare(true)),
+             Term) :-
+    !,
+    Surface \= surface(_, _, splice_bare, _, _).
+spliced_goal(event(_, _, _, Term), _, Term).
+
+% Every reference carried by one wrapper family, in source order: the argument
+% of each latest/1, pre/1 or finalize/1 the walk reached. This is the shared
+% implementation behind four predicates that the review found written twice,
+% once in the oracle and once in the compiler.
+body_wrapper_refs(Body, Wrapper, Policy, Ref) :-
+    walk_body(Body, Policy, Events),
+    member(event(_, _, _, Term), Events),
+    nonvar(Term),
+    functor(Term, Wrapper, 1),
+    arg(1, Term, Atom),
+    nonvar(Atom),
+    functor(Atom, Name, Arity),
+    Ref = Name/Arity.

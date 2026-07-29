@@ -7,12 +7,22 @@
 % so the parser, printer, analyzer, and supported-subset gate can project from
 % these rows without maintaining their own functor lists.
 
+% expression/5 is a SECOND, SEPARATE table on a different axis, added by rank 5
+% of plans/2026-07-29-prolog-org-review.md. surface/5 says which functors are
+% body syntax and what the analyzer and the gate do with them; expression/5
+% says how the arithmetic and comparison operators PRINT, LOWER, and TYPE.
+% Keeping them apart is deliberate: widening surface/5 with precedence and SQL
+% text would put rendering metadata on rows like not/1 and match/2 that have
+% no rendering. The two tables overlap on the eleven operator functors and
+% expression_table_agrees_with_surface_rows asserts they stay consistent.
 :- module(registry,
           [ surface/5,
             surface_for_term/6,
             body_surface_for_term/6,
             wrapper_lower_role/3,
-            bind_definition/2
+            bind_definition/2,
+            expression/5,
+            expression_for_term/5
           ]).
 
 % Contextual gate: live around one plain relation atom in an edge body;
@@ -78,6 +88,46 @@ surface(bind_decl/2,     world,     no_refs,                      decl(bind_plan
 surface(query/1,         read,      no_refs,                      decl(query_plan),                       live).
 surface(ts_query/1,      world,     no_refs,                      value(tree_sitter_query),               live).
 surface(sg_pattern/3,    world,     no_refs,                      value(refuse(slot_sg_metavariable_semantics)), refused).
+
+% ═══ expression operators ═══════════════════════════════════════════════════
+%
+% expression(Operator/Arity, Family, PrintPrecedence, SqlRendering, TypeRule)
+%
+%   Family          arithmetic | ordered_comparison | identity_comparison
+%   PrintPrecedence binding tightness for print_dl.pl's parenthesizer. Only
+%                   arithmetic is printed by that path, so comparisons carry 0.
+%   SqlRendering    infix(SqlOperator), or a named template where SQLite's
+%                   operator does not match this language's semantics.
+%   TypeRule        both_int  operands must both be int (the Int-only law)
+%                   same_type operands must agree, whatever the type
+%
+% Before this table, the same eleven operators were listed in five places:
+% body.pl's comparison_goal/1, lower.pl's arithmetic_expr/4 and
+% comparison_operator_sql/5, print_dl.pl's arith_op/2, and two memberchk lists
+% in analyze.pl. Adding an operator meant finding all five.
+%
+% mod is the row that shows why SqlRendering is not just an operator atom:
+% SQLite's % takes the sign of the dividend, while this language's mod follows
+% the divisor, so it renders as a sign-corrected template.
+
+expression('+'/2,    arithmetic,          1, infix('+'),             both_int).
+expression('-'/2,    arithmetic,          1, infix('-'),             both_int).
+expression('*'/2,    arithmetic,          2, infix('*'),             both_int).
+expression('/'/2,    arithmetic,          2, infix('/'),             both_int).
+expression(mod/2,    arithmetic,          2, sign_corrected_modulo,  both_int).
+
+expression('<'/2,    ordered_comparison,  0, infix('<'),             both_int).
+expression('=<'/2,   ordered_comparison,  0, infix('<='),            both_int).
+expression('>'/2,    ordered_comparison,  0, infix('>'),             both_int).
+expression('>='/2,   ordered_comparison,  0, infix('>='),            both_int).
+
+expression('=='/2,   identity_comparison, 0, infix('='),             same_type).
+expression('\\=='/2, identity_comparison, 0, infix('<>'),            same_type).
+
+expression_for_term(Term, Family, Precedence, SqlRendering, TypeRule) :-
+    nonvar(Term),
+    functor(Term, Name, Arity),
+    expression(Name/Arity, Family, Precedence, SqlRendering, TypeRule).
 
 bind_definition(interval, [col(period, int), col(bucket, int)]).
 

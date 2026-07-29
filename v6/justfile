@@ -38,6 +38,13 @@ plunit:
 arch:
 	swipl -q -l {{v6}}/prolog/ARCH.pl -g go -g halt
 
+# read-only organization gate: parse errors, duplicate modules, undefined
+# predicates, private cross-module calls, redefinitions, void declarations,
+# trivial fails, format errors. Ratcheted against
+# prolog/tools/prolog-lint-baseline.txt; unused exports are advisory output.
+prolog-lint:
+	cd {{v6}}/prolog && bash tools/prolog-lint.sh
+
 # ── tsv2 (prolog compiles TO TypeScript) ──
 
 # full corpus sweep: compile every fixture, replay vs oracle tick logs

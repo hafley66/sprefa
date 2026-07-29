@@ -1,0 +1,3 @@
+rel hit(item) log keep(all).
+
+total(count(Item)) <+ hit(Item).

@@ -57,14 +57,31 @@
 
 :- module(engine,
           [ run_fixture_checks/2, run_program/5, fixture_expectations_hold/2,
-            rel_rows/3, rel_deltas/3 ]).
+            rel_rows/3, rel_deltas/3,
+            % Body traversals, exported as the characterization seam for the
+            % shared-walker consolidation (rank R1). body_latest_ref/2 and
+            % body_pre_ref/2 are the oracle's copies of two compiler scans;
+            % the test that pins them equal reaches both sides by name.
+            trigger_items/2, body_finalize_ref/2,
+            body_latest_ref/2, body_pre_ref/2,
+            % The oracle's load-time program gate, exported so the
+            % cross_plane_check_parity unit (rank R2) can put the same prog/2
+            % term through both doors and compare the two exception terms.
+            check_program/1,
+            % Declaration queries, exported as the declaration_query_parity
+            % seam (rank R9). rel_kind/3 lost the Rules argument no clause
+            % ever read.
+            rel_kind/3, decl_key/3 ]).
 :- reexport(body, [json_canon/2]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(ordsets)).
 :- use_module(library(pairs)).
-:- use_module('../0_match_expand', [expand_match_program/2]).
+:- use_module('../1_expansion', [expand_program/3]).
+:- use_module('../0_body_walk', [walk_body/3, body_wrapper_refs/4]).
+:- use_module('../0_program_check',
+              [ first_violation/3, relation_kind/3, declared_key/3 ]).
 :- use_module('../1_host_expand', [prepare_program/5]).
 :- use_module(rulings).
 :- use_module(body).
@@ -86,16 +103,13 @@ drain_cap(100).
 % Bound: count(N) | all      (duration bounds arrive with the clock fixtures)
 
 
-declared_kind(Decls, Ref, Kind) :- memberchk(kind(Ref, Kind), Decls).
+% Both resolvers are shared with the compiler (rank R9 of
+% plans/2026-07-29-prolog-org-review.md). This file used to carry its own
+% clause-for-clause copies, and rel_kind/4's Rules argument was never read by
+% any clause; the declaration_query_parity unit is the receipt.
+rel_kind(Decls, Ref, Kind) :- relation_kind(Decls, Ref, Kind).
 
-rel_kind(Decls, _, Ref, log) :- declared_kind(Decls, Ref, log), !.
-rel_kind(Decls, _, Ref, set) :- declared_kind(Decls, Ref, set), !.
-rel_kind(Decls, _, Ref, set) :- memberchk(keyed(Ref, _), Decls), !.
-rel_kind(_, _, _, set).
-
-level_headed(Rules, Ref) :- member((Head <- _), Rules), rel_ref(Head, Ref), !.
-
-decl_key(Decls, Ref, Positions) :- memberchk(keyed(Ref, Positions), Decls).
+decl_key(Decls, Ref, Positions) :- declared_key(Decls, Ref, Positions).
 
 key_of(Positions, Row, Key) :-
     Row =.. [_ | Args],
@@ -103,25 +117,41 @@ key_of(Positions, Row, Key) :-
 
 % Load-time program checks: headed relation compatibility, body markings,
 % keyed-Log exclusion, and retention presence.
-check_program(prog(Decls, Rules)) :-
-    forall(( member(keyed(Ref, _), Decls), level_headed(Rules, Ref) ),
-           throw(keyed_level_head(Ref))),
-    forall(( member(keyed(Ref, _), Decls), declared_kind(Decls, Ref, log) ),
-           throw(keyed_log_rel(Ref))),
-    forall(( member(kind(Ref, log), Decls), level_headed(Rules, Ref) ),
-           throw(log_on_level_headed_rel(Ref))),
-    forall(( member(kind(Ref, log), Decls), \+ memberchk(keep(Ref, _), Decls) ),
-           throw(missing_retention(Ref))),
-    forall(( member(keep(Ref, _), Decls), rel_kind(Decls, Rules, Ref, Kind), Kind \== log ),
-           throw(keep_on_non_log_rel(Ref))),
-    forall(( member((Head <+ _), Rules), aggregate_head(Head, _, _) ),
-           throw(aggregate_in_edge_head)),
-    forall(( member((_ <- Body), Rules), body_finalize_ref(Body, Ref2) ),
-           throw(finalize_in_level_rule(Ref2))),
-    forall(( member((_ <- Body), Rules), body_latest_ref(Body, Ref3) ),
-           throw(latest_in_level_rule(Ref3))),
-    forall(( member((_ <- Body), Rules), body_pre_ref(Body, Ref4) ),
-           throw(pre_in_level_rule(Ref4))).
+%
+% The trigger conditions live in 0_program_check.pl, shared with the compiler's
+% supported-subset gate (rank R2 of plans/2026-07-29-prolog-org-review.md).
+% What stays here is this door's ORDER and this door's exception vocabulary,
+% both of which are fixture data: the oracle throws bare terms, the compiler
+% wraps in unsupported_construct/1, and a program violating two classes reports
+% different ones at the two doors.
+engine_check_order([ keyed_level_head,
+                     keyed_log_rel,
+                     log_on_level_headed_rel,
+                     missing_retention,
+                     keep_on_non_log_rel,
+                     aggregate_in_edge_head,
+                     finalize_in_level_rule,
+                     latest_in_level_rule,
+                     pre_in_level_rule ]).
+
+check_program(Program) :-
+    engine_check_order(Order),
+    (   first_violation(Program, Order, violation(Name, Payload))
+    ->  engine_refusal(Name, Payload, Term),
+        throw(Term)
+    ;   true
+    ).
+
+engine_refusal(keyed_level_head,        Ref,   keyed_level_head(Ref)).
+engine_refusal(keyed_log_rel,           Ref-_, keyed_log_rel(Ref)).
+engine_refusal(log_on_level_headed_rel, Ref,   log_on_level_headed_rel(Ref)).
+engine_refusal(missing_retention,       Ref,   missing_retention(Ref)).
+engine_refusal(keep_on_non_log_rel,     Ref,   keep_on_non_log_rel(Ref)).
+% The oracle names this one without a reference, and always has.
+engine_refusal(aggregate_in_edge_head,  _,     aggregate_in_edge_head).
+engine_refusal(finalize_in_level_rule,  Ref,   finalize_in_level_rule(Ref)).
+engine_refusal(latest_in_level_rule,    Ref,   latest_in_level_rule(Ref)).
+engine_refusal(pre_in_level_rule,       Ref,   pre_in_level_rule(Ref)).
 
 % ═══ the store ══════════════════════════════════════════════════════════════
 % srow(Row) for Set rels; lrow(st(Tick, Seq), Row) for Log rels. Level views
@@ -145,25 +175,51 @@ log_stamps(Store, Ref, Stamps) :-
 % r4: finalize(Atom) is a DEPARTURE trigger position; it fires on a Set/level
 % row's -delta arriving as a next-tick occurrence, and is never satisfiable
 % as a read (the row is gone). Items are arrival(Atom) | departure(Atom).
+% The conjunction spine comes from the shared walk (rank R1 of
+% plans/2026-07-29-prolog-org-review.md); the classification stays here,
+% because it is NOT the registry's.
+%
+% silent_trigger_form/1 below is the list this file has always carried, kept
+% exactly as it was. It is a strict SUBSET of the registry's body rows: next/1,
+% variadic combine, zip/2, the four reserved lifecycle wrappers and the six
+% comparison operators are absent from it, so each of those becomes an
+% arrival(Wrapper) here. The `mixed` and `comparison` goldens in the
+% body_walk_characterization unit pin exactly that. Those items are inert,
+% because occurrence_trigger/4 unifies an arrival against a real stored row and
+% none of those shapes can match one, but the classification is wrong at the
+% source and widening it is a semantics change owed a fixture, not a cleanup.
+%
+% The walk must NOT descend not/1 and must NOT splice next/1 or combine: a
+% negated atom is not a trigger, and splicing would turn the inert
+% arrival(next(...)) into a live trigger on the spliced atom.
 trigger_items(Body, Items) :-
-    trigger_items_(Body, Items).
+    walk_body(Body, walk_policy(descend_not(false), splice_bare(false)),
+              Events),
+    trigger_items_(Events, Items).
 
-trigger_items_((Left, Right), Items) :- !,
-    trigger_items_(Left, LeftItems), trigger_items_(Right, RightItems),
-    append(LeftItems, RightItems, Items).
-trigger_items_(finalize(Atom), [departure(Atom)]) :- !.
-trigger_items_(latest(_), []) :- !.
-trigger_items_(not(_), []) :- !.
-trigger_items_(pre(_), []) :- !.
-trigger_items_(now(_), []) :- !.
-trigger_items_(true, []) :- !.
-trigger_items_(_ := _, []) :- !.
-trigger_items_(_ is _, []) :- !.
-trigger_items_(decode(_, _), []) :- !.
-trigger_items_(json_each(_, _), []) :- !.
-% maplist, NEVER findall: findall copies its template, which would sever the
-% trigger atom from the body and let solve rejoin over the whole store.
-trigger_items_(Atom, [arrival(Atom)]).
+trigger_items_([], []).
+trigger_items_([event(_, _, _, Term) | Rest], Items) :-
+    (   nonvar(Term), Term = finalize(Atom)
+    ->  Items = [departure(Atom) | RestItems]
+    ;   silent_trigger_form(Term)
+    ->  Items = RestItems
+    % Bound directly out of the walked body, NEVER copied: a copy would sever
+    % the trigger atom from the body and let solve rejoin over the whole store.
+    ;   Items = [arrival(Term) | RestItems]
+    ),
+    trigger_items_(Rest, RestItems).
+
+silent_trigger_form(Term) :- nonvar(Term), silent_trigger_shape(Term).
+
+silent_trigger_shape(latest(_)).
+silent_trigger_shape(not(_)).
+silent_trigger_shape(pre(_)).
+silent_trigger_shape(now(_)).
+silent_trigger_shape(true).
+silent_trigger_shape(_ := _).
+silent_trigger_shape(_ is _).
+silent_trigger_shape(decode(_, _)).
+silent_trigger_shape(json_each(_, _)).
 
 wrap_arrival(Atom, arrival(Atom)).
 
@@ -182,28 +238,37 @@ listened_departure_refs(Rules, Refs) :-
             Refs0),
     sort(Refs0, Refs).
 
-body_finalize_ref((Left, Right), Ref) :-
-    ( body_finalize_ref(Left, Ref) ; body_finalize_ref(Right, Ref) ).
-body_finalize_ref(finalize(Atom), Ref) :- rel_ref(Atom, Ref).
+% All three are the shared walk under different policies (rank R1 of
+% plans/2026-07-29-prolog-org-review.md). The compiler shipped its own copies
+% of the latest/1 and pre/1 scans as analyze:level_body_latest_ref/2 and
+% analyze:level_body_pre_ref/2; both now call this same implementation, and
+% the body_walk_characterization unit asserts the two sides agree case by case.
+%
+% finalize/1 deliberately does NOT descend not/1, matching what this file did
+% before: a negated finalize is not a departure the engine listens for.
+body_finalize_ref(Body, Ref) :-
+    body_wrapper_refs(Body, finalize,
+                      walk_policy(descend_not(false), splice_bare(false)),
+                      Ref).
 
-body_latest_ref((Left, Right), Ref) :-
-    ( body_latest_ref(Left, Ref) ; body_latest_ref(Right, Ref) ).
-body_latest_ref(not(Body), Ref) :- body_latest_ref(Body, Ref).
-body_latest_ref(latest(Atom), Ref) :- rel_ref(Atom, Ref).
+body_latest_ref(Body, Ref) :-
+    body_wrapper_refs(Body, latest,
+                      walk_policy(descend_not(true), splice_bare(false)),
+                      Ref).
 
-body_pre_ref((Left, Right), Ref) :-
-    ( body_pre_ref(Left, Ref) ; body_pre_ref(Right, Ref) ).
-body_pre_ref(not(Body), Ref) :- body_pre_ref(Body, Ref).
-body_pre_ref(pre(Atom), Ref) :- rel_ref(Atom, Ref).
+body_pre_ref(Body, Ref) :-
+    body_wrapper_refs(Body, pre,
+                      walk_policy(descend_not(true), splice_bare(false)),
+                      Ref).
 
 % ═══ arrivals ═══════════════════════════════════════════════════════════════
 
 absorb_arrivals(_, _, [], Store, Seq, Store, Seq, []).
 absorb_arrivals(Prog, Tick, [Signed | Rest], Store0, Seq0, Store, Seq, Occurrences) :-
-    Prog = prog(Decls, Rules),
+    Prog = prog(Decls, _),
     (   Signed = +Row
     ->  rel_ref(Row, Ref),
-        rel_kind(Decls, Rules, Ref, Kind),
+        rel_kind(Decls, Ref, Kind),
         (   Kind == log
         ->  Store1 = [lrow(st(Tick, Seq0), Row) | Store0],
             Seq1 is Seq0 + 1,
@@ -215,7 +280,7 @@ absorb_arrivals(Prog, Tick, [Signed | Rest], Store0, Seq0, Store, Seq, Occurrenc
                Occurrences = [occ(st(Tick, Seq0), Row) | More] ) )
     ;   Signed = -Row,
         rel_ref(Row, Ref),
-        rel_kind(Decls, Rules, Ref, Kind),
+        rel_kind(Decls, Ref, Kind),
         ( Kind == log -> throw(retract_from_log(Ref)) ; true ),
         exclude(==(srow(Row)), Store0, Store1),
         Seq1 = Seq0, Occurrences = More
@@ -268,9 +333,9 @@ check_occurrence_conflicts(Decls, Derived) :-
 
 apply_edge_writes(_, _, [], Store, Store, []).
 apply_edge_writes(Prog, Tick, [Row | Rest], Store0, Store, Written) :-
-    Prog = prog(Decls, Rules),
+    Prog = prog(Decls, _),
     rel_ref(Row, Ref),
-    (   rel_kind(Decls, Rules, Ref, log)
+    (   rel_kind(Decls, Ref, log)
     ->  next_seq(Store0, Tick, Seq),
         Store1 = [lrow(st(Tick, Seq), Row) | Store0],
         Written = [Row | More]
@@ -352,7 +417,7 @@ stamp_extra(Tick, [Row | Rest], Seq, [occ(st(Tick, Seq), Row) | More]) :-
 
 % r7: Log rels emit one +Row per new stamp; everything else is a set diff of
 % the full visible state (removed then added).
-boundary_deltas(prog(Decls, Rules), Store0, Store, PrevAll, NextAll, Deltas) :-
+boundary_deltas(prog(Decls, _), Store0, Store, PrevAll, NextAll, Deltas) :-
     findall(Stamp-Row,
             ( member(lrow(Stamp, Row), Store),
               \+ memberchk(lrow(Stamp, Row), Store0) ),
@@ -361,11 +426,11 @@ boundary_deltas(prog(Decls, Rules), Store0, Store, PrevAll, NextAll, Deltas) :-
     findall(+Row, member(_-Row, NewStamped), LogAdds),
     findall(Delta,
             ( set_diff_delta(PrevAll, NextAll, Delta),
-              Delta = -Row, delta_ref_is_set(Decls, Rules, Row) ),
+              Delta = -Row, delta_ref_is_set(Decls, Row) ),
             SetRemovals),
     findall(Delta,
             ( set_diff_delta(PrevAll, NextAll, Delta),
-              Delta = +Row, delta_ref_is_set(Decls, Rules, Row) ),
+              Delta = +Row, delta_ref_is_set(Decls, Row) ),
             SetAdds),
     append([SetRemovals, SetAdds, LogAdds], Deltas).
 
@@ -373,14 +438,17 @@ set_diff_delta(PrevAll, NextAll, Delta) :-
     (   member(Row, PrevAll), \+ memberchk(Row, NextAll), Delta = -Row
     ;   member(Row, NextAll), \+ memberchk(Row, PrevAll), Delta = +Row ).
 
-delta_ref_is_set(Decls, Rules, Row) :-
-    rel_ref(Row, Ref), rel_kind(Decls, Rules, Ref, Kind), Kind == set.
+delta_ref_is_set(Decls, Row) :-
+    rel_ref(Row, Ref), rel_kind(Decls, Ref, Kind), Kind == set.
 
 % ═══ the run loop, engine-owned drains (q5) ═════════════════════════════════
 
 run_program(SugaredProg, Initial, Schedule, FinalAll, DeltaTicks) :-
     prepare_program(SugaredProg, HostProg, _, _, _),
-    expand_match_program(HostProg, Prog),
+    % Host preparation stays a PRE-PASS: it mixes syntax normalization with
+    % world-plan extraction, so it does not belong in the four-phase table.
+    % Everything after it runs in the declared order (1_expansion.pl).
+    expand_program(HostProg, Prog, _),
     check_program(Prog),
     seed_store(Prog, Initial, Store0),
     Prog = prog(_, Rules),
@@ -390,11 +458,11 @@ run_program(SugaredProg, Initial, Schedule, FinalAll, DeltaTicks) :-
     append(BaseRows, Level0, All0), sort(All0, PrevAll),
     run_ticks(Prog, state(1, Store0, Level0, PrevAll), [], Schedule, 0, FinalAll, DeltaTicks).
 
-seed_store(prog(Decls, Rules), Initial, Store) :-
+seed_store(prog(Decls, _), Initial, Store) :-
     findall(Entry,
             ( nth1(Position, Initial, Row),
               rel_ref(Row, Ref),
-              ( rel_kind(Decls, Rules, Ref, log)
+              ( rel_kind(Decls, Ref, log)
               -> Entry = lrow(st(0, Position), Row)
               ;  Entry = srow(Row) ) ),
             Store).

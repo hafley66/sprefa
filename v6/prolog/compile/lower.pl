@@ -124,11 +124,23 @@
 % rows a joint fixpoint would for an ACYCLIC chain; a genuine positive cycle
 % inside one group is refused at strat.pl:topo_order_group/2.
 
-:- module(lower, [ lower_program/2, boot_statements/4, relplan_kind/3 ]).
+:- module(lower,
+          [ lower_program/2, boot_statements/4, relplan_kind/3,
+            % The expression-lowering seam, exported for the
+            % expression_inventory unit (rank R5 of
+            % plans/2026-07-29-prolog-org-review.md). That unit walks every
+            % registry.pl expression/5 row and checks it lowers to the SQL the
+            % row declares, which has to reach these two by name.
+            compile_expr/4, compile_comparison/3,
+            % The column-expression and refCount-SQL seams (rank R8). The
+            % sql_text_snapshots and incremental_mode units pin the exact text
+            % these produce; both were private qualified calls before.
+            canonical_column_expr/2, level_support_sql/4 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(analyze).
+:- use_module(registry, [expression/5]).
 :- use_module('../conformance/body', [rel_ref/2]).
 
 :- op(1150, xfx, <-).
@@ -375,9 +387,11 @@ compile_term_sub_expr(Bound, Arg, Sql) :- compile_expr(Arg, Bound, Sql, _Type).
 
 compile_expr_bound(Bound, Arg, Sql) :- compile_expr(Arg, Bound, Sql, _Type).
 
+% The operator inventory is registry.pl's expression/5 (rank R5 of
+% plans/2026-07-29-prolog-org-review.md), not a local list.
 arithmetic_expr(Expr, Operator, Left, Right) :-
     compound(Expr), Expr =.. [Operator, Left, Right],
-    memberchk(Operator, ['+', '-', '*', '/', mod]).
+    expression(Operator/2, arithmetic, _, _, _).
 
 % The json arm's own VALUE grammar: a braces literal ({}/1) and a list. Both
 % are ordinary compound terms structurally, and the generic compound branch
@@ -408,10 +422,18 @@ compile_int_operand(Operand, Bound, Whole, Sql) :-
     ;  throw(unsupported_construct(arith_operand_not_int(Whole, Operand, Type)))
     ).
 
-arithmetic_sql(mod, LeftSql, RightSql, Sql) :- !,
-    format(atom(Sql), '(((~w % ~w) + ~w) % ~w)', [LeftSql, RightSql, RightSql, RightSql]).
+% Rendering comes from the table's SqlRendering field. sign_corrected_modulo
+% is there because SQLite's % takes the sign of the dividend while this
+% language's mod follows the divisor.
 arithmetic_sql(Operator, LeftSql, RightSql, Sql) :-
-    format(atom(Sql), '(~w ~w ~w)', [LeftSql, Operator, RightSql]).
+    expression(Operator/2, arithmetic, _, Rendering, _),
+    arithmetic_rendering(Rendering, LeftSql, RightSql, Sql).
+
+arithmetic_rendering(sign_corrected_modulo, LeftSql, RightSql, Sql) :- !,
+    format(atom(Sql), '(((~w % ~w) + ~w) % ~w)',
+           [LeftSql, RightSql, RightSql, RightSql]).
+arithmetic_rendering(infix(SqlOperator), LeftSql, RightSql, Sql) :-
+    format(atom(Sql), '(~w ~w ~w)', [LeftSql, SqlOperator, RightSql]).
 
 % engine.pl text_piece/2 throws non_display_in_concat on a compound piece;
 % an int piece auto-converts (atomic_list_concat), which SQLite's `||` also
@@ -473,28 +495,31 @@ compile_comparison(Goal, Bound, Text) :-
     comparison_operator_sql(Operator, Goal, LeftType, RightType, OperatorSql),
     format(atom(Text), '(~w ~w ~w)', [LeftSql, OperatorSql, RightSql]).
 
+% Family, SQL text and type rule all come from registry.pl's expression/5
+% (rank R5). The two type rules are named there: both_int for the ordered
+% comparisons (the Int-only law), same_type for the identity ones. The
+% refusal terms are unchanged, and an operator with no row still refuses by
+% name rather than lowering to something that means something else.
 comparison_operator_sql(Operator, Goal, LeftType, RightType, OperatorSql) :-
-    memberchk(Operator, ['<', '=<', '>', '>=']), !,
-    ( LeftType == int, RightType == int
-    -> true
-    ;  throw(unsupported_construct(comparison_operand_not_int(Goal, LeftType, RightType)))
-    ),
-    ordered_operator_sql(Operator, OperatorSql).
-comparison_operator_sql(Operator, Goal, LeftType, RightType, OperatorSql) :-
-    memberchk(Operator, ['==', '\\==']), !,
-    ( LeftType == RightType
-    -> true
-    ;  throw(unsupported_construct(comparison_type_mismatch(Goal, LeftType, RightType)))
-    ),
-    identity_operator_sql(Operator, OperatorSql).
+    expression(Operator/2, Family, _, infix(OperatorSql), TypeRule),
+    memberchk(Family, [ordered_comparison, identity_comparison]),
+    !,
+    check_comparison_types(TypeRule, Goal, LeftType, RightType).
 comparison_operator_sql(Operator, Goal, _, _, _) :-
     throw(unsupported_construct(unknown_comparison_operator(Goal, Operator))).
 
-ordered_operator_sql('=<', '<=') :- !.
-ordered_operator_sql(Operator, Operator).
-
-identity_operator_sql('==', '=') :- !.
-identity_operator_sql('\\==', '<>').
+check_comparison_types(both_int, Goal, LeftType, RightType) :-
+    (   LeftType == int, RightType == int
+    ->  true
+    ;   throw(unsupported_construct(
+                  comparison_operand_not_int(Goal, LeftType, RightType)))
+    ).
+check_comparison_types(same_type, Goal, LeftType, RightType) :-
+    (   LeftType == RightType
+    ->  true
+    ;   throw(unsupported_construct(
+                  comparison_type_mismatch(Goal, LeftType, RightType)))
+    ).
 
 head_select_list(Head, Bound, ColumnAliases, SelectExprs) :-
     Head =.. [_ | Args],
