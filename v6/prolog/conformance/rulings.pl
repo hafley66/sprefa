@@ -386,3 +386,19 @@ ruling(watcher_dep, fs_watch_until_bench_regression, user,
 % at intern; divergence stays unreachable, now from the accepting side.
 ruling(struct_arrival_key_order, decl_induced_canonicalize, user,
        'user 2026-07-29: "we know the types order so we can induce it"').
+
+% 2026-07-29 evening. Bool columns: the recorded golden-plan shape
+% (bool = row presence / two-variant enum, never a column type) is
+% OVERRULED as un-ergonomic. bool becomes a real column type, strictly
+% two-valued (2VL: true/false literals, no null, no unknown -- absence
+% stays row-absence). Storage/lowering spelling (INTEGER 0/1, literal
+% words vs atoms, guard interplay) rides the phase-5 type-pass arc.
+ruling(bool_column_type, two_valued_column_type, user,
+       'user 2026-07-29: "how do we not need bools come on now, even if they are just 2vl and not 3vl ... that is un ergonomic"').
+
+% 2026-07-29 evening. Numeric precision: approved. float/REAL + avg()
+% (the phase-5 hole) gets its yes; precision spelling (REAL vs
+% fixed-decimal for exactness-sensitive columns) is designed inside
+% the same arc, not assumed.
+ruling(numeric_precision, approved_phase5_design, user,
+       'user 2026-07-29: "and yes to precision numbers"').

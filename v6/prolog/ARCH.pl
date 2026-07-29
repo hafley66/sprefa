@@ -744,3 +744,25 @@ reaches_ast(G) :- refines(G, Parent), reaches_ast(Parent).
 go :- forall(check(N, G),
              ( catch(G, E, (print_message(error, E), fail))
              -> format("PASS  ~w~n", [N]) ; format("fail  ~w~n", [N]) )).
+
+% ═════════════════════════════════════════════════════════════════════════════
+% FABLE HANDOFF BLOCK (2026-07-29 evening, coordinator final save; sol drives
+% next). The world_health_reconcile agent OWNS the full ARCH reconcile and is
+% RUNNING -- its merge will conflict with this block; fold, do not drop.
+% PROCESS FAILURE, user-named, recorded: the language grew unsighted syntax
+% (`:=`/`==` split, the `type` keyword spelling, the naked span pair) through
+% agent arcs the coordinator toured as settled. Standing consequence for
+% every future lane: NO new surface spelling lands without a user decision
+% card presented BEFORE merge.
+% ═════════════════════════════════════════════════════════════════════════════
+
+task(file_span_redesign,   unbuilt, []).  % USER-DIRECTED: span is a FILE_SPAN (file ref + range, text DERIVED never stored, slice/line/col in-language). Design = plans/2026-07-29-file-span-design.md. Kills: path-beside-span columns, flow-rig concat ids, grep text hosts, referee python line/col translator. 3 decision cards open in the doc.
+task(assign_composition_lab, in_flight, []).  % opus worktree lab: := composes from match/scan/slice, assign = shorthand at most; ruling cards on landing. Verdict lands at plans/2026-07-29-assign-composition-verdict.md. NOTE its "slice" briefing predates file_span_redesign (slice = sub-SPAN projection, corrected in the design doc).
+task(finish_the_job_epic,  in_flight, []).  % opus worktree: plans/2026-07-29-finish-the-job-epic.md; instructed codex-driveable (sol/luna/terra owner-shapes), carries schema_import + bool/precision rulings + decl-legibility cluster.
+task(world_health_reconcile, in_flight, []).  % opus worktree: full ARCH reconcile + plans/2026-07-29-v6-world-health.md. Owns resolving THIS block into the reconciled file.
+task(schema_import_epic,   unbuilt, []).  % USER: TypeSpec / JSON-Schema / OpenAPI v3 (json+yaml) import; own epic; prior art hafley_tsp; research-first law.
+task(doc_format_extraction, unbuilt, []). % USER: html/xml/md/json/yaml/toml extraction; header plans/2026-07-29-extract-doc-formats-header.md; closes markdown comment hole.
+task(analysis_oracle_exam, unbuilt, []).  % USER: glean/joern/CodeQL-style graded analysis exam replacing v5 as standing oracle; research brief first.
+task(amplification_sensors, unbuilt, []). % db-bytes/corpus-bytes + boundary-rows/input-row columns in shared benches; measured receipt: comment db ~2/3 duplicated join-key text; diet arc only if sensor says so; file_span_redesign removes the biggest class structurally.
+task(flow_parity_residue,  unbuilt, []).  % 278 v5-only flow_edges undiagnosed; flow_param_type referee key gap (root:: sym prefix + qualified type names); flow_node_type EMPTY v6-side (real rail gap). Table lives in flagship-flow.sh output.
+task(comment_rail_wiring,  unbuilt, []).  % promote comment lab's 4 fixture candidates + port techniques 3/4/6; byte-span flattener SUPERSEDED by file_span_redesign line/col derivations.
