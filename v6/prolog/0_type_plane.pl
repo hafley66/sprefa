@@ -72,6 +72,7 @@
             type_cycle_witness/2,
             type_shape_error/4,
             world_row_shape_violation/3,
+            canonicalize_world_rows/3,
             type_canonical_json/4,
             type_field_values/4,
             type_ref_columns/3,
@@ -175,24 +176,20 @@ settled_prefix(Types, Pending, Acc, Settled) :-
 % form on the untyped inline path exactly as it is today.
 
 %
-% SLOT-ARRIVAL-CANONICAL-ORDER, decided: a struct-typed arrival value's object
-% keys must ALREADY be in canonical (sorted) order. The reason is a real
-% divergence, not tidiness: the oracle stores world values as TERMS and its Set
-% membership is term identity, so `obj([start-1,end-2])` and
-% `obj([end-2,start-1])` are two rows there while the emitted side interns both
-% to ONE dictionary row -- same canonical content, same semantic key. Two
-% spellings of one value would then produce two `add` entries on one side and
-% one on the other. Refusing the non-canonical spelling makes the divergence
-% unreachable without touching absorb_arrivals. Removing this strictness means
-% canonicalizing struct arrivals INSIDE the oracle's absorb path, which is an
-% oracle semantics change and therefore a user/coordinator ruling, not an
-% implementation choice.
+% SLOT-ARRIVAL-CANONICAL-ORDER, RULED 2026-07-29 (user: "we know the types
+% order so we can induce it", rulings.pl struct_arrival_key_order): arrival
+% key order is INSIGNIFICANT. The declaration names the field set, so the
+% oracle canonicalizes a struct-typed arrival value to sorted-key obj/1 form
+% at the world boundary (canonicalize_world_rows/3, called from run_program
+% right after check_world_shapes) instead of refusing. The divergence the old
+% keys_not_sorted refusal guarded -- oracle term identity treating
+% obj([start-1,end-2]) and obj([end-2,start-1]) as two rows while the emitted
+% side interns both to one -- is unreachable the other way now: both
+% spellings become ONE canonical term before any store or Set sees them. The
+% emitted runtime already canonicalized at intern; nothing changes there.
 
 type_shape_error(Types, TypeName, Value, Reason) :-
-    (   raw_object_keys(Value, RawKeys), msort(RawKeys, SortedKeys),
-        RawKeys \== SortedKeys
-    ->  Reason = keys_not_sorted(TypeName, RawKeys)
-    ;   json_object_value(Value, Pairs)
+    (   json_object_value(Value, Pairs)
     ->  type_definition(Types, TypeName, Columns, ColumnTypes),
         (   member(Column, Columns), \+ memberchk(Column-_, Pairs)
         ->  Reason = missing_key(TypeName, Column)
@@ -227,21 +224,62 @@ json_object_value(Value, Pairs) :-
     ->  json_canon(Value, obj(Pairs))
     ).
 
-% The keys AS WRITTEN, before any sorting -- the only thing that can tell a
-% canonical spelling from a non-canonical one.
-raw_object_keys(Value, Keys) :-
-    nonvar(Value),
-    (   Value = obj(RawPairs)
-    ->  is_list(RawPairs), findall(Key, member(Key-_, RawPairs), Keys)
-    ;   Value = {}(Fields)
-    ->  braces_field_keys(Fields, Keys)
+% ── world-row canonicalization (struct_arrival_key_order ruling) ────────────
+% Rewrite every struct-typed column value in a world-row list to the ONE
+% canonical spelling: obj(SortedPairs), recursively through nested declared
+% types, untyped inner json normalized by json_canon. Runs once at load
+% (run_program, after check_world_shapes passes), so every store, Set
+% membership, and tick-log render downstream sees a single term per value.
+% Rows of partially-typed refs pass through untouched -- the same named
+% crack as the shape check below, same reason.
+canonicalize_world_rows(Decls, Rows0, Rows) :-
+    type_definitions(Decls, Types),
+    (   Types == []
+    ->  Rows = Rows0
+    ;   maplist(canonicalize_signed_row(Decls, Types), Rows0, Rows)
     ).
 
-braces_field_keys((Left, Right), Keys) :- !,
-    braces_field_keys(Left, LeftKeys),
-    braces_field_keys(Right, RightKeys),
-    append(LeftKeys, RightKeys, Keys).
-braces_field_keys(Key: _, [Key]).
+canonicalize_signed_row(Decls, Types, +(Row0), +(Row)) :- !,
+    canonicalize_row(Decls, Types, Row0, Row).
+canonicalize_signed_row(Decls, Types, -(Row0), -(Row)) :- !,
+    canonicalize_row(Decls, Types, Row0, Row).
+canonicalize_signed_row(Decls, Types, Row0, Row) :-
+    canonicalize_row(Decls, Types, Row0, Row).
+
+canonicalize_row(Decls, Types, Row0, Row) :-
+    (   compound(Row0),
+        functor(Row0, Name, Arity),
+        ref_column_names(Decls, Name/Arity, Arity, Columns)
+    ->  Row0 =.. [Name | Values0],
+        maplist(canonicalize_column(Decls, Types, Name/Arity), Columns, Values0, Values),
+        Row =.. [Name | Values]
+    ;   Row = Row0
+    ).
+
+canonicalize_column(Decls, Types, Ref, Column, Value0, Value) :-
+    (   nonvar(Value0),
+        memberchk(col_type(Ref, Column, TypeName), Decls),
+        declared_type_name(Types, TypeName)
+    ->  canonical_struct_value(Types, TypeName, Value0, Value)
+    ;   Value = Value0
+    ).
+
+canonical_struct_value(Types, TypeName, Value0, obj(Pairs)) :-
+    json_object_value(Value0, Pairs0),
+    type_definition(Types, TypeName, Columns, ColumnTypes),
+    maplist(canonical_field_value(Types, Columns, ColumnTypes), Pairs0, Pairs),
+    !.
+canonical_struct_value(_, _, Value, Value).
+
+canonical_field_value(Types, Columns, ColumnTypes, Key-Value0, Key-Value) :-
+    (   nth1(Position, Columns, Key),
+        nth1(Position, ColumnTypes, ChildType),
+        declared_type_name(Types, ChildType)
+    ->  canonical_struct_value(Types, ChildType, Value0, Value)
+    ;   nonvar(Value0), ( Value0 = {}(_) ; is_list(Value0) )
+    ->  json_canon(Value0, Value)
+    ;   Value = Value0
+    ).
 
 % Every world row a program seeds or a schedule delivers, checked against the
 % declared shape of the column it lands in. Rows is a flat list of signed or

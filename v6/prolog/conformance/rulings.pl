@@ -375,3 +375,14 @@ ruling(compound_storage, struct_as_rows, user,
 % swap, taken only on a measured bench regression, never proactively.
 ruling(watcher_dep, fs_watch_until_bench_regression, user,
        'user 2026-07-29: "will live and die by lang/runtime ... dont put too much thought into it unless it borks any form of bench"').
+
+% 2026-07-29 midday. Struct arrival key order (struct-as-rows arc slot
+% SLOT-ARRIVAL-CANONICAL-ORDER): INSIGNIFICANT. The type declaration
+% names the field set, so the canonical spelling is induced from the
+% decl -- the oracle rewrites every world row to sorted-key obj/1 form
+% at load (canonicalize_world_rows/3, run_program) instead of refusing
+% out-of-order keys. keys_not_sorted is dead; missing/unknown/
+% wrong-type refusals stay. The emitted runtime already canonicalized
+% at intern; divergence stays unreachable, now from the accepting side.
+ruling(struct_arrival_key_order, decl_induced_canonicalize, user,
+       'user 2026-07-29: "we know the types order so we can induce it"').

@@ -82,7 +82,7 @@
 :- use_module('../0_body_walk', [walk_body/3, body_wrapper_refs/4]).
 :- use_module('../0_program_check',
               [ first_violation/3, relation_kind/3, declared_key/3 ]).
-:- use_module('../0_type_plane', [ world_row_shape_violation/3 ]).
+:- use_module('../0_type_plane', [ world_row_shape_violation/3, canonicalize_world_rows/3 ]).
 :- use_module('../1_host_expand', [prepare_program/5]).
 :- use_module(rulings).
 :- use_module(body).
@@ -451,14 +451,20 @@ delta_ref_is_set(Decls, Row) :-
 
 % ═══ the run loop, engine-owned drains (q5) ═════════════════════════════════
 
-run_program(SugaredProg, Initial, Schedule, FinalAll, DeltaTicks) :-
+run_program(SugaredProg, Initial0, Schedule0, FinalAll, DeltaTicks) :-
     prepare_program(SugaredProg, HostProg, _, _, _),
     % Host preparation stays a PRE-PASS: it mixes syntax normalization with
     % world-plan extraction, so it does not belong in the four-phase table.
     % Everything after it runs in the declared order (1_expansion.pl).
     expand_program(HostProg, Prog, _),
     check_program(Prog),
-    check_world_shapes(Prog, Initial, Schedule),
+    check_world_shapes(Prog, Initial0, Schedule0),
+    % struct_arrival_key_order ruling: arrival key order is insignificant --
+    % the decl induces the canonical form, so every world row is rewritten to
+    % it HERE, before any store or Set membership can see a second spelling.
+    Prog = prog(ProgDecls, _),
+    canonicalize_world_rows(ProgDecls, Initial0, Initial),
+    maplist(canonicalize_world_rows(ProgDecls), Schedule0, Schedule),
     seed_store(Prog, Initial, Store0),
     Prog = prog(_, Rules),
     split_rules(Rules, AggRules, PlainLevel, _),

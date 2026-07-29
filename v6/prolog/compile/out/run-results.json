@@ -84,6 +84,13 @@
     "finalDetail": ""
   },
   {
+    "name": "struct_arrival_key_order_canonicalized",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "struct_column_renders_canonical_json",
     "bucket": "identical",
     "detail": "",

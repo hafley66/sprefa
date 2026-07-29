@@ -86,19 +86,24 @@ fixture(struct_arrival_unknown_key_rejected,
   [ [ +finding('a.rs', obj([end-9, extra-1, start-3])) ] ],
   [ throws(type_arrival_shape_mismatch(finding/2, at, span, unknown_key(span, extra))) ]).
 
-% SLOT-ARRIVAL-CANONICAL-ORDER. Two spellings of one value would be two rows
-% on the oracle (term identity) and ONE dictionary row on the emitted side
-% (same canonical content), so the non-canonical spelling is refused rather
-% than left to diverge. Lifting this needs canonicalization inside the
-% oracle's own absorb path, which is an oracle semantics ruling.
-fixture(struct_arrival_key_order_rejected,
+% SLOT-ARRIVAL-CANONICAL-ORDER, RULED 2026-07-29 (struct_arrival_key_order,
+% user: "we know the types order so we can induce it"): arrival key order is
+% insignificant. The decl induces the canonical form; run_program rewrites
+% every world row to sorted-key obj/1 before any store sees it
+% (canonicalize_world_rows/3). FAIL-FIRST RECEIPT: this fixture's ancestor
+% (struct_arrival_key_order_rejected, git history) pinned the old refusal
+% keys_not_sorted(span,[start,end]) on exactly this schedule; under the
+% ruling the same out-of-order arrival is ACCEPTED and lands as the ONE
+% canonical row -- byte-identical to the sorted-spelling twin above it.
+fixture(struct_arrival_key_order_canonicalized,
   prog([ type_decl(span, [col(start, int), col(end, int)]),
          col_type(finding/2, path, text),
          col_type(finding/2, at, span) ],
        []),
   [],
   [ [ +finding('a.rs', obj([start-3, end-9])) ] ],
-  [ throws(type_arrival_shape_mismatch(finding/2, at, span, keys_not_sorted(span, [start, end]))) ]).
+  [ final(finding/2, [ finding('a.rs', obj([end-9, start-3])) ]),
+    ticks(1) ]).
 
 % A struct-typed column does NOT accept a plain Prolog compound term.
 % SLOT-TERM-STRUCT (0_type_plane.pl header): the oracle renders a compound
