@@ -60,9 +60,11 @@ if [ ! -f "$baseline" ]; then
   exit 1
 fi
 
+# Baseline lines starting with # carry the reason an entry is accepted; they
+# are not findings and never take part in the comparison.
 sorted_baseline="$(mktemp)"
 trap 'rm -f "$raw" "$findings" "$advisories" "$sorted_baseline"' EXIT
-LC_ALL=C sort "$baseline" > "$sorted_baseline"
+grep -v '^#' "$baseline" | grep -v '^[[:space:]]*$' | LC_ALL=C sort > "$sorted_baseline"
 
 new_findings="$(comm -23 "$findings" "$sorted_baseline")"
 fixed_findings="$(comm -13 "$findings" "$sorted_baseline")"

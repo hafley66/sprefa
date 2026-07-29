@@ -26,7 +26,13 @@
             conjunction_goals/2, check_edge_head_column_types/2,
             aggregate_head_template/2, rule_is_aggregate/1,
             body_guard_goals/2, guard_goal/1, bind_goal/3,
-            program_column_types/7 ]).
+            program_column_types/7,
+            % Body traversals, exported as the characterization seam for the
+            % shared-walker consolidation (rank R1). The oracle ships its own
+            % copy of the latest/1 and pre/1 scans, so the test that pins them
+            % equal has to reach both sides by name.
+            level_body_latest_ref/2, level_body_pre_ref/2,
+            reserved_construct_in_body/2, body_forbidden_goal/2 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).

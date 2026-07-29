@@ -4,7 +4,11 @@
 % reserved head forms incl. the json arm.
 
 :- module(level_eval,
-          [ split_rules/4, level_closure/5, aggregate_head/3 ]).
+          [ split_rules/4, level_closure/5, aggregate_head/3,
+            % Exported as the characterization seam for the shared-walker
+            % consolidation (rank R1). Its not/1 clause carries an ordering
+            % contract the shared walker deliberately does not reproduce.
+            goal_rel_refs/3 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).

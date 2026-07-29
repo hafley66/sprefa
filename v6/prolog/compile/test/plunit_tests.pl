@@ -26,6 +26,22 @@
 :- use_module('../emit_ts', [ emit_program/5 ]).
 :- use_module('../lower', [ boot_statements/4 ]).
 
+% Body-walk characterization (rank R1) reaches the traversals on BOTH sides of
+% the oracle/compiler split, because the review's central claim is that
+% several of them are the same predicate written twice. Each of these was
+% added to its module's export list for exactly this test rather than being
+% called as a private qualified goal, which `just prolog-lint` refuses.
+:- use_module('../analyze',
+              [ body_ref_uses/2, conjunction_goals/2,
+                level_body_latest_ref/2, level_body_pre_ref/2,
+                reserved_construct_in_body/2, body_forbidden_goal/2 ]).
+:- use_module('../../conformance/engine',
+              [ trigger_items/2, body_finalize_ref/2,
+                body_latest_ref/2, body_pre_ref/2 ]).
+:- use_module('../../conformance/level_eval', [ goal_rel_refs/3 ]).
+:- use_module('../../conformance/body', [ body_atoms/2 ]).
+:- use_module('../../1_host_expand', [ body_goals/2 ]).
+
 % Resolved relative to this file's own load-time directory (mirrors
 % sweep.pl's compile_dir/1 pattern -- prolog_load_context/2 only answers
 % inside a directive running WHILE this file loads, so the directory is
@@ -1001,3 +1017,381 @@ test(emitter_carries_world_plans_and_demand_sql) :-
     !.
 
 :- end_tests(hosts_wiring).
+
+% ═══════════════════════════════════════════════════════════════════════════
+% BODY WALK CHARACTERIZATION (rank R1 of plans/2026-07-29-prolog-org-review.md)
+%
+% Written BEFORE the shared walker existed, against the fourteen independent
+% body traversals the review inventoried, and committed green so the
+% consolidation has an exact contract to preserve. Every golden below was
+% computed from the pre-refactor implementations, not hand-written: a
+% consolidation that changes ANY of these values changes observable compiler
+% or oracle behavior, whatever the tick logs happen to say.
+%
+% The battery covers every shape the review named: comma association in both
+% nestings, nested not/1, not over a conjunction, a not whose inner
+% conjunction mixes signs, next/1, variadic combine, latest, finalize, pre, a
+% reserved lifecycle wrapper, a := bind, a comparison, a plain relation atom,
+% the true word, and one body carrying all of them at once.
+%
+% Bodies are GROUND on purpose. Every golden is then an exact literal and the
+% comparison is ==, with no variable-identity slack to hide a reordering.
+%
+% THREE DRIFTS THESE GOLDENS PIN, all pre-existing and all preserved by the
+% refactor rather than silently fixed (each is a registry row the hardcoded
+% lists never learned about):
+%
+%   1. engine:trigger_items/2 makes an ARRIVAL out of next/1, combine, a
+%      comparison, and a reserved lifecycle wrapper. See the `mixed` golden:
+%      arrival(next(d(4))), arrival(combine(e(5),f(6))), arrival(8<9). These
+%      are inert downstream because occurrence_trigger/4 unifies the item
+%      against a real stored row and none of these shapes can match one, but
+%      the classification is wrong at the source.
+%   2. level_eval:goal_rel_refs/3 reports next/1 and combine/2 as POSITIVE
+%      relation references, so stratification carries constraints naming
+%      relations that cannot exist.
+%   3. body:body_atoms/2 repeats drift 1 in its own hardcoded list.
+%
+% AND ONE ORDERING CONTRACT that is the reason goal_rel_refs/3 keeps a local
+% not/1 recursion instead of projecting from the shared walker: see the
+% `not_mixed` golden. For not((not(a(1)), b(2))) it answers [b/1,a/1], not
+% source order, because its not/1 clause appends inner-positive before
+% inner-negative. A source-ordered projection would answer [a/1,b/1] and
+% change stratification constraint order.
+
+:- begin_tests(body_walk_characterization).
+
+walk_case(comma_right,   (a(1), (b(2), c(3)))).
+walk_case(comma_left,    ((a(1), b(2)), c(3))).
+walk_case(nested_not,    not(not(a(1)))).
+walk_case(not_over_conj, not((a(1), latest(b(2))))).
+walk_case(not_mixed,     not((not(a(1)), b(2)))).
+walk_case(next_wrapper,  next(a(1))).
+walk_case(combine3,      combine(a(1), b(2), c(3))).
+walk_case(latest_only,   latest(a(1))).
+walk_case(finalize_only, finalize(a(1))).
+walk_case(pre_only,      pre(a(1))).
+walk_case(lifecycle,     unsubscribe(a(1))).
+walk_case(bind_goal,     (zz := 1)).
+walk_case(comparison,    (1 < 9)).
+walk_case(plain_atom,    a(1)).
+walk_case(true_word,     true).
+walk_case(mixed, ( a(1), not((b(2), latest(c(3)))), next(d(4)),
+                   combine(e(5), f(6)), zz := 7, 8 < 9,
+                   finalize(g(10)), pre(h(11)) )).
+
+walk_golden(comma_right,
+  [ body_ref_uses-[use(a/1,[1],pos,trigger),use(b/1,[2],pos,trigger),use(c/1,[3],pos,trigger)],
+    conjunction_goals-[a(1),b(2),c(3)],
+    trigger_items-[arrival(a(1)),arrival(b(2)),arrival(c(3))],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([a/1,b/1,c/1]-[]),
+    body_atoms-[a(1),b(2),c(3)],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[a(1),b(2),c(3)]
+  ]).
+
+walk_golden(comma_left,
+  [ body_ref_uses-[use(a/1,[1],pos,trigger),use(b/1,[2],pos,trigger),use(c/1,[3],pos,trigger)],
+    conjunction_goals-[a(1),b(2),c(3)],
+    trigger_items-[arrival(a(1)),arrival(b(2)),arrival(c(3))],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([a/1,b/1,c/1]-[]),
+    body_atoms-[a(1),b(2),c(3)],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[a(1),b(2),c(3)]
+  ]).
+
+walk_golden(nested_not,
+  [ body_ref_uses-[use(a/1,[1],neg,trigger)],
+    conjunction_goals-[not(not(a(1)))],
+    trigger_items-[],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([]-[a/1]),
+    body_atoms-[],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[not(not(a(1)))]
+  ]).
+
+walk_golden(not_over_conj,
+  [ body_ref_uses-[use(a/1,[1],neg,trigger),use(b/1,[2],neg,sampled)],
+    conjunction_goals-[not((a(1),latest(b(2))))],
+    trigger_items-[],
+    engine_finalize_refs-[],
+    engine_latest_refs-[b/1],
+    engine_pre_refs-[],
+    analyze_latest_refs-[b/1],
+    analyze_pre_refs-[],
+    goal_rel_refs-([]-[a/1,b/1]),
+    body_atoms-[],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[not((a(1),latest(b(2))))]
+  ]).
+
+walk_golden(not_mixed,
+  [ body_ref_uses-[use(a/1,[1],neg,trigger),use(b/1,[2],neg,trigger)],
+    conjunction_goals-[not((not(a(1)),b(2)))],
+    trigger_items-[],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([]-[b/1,a/1]),
+    body_atoms-[],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[not((not(a(1)),b(2)))]
+  ]).
+
+walk_golden(next_wrapper,
+  [ body_ref_uses-[use(a/1,[1],pos,trigger)],
+    conjunction_goals-[a(1)],
+    trigger_items-[arrival(next(a(1)))],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([next/1]-[]),
+    body_atoms-[next(a(1))],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[next(a(1))]
+  ]).
+
+walk_golden(combine3,
+  [ body_ref_uses-[use(a/1,[1],pos,trigger),use(b/1,[2],pos,trigger),use(c/1,[3],pos,trigger)],
+    conjunction_goals-[a(1),b(2),c(3)],
+    trigger_items-[arrival(combine(a(1),b(2),c(3)))],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([combine/3]-[]),
+    body_atoms-[combine(a(1),b(2),c(3))],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[combine(a(1),b(2),c(3))]
+  ]).
+
+walk_golden(latest_only,
+  [ body_ref_uses-[use(a/1,[1],pos,sampled)],
+    conjunction_goals-[latest(a(1))],
+    trigger_items-[],
+    engine_finalize_refs-[],
+    engine_latest_refs-[a/1],
+    engine_pre_refs-[],
+    analyze_latest_refs-[a/1],
+    analyze_pre_refs-[],
+    goal_rel_refs-([a/1]-[]),
+    body_atoms-[],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[latest(a(1))]
+  ]).
+
+walk_golden(finalize_only,
+  [ body_ref_uses-[use(a/1,[1],pos,trigger)],
+    conjunction_goals-[finalize(a(1))],
+    trigger_items-[departure(a(1))],
+    engine_finalize_refs-[a/1],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([]-[]),
+    body_atoms-[],
+    reserved_constructs-[],
+    forbidden_goals-[finalize(a(1))],
+    host_body_goals-[finalize(a(1))]
+  ]).
+
+walk_golden(pre_only,
+  [ body_ref_uses-[use(a/1,[1],pos,sampled)],
+    conjunction_goals-[pre(a(1))],
+    trigger_items-[],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[a/1],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[a/1],
+    goal_rel_refs-([]-[]),
+    body_atoms-[],
+    reserved_constructs-[],
+    forbidden_goals-[pre(a(1))],
+    host_body_goals-[pre(a(1))]
+  ]).
+
+walk_golden(lifecycle,
+  [ body_ref_uses-[use(a/1,[1],pos,trigger)],
+    conjunction_goals-[unsubscribe(a(1))],
+    trigger_items-[arrival(unsubscribe(a(1)))],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([unsubscribe/1]-[]),
+    body_atoms-[unsubscribe(a(1))],
+    reserved_constructs-[lifecycle_arm(unsubscribe)],
+    forbidden_goals-[],
+    host_body_goals-[unsubscribe(a(1))]
+  ]).
+
+walk_golden(bind_goal,
+  [ body_ref_uses-[],
+    conjunction_goals-[zz:=1],
+    trigger_items-[],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([]-[]),
+    body_atoms-[],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[zz:=1]
+  ]).
+
+walk_golden(comparison,
+  [ body_ref_uses-[],
+    conjunction_goals-[1<9],
+    trigger_items-[arrival(1<9)],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([]-[]),
+    body_atoms-[],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[1<9]
+  ]).
+
+walk_golden(plain_atom,
+  [ body_ref_uses-[use(a/1,[1],pos,trigger)],
+    conjunction_goals-[a(1)],
+    trigger_items-[arrival(a(1))],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([a/1]-[]),
+    body_atoms-[a(1)],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[a(1)]
+  ]).
+
+walk_golden(true_word,
+  [ body_ref_uses-[],
+    conjunction_goals-[true],
+    trigger_items-[],
+    engine_finalize_refs-[],
+    engine_latest_refs-[],
+    engine_pre_refs-[],
+    analyze_latest_refs-[],
+    analyze_pre_refs-[],
+    goal_rel_refs-([]-[]),
+    body_atoms-[],
+    reserved_constructs-[],
+    forbidden_goals-[],
+    host_body_goals-[true]
+  ]).
+
+walk_golden(mixed,
+  [ body_ref_uses-[use(a/1,[1],pos,trigger),use(b/1,[2],neg,trigger),use(c/1,[3],neg,sampled),use(d/1,[4],pos,trigger),use(e/1,[5],pos,trigger),use(f/1,[6],pos,trigger),use(g/1,[10],pos,trigger),use(h/1,[11],pos,sampled)],
+    conjunction_goals-[a(1),not((b(2),latest(c(3)))),d(4),e(5),f(6),zz:=7,8<9,finalize(g(10)),pre(h(11))],
+    trigger_items-[arrival(a(1)),arrival(next(d(4))),arrival(combine(e(5),f(6))),arrival(8<9),departure(g(10))],
+    engine_finalize_refs-[g/1],
+    engine_latest_refs-[c/1],
+    engine_pre_refs-[h/1],
+    analyze_latest_refs-[c/1],
+    analyze_pre_refs-[h/1],
+    goal_rel_refs-([a/1,next/1,combine/2]-[b/1,c/1]),
+    body_atoms-[a(1),next(d(4)),combine(e(5),f(6))],
+    reserved_constructs-[],
+    forbidden_goals-[finalize(g(10)),pre(h(11))],
+    host_body_goals-[a(1),not((b(2),latest(c(3)))),next(d(4)),combine(e(5),f(6)),zz:=7,8<9,finalize(g(10)),pre(h(11))]
+  ]).
+
+% Actual value of one projection over one case, as the golden records it.
+walk_actual(body_ref_uses,       Body, Uses)  :- body_ref_uses(Body, Uses).
+walk_actual(conjunction_goals,   Body, Goals) :- conjunction_goals(Body, Goals).
+walk_actual(trigger_items,       Body, Items) :- trigger_items(Body, Items).
+walk_actual(engine_finalize_refs,  Body, Refs) :- findall(R, body_finalize_ref(Body, R), Refs).
+walk_actual(engine_latest_refs,    Body, Refs) :- findall(R, body_latest_ref(Body, R), Refs).
+walk_actual(engine_pre_refs,       Body, Refs) :- findall(R, body_pre_ref(Body, R), Refs).
+walk_actual(analyze_latest_refs,   Body, Refs) :- findall(R, level_body_latest_ref(Body, R), Refs).
+walk_actual(analyze_pre_refs,      Body, Refs) :- findall(R, level_body_pre_ref(Body, R), Refs).
+walk_actual(goal_rel_refs,       Body, Pos-Neg) :- goal_rel_refs(Body, Pos, Neg).
+walk_actual(body_atoms,          Body, Atoms) :- body_atoms(Body, Atoms).
+walk_actual(reserved_constructs, Body, Found) :- findall(C, reserved_construct_in_body(Body, C), Found).
+walk_actual(forbidden_goals,     Body, Found) :- findall(G, body_forbidden_goal(Body, G), Found).
+walk_actual(host_body_goals,     Body, Goals) :- body_goals(Body, Goals).
+
+% Every case, one projection, compared with ==. The failure message names the
+% case and both values, so a consolidation regression says which shape broke.
+check_projection(Projection) :-
+    forall(( walk_case(Name, Body), walk_golden(Name, Rows),
+             memberchk(Projection-Expected, Rows) ),
+           ( walk_actual(Projection, Body, Actual),
+             (   Actual == Expected
+             ->  true
+             ;   format("~n~w/~w~n  expected ~q~n  actual   ~q~n",
+                        [Projection, Name, Expected, Actual]),
+                 fail
+             ) )).
+
+test(body_ref_uses)        :- check_projection(body_ref_uses).
+test(conjunction_goals)    :- check_projection(conjunction_goals).
+test(trigger_items)        :- check_projection(trigger_items).
+test(engine_finalize_refs) :- check_projection(engine_finalize_refs).
+test(engine_latest_refs)   :- check_projection(engine_latest_refs).
+test(engine_pre_refs)      :- check_projection(engine_pre_refs).
+test(analyze_latest_refs)  :- check_projection(analyze_latest_refs).
+test(analyze_pre_refs)     :- check_projection(analyze_pre_refs).
+test(goal_rel_refs)        :- check_projection(goal_rel_refs).
+test(body_atoms)           :- check_projection(body_atoms).
+test(reserved_constructs)  :- check_projection(reserved_constructs).
+test(forbidden_goals)      :- check_projection(forbidden_goals).
+test(host_body_goals)      :- check_projection(host_body_goals).
+
+% The engine and the compiler ship SEPARATE latest/1 and pre/1 body scans.
+% The review's rank 1 claim is that they are the same predicate twice; this
+% pins that equality directly, so a consolidation onto one implementation is
+% checked against the claim rather than against one side's own golden.
+test(engine_and_compiler_latest_scans_agree) :-
+    forall(walk_case(_, Body),
+           ( findall(R, body_latest_ref(Body, R), EngineRefs),
+             findall(R, level_body_latest_ref(Body, R), CompilerRefs),
+             EngineRefs == CompilerRefs )).
+
+test(engine_and_compiler_pre_scans_agree) :-
+    forall(walk_case(_, Body),
+           ( findall(R, body_pre_ref(Body, R), EngineRefs),
+             findall(R, level_body_pre_ref(Body, R), CompilerRefs),
+             EngineRefs == CompilerRefs )).
+
+:- end_tests(body_walk_characterization).

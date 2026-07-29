@@ -202,8 +202,11 @@ report_check(Cluster, check(cross_module_call(Target, Caller, _Where))) :-
 report_check(Cluster, check(redefined(Type, Module, Indicator))) :-
     !,
     finding(redefined, Cluster-Type-Module-Indicator).
-report_check(Cluster, check(void_declaration(Indicator, Declaration))) :-
+% The reported term is a callable with fresh variables, whose numbering moves
+% between runs; only its indicator is stable enough for a baseline.
+report_check(Cluster, check(void_declaration(Callable, Declaration))) :-
     !,
+    indicator(Callable, Indicator),
     finding(void_declaration, Cluster-Indicator-Declaration).
 report_check(Cluster, check(trivial_failure(Goal, _From))) :-
     !,

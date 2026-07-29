@@ -57,7 +57,13 @@
 
 :- module(engine,
           [ run_fixture_checks/2, run_program/5, fixture_expectations_hold/2,
-            rel_rows/3, rel_deltas/3 ]).
+            rel_rows/3, rel_deltas/3,
+            % Body traversals, exported as the characterization seam for the
+            % shared-walker consolidation (rank R1). body_latest_ref/2 and
+            % body_pre_ref/2 are the oracle's copies of two compiler scans;
+            % the test that pins them equal reaches both sides by name.
+            trigger_items/2, body_finalize_ref/2,
+            body_latest_ref/2, body_pre_ref/2 ]).
 :- reexport(body, [json_canon/2]).
 
 :- use_module(library(lists)).
