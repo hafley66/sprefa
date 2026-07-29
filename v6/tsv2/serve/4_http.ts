@@ -9,6 +9,10 @@
  *                    200 {ticks:[{tick,line}]} | 409 (no program) | 400 (bad batch)
  *   GET  /idb/:rel   -> {rows} | 404
  *   GET  /ticks      -> SSE, one `data: <tick log line>` per tick
+ *   GET  /stats      -> {memory, sqlite} | 404 (no program loaded)
+ *                    process.memoryUsage() + PRAGMA/dbstat storage stats
+ *                    (runtime/serveStats.ts); `?tables=a,b` scopes the
+ *                    dbstat pass, omitted or empty means PRAGMA-only.
  *   anything else    -> 404 {error, routes}
  *
  * THE APP IS ONE COLD OBSERVABLE (`serveTsv2`), subscribed exactly once, in
@@ -57,6 +61,7 @@ import {
 } from "rxjs";
 
 import { ScratchStore } from "../runtime/scratchStore.ts";
+import { ServeStats } from "../runtime/serveStats.ts";
 import type {
   IArrivalRow,
   IServeConfig,
@@ -71,7 +76,13 @@ import { ShHostRunner } from "./1_hosts.ts";
 import { IntervalBindRunner } from "./2_binds.ts";
 import { LiveEngine, bootServedProgram } from "./3_engine.ts";
 
-export const ROUTE_LIST: readonly string[] = ["POST /program", "POST /arrivals", "GET /idb/:rel", "GET /ticks"];
+export const ROUTE_LIST: readonly string[] = [
+  "POST /program",
+  "POST /arrivals",
+  "GET /idb/:rel",
+  "GET /ticks",
+  "GET /stats",
+];
 
 interface Exchange {
   readonly request: http.IncomingMessage;
@@ -230,6 +241,26 @@ function handleIdbRead$(state: ServerState, relName: string, response: http.Serv
   );
 }
 
+/** `GET /stats?tables=a,b` -- process memory plus storage stats for the
+ *  running program's own seam (runtime/serveStats.ts). 404 with no program
+ *  loaded, same convention as `/idb/:rel`: there is no connection to read. */
+function handleStats$(state: ServerState, request: http.IncomingMessage, response: http.ServerResponse): Observable<IServeEvent> {
+  if (!state.seam) {
+    writeJson(response, 404, { error: "no program loaded" });
+    return of({ kind: "served", method: "GET", path: "/stats" });
+  }
+  const tableNames = (new URL(request.url ?? "/", "http://localhost").searchParams.get("tables") ?? "")
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
+  return ServeStats.sqliteSnapshot(state.seam, tableNames).pipe(
+    map((sqlite): IServeEvent => {
+      writeJson(response, 200, { memory: ServeStats.processMemory(), sqlite });
+      return { kind: "served", method: "GET", path: "/stats" };
+    }),
+  );
+}
+
 /** One SSE client as one inner under the app's single subscription. Teardown
  *  law (refCount honesty): a dropped curl closes its socket, `takeUntil` ends
  *  the inner, `finalize` decrements the active count exactly once. */
@@ -298,6 +329,9 @@ function routeRequest$(state: ServerState, exchange: Exchange, bumpActive: (delt
     }
     if (method === "GET" && segments.length === 1 && segments[0] === "ticks") {
       return ticksClient$(state, request, response, bumpActive);
+    }
+    if (method === "GET" && segments.length === 1 && segments[0] === "stats") {
+      return handleStats$(state, request, response);
     }
     writeJson(response, 404, { error: "not found", routes: ROUTE_LIST });
     return of({ kind: "served", method, path: route });
