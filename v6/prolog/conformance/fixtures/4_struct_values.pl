@@ -162,6 +162,37 @@ fixture(struct_intern_order_b,
   [ final(mark/1, [ mark(obj([end-2, start-1])), mark(obj([end-4, start-3])) ]),
     ticks(2) ]).
 
+% THE MIGRATION RECEIPT (verdict Q6: "migrating a column from inline to ref
+% changes the stored bytes and, under a counter policy, changes ids; it does
+% not change the value"), MEASURED, and it does not say what the arc header
+% expected.
+%
+% The twin of `struct_intern_order_a` with the type declaration REMOVED and
+% nothing else touched -- same rel, same rows, same schedule -- was compiled
+% and replayed on this arc's sweep. Its ORACLE log is byte-identical to the
+% declared twin's, which is the half that holds: the declaration is inert on
+% a door that stores terms, so the VALUE did not change. Its EMITTED log is
+% not:
+%
+%   declared   actual = oracle
+%              {"tick":1,"deltas":{"mark":{"add":[[{"end":2,"start":1}]],...
+%   inline     actual {"tick":1,"deltas":{"mark":{"add":[["obj([|](-(end,2),[|](-(start,1),[])))"]],"del":[]}}}
+%              oracle {"tick":1,"deltas":{"mark":{"add":[[{"end":2,"start":1}]],"del":[]}}}
+%
+% An untyped compound value ARRIVES as canonical prolog term text while the
+% emitter's own compound encoding is the json1 tagged form -- the "compound
+% arrival text vs json1 match" mismatch SCOREBOARD.md has carried since phase
+% C. So the honest statement is stronger than "byte-identical either way":
+% the ref side is byte-identical to the oracle and the inline side never was.
+% The migration is the fix, not a wash.
+%
+% The twin is NOT kept as a fixture, deliberately: it would be a corpus entry
+% whose emitted log is knowingly wrong, and the sweep's wrong bucket is a gate
+% that must stay at zero. Making it live in the `unsupported` bucket instead
+% means turning the untyped-compound-arrival encoding into a NAMED refusal --
+% real work, real blast radius across every fixture that arrives a compound
+% into a text column, and SLOT-TERM-STRUCT's question first. Named follow-up.
+
 % Nesting costs no new syntax: a struct field may itself be a declared type,
 % and the parent's rendering is one concat over the child's.
 fixture(struct_nested_value_renders_whole_tree,
@@ -175,6 +206,52 @@ fixture(struct_nested_value_renders_whole_tree,
   [ [ +diag(obj([at-obj([end-9, start-3]), file-'a.rs']), 'unused') ] ],
   [ final(diag_file/1, [ diag_file('a.rs') ]),
     ticks(1) ]).
+
+% THE ACCEPTANCE CASE (arc header scope item 5): ghcacher's stars
+% normalization. `ghcacher_json_normalization` reads the same value out of an
+% UNTYPED json column and is refused by name (decode_source_not_struct on the
+% first rule, json_each on the second). Declaring the response body's shape is
+% the whole difference: decode becomes a dictionary join and the rule compiles.
+%
+%   type repo_body(full_name: text, stargazers_count: int).
+%   rel current_body(ep: text, body: repo_body).
+%   stars(ep, n) <- current_body(ep, body), decode(body, {stargazers_count: n}).
+%
+%   const stars$ = combineLatest([currentBody$, repoBodyDict$]).pipe(
+%     map(([bodies, dict]) => bodies.flatMap((row) => {
+%       const body = dict.get(row.body);          // one keyed read, no parse
+%       return body ? [{ ep: row.ep, n: body.stargazers_count }] : [];
+%     })),
+%     distinctUntilChanged(sameRowSet),
+%   );
+fixture(struct_ghcacher_stars_normalization,
+  prog([ type_decl(repo_body, [col(full_name, text), col(stargazers_count, int)]),
+         col_type(current_body/2, ep, text),
+         col_type(current_body/2, body, repo_body),
+         col_type(stars/2, ep, text),
+         col_type(stars/2, n, int) ],
+       [ (stars(Ep, N) <-
+            current_body(Ep, Body),
+            decode(Body, {stargazers_count: N})) ]),
+  [],
+  [ [ +current_body(repo, obj([full_name-cli, stargazers_count-17])) ],
+    [ +current_body(other, obj([full_name-hub, stargazers_count-4])) ] ],
+  [ deltas(stars/2, [ [ +stars(repo, 17) ], [ +stars(other, 4) ] ]),
+    final(stars/2, [ stars(other, 4), stars(repo, 17) ]),
+    ticks(2) ]).
+
+% A key the declared type does not have is a NAMED refusal, where the untyped
+% arm's own answer is "fails quietly" (json_arm.pl
+% decode_missing_key_fails_quietly). That difference is the point of declaring
+% a type: a typo in a field name stops being a rule that derives nothing.
+fixture(struct_decode_field_unknown_rejected,
+  prog([ type_decl(span, [col(start, int), col(end, int)]),
+         col_type(mark/1, at, span),
+         col_type(seen/1, start, int) ],
+       [ (seen(Start) <- mark(At), decode(At, {beginning: Start})) ]),
+  [],
+  [ [ +mark(obj([end-2, start-1])) ] ],
+  [ final(seen/1, []), ticks(1) ]).
 
 % THE SHARED CHILD (types-as-rels verdict Q3, domination_shared_child_survives
 % / domination_sole_owner_cascades) as a compiled fixture. Two parents hold the

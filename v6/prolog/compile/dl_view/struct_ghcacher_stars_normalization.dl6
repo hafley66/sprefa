@@ -1,0 +1,5 @@
+type repo_body(full_name: text, stargazers_count: int).
+rel current_body(ep: text, body: repo_body).
+rel stars(ep: text, n: int).
+
+stars(Ep, N) <- current_body(Ep, Body), decode(Body, {stargazers_count: N}).

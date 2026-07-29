@@ -153,7 +153,7 @@
 :- use_module('../0_type_plane',
               [ type_definitions/2, type_definition/4, column_storage/3,
                 type_topological_order/2, type_canonical_json/4,
-                type_field_values/4 ]).
+                type_field_values/4, declared_type_name/2 ]).
 :- use_module('../conformance/body', [rel_ref/2]).
 
 :- op(1150, xfx, <-).
@@ -748,6 +748,169 @@ struct_type_plan(Types, TypeName,
 dictionary_ref_type(Types, DeclaredType, RefType) :-
     column_storage(Types, DeclaredType, Storage),
     ( Storage = ref(Name) -> RefType = Name ; RefType = none ).
+
+% ═══ decode/2 as a dictionary join (SLOT-DECODE-SURFACE) ════════════════════
+%
+% SLOT-DECODE-SURFACE, decided: decode/2 STAYS on the surface as sugar and
+% lowers to a join. Removing it was the alternative and it loses: decode/2 is
+% the shipped destructuring spelling, it is what the oracle solves (body.pl
+% json_decode/2), and the untyped-json arm still needs it, so removing it from
+% the surface would mean two spellings for one idea rather than none.
+%
+% What it lowers TO is the whole point of the ruling. `decode(Where, {file:
+% File})` over a column declared `place` becomes an ordinary positive body
+% atom over that type's dictionary:
+%
+%   diag_file(File) <- diag(Where, _M), decode(Where, {file: File}).
+%     becomes
+%   diag_file(File) <- diag(Where, _M), '__dict_place'(Where, File, _At).
+%
+%   .dl6 with its rx lowering (the snippet law):
+%     type place(file: text, at: span).
+%     rel diag(where: place, message: text).
+%     diag_file(file) <- diag(where, message), decode(where, {file: file}).
+%
+%     const diagFile$ = combineLatest([diag$, placeDict$]).pipe(
+%       map(([diags, places]) => diags.flatMap((diag) => {
+%         const place = places.get(diag.where);      // the join: one keyed read
+%         return place ? [{ file: place.file }] : [];
+%       })),
+%       distinctUntilChanged(sameRowSet),
+%     );
+%
+% Doing it as a REWRITE OF THE RULE rather than a new compiler stage is what
+% makes it safe: every level-statement family (recompute insert, delta arm,
+% refCount arm, recursive-CTE arm, aggregate scope seed/delete/insert) reads
+% the rule body, so all of them get the join from one edit and none of them
+% can be the family where the destructure is silently absent -- the
+% silent-filter-loss class compile_body_guards/4's own header names.
+%
+% The dictionary atoms are APPENDED, after every original goal, so the source
+% variable is already bound when compile_pattern_arg/7 reaches the join and
+% the condition comes out as `d1."__id" = b0."where"` rather than a fresh
+% binding. `__id` is typed ref(Type), the same storage kind as the column that
+% points at it, so join_column_types_agree/4 sees one domain and the
+% cross-type join guard stays meaningful.
+%
+% Edge bodies keep the refusal (analyze.pl edge_body_needs_json_destructure):
+% a compound value that ARRIVES into an untyped column is stored as canonical
+% term text, and that encoding question is SLOT-TERM-STRUCT's, not this one's.
+
+dictionary_relplans(Types, Plans) :-
+    findall(relplan(Name/DictArity, set, ['__id' | Columns], none,
+                    [ref(TypeName) | StorageKinds]),
+            ( member(type_def(TypeName, Columns, ColumnTypes), Types),
+              dictionary_table_name(TypeName, Name),
+              length(Columns, Width), DictArity is Width + 1,
+              maplist(dictionary_storage_kind(Types), ColumnTypes, StorageKinds) ),
+            Plans).
+
+% Runs even when the program declares NO type. A rule with a decode goal and
+% no struct type must reach decode_source_not_struct, and skipping the pass on
+% an empty type table instead left decode/2 in the body where body_ref_uses/2
+% does not see it -- the head variable it should have bound then failed far
+% away as unbound_head_var, a diagnostic that names neither decode nor the
+% missing declaration. A rule with no decode goal keeps its body term
+% UNCHANGED (identity, not a rebuild), which is what keeps every pre-existing
+% emitted module byte-identical.
+expand_decode_rules(Types, RelPlans, Rules, Expanded) :-
+    maplist(expand_decode_rule(Types, RelPlans), Rules, Expanded).
+
+expand_decode_rule(Types, RelPlans, (Head <- Body), (Head <- Expanded)) :- !,
+    conjunction_goals(Body, Goals),
+    partition(is_decode_goal, Goals, DecodeGoals, OtherGoals),
+    (   DecodeGoals == []
+    ->  Expanded = Body
+    ;   foldl(decode_goal_atoms(Types, RelPlans, OtherGoals), DecodeGoals, [], Atoms),
+        append(OtherGoals, Atoms, AllGoals),
+        goals_conjunction(AllGoals, Expanded)
+    ).
+expand_decode_rule(_, _, Rule, Rule).
+
+is_decode_goal(Goal) :- nonvar(Goal), Goal = decode(_, _).
+
+goals_conjunction([Goal], Goal) :- !.
+goals_conjunction([Goal | Rest], (Goal, More)) :- goals_conjunction(Rest, More).
+
+decode_goal_atoms(Types, RelPlans, BodyGoals, decode(Source, Pattern), Acc0, Acc) :-
+    decode_source_type(Types, RelPlans, BodyGoals, Acc0, decode(Source, Pattern), TypeName),
+    decode_pattern_atoms(Types, TypeName, Source, Pattern, Atoms),
+    append(Acc0, Atoms, Acc).
+
+% The declared type of the variable decode/2 reads, resolved from whichever
+% positive body atom (or already-emitted dictionary atom) binds it. A source
+% with no ref-typed binding is a NAMED refusal, never a lowering that answers
+% something: the untyped-json arm still needs its own encoding decision, which
+% is SLOT-TERM-STRUCT's question and not this one's.
+decode_source_type(Types, RelPlans, BodyGoals, DictAtoms, Goal, TypeName) :-
+    Goal = decode(Source, _),
+    (   var(Source),
+        decode_binding_type(RelPlans, BodyGoals, DictAtoms, Source, Found)
+    ->  TypeName = Found
+    ;   throw(unsupported_construct(decode_source_not_struct(Goal)))
+    ),
+    ( declared_type_name(Types, TypeName) -> true
+    ; throw(unsupported_construct(column_type_unknown(TypeName))) ).
+
+% Walked with member/2 over the goal list, never collected with findall/3:
+% findall COPIES its template, and the whole resolution here is `Argument ==
+% Source`, variable IDENTITY. A findall in this position silently answers "no
+% binding" for every source and every decode becomes decode_source_not_struct.
+% (The prolog-org journal records the same bite twice, both times with a
+% failure message far from the cause.)
+decode_binding_type(RelPlans, BodyGoals, DictAtoms, Source, Found) :-
+    ( member(Atom, BodyGoals) ; member(Atom, DictAtoms) ),
+    compound(Atom),
+    functor(Atom, Name, Arity),
+    relplan_column_types(RelPlans, Name/Arity, ColumnTypes),
+    Atom =.. [_ | Args],
+    nth1(Position, Args, Argument),
+    Argument == Source,
+    nth1(Position, ColumnTypes, ref(Found)),
+    !.
+
+decode_pattern_atoms(Types, TypeName, Source, Pattern, Atoms) :-
+    (   Pattern = {}(Fields)
+    ->  true
+    ;   throw(unsupported_construct(decode_pattern_not_object(TypeName, Pattern)))
+    ),
+    braces_pattern_pairs(Fields, Pairs),
+    type_definition(Types, TypeName, Columns, ColumnTypes),
+    forall(member(Key-_, Pairs),
+           ( memberchk(Key, Columns) -> true
+           ; throw(unsupported_construct(decode_field_unknown(TypeName, Key))) )),
+    length(Columns, Width),
+    length(Slots, Width),
+    foldl(decode_slot(Types, Pairs, Columns, ColumnTypes), Slots, 1-[]-[], _-_-NestedGroups),
+    dictionary_table_name(TypeName, Table),
+    Atom =.. [Table, Source | Slots],
+    append(NestedGroups, Nested),
+    append([Atom], Nested, Atoms).
+
+% One dictionary column: the pattern's own argument when the pattern names it,
+% otherwise a fresh anonymous variable (an object pattern is OPEN -- body.pl
+% json_decode/2 ignores keys the pattern does not mention). A nested object
+% pattern over a ref column becomes ANOTHER dictionary atom, keyed on the
+% fresh variable this slot binds, which is how depth costs no new construct.
+decode_slot(Types, Pairs, Columns, ColumnTypes, Slot,
+            Position-Acc-Nested0, NextPosition-Acc-Nested) :-
+    nth1(Position, Columns, Column),
+    nth1(Position, ColumnTypes, ColumnType),
+    NextPosition is Position + 1,
+    (   memberchk(Column-SubPattern, Pairs)
+    ->  (   nonvar(SubPattern), SubPattern = {}(_), declared_type_name(Types, ColumnType)
+        ->  decode_pattern_atoms(Types, ColumnType, Slot, SubPattern, SubAtoms),
+            append(Nested0, [SubAtoms], Nested)
+        ;   Slot = SubPattern, Nested = Nested0
+        )
+    ;   Nested = Nested0
+    ).
+
+braces_pattern_pairs((Left, Right), Pairs) :- !,
+    braces_pattern_pairs(Left, LeftPairs),
+    braces_pattern_pairs(Right, RightPairs),
+    append(LeftPairs, RightPairs, Pairs).
+braces_pattern_pairs(Key: Pattern, [Key-Pattern]).
 
 incremental_json_select_exprs_from(0, _, []) :- !.
 incremental_json_select_exprs_from(N, Index, [Expr | More]) :-
@@ -1563,14 +1726,29 @@ level_rule_delta_arms(RelPlans, (Head <- Body), DeltaArms) :-
     level_positive_delta_arms(RelPlans, Head, Body, PosUses, NegUses, PosUses, DeltaArms).
 
 level_positive_delta_arms(_, _, _, [], _, _, []).
+% STRUCT-AS-ROWS: a dictionary atom gets NO delta arm, and needs none. A
+% dictionary row is created only by interning a value some ARRIVING row
+% carries, and interning runs before that tick's arrival statements, so every
+% new dictionary row already has its parent row in the parent's own frontier
+% -- the parent's arm covers exactly the same derivations. An arm on this side
+% would additionally read `__frontier___dict_<type>`, a table the DDL does not
+% create (a dictionary is storage plane: no delta table, no frontier, no
+% boundary), so this is the same fact stated twice: dictionaries do not move
+% on their own.
 level_positive_delta_arms(RelPlans, Head, Body, [_ | RestPositions], NegUses, PosUses,
-                          [DeltaArm | RestArms]) :-
+                          Arms) :-
     length(RestPositions, RemainingCount),
     length(PosUses, PositiveCount),
     Position is PositiveCount - RemainingCount - 1,
     nth0_select(Position, PosUses, DeltaUse, OtherPosUses),
-    level_delta_select_arm(RelPlans, Head, Body, DeltaUse, OtherPosUses, NegUses, DeltaArm),
-    level_positive_delta_arms(RelPlans, Head, Body, RestPositions, NegUses, PosUses, RestArms).
+    level_positive_delta_arms(RelPlans, Head, Body, RestPositions, NegUses, PosUses, RestArms),
+    (   dictionary_use(DeltaUse)
+    ->  Arms = RestArms
+    ;   level_delta_select_arm(RelPlans, Head, Body, DeltaUse, OtherPosUses, NegUses, DeltaArm),
+        Arms = [DeltaArm | RestArms]
+    ).
+
+dictionary_use(use(Name/_Arity, _, _, _)) :- sub_atom(Name, 0, _, _, '__dict_').
 
 nth0_select(0, [Selected | Rest], Selected, Rest) :- !.
 nth0_select(Index, [Item | Rest], Selected, [Item | More]) :-
@@ -1864,7 +2042,18 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     % one-to-one.
     maplist(edge_statements_for_rule(RelPlans), EdgeRules, EdgeStatementGroups),
     append(EdgeStatementGroups, EdgeStatements),
-    level_statement_groups(RelPlans, RuleOrder, RuleLevelStatements),
+    % STRUCT-AS-ROWS: level bodies are compiled against RelPlans PLUS the
+    % dictionary plans, and with decode/2 already rewritten into dictionary
+    % atoms. The dictionary plans reach the BODY compiler only -- never
+    % rel_ddl/5, delta_statement/2, arrival_statement/2 or relColumns -- which
+    % is Edge 2 enforced by construction rather than by a filter someone can
+    % forget: a dictionary has no delta table to report and no name the tick
+    % log can reach.
+    type_definitions(Decls, LoweringTypes),
+    dictionary_relplans(LoweringTypes, DictionaryRelPlans),
+    append(RelPlans, DictionaryRelPlans, BodyRelPlans),
+    expand_decode_rules(LoweringTypes, BodyRelPlans, RuleOrder, DecodedRuleOrder),
+    level_statement_groups(BodyRelPlans, DecodedRuleOrder, RuleLevelStatements),
     retention_statements(Decls, RelPlans, RetentionStatements),
     append(RuleLevelStatements, RetentionStatements, LevelStatements),
     maplist(support_ddl(RelPlans), RuleLevelStatements, SupportDdlGroups),

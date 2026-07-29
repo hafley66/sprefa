@@ -870,9 +870,15 @@ edge_goal_refusal(not(Atom), Body, 5, edge_body_with_negation(Body)) :-
 % zero rows where the oracle unifies. The object-pattern half (`{name: X}`)
 % needs a third shape again, and json_each/2 needs a table-valued read.
 % A decode arc owns the encoding decision first; the arm is not the blocker.
+%
+% STRUCT-AS-ROWS flipped decode/2's registry row to `lower` so a LEVEL body
+% over a struct-typed column compiles to a dictionary join. This clause
+% therefore names the two functors directly instead of reading the refused
+% status off the row: the arm is still the blocker for an EDGE body, and the
+% status word can no longer say so.
 edge_goal_refusal(Goal, Body, 8, edge_body_needs_json_destructure(Body)) :-
-    body_surface_for_term(Goal, _, guard, no_refs,
-                          wrapper(expr_pair, refuse(goal)), refused).
+    nonvar(Goal),
+    ( Goal = decode(_, _) ; Goal = json_each(_, _) ).
 
 % The ordered goal list, with next/1 and variadic combine spliced away and
 % not/1 left whole. The splicing used to be a local `Term =.. [combine | ...]`
