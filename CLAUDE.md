@@ -1438,6 +1438,36 @@ justfile: lsp-diags recipe in green-all. PHASE 4 OF THE GOLDEN
 PLAN IS COMPLETE (CLI + LSP). Golden-plan alpha spine now P0-P4
 DONE; phase 5 (type pass float/REAL+avg, clock checker, ingest
 commit_ms) is the remaining leg, all rows priced in ARCH.
+MORNING SESSION 2026-07-29 (user awake, ruling round + dispatches):
+USER DIRECTIVE: problems are "turbo mid", find the SMALLEST CORRECT
+solution, standing for the whole open list. RULED compound_storage =
+struct_as_rows (rulings.pl; user "lol d"): struct value = rel row +
+content id ref, inline blob dead, decode dissolves into joins. BOTH
+sharp edges worked in plans/2026-07-29-struct-as-rows-header.md:
+(1) tick log prints VALUES never ids via memoized rendered_text
+canonical JSON written once at intern time (DAG = children first,
+parent render = one concat; boundary read = one join); (2)
+dictionaries are boundary-invisible storage plane (frontier-TEMP
+class; __host_* rels differ: both sides derive those). Lab receipts
+adopted not relitigated (rendered_text_stable_under_both_policies,
+support-GC complete on the value DAG, FK CASCADE stays banned,
+json1 = untyped only, per-column ref(Type) coexistence).
+STRUCT-AS-ROWS ARC DISPATCHED (opus worktree, base 72d4d753, IN
+FLIGHT): unlocks 20 json fixtures + byte spans + LSP line numbers.
+decode_arc CLOSED as superseded.
+EXTRACT RESOLVE FLAG: user WAIVED the extractor-fixed directive for
+exactly this ("sic codex terra on this once u scout to make goal");
+coordinator scouted first: resolve is library-tested
+(tests/0_prolog.rs:85 Resolve::<CallF> + def index + ProjectCx
+recipe) and the CLI is phase-1 BY DESIGN (extract.rs:176) -- the
+missing test was unwritable because the bin never claimed phase 2;
+the real gap = nothing asserts bin-vs-lib capability parity. Brief
+plans/2026-07-29-extract-resolve-flag-brief.md (flat top-level JSONL
+fields, project-mode entry, CLI golden test pins the new contract,
+zero deps, no-commit flow). DISPATCHED codex terra (header echo
+verified, IN FLIGHT, worktree ../sprefa-codex-extresolve, branch
+codex/extract-resolve, base 0264d2b1). flow_interproc_port now
+blocks on this lane; closure spelling rides the port arc.
 NIGHT CLOSE-OUT: first merged-main green-all tripped on a STALE
 target/release/dl (Jul 20 build; receipt scripts build only if
 missing -- binary flavor of the staleness class, noted on the
