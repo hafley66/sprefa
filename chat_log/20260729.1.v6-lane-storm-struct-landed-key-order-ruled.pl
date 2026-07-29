@@ -8,8 +8,8 @@
 
 session(id, '20260729.1').
 session(topic, 'v6-lane-storm-struct-landed-key-order-ruled').
-session(main_sha, 'd5972a7e').
-session(pushed_through, '2e1885d5').
+session(main_sha, '01ac896e_pre_compact_save_commit_follows').
+session(pushed_through, '01ac896e').
 session(battery, 'conformance 156 PASS (just-conformance form; bare swipl go.pl is VACUOUS), sweep both modes 96/94/0-wrong, TEXT_DOOR 96/96/0, plunit 137/137, roundtrip ALL PASS, tsv2 68-69/1skip, dl 96/1skip, store 74/74, staleness gate OK, extraction-live + leak-soak HOLD').
 session(machine, 'v5 daemon STOPPED (launchctl bootout gui/501/com.sprefa.dl; restart = launchctl load ~/Library/LaunchAgents/com.sprefa.dl.plist); 3 hung dl --lsp killed (~4h each, one leaked per lsp-diags run)').
 
@@ -27,11 +27,18 @@ landed(struct_as_rows,            'dcfa6fcc + 9aef1633 (opus, 6 commits): type d
 landed(struct_key_order_ruling,   'd5972a7e: canonicalize_world_rows/3 in 0_type_plane threaded through run_program; keys_not_sorted dead; fixture flipped, +1 compiled +1 identical').
 landed(codex_orighead_rootcause,  'coordinator-cut worktree git metadata outside codex sandbox; read-only rev-parse base check + no-commit flow; codex-delegate.md updated').
 
+% landed after the first save (this file updated pre-compact):
+landed(compiler_quality_bundle,   'merge 733d4c1b (sol): groupby (N+0) 8 diag modules moved, probe guards = GOAL PLACEMENT fix in host expansion, 4 drift pins flipped, 0_refusal_messages.pl umbrella over 77-signature inventory + coverage test; battery conformance 158/plunit 138/sweep 98-96-0 both modes/TEXT_DOOR 98/LSP HOLDS; location residue = rule-index unavailable (parse_dl keeps no positions)').
+
 % in_flight(Name, AgentKind, BaseSha, IntegrateNote)
-in_flight(compiler_quality_bundle, codex_sol, '67719352',
-          'worktree ../sprefa-codex-cqbundle branch codex/cq-bundle, NO-COMMIT; items IN ORDER: #7 groupby-literal + diag-rail 0+0 removal, #8 probe-output guard compiles, #12 four org drift sites, #13 prolog:message//1 umbrella w/ coverage test; brief plans/2026-07-29-compiler-quality-bundle-brief.md').
+% AGENT ROSTER AT COMPACT TIME -- each reports via task notification;
+% coordinator reviews, re-runs battery, commits, merges, cleans worktree.
+in_flight(host_output_seam, codex_sol, '13fef29c',
+          'worktree ../sprefa-codex-hostseam branch codex/host-seam, NO-COMMIT; compiler acceptance for declared-struct host output columns + serve plan-union widening + StructPlane intern; brief plans/2026-07-29-host-output-seam-brief.md; ON LANDING: merge, battery, THEN merge held branch codex/flow-parity (ccfe53ec) + produce four-query parity table, THEN dispatch phase 5 (pre-authorized)').
 in_flight(crawl_bench, codex_luna, '67719352',
-          'worktree ../sprefa-codex-crawlbench branch codex/crawl-bench, NO-COMMIT; grafana org-fan v5 leg vs v6 served extraction leg, nice -19, NOT green-all; v5 yardstick 42739 files/389 repos/5.9s; brief plans/2026-07-29-crawl-bench-brief.md').
+          'worktree ../sprefa-codex-crawlbench branch codex/crawl-bench, NO-COMMIT; grafana org-fan v5 leg vs v6 served extraction leg, nice -19, NOT green-all; v5 yardstick 42739 files/389 repos/5.9s; brief plans/2026-07-29-crawl-bench-brief.md; verify luna output HARD (user: sonnet-class, only slightly better)').
+in_flight(simplify_review_x4, opus_subagents, '01ac896e',
+          'FOUR read-only opus reviewers over git diff 934dcc4d..HEAD (generated files excluded), one angle each: reuse / simplification / efficiency / altitude. First sonnet wave STOPPED on user word (opus only for the polishing stone). On each notification: collect findings; when all four in, dedup, apply surviving fixes in main tree, re-run affected suites, commit. User directive: simplify wherever possible.').
 
 % held_branch(Branch, Sha, BlockedOn)
 held_branch('codex/flow-parity', 'ccfe53ec',
