@@ -20,8 +20,8 @@
 //! `Resolve<CallF>` (the 4c-ii ts arm mirrored: NameResolve primary,
 //! ScipOverride on scip disagreement; the rust-analyzer `local `-symbol
 //! adaptation documented on the arm) + the scip ratchet. Deferred follow-ups:
-//! the docs facet (`rust_docs_from`); the df enrichment aux (args/fields/
-//! lits/param_pos/loops/nests).
+//! the docs facet (`rust_docs_from`); df field/literal/loop/nesting aux.
+//! Df argument slots and parameter positions are emitted.
 
 use std::collections::BTreeSet;
 
@@ -33,9 +33,9 @@ use syn::{
 
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
-    CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfEdgeKind, DfF,
-    DfNodeKind, ProjectEdge, SigSlot, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF,
-    TypeSig,
+    CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind,
+    DfF, DfNodeKind, DfParam, ProjectEdge, SigSlot, TypeEdgeCandidate, TypeEdgeKind,
+    TypeEntityKind, TypeF, TypeSig,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
@@ -228,7 +228,7 @@ fn fn_sigs(
     owner: Span,
     sig: &syn::Signature,
 ) {
-    let mut pos: u32 = 0;
+    let mut pos = 0u32;
     for arg in &sig.inputs {
         if let syn::FnArg::Typed(pt) = arg {
             for name in type_refs(&pt.ty) {
@@ -847,7 +847,7 @@ impl Resolve<CallF> for RustSource {
                 (Some(n), None) => (n, CallEdgeKind::NameResolve),
                 (None, None) => continue,
             };
-            edges.push(ProjectEdge::new(caller, dst_blob, dst_span, kind));
+            edges.push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
         }
         edges
     }
@@ -1191,6 +1191,7 @@ fn flow_fn_body(
     loop_breaks: &mut LoopBreaks,
 ) {
     // Position counts only typed params (the receiver `self` is skipped).
+    let mut pos = 0u32;
     for arg in &sig.inputs {
         if let syn::FnArg::Typed(pt) = arg {
             if let syn::Pat::Ident(pi) = &*pt.pat {
@@ -1204,8 +1205,13 @@ fn flow_fn_body(
                     DfNodeKind::Param,
                     Some(&pi.ident.to_string()),
                 );
+                sink.aux.params.push(DfParam {
+                    node,
+                    pos,
+                });
                 scope.insert(pi.ident.to_string(), node);
             }
+            pos += 1;
         }
     }
     if let Some((tail, line, col)) = flow_block(
@@ -1360,8 +1366,13 @@ fn flow_expr(
                 kind,
                 constructor.as_deref(),
             );
-            for child in children {
+            for (pos, child) in children.into_iter().enumerate() {
                 df_edge(sink, child, node);
+                sink.aux.args.push(DfArg {
+                    call: node,
+                    pos: pos as i64,
+                    arg: child,
+                });
             }
             node
         }
@@ -1400,8 +1411,18 @@ fn flow_expr(
                 None,
             );
             df_edge(sink, receiver, node);
-            for child in children {
+            sink.aux.args.push(DfArg {
+                call: node,
+                pos: -1,
+                arg: receiver,
+            });
+            for (pos, child) in children.into_iter().enumerate() {
                 df_edge(sink, child, node);
+                sink.aux.args.push(DfArg {
+                    call: node,
+                    pos: pos as i64,
+                    arg: child,
+                });
             }
             node
         }
@@ -1854,7 +1875,7 @@ fn flow_expr(
         // resolve.
         syn::Expr::Closure(closure) => {
             let lam_sym = format!("{fn_sym}::closure::{line}_{col}");
-            for input in &closure.inputs {
+            for (pos, input) in closure.inputs.iter().enumerate() {
                 let ident_pat = match input {
                     syn::Pat::Type(pat_type) => pat_type.pat.as_ref(),
                     other => other,
@@ -1870,6 +1891,10 @@ fn flow_expr(
                         DfNodeKind::Param,
                         Some(&ident.ident.to_string()),
                     );
+                    sink.aux.params.push(DfParam {
+                        node,
+                        pos: pos as u32,
+                    });
                     scope.insert(ident.ident.to_string(), node);
                 } else {
                     let _ = bind_pat(input, line_starts, strings, scope, sink);

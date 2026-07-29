@@ -150,7 +150,8 @@ impl fmt::Display for NameId {
 
 /// One static-analysis family. The associated kinds are the per-family node and
 /// edge vocabularies; `TAG` is the flat discriminant used at the seam only. `Aux`
-/// is the family's side-channel payload (TypeF sigs/consts, CallF sites): per-
+/// is the family's side-channel payload (TypeF sigs/consts, CallF sites, DfF
+/// parameter and argument rows): per-
 /// node/per-occurrence attributes that are NOT span-pair edges and do not fit the
 /// uniform `Node<F>`/`Edge<F>` shape. The bundle carries one `F::Aux`; the wire
 /// flattens it to its own `FlatFact` arm.
@@ -473,6 +474,32 @@ impl Family for CallF {
 #[derive(Default, Copy, Clone, Debug)]
 pub struct DfF;
 
+/// One parameter-to-slot bridge for the df wire. `node` points at a `param`
+/// node in the same DfF bundle; `pos` counts typed parameters, omitting Rust
+/// receivers and matching the v5 `df_param` contract.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DfParam {
+    pub node: NodeRef,
+    pub pos: u32,
+}
+
+/// One call/new argument-to-slot bridge for the df wire. `pos` is signed so a
+/// method receiver occupies slot `-1`; ordinary and named arguments retain
+/// their source slot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DfArg {
+    pub call: NodeRef,
+    pub pos: i64,
+    pub arg: NodeRef,
+}
+
+/// DfF side-channel rows that cannot be represented as uniform node/edge rows.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DfFAux {
+    pub params: Vec<DfParam>,
+    pub args: Vec<DfArg>,
+}
+
 /// df_node kind. 23 variants.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum DfNodeKind {
@@ -553,7 +580,7 @@ impl DfEdgeKind {
 impl Family for DfF {
     type NodeKind = DfNodeKind;
     type EdgeKind = DfEdgeKind;
-    type Aux = (); // enrichment (args/fields/lits/param_pos/loops) lands in follow-ups
+    type Aux = DfFAux;
     const TAG: FamilyTag = FamilyTag::Df;
 }
 
@@ -665,6 +692,9 @@ pub struct ProjectEdge<F: Family> {
     /// The target node's coordinate inside `dst_blob`.
     pub dst_span: Span,
     pub kind: F::EdgeKind,
+    /// The phase-1 call site that produced this edge, when the edge is a
+    /// resolved CallF row. TypeF and legacy resolver rows leave this empty.
+    pub call_site: Option<Span>,
     _f: PhantomData<fn() -> F>,
 }
 
@@ -675,8 +705,14 @@ impl<F: Family> ProjectEdge<F> {
             dst_blob,
             dst_span,
             kind,
+            call_site: None,
             _f: PhantomData,
         }
+    }
+
+    pub fn with_call_site(mut self, call_site: Span) -> Self {
+        self.call_site = Some(call_site);
+        self
     }
 }
 
@@ -1233,10 +1269,29 @@ pub enum FlatFact {
         from: SpanOut,
         to: SpanOut,
     },
+    /// DfF parameter slot bridge: one parameter node and its typed-parameter
+    /// position. The receiver/self is omitted from the position count.
+    #[serde(rename = "param")]
+    DfParam {
+        family: FamilyTag,
+        span: SpanOut,
+        pos: u32,
+    },
+    /// DfF argument slot bridge: one call/new node, signed slot, and argument
+    /// node. Method receivers use slot `-1`.
+    #[serde(rename = "arg")]
+    DfArg {
+        family: FamilyTag,
+        call: SpanOut,
+        pos: i64,
+        arg: SpanOut,
+    },
     /// TypeF arrow-type sig: owner = callable span, slot = param/ret, pos, ty.
     Sig {
         family: FamilyTag,
         owner: SpanOut,
+        owner_start: u32,
+        owner_end: u32,
         slot: String,
         pos: u32,
         ty: String,
@@ -1285,6 +1340,8 @@ pub enum FlatFact {
         caller_name: Option<String>,
         callee_path: String,
         callee_name: Option<String>,
+        caller_site_start: u32,
+        caller_site_end: u32,
         kind: String,
     },
 }
@@ -1327,7 +1384,8 @@ pub enum FlatFact {
 //   type_edge (field/impl/variant/uses/generic)   -> TS ASSERTED (4b-iii); GO ASSERTED (4d-i-go, v5 go shape-only: field/impl/generic); rust ASSERTED (4d-i-rust; no sig-sourced rows per v5); kotlin DEFERRED to the traits/codegen arc (v5 kotlin DOES emit: field/impl/generic/variant - candidates + Resolve<TypeF> land there)
 //   resolved caller -> callee                     -> TS RATCHETED vs scip (4c-ii); GO RATCHETED vs scip-go (4d-ii-go); rust RATCHETED vs rust-analyzer-scip (4d-ii-rust); kotlin DEFERRED to the traits/codegen arc
 //   docs facet                                    -> follow-up
-//   df aux (args/fields/lits/param_pos)           -> labels, follow-up
+//   df aux (args/param_pos)                       [x]         [x]            [x]                 [x]
+//   df aux (fields/lits/loops/nests)              -> labels, follow-up
 //
 // LEAF INFRA (pure CPU; still this leaf): parallel dispatch (rayon, arena-per-
 //   worker); BlobSource impls + the (BlobHash, lang, mask) content-keyed cache.

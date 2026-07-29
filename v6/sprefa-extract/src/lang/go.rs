@@ -16,8 +16,9 @@
 //! phase 1) + lands `Resolve<TypeF>`; 4d-ii-go lands `Resolve<CallF>` (the
 //! scip-ratcheted twin of the TsSource arm).
 //!
-//! Deferred follow-ups: the docs facet (`walk_go_docs`); the df enrichment aux
-//! (args/fields/lits/param_pos/loops/nests). The const facet is
+//! Deferred follow-ups: the docs facet (`walk_go_docs`); df field/literal/
+//! loop/nesting aux. Df argument slots and parameter positions are emitted.
+//! The const facet is
 //! NOT ported: v5 go emits no const entities and no const_value rows
 //! (`walk_go_entities` skips `const_declaration`; `extract` leaves `consts`
 //! empty), so v6 matches by emitting none either.
@@ -26,8 +27,9 @@ use std::collections::BTreeSet;
 
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
-    CallEdgeKind, CallF, CallKind, CallSite, CstF, DfEdgeKind, DfF, DfNodeKind, ProjectEdge,
-    SigSlot, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
+    CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfNodeKind,
+    DfParam, ProjectEdge, SigSlot, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF,
+    TypeSig,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
@@ -694,7 +696,7 @@ fn go_walk_fns(
 /// A grouped parameter (`a, b int`) mints one param node PER declared name,
 /// matching `go_fn_type`'s slot count; an unnamed parameter still advances the
 /// position counter so later named params keep the right index. Port of v5
-/// `go_flow_fn` (the `param_pos` aux is dropped).
+/// `go_flow_fn` (the `param_pos` aux is emitted as DfParam rows).
 fn go_flow_fn(
     fn_node: tree_sitter::Node,
     src: &[u8],
@@ -704,6 +706,7 @@ fn go_flow_fn(
 ) {
     let mut scope = Scope::new();
     if let Some(params) = fn_node.child_by_field_name("parameters") {
+        let mut param_pos = 0u32;
         let mut cursor = params.walk();
         for param in params.children(&mut cursor) {
             if !matches!(
@@ -718,6 +721,7 @@ fn go_flow_fn(
                 .filter(|n| n.kind() == "identifier")
                 .collect();
             if names.is_empty() {
+                param_pos += 1;
                 continue;
             }
             for name_node in names {
@@ -729,7 +733,12 @@ fn go_flow_fn(
                     DfNodeKind::Param,
                     Some(&name),
                 );
+                sink.aux.params.push(DfParam {
+                    node,
+                    pos: param_pos,
+                });
                 scope.insert(name, node);
+                param_pos += 1;
             }
         }
     }
@@ -795,9 +804,19 @@ fn flow_go(
             let call_res = df_push(sink, strings, start_byte, DfNodeKind::CallRes, None);
             if let Some(recv) = receiver {
                 df_edge(sink, recv, call_res);
+                sink.aux.args.push(DfArg {
+                    call: call_res,
+                    pos: -1,
+                    arg: recv,
+                });
             }
-            for arg_id in arg_ids {
+            for (pos, arg_id) in arg_ids.into_iter().enumerate() {
                 df_edge(sink, arg_id, call_res);
+                sink.aux.args.push(DfArg {
+                    call: call_res,
+                    pos: pos as i64,
+                    arg: arg_id,
+                });
             }
             Some(call_res)
         }
@@ -1059,6 +1078,7 @@ fn flow_go(
             let pos = node.start_position();
             let lam_sym = format!("{fn_sym}::closure::{}_{}", pos.row, pos.column);
             if let Some(params) = node.child_by_field_name("parameters") {
+                let mut param_pos = 0u32;
                 let mut cursor = params.walk();
                 for param in params.children(&mut cursor) {
                     if !matches!(
@@ -1073,6 +1093,7 @@ fn flow_go(
                         .filter(|n| n.kind() == "identifier")
                         .collect();
                     if names.is_empty() {
+                        param_pos += 1;
                         continue;
                     }
                     for name_node in names {
@@ -1084,7 +1105,12 @@ fn flow_go(
                             DfNodeKind::Param,
                             Some(&name),
                         );
+                        sink.aux.params.push(DfParam {
+                            node: node_ref,
+                            pos: param_pos,
+                        });
                         scope.insert(name, node_ref);
+                        param_pos += 1;
                     }
                 }
             }
@@ -1621,7 +1647,7 @@ impl Resolve<CallF> for GoSource {
                 (Some(n), None) => (n, CallEdgeKind::NameResolve),
                 (None, None) => continue,
             };
-            edges.push(ProjectEdge::new(caller, dst_blob, dst_span, kind));
+            edges.push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
         }
         edges
     }

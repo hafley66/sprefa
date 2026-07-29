@@ -29,7 +29,8 @@ pub mod wire;
 
 pub use dispatch::dispatch;
 pub use family::{
-    CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfEdgeKind, DfF, DfNodeKind,
+    CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfArg, DfEdgeKind, DfF, DfFAux,
+    DfNodeKind, DfParam,
     Family, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind,
     TypeEntityKind, TypeF, TypeFAux, TypeSig,
 };

@@ -187,6 +187,7 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
                 FamilyTag::Cst => {}
                 _ => {}
             },
+            FlatFact::DfParam { .. } | FlatFact::DfArg { .. } => {}
             FlatFact::Sig {
                 owner,
                 slot,

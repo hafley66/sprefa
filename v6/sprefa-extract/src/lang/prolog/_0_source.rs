@@ -550,7 +550,7 @@ impl Resolve<CallF> for PrologSource {
                     blob,
                     target,
                     CallEdgeKind::NameResolve,
-                ))
+                ).with_call_site(site.span))
             })
             .collect()
     }

@@ -100,6 +100,8 @@ fn flatten_type(bundle: &FamilyBundle<TypeF>, strings: &Strings) -> Vec<FlatFact
         out.push(FlatFact::Sig {
             family: TypeF::TAG,
             owner: SpanOut::new(sig.owner.start, sig.owner.end()),
+            owner_start: sig.owner.start,
+            owner_end: sig.owner.end(),
             slot: sig.slot.as_str().to_string(),
             pos: sig.pos,
             ty: strings.lookup(sig.ty).to_string(),
@@ -181,10 +183,13 @@ pub fn flatten_project_type(
 /// Flatten one DfF bundle to flat facts: value-flow NODES (kind = the DfNodeKind
 /// slug; name = the variable / property / type when the node carries one) +
 /// Direct value EDGES (src value -> dst value). The enclosing callable is
-/// derived at the seam (not in the wire). The enrichment aux (arg slots, field
-/// names, literal texts) lands in follow-ups.
+/// derived at the seam (not in the wire). Df argument slots and parameter
+/// positions are emitted as flat records; field names and literal texts land
+/// in follow-ups.
 fn flatten_df(bundle: &FamilyBundle<DfF>, strings: &Strings) -> Vec<FlatFact> {
-    let mut out = Vec::with_capacity(bundle.nodes.len() + bundle.edges.len());
+    let mut out = Vec::with_capacity(
+        bundle.nodes.len() + bundle.edges.len() + bundle.aux.params.len() + bundle.aux.args.len(),
+    );
     for node in &bundle.nodes {
         out.push(FlatFact::Node {
             family: DfF::TAG,
@@ -201,6 +206,24 @@ fn flatten_df(bundle: &FamilyBundle<DfF>, strings: &Strings) -> Vec<FlatFact> {
             kind: edge.kind.as_str().to_string(),
             from: SpanOut::new(from.span.start, from.span.end()),
             to: SpanOut::new(to.span.start, to.span.end()),
+        });
+    }
+    for param in &bundle.aux.params {
+        let node = bundle.node(param.node);
+        out.push(FlatFact::DfParam {
+            family: DfF::TAG,
+            span: SpanOut::new(node.span.start, node.span.end()),
+            pos: param.pos,
+        });
+    }
+    for arg in &bundle.aux.args {
+        let call = bundle.node(arg.call);
+        let value = bundle.node(arg.arg);
+        out.push(FlatFact::DfArg {
+            family: DfF::TAG,
+            call: SpanOut::new(call.span.start, call.span.end()),
+            pos: arg.pos,
+            arg: SpanOut::new(value.span.start, value.span.end()),
         });
     }
     out

@@ -117,7 +117,7 @@ fn prolog_parser_error_recovery_ledger_for_the_v6_corpus() {
         })
         .collect();
 
-    assert_eq!(files.len(), 53);
+    assert_eq!(files.len(), 54);
     assert_eq!(
         errors,
         [
@@ -141,6 +141,7 @@ fn prolog_parser_error_recovery_ledger_for_the_v6_corpus() {
             "conformance/fixtures/1_match_block.pl",
             "conformance/fixtures/2_hosts_wiring.pl",
             "conformance/fixtures/3_flagship_callgraph.pl",
+            "conformance/fixtures/4_flagship_flow.pl",
             "conformance/fixtures/check_eventing.pl",
             "conformance/fixtures/engine_core.pl",
             "conformance/fixtures/expressions.pl",
