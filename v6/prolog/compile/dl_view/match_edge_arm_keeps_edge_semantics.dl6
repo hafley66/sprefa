@@ -1,0 +1,6 @@
+rel poll_result(col1, col2) log keep(all).
+rel cache(col1, col2) key(1).
+
+match poll_result(Key, Value) (
+    cache(Key, Value) <+ true
+).

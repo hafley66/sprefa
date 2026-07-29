@@ -64,7 +64,7 @@
 :- use_module(library(apply)).
 :- use_module(library(ordsets)).
 :- use_module(library(pairs)).
-:- use_module('../0_enum_expand', [expand_enum_program/2]).
+:- use_module('../0_match_expand', [expand_match_program/2]).
 :- use_module(rulings).
 :- use_module(body).
 :- use_module(level_eval).
@@ -102,6 +102,8 @@ key_of(Positions, Row, Key) :-
 
 % Load-time program checks: keyed-Log exclusion, retention presence.
 check_program(prog(Decls, Rules)) :-
+    forall(( member(keyed(Ref, _), Decls), level_headed(Rules, Ref) ),
+           throw(keyed_level_head(Ref))),
     forall(( member(keyed(Ref, _), Decls), declared_kind(Decls, Ref, log) ),
            throw(keyed_log_rel(Ref))),
     forall(( member(kind(Ref, log), Decls), \+ memberchk(keep(Ref, _), Decls) ),
@@ -344,7 +346,7 @@ delta_ref_is_set(Decls, Rules, Row) :-
 % ═══ the run loop, engine-owned drains (q5) ═════════════════════════════════
 
 run_program(SugaredProg, Initial, Schedule, FinalAll, DeltaTicks) :-
-    expand_enum_program(SugaredProg, Prog),
+    expand_match_program(SugaredProg, Prog),
     check_program(Prog),
     seed_store(Prog, Initial, Store0),
     Prog = prog(_, Rules),

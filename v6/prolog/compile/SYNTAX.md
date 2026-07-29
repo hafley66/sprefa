@@ -28,7 +28,7 @@ anywhere in the grammar (`ArgTerm := Var | Literal | Wildcard`,
 real `.dl6` files: grepped both, neither ever writes a bareword atom constant;
 every constant is a quoted string (`"repos/cli/cli"`) or an int (`200`).
 
-The 115-fixture term-form corpus needs the opposite in places: a bareword
+The 126-fixture term-form corpus needs the opposite in places: a bareword
 constant-tag match is a real, critical construct:
 `fixtures/state_machine.pl`'s `phase(Endpoint, fetching)` matches the exact
 atom `fetching`, not a fresh variable. Since this parser is now canonical
@@ -65,24 +65,25 @@ the compiler inventory order. Edit the registry, then run the emitter.
 | `decode/2` | `guard` | `no_refs` | `wrapper(expr_pair,refuse(goal))` | `refused` |
 | `json_each/2` | `guard` | `no_refs` | `wrapper(expr_pair,refuse(goal))` | `refused` |
 | `true/0` | `guard` | `no_refs` | `word(lower)` | `live` |
-| `:=/2` | `bind` | `no_refs` | `infix(refuse(goal))` | `refused` |
-| `is/2` | `bind` | `no_refs` | `infix(refuse(goal))` | `refused` |
-| `</2` | `guard` | `no_refs` | `infix(refuse(comparison))` | `refused` |
-| `=</2` | `guard` | `no_refs` | `infix(refuse(comparison))` | `refused` |
-| `>/2` | `guard` | `no_refs` | `infix(refuse(comparison))` | `refused` |
-| `>=/2` | `guard` | `no_refs` | `infix(refuse(comparison))` | `refused` |
-| `==/2` | `guard` | `no_refs` | `infix(refuse(comparison))` | `refused` |
-| `\==/2` | `guard` | `no_refs` | `infix(refuse(comparison))` | `refused` |
-| `count/1` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
-| `sum/1` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
-| `min/1` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
-| `max/1` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
+| `:=/2` | `bind` | `no_refs` | `infix(lower)` | `live` |
+| `is/2` | `bind` | `no_refs` | `infix(lower)` | `live` |
+| `</2` | `guard` | `no_refs` | `infix(lower)` | `live` |
+| `=</2` | `guard` | `no_refs` | `infix(lower)` | `live` |
+| `>/2` | `guard` | `no_refs` | `infix(lower)` | `live` |
+| `>=/2` | `guard` | `no_refs` | `infix(lower)` | `live` |
+| `==/2` | `guard` | `no_refs` | `infix(lower)` | `live` |
+| `\==/2` | `guard` | `no_refs` | `infix(lower)` | `live` |
+| `count/1` | `aggregate` | `no_refs` | `head(lower)` | `live` |
+| `sum/1` | `aggregate` | `no_refs` | `head(lower)` | `live` |
+| `min/1` | `aggregate` | `no_refs` | `head(lower)` | `live` |
+| `max/1` | `aggregate` | `no_refs` | `head(lower)` | `live` |
 | `json_array/1` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
 | `json_object/2` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
 | `enum_decl/2` | `decl` | `no_refs` | `decl(enum_variants)` | `live` |
 | `;/2` | `decl` | `no_refs` | `decl(enum_variant_separator)` | `live` |
 | `col_type/3` | `decl` | `no_refs` | `decl(column_type)` | `live` |
 | `set/0` | `decl` | `no_refs` | `decl(refuse(removed_word))` | `refused` |
+| `match/2` | `sugar` | `no_refs` | `block(match_arms)` | `live` |
 <!-- END GENERATED surface/5 TABLE -->
 
 ### Core grammar and input aliases
@@ -99,6 +100,7 @@ construct inventory.
 | `keyed(Ref, Positions)` | `key(P, P, ...)` | declaration modifier |
 | `(Head <- Body)` | `Head <- Body.` | level rule |
 | `(Head <+ Body)` | `Head <+ Body.` | edge rule |
+| `match(Source, ((Head <- Guards) ; (Head <+ Guards)))` | `match Source (...)` with `;`-separated arms | retained sugar; one ordinary rule per arm |
 | bare fact | `Head.` | body becomes registered `true/0` |
 | bare positive relation | `name(args)` | trigger relation |
 | comparison alias `<=` | input only | maps to registered `=</2` |
@@ -140,7 +142,7 @@ every ref's name, arity, and column names via `analyze.pl:rel_columns/5`).
 
 ## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
 
-- **G1**: 115 / 115 fixtures round-trip (`parse_dl(print_dl(Term)) =@= Term`
+- **G1**: 126 / 126 fixtures round-trip (`parse_dl(print_dl(Term)) =@= Term`
   for every `fixture/5` in `v6/prolog/conformance/fixtures/*.pl`).
 - **G2**: both real files parse without error.
   - `ghcacher.dl6`: Decls 16, Rules 9, 8 findings (3 host decls + 3 matching
@@ -148,11 +150,11 @@ every ref's name, arity, and column names via `analyze.pl:rel_columns/5`).
     parser defect).
   - `conformance.dl6`: Decls 29, Rules 28, 0 findings (the named/positional
     mix resolves silently, per the construct table above).
-- **G3**: `v6/prolog/conformance/go.pl` unchanged, 115 pass / 0 fail.
+- **G3**: `v6/prolog/conformance/go.pl` unchanged, 126 pass / 0 fail.
 
 ## What `dl_view/*.dl6` is
 
-Every fixture in the 115-fixture corpus, printed as `.dl6` text by this
+Every fixture in the 126-fixture corpus, printed as `.dl6` text by this
 parser's own printer, committed under `v6/prolog/compile/dl_view/`. This is
 the "language you can see" deliverable: inspect any file there to read a
 conformance fixture's PROGRAM (not its test scaffolding -- `Initial`,

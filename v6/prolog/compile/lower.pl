@@ -16,7 +16,8 @@
 %     EdgeStatements   : list of edgestmt(HeadRef, TriggerRef, HeadColumns,
 %                        KeyColumns, ProjectSql, WriteSql, DeltaProjectSql).
 %     LevelStatements  : list of levelstmt(HeadRef, DeleteSql, InsertSqls,
-%                        DeltaInsertSql, SupportSql),
+%                        DeltaInsertSql, SupportSql) and
+%                        retentionstmt(Ref, Limit, DeleteSql),
 %                        already in execution order (strat.pl:sql_rule_order/2).
 %     DeltaStatements  : list of deltastmt(Ref, SelectAllSql, DeltaTable,
 %                        BoundarySql). SelectAllSql preserves the recompute
@@ -1386,6 +1387,27 @@ delta_statement(relplan(Ref, _Kind, Columns, _, ColumnTypes),
            'SELECT ~w, "_sign" AS "__sign", count(*) AS "__count" FROM ~w WHERE "_sign" IN (-1, 1) GROUP BY ~w, "_sign"',
            [ColumnsSql, QuotedDeltaTable, GroupColumnsSql]).
 
+retention_statement(RelPlans, keep(Ref, count(Limit)),
+                    retentionstmt(Ref, Limit, DeleteSql)) :-
+    integer(Limit),
+    Limit >= 0,
+    memberchk(relplan(Ref, log, Columns, _, _), RelPlans),
+    table_name(Ref, Table),
+    quote_ident(Table, QuotedTable),
+    maplist(quote_ident, Columns, QuotedColumns),
+    atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
+    format(atom(DeleteSql),
+           'DELETE FROM ~w WHERE rowid NOT IN (SELECT rowid FROM ~w ORDER BY rowid DESC LIMIT ~w) RETURNING ~w',
+           [QuotedTable, QuotedTable, Limit, ColumnsSql]).
+
+retention_statements(Decls, RelPlans, RetentionStatements) :-
+    findall(RetentionStatement,
+            ( member(KeepDecl, Decls),
+              KeepDecl = keep(_, count(_)),
+              retention_statement(RelPlans, KeepDecl, RetentionStatement)
+            ),
+            RetentionStatements).
+
 delta_ddl(relplan(Ref, _Kind, Columns, _, ColumnTypes),
           [TableDdl, IndexDdl, FrontierDdl, FrontierIndexDdl,
            NextFrontierDdl, NextFrontierIndexDdl]) :-
@@ -1495,7 +1517,7 @@ boot_seed_statement(relplan(Ref, set, Columns, _, _), Initial, Statements) :-
 
 % ═══ top level ═══════════════════════════════════════════════════════════════
 
-lower_program(plan(Name, prog(_Decls, _Rules), RelPlans, ArrivalTargets, RuleOrder, EdgeRules),
+lower_program(plan(Name, prog(Decls, _Rules), RelPlans, ArrivalTargets, RuleOrder, EdgeRules),
               lowered(Name, Ddl, ArrivalStatements, EdgeStatements, LevelStatements, DeltaStatements, RelPlans, ArrivalTargets)) :-
     findall(EdgeHeadedRef, ( member(EdgeRule, EdgeRules), rule_head_ref(EdgeRule, EdgeHeadedRef) ), EdgeHeadedRefs),
     findall(LevelHeadedRef,
@@ -1513,9 +1535,11 @@ lower_program(plan(Name, prog(_Decls, _Rules), RelPlans, ArrivalTargets, RuleOrd
     % one-to-one.
     maplist(edge_statements_for_rule(RelPlans), EdgeRules, EdgeStatementGroups),
     append(EdgeStatementGroups, EdgeStatements),
-    level_statement_groups(RelPlans, RuleOrder, LevelStatements),
-    maplist(support_ddl(RelPlans), LevelStatements, SupportDdlGroups),
-    maplist(aggregate_scope_ddl, LevelStatements, AggregateScopeDdlGroups),
+    level_statement_groups(RelPlans, RuleOrder, RuleLevelStatements),
+    retention_statements(Decls, RelPlans, RetentionStatements),
+    append(RuleLevelStatements, RetentionStatements, LevelStatements),
+    maplist(support_ddl(RelPlans), RuleLevelStatements, SupportDdlGroups),
+    maplist(aggregate_scope_ddl, RuleLevelStatements, AggregateScopeDdlGroups),
     append(SupportDdlGroups, SupportDdl),
     append(AggregateScopeDdlGroups, AggregateScopeDdl),
     append([RelationDdl, DeltaDdl, SupportDdl, AggregateScopeDdl], Ddl),

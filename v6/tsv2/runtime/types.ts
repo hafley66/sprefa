@@ -175,6 +175,12 @@ export interface IIncrementalLevelStatement {
   readonly aggregateSql: IAggregateLevelPlan | null;
 }
 
+export interface IIncrementalRetentionStatement {
+  readonly rel: string;
+  readonly count: number;
+  readonly deleteSql: string;
+}
+
 export interface IIncrementalProgramPlan {
   readonly safe: boolean;
   readonly reconcileEveryTick: boolean;
@@ -182,6 +188,7 @@ export interface IIncrementalProgramPlan {
   readonly relations: readonly IIncrementalRelationPlan[];
   readonly edges: readonly IIncrementalEdgeStatement[];
   readonly levels: readonly IIncrementalLevelStatement[];
+  readonly retention?: readonly IIncrementalRetentionStatement[];
 }
 
 export interface IIncrementalRuntime {
@@ -208,6 +215,11 @@ export interface IIncrementalRuntime {
   applyLevelsAfterEdges(
     seam: ISqlSeam,
     statements: readonly IIncrementalLevelStatement[],
+    relations: readonly IIncrementalRelationPlan[],
+  ): Observable<void>;
+  applyRetention(
+    seam: ISqlSeam,
+    statements: readonly IIncrementalRetentionStatement[],
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<void>;
   recomputeLevelsAfterEdges(

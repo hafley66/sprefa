@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"cache":{"add":[["cli","v1"]],"del":[]},"poll_result":{"add":[["cli","v1"]],"del":[]}}}
+{"tick":2,"deltas":{"cache":{"add":[["cli","v2"]],"del":[["cli","v1"]]},"poll_result":{"add":[["cli","v2"]],"del":[]}}}
+{"tick":3,"deltas":{}}

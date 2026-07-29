@@ -18,7 +18,9 @@
 :- use_module('../lower', [ lower_program/2 ]).
 :- use_module('../analyze', [ check_supported_subset/1 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
+:- use_module('../../0_match_expand', [ expand_match_program/2 ]).
 :- use_module('../parse_dl', [ parse_dl/4 ]).
+:- use_module('../print_dl', [ print_dl_program/3 ]).
 
 % Resolved relative to this file's own load-time directory (mirrors
 % sweep.pl's compile_dir/1 pattern -- prolog_load_context/2 only answers
@@ -626,3 +628,80 @@ test(enum_tag_view_can_trigger_keyed_edge_head) :-
         EdgeStatements).
 
 :- end_tests(enum_decl_expansion).
+
+:- begin_tests(match_block).
+
+test(shared_expansion_produces_one_ordinary_rule_per_arm) :-
+    Sugared = prog(
+        [],
+        [
+            match(
+                source(Key, Value),
+                ((accepted(Key) <- Value >= 10) ;
+                 (latest(Key, Value) <+ true)))
+        ]),
+    expand_match_program(Sugared, prog([], ExpandedRules)),
+    ExpandedRules =@=
+        [
+            (accepted(Key) <- source(Key, Value), Value >= 10),
+            (latest(Key, Value) <+ source(Key, Value))
+        ].
+
+test(enum_match_requires_every_variant,
+     [throws(unsupported_construct(match_nonexhaustive(body, redirect)))]) :-
+    expand_match_program(
+        prog(
+            [enum_decl(body, (page(view:text) ; redirect(to:text)))],
+            [
+                match(
+                    decoded(Id, Tag, Value),
+                    (body_page(Id, Value) <+ Tag == page))
+            ]),
+        _).
+
+test(keyed_level_head_is_a_named_compile_refusal,
+     [throws(unsupported_construct(keyed_level_head(current/2)))]) :-
+    check_supported_subset(
+        prog(
+            [keyed(current/2, [1])],
+            [(current(Key, Value) <- source(Key, Value))])).
+
+test(keyed_edge_head_remains_supported) :-
+    check_supported_subset(
+        prog(
+            [
+                kind(source/2, log),
+                keep(source/2, all),
+                keyed(current/2, [1])
+            ],
+            [(current(Key, Value) <+ source(Key, Value))])).
+
+test(match_surface_round_trips_with_semicolon_arms) :-
+    string_codes(
+        "match source(Key, Value) (\n    accepted(Key) <- Value >= 10\n  ; latest(Key, Value) <+ true\n).\n",
+        Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    print_dl_program(Program, Bindings, Text),
+    atom_codes(Text, PrintedCodes),
+    parse_dl(PrintedCodes, RoundTripped, _, []),
+    Program =@= RoundTripped.
+
+test(sugar_and_hand_written_desugar_lower_to_identical_sql) :-
+    lowered_for('1_match_block.pl', match_classify_response, SugaredLowered),
+    lowered_for('1_match_block.pl', match_classify_response_desugared,
+                DesugaredLowered),
+    SugaredLowered =.. [lowered, _SugaredName | SugaredFields],
+    DesugaredLowered =.. [lowered, _DesugaredName | DesugaredFields],
+    SugaredFields =@= DesugaredFields.
+
+test(retention_count_is_one_set_based_delete_statement) :-
+    lowered_for('engine_core.pl', retention_count_prunes_oldest, Lowered),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    memberchk(
+        retentionstmt(
+            event/1,
+            2,
+            'DELETE FROM "event" WHERE rowid NOT IN (SELECT rowid FROM "event" ORDER BY rowid DESC LIMIT 2) RETURNING "col1"'),
+        LevelStatements).
+
+:- end_tests(match_block).

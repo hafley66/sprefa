@@ -211,6 +211,7 @@ statement(Kind, Item, Vars0, Vars, S0, S) :-
     ; decl_b_stmt(Item0, S1, S2) -> Kind = decl_list, Item = Item0, Vars = Vars0, S = S2
     ; sh_decl_stmt(S1, S2) -> Kind = skip, Item = [], Vars = Vars0, S = S2
     ; query_stmt(S1, S2) -> Kind = skip, Item = [], Vars = Vars0, S = S2
+    ; match_stmt(Item0, Vars0, Vars1, S1, S2) -> Kind = rule, Item = Item0, Vars = Vars1, S = S2
     ; rule_stmt(Item0, Vars0, Vars1, S1, S2) -> Kind = rule, Item = Item0, Vars = Vars1, S = S2
     ).
 
@@ -491,6 +492,46 @@ query_args([Arg | Rest], Vars0, Vars, S0, S) :-
     ( lit_dcg(`,`, S3, S4) -> query_args(Rest, Vars1, Vars, S4, S) ; Rest = [], Vars = Vars1, S = S3 ).
 
 % ═══ rule / fact: `HeadAtom (<- | <+) Body.` or `HeadAtom.` (bare fact) ══════
+
+match_stmt(match(SourceAtom, Arms), Vars0, Vars, S0, S) :-
+    word(`match`, S0, S1),
+    ws0(S1, S2),
+    head_atom(SourceAtom, Vars0, Vars1, S2, S3),
+    ws0(S3, S4),
+    lit_dcg(`(`, S4, S5),
+    match_arm_list(Arms, Vars1, Vars, S5, S6),
+    ws0(S6, S7),
+    lit_dcg(`)`, S7, S8),
+    ws0(S8, S9),
+    lit_dcg(`.`, S9, S).
+
+match_arm_list(Arms, Vars0, Vars, S0, S) :-
+    ws0(S0, S00),
+    match_arm(First, Vars0, Vars1, S00, S1),
+    ws0(S1, S2),
+    ( lit_dcg(`;`, S2, S3)
+    -> ws0(S3, S4),
+       match_arm_list(Rest, Vars1, Vars, S4, S),
+       Arms = (First ; Rest)
+    ; Arms = First,
+      Vars = Vars1,
+      S = S2
+    ).
+
+match_arm(Arm, Vars0, Vars, S0, S) :-
+    head_atom(Head, Vars0, Vars1, S0, S1),
+    ws0(S1, S2),
+    ( lit_dcg(`<-`, S2, S3)
+    -> Arrow = (<-)
+    ; lit_dcg(`<+`, S2, S3)
+    -> Arrow = (<+)
+    ),
+    ws0(S3, S4),
+    body(Guards, Vars1, Vars, S4, S),
+    ( Arrow == (<-)
+    -> Arm = (Head <- Guards)
+    ; Arm = (Head <+ Guards)
+    ).
 
 rule_stmt(Rule, Vars0, Vars, S0, S) :-
     head_atom(Head, Vars0, Vars1, S0, S1),

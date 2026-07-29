@@ -1,0 +1,1 @@
+{"tick":1,"deltas":{"fetch_result_error":{"add":[["worker",503]],"del":[]},"fetch_result_fresh":{"add":[["api","etag_1","payload_1"]],"del":[]},"fetch_result_unchanged":{"add":[["api"]],"del":[]},"resp_raw":{"add":[["api",200,"etag_1","payload_1"],["api",304,"etag_1","payload_1"],["worker",503,"none","unavailable"]],"del":[]}}}
