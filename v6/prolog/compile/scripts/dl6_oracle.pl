@@ -15,12 +15,18 @@
 %
 %   [ [ {"rel":"event","sign":"add","row":[1,"boot"]} ], ... ]
 %
-% VALUE MAPPING, stated because it is lossy in one direction: a JSON number
-% becomes a prolog integer and a JSON string becomes a prolog STRING. Atoms and
-% strings both serialize as JSON strings on the way out (ticklog.pl
-% `value_json/2`), so the printed log is unaffected -- but a program whose RULES
-% carry atom literals would not unify against a string arrival. Such a program
-% needs its schedule expressed as a fixture term, not through this door.
+% VALUE MAPPING, stated because prolog makes it a real choice: a JSON number
+% becomes an integer and a JSON string becomes an ATOM, not a prolog string.
+% Atoms and strings both serialize as JSON strings on the way out (ticklog.pl
+% `value_json/2`), so the printed log is identical either way -- but joins are
+% not. The compiler's own generated text (a probe's witness digest, built by
+% concatenation in 1_host_expand.pl) is an ATOM, so a schedule that fed a host
+% response's witness column as a string would silently fail to join and the
+% derived rows would vanish. Measured, not assumed: with strings, the served
+% receipt (b) log carried `answered` at its third tick and the oracle's did not.
+% The remaining edge, named rather than fixed: a program whose RULES carry
+% double-quoted string literals compared against a world-fed column needs its
+% schedule expressed as a fixture term instead.
 %
 % Run: swipl -q -l dl6_oracle.pl -g "oracle('p.dl6','s.json')" -g halt
 
@@ -57,5 +63,5 @@ arrival_term(Arrival, Term) :-
     ).
 
 schedule_value(Value, Value) :- integer(Value), !.
-schedule_value(Value, Value) :- string(Value), !.
-schedule_value(Value, Text) :- term_string(Value, Text).
+schedule_value(Value, Atom) :- string(Value), !, atom_string(Atom, Value).
+schedule_value(Value, Atom) :- term_to_atom(Value, Atom).
