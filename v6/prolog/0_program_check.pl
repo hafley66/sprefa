@@ -35,12 +35,10 @@
 :- module(program_check,
           [ program_violation/3,
             first_violation/3,
-            aggregate_head_ref/2,
             % Declaration queries, shared by both doors (rank R9 of the same
             % review). The oracle and the compiler each carried a clause-for-
             % clause identical resolver, the oracle's taking an extra Rules
             % argument it never read.
-            declared_kind/3,
             relation_kind/3,
             declared_key/3
           ]).

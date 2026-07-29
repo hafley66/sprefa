@@ -77,7 +77,6 @@
 
 :- module(body_walk,
           [ walk_body/3,
-            event_is_relation_atom/2,
             body_conjunction_goals/3,
             body_wrapper_refs/4
           ]).
@@ -134,10 +133,6 @@ walk_arguments([Argument | Rest], Index, Path, Polarity, Policy,
     walk_arguments(Rest, Next, Path, Polarity, Policy, Middle, Tail).
 
 % ── projections shared by more than one consumer ─────────────────────────────
-
-% A relation atom is a node the registry has no row for. Everything with a row
-% is a construct, and constructs are never trigger sources by themselves.
-event_is_relation_atom(event(_, _, plain_atom, Term), Term).
 
 % The ordered goal list of a body: one entry per node the walk reached that is
 % not a conjunction. With splice_bare(true) a next/1 or combine contributes its

@@ -566,3 +566,80 @@ gate is back to 10/10.
 conformance 137/0, plunit 119/119 (+7), roundtrip ALL PASS,
 TEXT_DOOR 72/72/0, sweep 137/72 RUN identical=70 wrong=0 with a clean artifact
 diff, prolog-lint 10/10 OK.
+
+---
+
+## R7: unused-export classification
+
+The gate's advisory list stood at 44 candidates after ranks R1 to R5 (the
+review measured 40 on a smaller tree, and the earlier ranks both added export
+seams and created new modules). Every one is classified below. Only the
+`internal only` rows were removed; nothing else was touched.
+
+### CLI entry, reached through `-g`. Stays exported.
+
+| Export | Receipt |
+|---|---|
+| `compile:compile_fixture/4` | `sprefa-store/bench/engines/tsv2_gen.sh:34` |
+| `compile:compile_dl6/2` | `compile/scripts/compile_dl6.sh:17` |
+| `sweep:sweep/0` | `tsv2/scripts/sweep.sh:26` |
+| `text_door_receipt:run/0` | `-g run` in its own script |
+| `print_dl:print_dl_program_with_edb_types/7` | `compile/scripts/roundtrip.sh:167` |
+| `emit_registry_docs:emit_registry_docs/0`, `emit_dl6_grammar/0` | documented `-g` entries; `emit_registry_docs/0` also calls the grammar emitter |
+| `run_sql_check:check/1`, `check_all/0` | documented `-g` entry at the file head |
+| `emit_ts_engine_v1:emit/3`, `go/0` | `bench/engines/swi_emit.sh:10`, and `go/0` is the documented scoring entry |
+| `prolog_lint:lint_sources/0`, `lint_loaded/1` | the gate's own three `-g` phases |
+| `compile:compile_fixture/3`, `compile_program/6` | sibling arities of the CLI entry, kept as the module's stated API |
+| `print_dl:print_dl_to_file/3` | file-writing sibling of the printer API |
+
+### Reached by `ensure_loaded/1` or a meta-call. Stays exported.
+
+| Export | Receipt |
+|---|---|
+| `engine:run_fixture_checks/2`, `fixture_expectations_hold/2`, `rel_rows/3`, `rel_deltas/3` | `conformance/go.pl` loads and drives them |
+| `kernel:grounds/1` | `ARCH.pl:532` inside a `check/2` fact body, a meta-call xref cannot follow |
+| `checks:covers_enum/2`, `has_subscribe_arm/1`, `no_twin_names/1`, `no_self_union/1`, `surface_grounded/0` | the `examples/ghcacher.pl` report driver calls them by name |
+
+### Test and driver seams introduced by this arc. Stays exported.
+
+`body_walk:walk_body/3`, `body_conjunction_goals/3`, `body_wrapper_refs/4`;
+`program_check:program_violation/3`, `first_violation/3`, `relation_kind/3`,
+`declared_key/3`; `expansion:expansion_phase/3`, `expand_program/3`;
+`enum_expand:expand_enum_in_context/3`, `enum_context/2`;
+`match_expand:expand_match_program_in_context/3`;
+`registry:expression/5`, `expression_for_term/5`; plus the characterization
+seams named in the R1, R2, R5 and R9 sections above.
+
+Several of these read as unused to source xref because their only caller is
+the PLUnit cluster, which the advisory scan treats as another file but which
+resolves through `use_module/2` at load time.
+
+### Internal only. Export declaration REMOVED.
+
+| Export | Where it is still used |
+|---|---|
+| `analyze:decl_keep/3` | nowhere outside `analyze.pl`; only prose in `print_dl.pl` and `parse_dl.pl` mentions it |
+| `analyze:arrival_target_refs/2` | internal |
+| `analyze:edge_headed_refs/2` | internal, by `derived_refs/2` |
+| `analyze:level_headed_refs/2` | internal, by `derived_refs/2` |
+| `analyze:rel_columns/4` | internal; the `/5` arity is the one `print_dl.pl` and `compile.pl` call |
+| `analyze:rel_column_types/5` | internal |
+| `analyze:rel_column_types/7` | internal |
+| `analyze:snake_name/2` | internal, by the column-name miner |
+| `host_expand:compile_query/2` | internal, by `prepare_program/5` |
+| `host_expand:host_relation_refs/3` | internal, by `compile_host_decl/2` |
+| `level_eval:aggregate_head/3` | internal. It was a live cross-module call until rank R2 moved the oracle's aggregate-edge check onto `program_check:aggregate_head_ref/2`; R2 is what made it dead |
+| `program_check:declared_kind/3` | internal, by `relation_kind/3` |
+| `program_check:aggregate_head_ref/2` | internal, by the `aggregate_in_edge_head` trigger |
+| `body_walk:event_is_relation_atom/2` | nothing ever called it. Written in the R1 draft, exported, imported by two modules, and never used. DELETED outright rather than unexported |
+
+Fourteen indicators removed, one of them a whole predicate. No behavior change:
+conformance 137/0, plunit 119/119, roundtrip ALL PASS, TEXT_DOOR 72/72/0,
+sweep 137/72 identical=70 wrong=0 with a clean artifact diff, prolog-lint
+10/10 OK.
+
+The `level_eval:aggregate_head/3` row is the one worth noting for later: an
+export that was genuinely live became dead as a side effect of an earlier
+rank, and only the advisory scan surfaced it. That is the case for keeping the
+scan advisory and re-reading it after each landing rather than trusting a
+one-time classification.

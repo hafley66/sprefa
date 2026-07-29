@@ -11,9 +11,7 @@
 :- module(host_expand,
           [ prepare_program/5,
             compile_host_decl/2,
-            compile_query/2,
             compile_ts_query/2,
-            host_relation_refs/3,
             % Exported as the characterization seam for the shared-walker
             % consolidation (rank R1): the plainest comma flatten in the tree.
             body_goals/2

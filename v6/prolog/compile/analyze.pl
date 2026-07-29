@@ -40,7 +40,7 @@
 :- use_module(library(pairs)).
 :- use_module('../1_expansion', [expand_program/3]).
 :- use_module('../0_body_walk',
-              [ walk_body/3, event_is_relation_atom/2,
+              [ walk_body/3,
                 body_conjunction_goals/3, body_wrapper_refs/4 ]).
 :- use_module('../0_program_check',
               [ first_violation/3, relation_kind/3, declared_key/3 ]).
