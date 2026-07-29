@@ -1024,3 +1024,30 @@ landed; the 42 are edge-BODY construct gaps: pre 12, latest 6,
 negation 6, json destructure 6, now 5, finalize 2); SCOREBOARD +
 justfile expected-count comments stale, refresh rides the next
 sweep-touching arc.
+
+UPDATE-ARM LAB LANDED (merge before 9788b655, lab-death 9788b655,
+last copy be019a99, verdict plans/2026-07-29-update-arm-verdict.md;
+19 PASS + conformance re-run by coordinator, main at 131/0 post
+merge): zero-construct OLD/NEW arm HOLDS as
+`changed(K,Old,New) <+ finalize(r(K,Old)), r(K,New)` -- EDGE arrow
+mandatory, level spelling refused at load
+(finalize_in_level_rule, refusal is right: level rules have no
+occurrences). Fires replace-tick PLUS ONE (departure = next-tick
+occurrence); needs NO keyed decl (property of the minus delta);
+insert/delete arms silent by construction; delete IS separable
+via not(current(...)). U4 same-tick v1->v2->v3 = ONE row, honest
+ENDPOINT pair (v1,v3) -- settles match-frontier C2 as DEFINED
+semantics (net transition per tick), residual trap = same-tick
+from empty yields zero rows (firing is f(tick-start state)).
+SUGAR-SCOPE ANSWERED: arm scope = trigger bindings + own body,
+never siblings; loud-in-head (unbound_in_expression) but
+SILENT-fresh-wildcard-in-body asymmetry = named slot. U5: finalize
+over log rels silently dead (no refusal) -- SLOT-LOG-FINALIZE-
+REFUSAL recommends load-time refusal, decidable. U7: compiled path
+= edge_body_needs_finalize bucket (2 fixtures). Rx lowerings:
+update arm = groupBy + distinctUntilChanged + pairwise (pairwise's
+empty-first-emission IS the silent insert case); collapse = per-
+tick fold BEFORE pairwise. 5 fixture/5 candidates distilled in the
+verdict for promotion. Open slots: UPDATE-ARM-LEVEL-SPELLING (keep
+refusal), DELETE-ARM-DISCRIMINATION, LOG-FINALIZE-REFUSAL,
+ARM-SIBLING-WILDCARD, UPDATE-ARM-COMPILED.
