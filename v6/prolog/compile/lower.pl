@@ -1579,11 +1579,13 @@ level_support_arm(RelPlans, Rule, SupportArm) :-
 % an expression while preserving its value, so only literal integer head
 % columns need a different spelling from head_select_list/4. Every variable,
 % atom, and compound head expression retains its existing emitted SQL bytes.
+% Shared by the support-count arm and both aggregate grouping arms
+% (scoped-delta insert + recompute) so the SQLite grammar fact lives once.
 support_group_exprs(Head, Bound, GroupExprs) :-
     Head =.. [_ | Args],
-    maplist(support_group_expr(Bound), Args, GroupExprs).
+    maplist(group_expr(Bound), Args, GroupExprs).
 
-support_group_expr(Bound, Arg, GroupExpr) :-
+group_expr(Bound, Arg, GroupExpr) :-
     compile_expr(Arg, Bound, Sql, _Type),
     ( integer(Arg)
     -> format(atom(GroupExpr), '(~w + 0)', [Sql])
@@ -1706,8 +1708,8 @@ compile_aggregate_int_operand(Kind, Expr, Bound, Sql) :-
     ).
 
 aggregate_group_exprs(Template, Bound, GroupExprs) :-
-    findall(Sql,
-            ( member(plain(Expr), Template), compile_expr(Expr, Bound, Sql, _Type) ),
+    findall(GroupExpr,
+            ( member(plain(Expr), Template), group_expr(Bound, Expr, GroupExpr) ),
             GroupExprs).
 
 % The head columns an aggregate rule GROUPS BY, as SQL text, reused by the

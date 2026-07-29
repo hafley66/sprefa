@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"source":{"add":[["alpha"]],"del":[]},"tallied":{"add":[[0,0,1]],"del":[]}}}
+{"tick":2,"deltas":{"source":{"add":[["beta"]],"del":[]},"tallied":{"add":[[0,0,2]],"del":[[0,0,1]]}}}

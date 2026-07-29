@@ -34,6 +34,33 @@ fixture(groupby_two_bare_integer_literals,
       [ classified(alpha, 0, 0),
         classified(beta, 0, 0) ]) ]).
 
+% ITEM 1b FAIL-FIRST RECEIPT: aggregate GROUP BY with bare integer literals.
+% The item-1 fix wrapped literals in support_group_exprs only;
+% aggregate_group_exprs (scoped-delta insert + recompute) still emitted them
+% verbatim (altitude review finding 1, 2026-07-29).
+%
+% RED, before aggregate_group_exprs shared the literal wrap:
+%   emitted recompute arm:
+%     GROUP BY 0, 0
+%   sqlite reads a bare integer there as a SELECT-list position.
+%
+% GREEN, after both group-expr sites share group_expr/3:
+%   sweep: groupby_aggregate_two_bare_integer_literals oracle-identical
+fixture(groupby_aggregate_two_bare_integer_literals,
+  prog([ col_type(source/1, name, text),
+         col_type(tallied/3, line, int),
+         col_type(tallied/3, column, int),
+         col_type(tallied/3, total, int) ],
+       [ (tallied(0, 0, count(Name)) <- source(Name)) ]),
+  [],
+  [ [ +source(alpha) ],
+    [ +source(beta) ] ],
+  [ deltas(tallied/3,
+      [ [ +tallied(0, 0, 1) ],
+        [ -tallied(0, 0, 1), +tallied(0, 0, 2) ] ]),
+    final(tallied/3,
+      [ tallied(0, 0, 2) ]) ]).
+
 % ITEM 2 FAIL-FIRST RECEIPT: comparison guard over a probe output.
 %
 % RED, before the response output columns joined the guard bound set:

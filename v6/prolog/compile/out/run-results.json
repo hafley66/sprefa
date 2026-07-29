@@ -147,6 +147,13 @@
     "finalDetail": ""
   },
   {
+    "name": "groupby_aggregate_two_bare_integer_literals",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "probe_output_comparison_guard",
     "bucket": "identical",
     "detail": "",
