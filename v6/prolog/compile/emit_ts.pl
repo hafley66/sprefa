@@ -24,7 +24,19 @@
 % fields, never renaming" -- v6/tsv2/scripts/run-emitted.ts confirms who
 % runs it and when: after DDL, before the tick fold).
 
-:- module(emit_ts, [ emit_program/5 ]).
+% The four extra exports are the EMITTER MODE seam (rank R8 of
+% plans/2026-07-29-prolog-org-review.md). The incremental_mode unit in
+% compile/test/plunit_tests.pl asserts which statement family a plan compiles
+% to, and it used to reach these as private qualified goals, which
+% `just prolog-lint` refuses. They are a real contract, not a test hole: each
+% answers a yes/no question about a plan that the emitted module's SHAPE
+% depends on, and stating them here makes that contract checkable.
+:- module(emit_ts,
+          [ emit_program/5,
+            incremental_program_safe/4,
+            reconcile_every_tick/2,
+            derived_edge_carry_required/3,
+            retraction_guard/2 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).

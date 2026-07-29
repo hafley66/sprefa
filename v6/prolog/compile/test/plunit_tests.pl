@@ -16,7 +16,8 @@
 :- use_module('../compile', [ read_fixture_term/4, program_plan/2 ]).
 :- use_module('../strat', [ stratum_groups/2 ]).
 :- use_module('../lower',
-              [ lower_program/2, compile_expr/4, compile_comparison/3 ]).
+              [ lower_program/2, compile_expr/4, compile_comparison/3,
+                canonical_column_expr/2, level_support_sql/4 ]).
 :- use_module('../analyze', [ check_supported_subset/1 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
@@ -26,7 +27,12 @@
 :- use_module('../registry', [ surface/5, expression/5 ]).
 :- use_module('../../1_host_expand',
               [ prepare_program/5, compile_host_decl/2, compile_ts_query/2 ]).
-:- use_module('../emit_ts', [ emit_program/5 ]).
+:- use_module('../emit_ts',
+              [ emit_program/5,
+                % The emitter-mode seam (rank R8): which statement family a
+                % plan compiles to, asserted by the incremental_mode unit.
+                incremental_program_safe/4, reconcile_every_tick/2,
+                derived_edge_carry_required/3, retraction_guard/2 ]).
 :- use_module('../lower', [ boot_statements/4 ]).
 
 % Body-walk characterization (rank R1) reaches the traversals on BOTH sides of
@@ -311,7 +317,7 @@ test(level_derived_trigger_reads_same_tick_frontier) :-
 % json_valid/json_type guard, the AS alias) instead.
 
 test(canonical_column_expr_shape) :-
-    lower:canonical_column_expr(target, Expr),
+    canonical_column_expr(target, Expr),
     Expr ==
       'CASE WHEN json_valid("target") AND json_type("target") = \'object\' THEN json_extract("target", \'$.fn\') || \'(\' || (SELECT group_concat(value, \',\') FROM json_each("target", \'$.args\')) || \')\' ELSE "target" END AS "target"'.
 
@@ -376,14 +382,14 @@ test(positive_edge_level_program_is_incremental) :-
     load_plan(switch_as_keyed_replace, Plan),
     lower_program(Plan, Lowered),
     Lowered = lowered(_, _, _, EdgeStatements, LevelStatements, _, _, _),
-    emit_ts:incremental_program_safe(Plan, EdgeStatements, LevelStatements, true).
+    incremental_program_safe(Plan, EdgeStatements, LevelStatements, true).
 
 test(negative_level_body_uses_incremental_reconcile) :-
     load_plan(merge_policy, Plan),
     lower_program(Plan, Lowered),
     Lowered = lowered(_, _, _, EdgeStatements, LevelStatements, _, _, _),
-    emit_ts:incremental_program_safe(Plan, EdgeStatements, LevelStatements, true),
-    emit_ts:reconcile_every_tick(Plan, true).
+    incremental_program_safe(Plan, EdgeStatements, LevelStatements, true),
+    reconcile_every_tick(Plan, true).
 
 test(derived_edge_trigger_requires_incremental_carry_path) :-
     fixture_file('engine_core.pl', File),
@@ -391,13 +397,13 @@ test(derived_edge_trigger_requires_incremental_carry_path) :-
            program_plan(Term-Bindings, Plan),
            lower_program(Plan, Lowered) )),
     Lowered = lowered(_, _, _, EdgeStatements, _, _, _, _),
-    emit_ts:derived_edge_carry_required(Plan, EdgeStatements, true).
+    derived_edge_carry_required(Plan, EdgeStatements, true).
 
 test(edb_edge_trigger_keeps_naive_referee_available) :-
     load_plan(switch_as_keyed_replace, Plan),
     lower_program(Plan, Lowered),
     Lowered = lowered(_, _, _, EdgeStatements, _, _, _, _),
-    emit_ts:derived_edge_carry_required(Plan, EdgeStatements, false).
+    derived_edge_carry_required(Plan, EdgeStatements, false).
 
 test(acyclic_support_count_statements_are_emitted) :-
     lowered_for(shared_demand_refcount, Lowered),
@@ -424,7 +430,7 @@ test(self_recursive_support_uses_recursive_cte_reseed) :-
         (path(Node) <- root(Node)),
         (path(Child) <- path(Parent), edge(Parent, Child))
     ],
-    lower:level_support_sql(
+    level_support_sql(
         RelPlans, path/1, Rules,
         supportsql(_, SeedSql, _, _, _)),
     once(sub_atom(
@@ -432,7 +438,7 @@ test(self_recursive_support_uses_recursive_cte_reseed) :-
         'WITH RECURSIVE "path" ("node") AS')),
     once(sub_atom(SeedSql, _, _, _, 'FROM "path" b0')),
     Plan = plan(test, prog([], Rules), RelPlans, [], Rules, []),
-    emit_ts:retraction_guard(Plan, 'recursive-cte-reseed').
+    retraction_guard(Plan, 'recursive-cte-reseed').
 
 test(set_delete_arrival_is_one_json_batch_statement) :-
     lowered_for(shared_demand_refcount, Lowered),

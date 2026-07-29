@@ -106,7 +106,7 @@ report :-
     format("externals (host boundary):              ~w~n", [Externals]),
     forall(register(Name, over(Src), _),
            format("  register ~w folds external ~w~n", [Name, Src])),
-    forall(( rule(Head <- Body), checks:body_member(delta(_), Body),
+    forall(( rule(Head <- Body), body_member(delta(_), Body),
              functor(Head, HeadName, _) ),
            format("  boundary-out ~w is clocked on deltas~n", [HeadName])),
     format("v5: 12 rels (2 twins + 3-rel latest-wins chain) -> ~w rules + 1 register~n",

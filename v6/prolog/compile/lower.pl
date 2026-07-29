@@ -131,7 +131,11 @@
             % plans/2026-07-29-prolog-org-review.md). That unit walks every
             % registry.pl expression/5 row and checks it lowers to the SQL the
             % row declares, which has to reach these two by name.
-            compile_expr/4, compile_comparison/3 ]).
+            compile_expr/4, compile_comparison/3,
+            % The column-expression and refCount-SQL seams (rank R8). The
+            % sql_text_snapshots and incremental_mode units pin the exact text
+            % these produce; both were private qualified calls before.
+            canonical_column_expr/2, level_support_sql/4 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).

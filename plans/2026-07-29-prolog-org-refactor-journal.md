@@ -643,3 +643,43 @@ export that was genuinely live became dead as a side effect of an earlier
 rank, and only the advisory scan surfaced it. That is the case for keeping the
 scan advisory and re-reading it after each landing rather than trusting a
 one-time classification.
+
+---
+
+## R8: private qualified call sites
+
+All nine closed. The lint baseline drops from 10 findings to 1.
+
+The review priced this as "tests currently pin emitter/lower internals" and
+asked for a public seam rather than deleting assertions. Every site turned out
+to be reaching something that IS a contract, just an undeclared one, so the
+fix was to declare it. No assertion was weakened and no snapshot was rewritten.
+
+| Site | Target | Now |
+|---|---|---|
+| `plunit_incremental_mode` x2 | `emit_ts:incremental_program_safe/4` | exported |
+| `plunit_incremental_mode` | `emit_ts:reconcile_every_tick/2` | exported |
+| `plunit_incremental_mode` x2 | `emit_ts:derived_edge_carry_required/3` | exported |
+| `plunit_incremental_mode` | `emit_ts:retraction_guard/2` | exported |
+| `plunit_incremental_mode` | `lower:level_support_sql/4` | exported |
+| `plunit_sql_text_snapshots` | `lower:canonical_column_expr/2` | exported |
+| `examples/ghcacher.pl` | `checks:body_member/2` | exported |
+
+The four `emit_ts` predicates are one seam, not four accidents: each answers a
+yes-or-no question about a plan that the emitted module's SHAPE depends on
+(which statement family, whether reconcile runs every tick, whether a derived
+edge trigger needs the carry path, which retraction guard). Naming them in the
+module header makes that contract checkable instead of implied.
+
+`checks:body_member/2` is the older `src/` cluster's body walker, which
+`examples/ghcacher.pl` uses to report which boundary relations are clocked on
+deltas. The report output is unchanged.
+
+Nothing needed a heavy snapshot rewrite, so nothing was left for the baseline
+to carry.
+
+### Receipts
+
+conformance 137/0, plunit 119/119, roundtrip ALL PASS, TEXT_DOOR 72/72/0,
+sweep 137/72 RUN identical=70 wrong=0 with a clean artifact diff, ghcacher
+report unchanged, prolog-lint findings=1 baseline=1 OK.

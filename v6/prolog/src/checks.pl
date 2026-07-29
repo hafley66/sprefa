@@ -3,10 +3,14 @@
 % initialization.pl's first-instant rule, the v5 twin post-mortems), packaged
 % for import instead of restatement.
 
+% body_member/2 is exported for examples/ghcacher.pl, which reads rule bodies
+% to report which boundary relations are clocked on deltas. It reached it as a
+% private qualified goal before rank R8 of
+% plans/2026-07-29-prolog-org-review.md.
 :- module(checks,
           [ covers_enum/2, has_subscribe_arm/1,
             no_twin_names/1, no_self_union/1,
-            surface_grounded/0 ]).
+            surface_grounded/0, body_member/2 ]).
 
 :- use_module(library(lists)).
 :- use_module(kernel).
