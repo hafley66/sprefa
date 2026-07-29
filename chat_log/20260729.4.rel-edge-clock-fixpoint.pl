@@ -14,6 +14,7 @@
 :- discontiguous touched/2.
 :- discontiguous verification/2.
 :- discontiguous next_action/2.
+:- discontiguous locked/2.
 
 session(id, '20260729.4').
 session(date, '2026-07-29').
@@ -153,3 +154,27 @@ verification(stale_keyed_retraction_oracle, passed(3)).
 verification(stale_keyed_retraction_sql, passed(3)).
 next_action(1,
             'grade reference construction contexts: existing target query, missing target, nested world arrival, and same-key conflicting non-key fields').
+
+touched('v6/prolog/labs/rel_value_unification/9_reference_construction_contexts.pl',
+        'seven real compiler checks across existing, missing, conflicting, key-only, runtime, and boot reference construction').
+observed(reference_construction_contexts,
+         '7 checks pass against current plan/lowering/runtime SQL generation').
+observed(existing_target_id_discarded,
+         'an RHS target relation already joins the target table, but the nested head constructor discards that available row identity into JSON').
+observed(missing_target_has_no_join,
+         'a nested constructor without an RHS target atom currently fabricates JSON without checking target membership').
+observed(conflicting_non_key_runtime_failure,
+         'runtime INSERT OR IGNORE respects the key UNIQUE constraint, then full-row lookup by key plus non-key fields returns no id for a same-key conflict').
+observed(boot_schema_divergence,
+         'boot reference insertion still queries removed __semantic columns absent from current target-table DDL').
+leading_hypothesis(derived_reference_lowering,
+                   'relation-shaped head value is an indexed match against an existing public target row; its fields constrain that row and the parent stores __id').
+leading_hypothesis(missing_derived_target,
+                   'ordinary join semantics produce no parent row; target creation is an ordinary target-headed rule participating in the relational fixpoint').
+leading_hypothesis(world_reference_arrival,
+                   'boundary batch resolves or asserts target rows before parent rows atomically; conflicts refuse the batch by name').
+leading_hypothesis(key_only_constructor,
+                   'no key-only arity is needed while a full relation pattern with existing wildcards can constrain only key fields').
+verification(reference_construction_contexts, passed(7)).
+next_action(1,
+            'prototype existing-target relation constructor as a direct __id projection from the already joined target table, with no JSON and no hidden write').
