@@ -63,6 +63,10 @@ store-test:
 endurance:
 	bash {{v6}}/dl/scripts/goal-endurance.sh
 
+# long-running server leak gate: one process, repeated swaps/commits/SSE teardown
+leak-soak:
+	bash {{v6}}/dl/scripts/leak-soak.sh
+
 # ── benches ──
 
 # the house scale-test rig (engines/*.sh emit a shared CSV protocol)
@@ -75,4 +79,4 @@ bench:
 green: conformance roundtrip plunit tsv2-test import-gate dl-test store-test
 
 # everything, including the sweep
-green-all: green sweep
+green-all: green endurance leak-soak sweep

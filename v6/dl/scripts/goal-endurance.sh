@@ -17,27 +17,32 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-PORT="${DL_GOAL_PORT:-7191}"
+PORT="${DL_GOAL_PORT:-17491}"
 NAP="${DL_GOAL_NAP:-4}"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/dl-goal.XXXXXX")"
 DB="$WORK/endure.sqlite"
 BASE="http://127.0.0.1:$PORT"
 SERVER_PID=""
+PASS_LINES=()
 
 say()  { printf '\n== %s\n' "$*"; }
-pass() { printf 'PASS  %s\n' "$*"; }
+pass() { PASS_LINES+=("PASS  $*"); }
 fail() { printf 'FAIL  %s\n' "$*"; stop_server; exit 1; }
 
 start_server() {
+  local started=0
   DL_DB_PATH="$DB" DL_PORT="$PORT" node --experimental-transform-types src/main.ts \
     >"$WORK/server.log" 2>&1 &
   SERVER_PID=$!
   for _ in $(seq 1 50); do
-    curl -sf "$BASE/idb/nothing" >/dev/null 2>&1 && break
-    curl -s -o /dev/null "$BASE/query" 2>/dev/null && break
+    if curl -sf "$BASE/idb/nothing" >/dev/null 2>&1 || curl -s -o /dev/null "$BASE/query" 2>/dev/null; then
+      started=1
+      break
+    fi
     kill -0 "$SERVER_PID" 2>/dev/null || fail "server died on boot: $(tail -3 "$WORK/server.log")"
     sleep 0.2
   done
+  [ "$started" = "1" ] || fail "server did not become ready on port $PORT: $(tail -3 "$WORK/server.log")"
 }
 
 stop_server() { [ -n "$SERVER_PID" ] && kill -9 "$SERVER_PID" 2>/dev/null; wait "$SERVER_PID" 2>/dev/null; SERVER_PID=""; }
@@ -112,5 +117,9 @@ alpha_n=$(woke_count alpha); bravo_n=$(woke_count bravo)
 [ "$alpha_n" = "1" ] || fail "phase 2: woke(alpha) count=$alpha_n, want 1 (witness cache must hold across boots)"
 [ "$bravo_n" = "1" ] || fail "phase 2: woke(bravo) count=$bravo_n, want 1"
 pass "phase 2: both values exactly once after reboot #2"
+
+for pass_line in "${PASS_LINES[@]}"; do
+  printf '%s\n' "$pass_line"
+done
 
 say "END GOAL HOLDS: time flows through rows, not process memory. ($WORK kept for autopsy)"
