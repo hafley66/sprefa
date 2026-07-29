@@ -20,6 +20,7 @@
           ]).
 
 :- use_module(library(lists)).
+:- use_module('0_body_walk', [body_conjunction_goals/3]).
 :- use_module('compile/registry', [bind_definition/2]).
 
 :- op(1150, xfx, <-).
@@ -315,12 +316,15 @@ expand_probe_rule((Head <- Body), HostPlans, RawDecls,
     DemandRule = (DemandAtom <- DemandBody).
 expand_probe_rule(Rule, _, _, [Rule], []).
 
-body_goals((Left, Right), Goals) :-
-    !,
-    body_goals(Left, LeftGoals),
-    body_goals(Right, RightGoals),
-    append(LeftGoals, RightGoals, Goals).
-body_goals(Goal, [Goal]).
+% The plainest walk in the tree: flatten the conjunction spine and leave every
+% wrapper whole (rank R1 of plans/2026-07-29-prolog-org-review.md). Probe
+% selection above depends on wrappers staying intact, so nothing is spliced and
+% not/1 is not descended.
+body_goals(Body, Goals) :-
+    body_conjunction_goals(Body,
+                           walk_policy(descend_not(false),
+                                       splice_bare(false)),
+                           Goals).
 
 expand_probe(Probe, HostPlans, RawDecls,
              DemandAtom, WitnessBind, ResponseAtom, Decls) :-

@@ -71,6 +71,8 @@
 :- use_module(library(ordsets)).
 :- use_module(library(pairs)).
 :- use_module('../0_match_expand', [expand_match_program/2]).
+:- use_module('../0_body_walk', [walk_body/3, event_is_relation_atom/2,
+                                 body_wrapper_refs/4]).
 :- use_module('../1_host_expand', [prepare_program/5]).
 :- use_module(rulings).
 :- use_module(body).
@@ -151,25 +153,51 @@ log_stamps(Store, Ref, Stamps) :-
 % r4: finalize(Atom) is a DEPARTURE trigger position; it fires on a Set/level
 % row's -delta arriving as a next-tick occurrence, and is never satisfiable
 % as a read (the row is gone). Items are arrival(Atom) | departure(Atom).
+% The conjunction spine comes from the shared walk (rank R1 of
+% plans/2026-07-29-prolog-org-review.md); the classification stays here,
+% because it is NOT the registry's.
+%
+% silent_trigger_form/1 below is the list this file has always carried, kept
+% exactly as it was. It is a strict SUBSET of the registry's body rows: next/1,
+% variadic combine, zip/2, the four reserved lifecycle wrappers and the six
+% comparison operators are absent from it, so each of those becomes an
+% arrival(Wrapper) here. The `mixed` and `comparison` goldens in the
+% body_walk_characterization unit pin exactly that. Those items are inert,
+% because occurrence_trigger/4 unifies an arrival against a real stored row and
+% none of those shapes can match one, but the classification is wrong at the
+% source and widening it is a semantics change owed a fixture, not a cleanup.
+%
+% The walk must NOT descend not/1 and must NOT splice next/1 or combine: a
+% negated atom is not a trigger, and splicing would turn the inert
+% arrival(next(...)) into a live trigger on the spliced atom.
 trigger_items(Body, Items) :-
-    trigger_items_(Body, Items).
+    walk_body(Body, walk_policy(descend_not(false), splice_bare(false)),
+              Events),
+    trigger_items_(Events, Items).
 
-trigger_items_((Left, Right), Items) :- !,
-    trigger_items_(Left, LeftItems), trigger_items_(Right, RightItems),
-    append(LeftItems, RightItems, Items).
-trigger_items_(finalize(Atom), [departure(Atom)]) :- !.
-trigger_items_(latest(_), []) :- !.
-trigger_items_(not(_), []) :- !.
-trigger_items_(pre(_), []) :- !.
-trigger_items_(now(_), []) :- !.
-trigger_items_(true, []) :- !.
-trigger_items_(_ := _, []) :- !.
-trigger_items_(_ is _, []) :- !.
-trigger_items_(decode(_, _), []) :- !.
-trigger_items_(json_each(_, _), []) :- !.
-% maplist, NEVER findall: findall copies its template, which would sever the
-% trigger atom from the body and let solve rejoin over the whole store.
-trigger_items_(Atom, [arrival(Atom)]).
+trigger_items_([], []).
+trigger_items_([event(_, _, _, Term) | Rest], Items) :-
+    (   nonvar(Term), Term = finalize(Atom)
+    ->  Items = [departure(Atom) | RestItems]
+    ;   silent_trigger_form(Term)
+    ->  Items = RestItems
+    % Bound directly out of the walked body, NEVER copied: a copy would sever
+    % the trigger atom from the body and let solve rejoin over the whole store.
+    ;   Items = [arrival(Term) | RestItems]
+    ),
+    trigger_items_(Rest, RestItems).
+
+silent_trigger_form(Term) :- nonvar(Term), silent_trigger_shape(Term).
+
+silent_trigger_shape(latest(_)).
+silent_trigger_shape(not(_)).
+silent_trigger_shape(pre(_)).
+silent_trigger_shape(now(_)).
+silent_trigger_shape(true).
+silent_trigger_shape(_ := _).
+silent_trigger_shape(_ is _).
+silent_trigger_shape(decode(_, _)).
+silent_trigger_shape(json_each(_, _)).
 
 wrap_arrival(Atom, arrival(Atom)).
 
@@ -188,19 +216,28 @@ listened_departure_refs(Rules, Refs) :-
             Refs0),
     sort(Refs0, Refs).
 
-body_finalize_ref((Left, Right), Ref) :-
-    ( body_finalize_ref(Left, Ref) ; body_finalize_ref(Right, Ref) ).
-body_finalize_ref(finalize(Atom), Ref) :- rel_ref(Atom, Ref).
+% All three are the shared walk under different policies (rank R1 of
+% plans/2026-07-29-prolog-org-review.md). The compiler shipped its own copies
+% of the latest/1 and pre/1 scans as analyze:level_body_latest_ref/2 and
+% analyze:level_body_pre_ref/2; both now call this same implementation, and
+% the body_walk_characterization unit asserts the two sides agree case by case.
+%
+% finalize/1 deliberately does NOT descend not/1, matching what this file did
+% before: a negated finalize is not a departure the engine listens for.
+body_finalize_ref(Body, Ref) :-
+    body_wrapper_refs(Body, finalize,
+                      walk_policy(descend_not(false), splice_bare(false)),
+                      Ref).
 
-body_latest_ref((Left, Right), Ref) :-
-    ( body_latest_ref(Left, Ref) ; body_latest_ref(Right, Ref) ).
-body_latest_ref(not(Body), Ref) :- body_latest_ref(Body, Ref).
-body_latest_ref(latest(Atom), Ref) :- rel_ref(Atom, Ref).
+body_latest_ref(Body, Ref) :-
+    body_wrapper_refs(Body, latest,
+                      walk_policy(descend_not(true), splice_bare(false)),
+                      Ref).
 
-body_pre_ref((Left, Right), Ref) :-
-    ( body_pre_ref(Left, Ref) ; body_pre_ref(Right, Ref) ).
-body_pre_ref(not(Body), Ref) :- body_pre_ref(Body, Ref).
-body_pre_ref(pre(Atom), Ref) :- rel_ref(Atom, Ref).
+body_pre_ref(Body, Ref) :-
+    body_wrapper_refs(Body, pre,
+                      walk_policy(descend_not(true), splice_bare(false)),
+                      Ref).
 
 % ═══ arrivals ═══════════════════════════════════════════════════════════════
 

@@ -38,6 +38,9 @@
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
 :- use_module('../0_match_expand', [expand_match_program/2]).
+:- use_module('../0_body_walk',
+              [ walk_body/3, event_is_relation_atom/2,
+                body_conjunction_goals/3, body_wrapper_refs/4 ]).
 :- use_module('../conformance/body', [rel_ref/2]).
 :- use_module(registry,
               [ surface_for_term/6,
@@ -98,34 +101,46 @@ derived_refs(Rules, Refs) :-
 % stratification and column-name mining, both of which DO care about a
 % negated read).
 
-body_ref_uses((Left, Right), Uses) :- !,
-    body_ref_uses(Left, LeftUses), body_ref_uses(Right, RightUses),
-    append(LeftUses, RightUses, Uses).
-body_ref_uses(Term, Uses) :-
-    body_surface_for_term(Term, _, _, AnalyzeRole, _, _), !,
-    analyze_role_uses(AnalyzeRole, Term, Uses).
-body_ref_uses(Atom, [use(Ref, Args, pos, trigger)]) :-
-    atom_ref_args(Atom, Ref, Args).
+% This is the walk the review named as the reference semantics for the shared
+% traversal, and the one whose policy is widest: it descends not/1 and splices
+% next/1 and combine. The traversal itself now lives in 0_body_walk.pl (rank
+% R1); what stays here is the projection from a walk event to a use/4.
+%
+% Polarity comes from the walker, which absorbs to neg under any descended
+% not/1 rather than flipping, so a doubly negated atom reads negative. That is
+% what the old flip_to_neg/2 did, applied unconditionally rather than as a
+% flip; the nested_not golden pins it.
+% Collected by recursion and NEVER by findall/3: findall copies its template,
+% which would sever every use/4's Args from the body's own variables and leave
+% lowering to join over fresh holes.
+body_ref_uses(Body, Uses) :-
+    walk_body(Body, walk_policy(descend_not(true), splice_bare(true)),
+              Events),
+    events_uses(Events, Uses).
 
-analyze_role_uses(refs_of_arg(Index, Sign, Marking), Term,
-                  [use(Ref, Args, Sign, Marking)]) :-
+events_uses([], []).
+events_uses([Event | Rest], Uses) :-
+    (   event_use(Event, Use)
+    ->  Uses = [Use | RestUses]
+    ;   Uses = RestUses
+    ),
+    events_uses(Rest, RestUses).
+
+% A node the registry has a row for contributes according to its AnalyzeRole;
+% a node it does not is a relation atom read positively as a trigger source.
+event_use(event(_, Polarity, plain_atom, Atom), use(Ref, Args, Polarity,
+                                                    trigger)) :-
+    !,
+    atom_ref_args(Atom, Ref, Args).
+event_use(event(_, Polarity, surface(_, _, refs_of_arg(Index, Sign, Marking),
+                                     _, _), Term),
+          use(Ref, Args, Polarity, Marking)) :-
+    % The registry's own Sign is positive for every current row; a negative
+    % polarity can only come from an enclosing not/1, which the walker has
+    % already absorbed. Reading it here keeps the row honest if one is added.
+    Sign == pos,
     arg(Index, Term, Atom),
     atom_ref_args(Atom, Ref, Args).
-analyze_role_uses(splice_bare, Term, Uses) :-
-    Term =.. [_ | Bodies],
-    body_ref_uses_list(Bodies, Uses).
-analyze_role_uses(arm(neg), Term, Uses) :-
-    arg(1, Term, Goal),
-    body_ref_uses(Goal, InnerUses),
-    maplist(flip_to_neg, InnerUses, Uses).
-analyze_role_uses(no_refs, _, []).
-
-flip_to_neg(use(Ref, Args, _, Marked), use(Ref, Args, neg, Marked)).
-
-body_ref_uses_list([], []).
-body_ref_uses_list([Body | Rest], Uses) :-
-    body_ref_uses(Body, BodyUses), body_ref_uses_list(Rest, RestUses),
-    append(BodyUses, RestUses, Uses).
 
 atom_ref_args(Atom, Ref, Args) :- rel_ref(Atom, Ref), Atom =.. [_ | Args].
 
@@ -652,14 +667,16 @@ edge_goal_refusal(Goal, Body, 8, edge_body_needs_json_destructure(Body)) :-
     body_surface_for_term(Goal, _, guard, no_refs,
                           wrapper(expr_pair, refuse(goal)), refused).
 
-conjunction_goals((Left, Right), Goals) :- !,
-    conjunction_goals(Left, LeftGoals), conjunction_goals(Right, RightGoals),
-    append(LeftGoals, RightGoals, Goals).
-conjunction_goals(Term, Goals) :-
-    compound(Term), Term =.. [combine | Atoms], Atoms \== [], !,
-    maplist(conjunction_goals, Atoms, AtomGoals), append(AtomGoals, Goals).
-conjunction_goals(next(Atom), [Atom]) :- !.
-conjunction_goals(Goal, [Goal]).
+% The ordered goal list, with next/1 and variadic combine spliced away and
+% not/1 left whole. The splicing used to be a local `Term =.. [combine | ...]`
+% test plus a next/1 clause; it is now the registry's splice_bare role, walked
+% by 0_body_walk.pl (rank R1). not/1 stays one goal because callers depend on
+% it: negated_guard_goal/2 below selects a not/1 goal out of this list and
+% inspects its inside.
+conjunction_goals(Body, Goals) :-
+    body_conjunction_goals(Body,
+                           walk_policy(descend_not(false), splice_bare(true)),
+                           Goals).
 
 plain_positive_atom(Goal) :-
     compound(Goal),
@@ -767,15 +784,21 @@ check_supported_subset_expanded(prog(Decls, Rules)) :-
     forall(( member(keyed(Ref, Positions), Decls), rel_kind(Decls, Ref, log) ),
            throw(unsupported_construct(keyed_log_rel(Ref, Positions)))).
 
-level_body_latest_ref((Left, Right), Ref) :-
-    ( level_body_latest_ref(Left, Ref) ; level_body_latest_ref(Right, Ref) ).
-level_body_latest_ref(not(Body), Ref) :- level_body_latest_ref(Body, Ref).
-level_body_latest_ref(latest(Atom), Ref) :- rel_ref(Atom, Ref).
+% Both are the shared walk (rank R1 of
+% plans/2026-07-29-prolog-org-review.md). The oracle's engine:body_latest_ref/2
+% and engine:body_pre_ref/2 call the same implementation under the same policy,
+% and the body_walk_characterization unit asserts the two sides agree case by
+% case, which is what makes the cross-plane refusal parity real rather than
+% coincidental.
+level_body_latest_ref(Body, Ref) :-
+    body_wrapper_refs(Body, latest,
+                      walk_policy(descend_not(true), splice_bare(false)),
+                      Ref).
 
-level_body_pre_ref((Left, Right), Ref) :-
-    ( level_body_pre_ref(Left, Ref) ; level_body_pre_ref(Right, Ref) ).
-level_body_pre_ref(not(Body), Ref) :- level_body_pre_ref(Body, Ref).
-level_body_pre_ref(pre(Atom), Ref) :- rel_ref(Atom, Ref).
+level_body_pre_ref(Body, Ref) :-
+    body_wrapper_refs(Body, pre,
+                      walk_policy(descend_not(true), splice_bare(false)),
+                      Ref).
 
 check_edge_rule_shape((Head <+ Body)) :-
     edge_trigger_shape(Body, Shape),
@@ -792,12 +815,17 @@ rule_reserved_construct(Rule, Construct) :-
     rule_body(Rule, Body),
     reserved_construct_in_body(Body, Construct).
 
-reserved_construct_in_body((Left, Right), Construct) :- !,
-    ( reserved_construct_in_body(Left, Construct)
-    ; reserved_construct_in_body(Right, Construct)
-    ).
-reserved_construct_in_body(Term, Construct) :-
-    body_surface_for_term(Term, Functor/_, _, _, LowerRole, reserved),
+% Shared walk (rank R1), same policy as before: the conjunction spine only,
+% not/1 opaque and next/1 and combine unspliced. A reserved construct nested
+% inside either wrapper is therefore still not reached; the review recorded
+% that as drift against body_ref_uses/2, which does splice. Widening it would
+% start refusing programs that load today, so it is left as it stands and
+% named here rather than changed under cover of a refactor.
+reserved_construct_in_body(Body, Construct) :-
+    walk_body(Body, walk_policy(descend_not(false), splice_bare(false)),
+              Events),
+    member(event(_, _, surface(Functor/_, _, _, LowerRole, reserved), _),
+           Events),
     reserved_construct_name(LowerRole, Functor, Construct).
 
 reserved_construct_name(wrapper(_, refuse(lifecycle)), Functor,
@@ -932,8 +960,10 @@ contains_arithmetic_functor(Arg, Arg) :-
 contains_arithmetic_functor(Arg, Found) :-
     compound(Arg), Arg =.. [_ | SubArgs], member(SubArg, SubArgs), contains_arithmetic_functor(SubArg, Found).
 
-body_forbidden_goal((Left, Right), Forbidden) :- !,
-    ( body_forbidden_goal(Left, Forbidden) ; body_forbidden_goal(Right, Forbidden) ).
+% Shared walk (rank R1) over the conjunction spine, with not/1 opaque and no
+% splicing, exactly the reach this had before. A negated forbidden goal is
+% covered separately by negated_guard_goal/2.
+%
 % Comparison operators (body_ref_uses/2 already returns zero Uses for these
 % -- comparison_goal/1 -- meaning nothing downstream ever compiled them into
 % a WHERE clause; a level rule that filters on one silently lost the filter)
@@ -946,8 +976,10 @@ body_forbidden_goal((Left, Right), Forbidden) :- !,
 % range_join_over_arithmetic, bind_computes_derived_value_then_comparison_filters);
 % refusing them cleanly until real lowering lands, rather than leaving the
 % silent-drop behavior.
-body_forbidden_goal(Term, Forbidden) :-
-    body_surface_for_term(Term, _, _, _, LowerRole, refused),
+body_forbidden_goal(Body, Forbidden) :-
+    walk_body(Body, walk_policy(descend_not(false), splice_bare(false)),
+              Events),
+    member(event(_, _, surface(_, _, _, LowerRole, refused), Term), Events),
     refused_goal_term(LowerRole, Term, Forbidden).
 
 refused_goal_term(infix(refuse(comparison)), Term, comparison(Term)) :- !.
