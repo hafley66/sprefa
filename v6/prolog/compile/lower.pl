@@ -311,10 +311,28 @@ compile_positive_uses(RelPlans, [use(Ref, Args, pos, _) | Rest], Index, Bound0, 
     format(atom(From), '~w ~w', [QuotedTable, Alias]),
     relplan_columns(RelPlans, Ref, Columns),
     relplan_column_types(RelPlans, Ref, ColumnTypes),
-    compile_atom_args(Args, Columns, ColumnTypes, Alias, Bound0, Bound1, HereWhere),
+    compile_atom_args(Args, Columns, ColumnTypes, Alias, Bound0, FieldBound, HereWhere),
+    bind_reference_target_identity(RelPlans, Ref, Args, Alias,
+                                   FieldBound, Bound1),
     NextIndex is Index + 1,
     compile_positive_uses(RelPlans, Rest, NextIndex, Bound1, Bound, MoreFrom, MoreWhere),
     append(HereWhere, MoreWhere, WhereParts).
+
+% A public relation that appears as another relation's column domain has a
+% hidden dense __id. Bind the complete body atom to that endpoint while its
+% ordinary fields remain bound independently. A head value with the same
+% relation-shaped term can then project the already-joined row identity
+% instead of manufacturing JSON or performing a hidden target write.
+bind_reference_target_identity(RelPlans, Name/Arity, Args, Alias,
+                               Bound0, Bound) :-
+    member(relplan(_, _, _, _, ColumnTypes), RelPlans),
+    memberchk(ref(Name), ColumnTypes),
+    !,
+    length(Args, Arity),
+    Atom =.. [Name | Args],
+    format(atom(IdExpr), '~w."__id"', [Alias]),
+    Bound = [Atom-typed(IdExpr, ref(Name)) | Bound0].
+bind_reference_target_identity(_, _, _, _, Bound, Bound).
 
 compile_atom_args([], [], [], _, Bound, Bound, []).
 compile_atom_args([Arg | RestArgs], [Column | RestColumns], [ColumnType | RestTypes],
@@ -390,6 +408,9 @@ compile_expr(Expr, Bound, Sql, Type) :-
     -> ( bound_lookup(Bound, Expr, typed(Sql, Type))
        -> true
        ;  throw(unsupported_construct(unbound_head_var(Expr))) )
+    ; compound(Expr),
+      bound_lookup(Bound, Expr, typed(Sql, Type))
+    -> true
     ; integer(Expr)
     -> sql_literal(Expr, Sql), Type = int
     ; atomic(Expr)

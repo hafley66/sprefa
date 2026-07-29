@@ -462,6 +462,13 @@
     "finalDetail": ""
   },
   {
+    "name": "stale_keyed_retraction_keeps_replacement",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "merge_policy",
     "bucket": "identical",
     "detail": "",

@@ -1,0 +1,4 @@
+{"tick":1,"deltas":{"current_value":{"add":[["item","v1"]],"del":[]}}}
+{"tick":2,"deltas":{"current_value":{"add":[["item","v2"]],"del":[["item","v1"]]}}}
+{"tick":3,"deltas":{}}
+{"tick":4,"deltas":{"current_value":{"add":[],"del":[["item","v2"]]}}}

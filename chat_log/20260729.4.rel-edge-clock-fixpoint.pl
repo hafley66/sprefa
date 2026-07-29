@@ -178,3 +178,24 @@ leading_hypothesis(key_only_constructor,
 verification(reference_construction_contexts, passed(7)).
 next_action(1,
             'prototype existing-target relation constructor as a direct __id projection from the already joined target table, with no JSON and no hidden write').
+
+touched('v6/prolog/compile/lower.pl',
+        'prototype binds each positive body atom for a referenced public relation to its table alias __id and lets the identical relation-shaped head term project it').
+observed(existing_target_identity_prototype,
+         'post(user(Id,Name)) from a body containing user(Id,Name) now selects bN.__id directly; no JSON, subquery, extra statement, hidden target write, or surface syntax').
+observed(existing_target_identity_cost,
+         'one compile-time compound-term binding per referenced positive use and one early bound-expression lookup').
+observed(direct_trigger_gap,
+         'a referenced relation used as the direct edge trigger still binds only its fields and emits JSON for a relation-shaped head value').
+observed(implicit_match_gap,
+         'a relation-shaped head value without an explicit target atom still emits JSON; automatic RHS match injection is unimplemented').
+verification(existing_target_identity_context_lab, passed(8)).
+verification(existing_target_identity_plunit, passed(147)).
+verification(existing_target_identity_sweep_compile,
+             result(164,103,61,0,
+                    'total, compiled, unsupported, crash')).
+verification(existing_target_identity_sweep_runtime,
+             result(103,92,9,2,
+                    'compiled, identical, expected old relation-value oracle disagreements, recorded run errors')).
+next_action(1,
+            'extend the same identity binding to direct triggers, then test automatic target-match injection separately from world-arrival assertion').

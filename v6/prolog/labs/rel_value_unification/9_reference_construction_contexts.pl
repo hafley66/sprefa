@@ -37,14 +37,23 @@ check(existing_target_query_has_target_id_available_in_sql,
         sub_atom(Sql, _, _, _, 'FROM "source"'),
         sub_atom(Sql, _, _, _, '"user"') )).
 
-check(existing_target_constructor_still_discards_available_id_into_json,
+check(existing_target_constructor_projects_available_id_without_json,
       ( Text = "rel user(id: int, name: text) key(1).\nrel post(author: user).\nrel source(id: int, name: text).\npost(user(Id, Name)) <- source(Id, Name), user(Id, Name).\n",
         lower_text(existing_target_json, Text, [], _,
                    lowered(_, _, _, _, Levels, _, _, _)),
         member(levelstmt(post/1, _, Inserts, _, _, _), Levels),
         member(Sql, Inserts),
-        sub_atom(Sql, _, _, _, 'json_object'),
-        sub_atom(Sql, _, _, _, '''user''') )).
+        sub_atom(Sql, _, _, _, 'b1."__id"'),
+        \+ sub_atom(Sql, _, _, _, 'json_object') )).
+
+check(direct_target_edge_trigger_still_has_no_identity_binding,
+      ( Text = "rel user(id: int, name: text) key(1).\nrel post(author: user) key(1).\npost(user(Id, Name)) <+ user(Id, Name).\n",
+        lower_text(direct_target_trigger, Text, [], _,
+                   lowered(_, _, _, Edges, _, _, _, _)),
+        member(edgestmt(post/1, user/2, _, _, ProjectSql, _, _, _),
+               Edges),
+        sub_atom(ProjectSql, _, _, _, 'json_object'),
+        \+ sub_atom(ProjectSql, _, _, _, '"__id"') )).
 
 check(missing_target_constructor_currently_has_no_existence_join,
       ( Text = "rel user(id: int, name: text) key(1).\nrel post(author: user).\nrel source(id: int, name: text).\npost(user(Id, Name)) <- source(Id, Name).\n",
