@@ -59,7 +59,7 @@ Level-rule use remains `latest_in_level_rule`; wider edge arguments remain
 | signature | axis | analyze role | lower role | status (writable surface) |
 |---|---|---|---|---|
 | `latest/1` | `sample` | `refs_of_arg(1,pos,sampled)` | `wrapper(rel_atom,lower)` | `live` |
-| `finalize/1` | `time` | `refs_of_arg(1,pos,trigger)` | `wrapper(rel_atom,refuse(goal))` | `refused` |
+| `finalize/1` | `time` | `refs_of_arg(1,pos,trigger)` | `wrapper(rel_atom,lower)` | `live` |
 | `next/1` | `time` | `splice_bare` | `wrapper(rel_atom,lower)` | `live` |
 | `combine/variadic` | `join` | `splice_bare` | `wrapper(atom_list,lower)` | `live` |
 | `zip/2` | `join` | `splice_bare` | `wrapper(atom_list,refuse(functor))` | `reserved` |
@@ -99,6 +99,29 @@ Level-rule use remains `latest_in_level_rule`; wider edge arguments remain
 | `ts_query/1` | `world` | `no_refs` | `value(tree_sitter_query)` | `live` |
 | `sg_pattern/3` | `world` | `no_refs` | `value(refuse(slot_sg_metavariable_semantics))` | `refused` |
 <!-- END GENERATED surface/5 TABLE -->
+
+## CLI ("the bop")
+
+Generated from `registry.pl`'s `cli_command/3` rows by `1_emit_registry_docs.pl`,
+the same emitter, a second table. `v6/tsv2/cli/bop.ts` wires the identical five
+verbs through commander; the row order here is the registry's own order.
+`run` and `check` boot the served tsv2 engine **in-process** (server-calls-
+itself, no daemon concept); `serve` is the long-running entry `run`/`check`
+each start privately and tear down on exit. Exit codes are `check`'s own
+contract, applied consistently wherever `run`/`load` hit the same compile
+door: 0 clean, 2 named-refusal findings (`unsupported_construct` and its
+sibling throw shapes -- see `scripts/bop_check.pl`'s own header), 1 broken
+(a program that does not parse, or any other uncaught fault).
+
+<!-- BEGIN GENERATED cli_command/3 TABLE -->
+| verb | args | summary |
+|---|---|---|
+| `bop serve` | `[--port <port>] [--db <url>]` | boot the served tsv2 engine and keep it running (exactly serve/main.ts). |
+| `bop run` | `<file.dl6> [--ticks <n>] [--port <port>]` | compile + load a program on an in-process ephemeral server, stream ticks to stdout until quiescent or --ticks fires, then shut down cleanly. |
+| `bop check` | `<file.dl6>` | validate a program through the text door; no server boots. Exit 0 clean, 2 named-refusal findings, 1 broken (parse/compile error). |
+| `bop load` | `<file.dl6> [--port <port>]` | POST a compiled program to an already-running bop serve; exit 1 if nothing is listening. |
+| `bop q` | `<rel> [--port <port>] [--json]` | read one rel's current rows from a running bop serve. |
+<!-- END GENERATED cli_command/3 TABLE -->
 
 ### Context status
 
