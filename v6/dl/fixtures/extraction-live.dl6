@@ -53,7 +53,7 @@ sh extract(path: text) -> (callee: text) =
 
 # ── the program's own file set ──────────────────────────────────────────────
 rel file(path: text, digest: text).
-file(path, digest) <- watch("**/*.ts", path, digest).
+file(path, digest) <- watch('**/*.ts', path, digest).
 
 # ── extraction demand, content-addressed ────────────────────────────────────
 # The digest is a SALT, not an input: it never reaches the command line (the
@@ -67,4 +67,4 @@ call_site(path, digest, callee) <-
 
 # ── the rail ────────────────────────────────────────────────────────────────
 rel banned_call(path: text, callee: text).
-banned_call(path, callee) <- call_site(path, digest, callee), callee == "eval".
+banned_call(path, callee) <- call_site(path, digest, callee), callee == 'eval'.

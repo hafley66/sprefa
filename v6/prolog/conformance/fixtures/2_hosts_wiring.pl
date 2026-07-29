@@ -72,11 +72,11 @@ fixture(ghcacher_host_program_term,
   [ [+interval(300, 1)],
     [ +'__host_response_fetch'(
           'witness|fetch|ep:text=repo|prev:text=|bucket=1',
-          repo, "", 200, "t1",
+          0, repo, "", 200, "t1",
           {full_name: "cli", stargazers_count: 17}),
       +'__host_response_fetch'(
           'witness|fetch|ep:text=pulls|prev:text=|bucket=1',
-          pulls, "", 200, "t2",
+          0, pulls, "", 200, "t2",
           [ {number: 7, title: "seven", state: "open",
              user: {login: "octo"}},
             {number: 8, title: "eight", state: "closed",
@@ -85,11 +85,11 @@ fixture(ghcacher_host_program_term,
     ],
     [ +'__host_response_fetch'(
           'witness|fetch|ep:text=repo|prev:text=|bucket=1',
-          repo, "", 200, "t1",
+          0, repo, "", 200, "t1",
           {full_name: "cli", stargazers_count: 17}),
       +'__host_response_fetch'(
           'witness|fetch|ep:text=repo|prev:text=|bucket=1',
-          repo, "", 200, "t1b",
+          0, repo, "", 200, "t1b",
           {full_name: "cli", stargazers_count: 18})
     ]
   ],
@@ -139,13 +139,13 @@ fixture(extraction_fork_callgraph,
   [file(a, d1), query_value(q_calls)],
   [ [ +'__host_response_sg'(
           'witness|sg|file_digest:text=d1|query_digest:text=q_calls',
-          d1, q_calls, foo, bar, 0, 3)
+          0, d1, q_calls, foo, bar, 0, 3)
     ],
     [ -file(a, d1),
       +file(a, d3),
       +'__host_response_sg'(
           'witness|sg|file_digest:text=d3|query_digest:text=q_calls',
-          d3, q_calls, foo, zap, 0, 3)
+          0, d3, q_calls, foo, zap, 0, 3)
     ]
   ],
   [ final(call_edge/5, [call_edge(a, foo, zap, 0, 3)]),
@@ -180,13 +180,13 @@ fixture(extraction_fork_span_line,
   [file(a, d1), query_value(q_lines)],
   [ [ +'__host_response_span_scan'(
           'witness|span_scan|file_digest:text=d1|query_digest:text=q_lines',
-          d1, q_lines, 10, "old")
+          0, d1, q_lines, 10, "old")
     ],
     [ -file(a, d1),
       +file(a, d3),
       +'__host_response_span_scan'(
           'witness|span_scan|file_digest:text=d3|query_digest:text=q_lines',
-          d3, q_lines, 11, "new")
+          0, d3, q_lines, 11, "new")
     ]
   ],
   [ final(span_line/3, [span_line(a, 11, "new")]),

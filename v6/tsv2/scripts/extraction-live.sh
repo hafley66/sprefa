@@ -175,7 +175,12 @@ say "PASS  phase 5  file deleted -> '-' arrival -> finding retracted: $(rows_of 
 sites="$(rows_of call_site)"
 case "$sites" in *'"a.ts"'*'"parse"'*) ;; *) fail "call_site does not carry a.ts/parse: $sites";; esac
 case "$sites" in *eval*) fail "call_site still carries an eval row after both retractions: $sites";; esac
-say "PASS  call_site carries exactly the surviving file's real extractor output"
+# NO EMPTY CALLEE. The extractor's JSONL interleaves `record=node` lines that
+# carry no `callee` at all; if the named projection stopped filtering them, each
+# would land as a row with an empty callee column rather than as no row. This is
+# the receipt for that (tests/hostDecode.test.ts covers the same seam directly).
+case "$sites" in *'""'*) fail "call_site carries an empty-callee row: the JSONL projection let a non-site record through: $sites";; esac
+say "PASS  call_site carries exactly the surviving file's real extractor output, no empty projections"
 
 stop_server
 say "EXTRACTION LIVE HOLDS"

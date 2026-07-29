@@ -403,11 +403,17 @@ export class ShHostRunner implements IShHostRunner {
       ),
       concatMap((stdout) => {
         const outputRows = decodeOutput(plan.name, stdout, plan.outputs);
-        const arrivals: IArrivalRow[] = outputRows.map((outputRow) => ({
+        // `ordinal` is the answer's own row index (1_host_expand.pl keys the
+        // response rel on (witness_digest, ordinal)): N rows of one answer are
+        // N distinct keys, so a multi-row host -- every extractor -- keeps all
+        // of them, while a late answer for the same witness still replaces row
+        // for row.
+        const arrivals: IArrivalRow[] = outputRows.map((outputRow, ordinal) => ({
           rel: plan.responseRel,
           sign: "add" as const,
           row: responseColumns.map((column) => {
             if (column === "witness_digest") return witnessDigest;
+            if (column === "ordinal") return ordinal;
             const input = demand.inputs.get(column);
             if (input !== undefined) return input;
             return outputRow[plan.outputs.findIndex((output) => output.name === column)] ?? "";

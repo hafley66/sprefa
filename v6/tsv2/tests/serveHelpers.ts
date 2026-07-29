@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import type { SchedulerLike, Subscription } from "rxjs";
 
 import { serveTsv2 } from "../serve/4_http.ts";
-import type { IArrivalBatch, IServeEvent, ITickOutcome } from "../runtime/types.ts";
+import type { IArrivalBatch, IServeEvent, ITickOutcome, IWatchSource } from "../runtime/types.ts";
 
 const DL6_ORACLE_PL = fileURLToPath(new URL("../../prolog/compile/scripts/dl6_oracle.pl", import.meta.url));
 
@@ -50,12 +50,27 @@ export function request(port: number, path: string, method: string, body?: strin
   });
 }
 
+/** Everything a receipt may pin beyond port/scheduler/db. `watchSource` is the
+ *  watcher backend seam (runtime/types.ts `IWatchSource`): a receipt injects a
+ *  driveable one so the watch bind's own logic is graded without waiting on the
+ *  OS, the same split the injected scheduler makes for the interval bind. */
+export interface ServeOverrides {
+  readonly watchRoot?: string;
+  readonly watchCoalesceMs?: number;
+  readonly watchSource?: IWatchSource;
+}
+
 /** Start one served process in-process and wait until it is listening. */
-export function startServed(port: number, scheduler?: SchedulerLike, dbUrl = ":memory:"): Promise<ServedFixture & { running: Subscription }> {
+export function startServed(
+  port: number,
+  scheduler?: SchedulerLike,
+  dbUrl = ":memory:",
+  overrides: ServeOverrides = {},
+): Promise<ServedFixture & { running: Subscription }> {
   return new Promise((resolve, reject) => {
     const events: IServeEvent[] = [];
     let settled = false;
-    const running = serveTsv2({ dbUrl, port, scheduler }).subscribe({
+    const running = serveTsv2({ dbUrl, port, scheduler, ...overrides }).subscribe({
       next: (event) => {
         events.push(event);
         if (event.kind === "listening" && !settled) {
