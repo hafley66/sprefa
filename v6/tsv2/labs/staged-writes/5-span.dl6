@@ -1,0 +1,45 @@
+# 5-span.dl6 -- WRITING ADDRESSED BY BYTE SPAN, not by marker text.
+#
+# The marker pair is located once and reduced to a half-open byte range; the
+# apply arm splices that range. Nothing about the write knows the word BEGIN.
+# Any producer of (start, end) works the same way -- `sprefa-extract --family
+# cst` emits a `span` object per CST node, which is what makes this the CST
+# write path and not just a second marker path.
+#
+# WHY THE COLUMNS ARE `start: int, end: int` AND NOT `at: span`. The struct
+# plane HAS a span type (`rel span(start: int, end: int).` used as a column
+# type, v6/dl/fixtures/flagship-flow.dl6) and the text door REFUSES it on a
+# HOST OUTPUT -- `unsupported_surface(column_type_wrapper(<host>, <column>,
+# none))`, the named stop flagship-flow.dl6 records in its own header. Flat int
+# columns are the shape that compiles today, which is why the helper flattens
+# `span.start`/`span.end` before printing, exactly as scripts/comment_node.py
+# already does for the `lines` projection.
+#
+# rx lowering:
+#
+#   const region$ = file$.pipe(mergeMap(f => pairsOf(f)));  // (start, end)
+#   const apply$  = armed$.pipe(withLatestFrom(region$),
+#                     concatMap(([_, r]) => splice(r.start, r.end, text)));
+
+rel file(path: text, digest: text).
+
+sh pair_at(path: text, digest: text) -> (zone: text, begin_line: int, end_line: int, start: int, end: int) =
+  `: {digest}; python3 "$LAB_ZONE" pair {path}`.
+
+rel zone_span(path: text, zone: text, begin_line: int, end_line: int, start: int, end: int).
+zone_span(path, zone, begin_line, end_line, start, end) <-
+  file(path, digest), pair_at(path, digest, zone, begin_line, end_line, start, end).
+
+rel armed(zone: text).
+
+sh splice_span(path: text, start: int, end: int, text: text) -> (wrote: int) =
+  `python3 "$LAB_ZONE" splice {path} {start} {end} '{text}'`.
+
+rel spliced(path: text, zone: text, wrote: int).
+spliced(path, zone, wrote) <-
+  armed(zone),
+  zone_span(path, zone, begin_line, end_line, start, end),
+  splice_span(path, start, end, '// written by byte span', wrote).
+
+? zone_span(path, zone, begin_line, end_line, start, end).
+? spliced(path, zone, wrote).
