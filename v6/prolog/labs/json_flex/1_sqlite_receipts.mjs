@@ -110,22 +110,36 @@ function canonicalizeJson(value) {
   return value;
 }
 function canonicalJsonText(value) {
-  if (value[0] !== "{" && value[0] !== "[") return null;
   try {
-    const parsed = JSON.parse(value);
-    if (parsed === null || typeof parsed !== "object") return null;
-    return JSON.stringify(canonicalizeJson(parsed));
+    return JSON.stringify(canonicalizeJson(JSON.parse(value)));
   } catch {
     return null;
   }
 }
-function encodeValue(value) {
+function encodeValue(value, type) {
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new Error(`non-finite float at tick boundary: ${String(value)}`);
     return JSON.stringify(value);
   }
   if (typeof value === "boolean") return value ? "true" : "false";
-  return canonicalJsonText(value) ?? JSON.stringify(value);
+  if (type === "json" || type === "ref") return canonicalJsonText(value) ?? JSON.stringify(value);
+  return JSON.stringify(value);
+}
+/** The FIRST-CHARACTER SNIFF this wave removed, kept as a live negative
+ *  control: every receipt below that reports a defect count reports it against
+ *  both encoders, so "the fix moved the number" is a measurement rather than a
+ *  claim. */
+function encodeValueBySniff(value) {
+  if (typeof value === "number") return JSON.stringify(value);
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (value[0] !== "{" && value[0] !== "[") return JSON.stringify(value);
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed === null || typeof parsed !== "object") return JSON.stringify(value);
+    return JSON.stringify(canonicalizeJson(parsed));
+  } catch {
+    return JSON.stringify(value);
+  }
 }
 
 say("═══ json_flex lab, sqlite/tsv2 door ═══");
@@ -206,7 +220,7 @@ for (const row of acceptedRows.rows) {
   const stored = String(row.body);
   let encoded;
   try {
-    encoded = encodeValue(stored);
+    encoded = encodeValue(stored, "json");
   } catch (error) {
     encoderThrows.push(String(error).slice(0, 80));
     continue;
@@ -217,7 +231,7 @@ for (const row of acceptedRows.rows) {
     encoderNonJson.push(stored.slice(0, 60));
     continue;
   }
-  if (encodeValue(encoded) !== encoded) encoderNotIdempotent.push(stored.slice(0, 60));
+  if (encodeValue(encoded, "json") !== encoded) encoderNotIdempotent.push(`${stored.slice(0, 48)}  ->  ${encoded.slice(0, 48)}`);
 }
 say(`── Q4 encoder over every ACCEPTED corpus document (${acceptedRows.rows.length}) ──`);
 say(`throws: ${encoderThrows.length}   non-JSON output: ${encoderNonJson.length}   non-idempotent: ${encoderNotIdempotent.length}`);
@@ -276,7 +290,7 @@ for (const [label, document] of q1Documents) {
   }
   let encoded;
   try {
-    encoded = stored === true ? encodeValue(String(roundTrip)) : "n/a";
+    encoded = stored === true ? encodeValue(String(roundTrip), "json") : "n/a";
   } catch (error) {
     encoded = `THROW ${String(error).slice(0, 40)}`;
   }
@@ -291,14 +305,36 @@ say("");
 // THE HEADER'S NAMED DEFECT 1: encodeValue sniffs the FIRST CHARACTER. A json
 // column whose document is a top-level scalar therefore never reaches
 // canonicalJsonText and is emitted as a JSON STRING of its own source text.
-const topLevelScalarDefects = q1Rows.filter(
-  (row) => row.valid === true && row.tickLog.startsWith("\"") && !String(row.sqliteCanon).startsWith("\""),
-);
-say("── Q1 DEFECT: top-level scalar json documents render as JSON STRINGS ──");
-for (const row of topLevelScalarDefects) {
-  say(`  ${row.label.padEnd(22)} stored ${String(row.sqliteCanon).padEnd(24)} -> tick log ${row.tickLog}`);
+const validRows = q1Rows.filter((row) => row.valid === true);
+const sniffWrong = validRows.filter((row) => encodeValueBySniff(String(row.sqliteCanon)) !== row.tickLog);
+say("── Q1 top-level scalars: the REMOVED first-char sniff vs the type-directed encoder ──");
+for (const row of sniffWrong) {
+  say(
+    `  ${row.label.padEnd(22)} stored ${String(row.sqliteCanon).padEnd(24)} ` +
+      `sniff=${encodeValueBySniff(String(row.sqliteCanon)).padEnd(24)} typed=${row.tickLog}`,
+  );
 }
-say(`  count: ${topLevelScalarDefects.length} of ${q1Rows.filter((r) => r.valid === true).length} valid documents`);
+say(`  the sniff got ${sniffWrong.length} of ${validRows.length} valid documents wrong`);
+say("");
+// THE HONEST ASSERTION. A json document's tick-log text must be JSON and must
+// be a fixpoint; it may NOT be byte-equal to the stored text, because the
+// canonicalizer works on VALUES and json1's `json()` preserves the source
+// LEXEME. Both facts are stated, and the number-lexeme rewrites are counted
+// rather than asserted away -- they are slot_json_float_fate and
+// slot_json_bignum.
+receipt("Q1-json-documents-render-as-json", () => {
+  for (const row of validRows) {
+    JSON.parse(row.tickLog);
+    assert.equal(encodeValue(row.tickLog, "json"), row.tickLog, `${row.label} render is not a fixpoint`);
+    assert.ok(!row.tickLog.startsWith('"') || String(row.sqliteCanon).startsWith('"'), `${row.label} became a string`);
+  }
+});
+const lexemeRewrites = validRows.filter((row) => row.tickLog !== String(row.sqliteCanon));
+say("── Q1 documents whose CANONICAL text differs from their stored text ──");
+for (const row of lexemeRewrites) {
+  say(`  ${row.label.padEnd(22)} stored ${String(row.sqliteCanon).padEnd(24)} -> log ${row.tickLog}`);
+}
+say(`  count: ${lexemeRewrites.length} of ${validRows.length}; every one is a NUMBER (json1 keeps the source lexeme, the canon keeps the value)`);
 say("");
 
 // ═══ Q2. present-null vs absent, every read path ═════════════════════════════
@@ -364,7 +400,7 @@ for (const [label, document] of q3) {
   });
   const canon = String(r.rows[0].canon);
   say(
-    `  ${label.padEnd(22)} valid=${String(r.rows[0].valid)} json()=${canon.padEnd(20)} json_each keys=[${String(r.rows[0].keys)}] ticklog=${encodeValue(canon)}`,
+    `  ${label.padEnd(22)} valid=${String(r.rows[0].valid)} json()=${canon.padEnd(20)} json_each keys=[${String(r.rows[0].keys)}] ticklog=${encodeValue(canon, "json")}`,
   );
 }
 say("");
@@ -499,6 +535,18 @@ say("");
 // Depth. sqlite json1 has a compile-time depth limit; find it rather than
 // assume it.
 say("── Q1 depth limits ──");
+let depthLow = 1;
+let depthHigh = 4096;
+const depthOk = async (depth) => {
+  const r = await libsql.execute({ sql: "SELECT json_valid(?) AS valid", args: ["[".repeat(depth) + "]".repeat(depth)] });
+  return Number(r.rows[0].valid) === 1;
+};
+while (depthLow + 1 < depthHigh) {
+  const mid = Math.floor((depthLow + depthHigh) / 2);
+  if (await depthOk(mid)) depthLow = mid;
+  else depthHigh = mid;
+}
+say(`  json1 nesting cap: depth ${depthLow} accepted, depth ${depthHigh} refused (bisected, @libsql ${libsqlVersion})`);
 for (const depth of [10, 100, 500, 1000, 2000, 5000]) {
   const document = "[".repeat(depth) + "]".repeat(depth);
   let valid;
@@ -571,10 +619,20 @@ const corpusPath = join(labDir, "corpus.jsonl");
 if (existsSync(corpusPath)) {
   const corpus = readFileSync(corpusPath, "utf8").split("\n").filter((line) => line.length > 0);
   const disagree = [];
+  const wideIntegerLoss = [];
+  const sniffDisagree = [];
   const sqliteDisagree = [];
   for (const oracleText of corpus) {
     const tsv2Text = encodeValue(oracleText, "json");
-    if (tsv2Text !== oracleText) disagree.push(`${oracleText}  ->  ${tsv2Text}`);
+    if (encodeValueBySniff(oracleText) !== oracleText) sniffDisagree.push(oracleText);
+    if (tsv2Text !== oracleText) {
+      // The ONE class the type-directed encoder still cannot carry: JSON.parse
+      // rounds any integer past 2^53 to the nearest double before this code
+      // ever sees it. Reported apart from the rest because it is a named card
+      // (slot_json_bignum), not a regression this wave introduced.
+      if (/\d{16,}/.test(oracleText)) wideIntegerLoss.push(`${oracleText}  ->  ${tsv2Text}`);
+      else disagree.push(`${oracleText}  ->  ${tsv2Text}`);
+    }
     // The third reference: json1's own normalization of the same text. json()
     // minifies but PRESERVES key order, so it agrees only where the oracle's
     // sort already matches source order; that is a stated property, not a bug,
@@ -586,6 +644,10 @@ if (existsSync(corpusPath)) {
   say(`  corpus lines: ${corpus.length}`);
   say(`  ticklog.pl (#1) vs ticklog.ts (#2, json-typed): ${disagree.length} disagreements`);
   for (const line of disagree.slice(0, 20)) say(`    DISAGREE ${line}`);
+  say(`  ticklog.pl (#1) vs the REMOVED first-char sniff: ${sniffDisagree.length} disagreements (the negative control)`);
+  for (const line of sniffDisagree.slice(0, 8)) say(`    SNIFF WOULD LOSE ${line}`);
+  say(`  wide-integer canon loss (slot_json_bignum, not fixed): ${wideIntegerLoss.length}`);
+  for (const line of wideIntegerLoss.slice(0, 8)) say(`    LOSSY ${line}`);
   say(`  ticklog.pl (#1) vs sqlite json() (#3, key order NOT sorted): ${sqliteDisagree.length} differ`);
   for (const line of sqliteDisagree.slice(0, 8)) say(`    json() differs on ${line}`);
   say("");

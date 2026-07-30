@@ -361,10 +361,25 @@ test(level_derived_trigger_reads_same_tick_frontier) :-
 % -- those two tests below check the STRUCTURAL pieces (FROM table, the
 % json_valid/json_type guard, the AS alias) instead.
 
+% THE GUARD IS FOUR TESTS, NOT TWO (json_flex lab, 2026-07-30). `json_valid`
+% plus `json_type = 'object'` is true of every json object a program might
+% legitimately store in a text column, and for one of those the THEN branch
+% computed `NULL || '(' || ...` = NULL in a column IRowValue says is never
+% null. Fail-first receipt: fixture json_top_level_scalar_document_is_a_value
+% carries a text column holding `{"a":1}`, and the sweep run died with
+% `Cannot read properties of null (reading '0')` before `$.fn`/`$.args` joined
+% the guard. `coalesce` is the nullary functor, whose `json_array()` makes
+% group_concat answer NULL by the same route one arity down.
+%
+% SABOTAGE RECEIPT: dropping either `json_type(...,'$.fn') = 'text'` or the
+% `coalesce` from lower.pl turns this test red on the exact atom, and dropping
+% BOTH additionally turns the fixture's whole sweep run red rather than merely
+% wrong -- which is why the shape is pinned here as text and not merely
+% probed for substrings.
 test(canonical_column_expr_shape) :-
     canonical_column_expr(target, Expr),
     Expr ==
-      'CASE WHEN json_valid("target") AND json_type("target") = \'object\' THEN json_extract("target", \'$.fn\') || \'(\' || (SELECT group_concat(value, \',\') FROM json_each("target", \'$.args\')) || \')\' ELSE "target" END AS "target"'.
+      'CASE WHEN json_valid("target") AND json_type("target") = \'object\' AND json_type("target", \'$.fn\') = \'text\' AND json_type("target", \'$.args\') = \'array\' THEN json_extract("target", \'$.fn\') || \'(\' || coalesce((SELECT group_concat(value, \',\') FROM json_each("target", \'$.args\')), \'\') || \')\' ELSE "target" END AS "target"'.
 
 test(switch_as_keyed_replace_delta_sql_open_scope) :-
     lowered_for(switch_as_keyed_replace, Lowered),

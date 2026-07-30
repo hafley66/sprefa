@@ -1,0 +1,7 @@
+rel payload(name: text, body: json).
+rel label(name: text, body: text).
+rel echoed(name: text, body: json).
+rel labelled(name: text, body: text).
+
+echoed(Name, Body) <- payload(Name, Body).
+labelled(Name, Body) <- label(Name, Body).
