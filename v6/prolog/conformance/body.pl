@@ -23,15 +23,21 @@ rel_ref(Atom, Name/Arity) :- functor(Atom, Name, Arity).
 % interpolation lowering target.
 
 eval_expr(Value, _) :- var(Value), !, throw(unbound_in_expression).
+eval_expr(bool_lit(Boolean), bool_lit(Boolean)) :- !.
 eval_expr(Number, Number) :- number(Number), !.
 eval_expr(concat(Parts), Out) :- !,
     maplist(eval_expr, Parts, Values),
     maplist(text_piece, Values, Pieces),
     atomic_list_concat(Pieces, Out).
-eval_expr(Left + Right, Out)   :- !, eval_int2(Left, Right, LeftV, RightV), Out is LeftV + RightV.
-eval_expr(Left - Right, Out)   :- !, eval_int2(Left, Right, LeftV, RightV), Out is LeftV - RightV.
-eval_expr(Left * Right, Out)   :- !, eval_int2(Left, Right, LeftV, RightV), Out is LeftV * RightV.
-eval_expr(Left / Right, Out)   :- !, eval_int2(Left, Right, LeftV, RightV), Out is LeftV // RightV.
+eval_expr(Left + Right, Out)   :- !, eval_number2(Left, Right, LeftV, RightV), Out is LeftV + RightV.
+eval_expr(Left - Right, Out)   :- !, eval_number2(Left, Right, LeftV, RightV), Out is LeftV - RightV.
+eval_expr(Left * Right, Out)   :- !, eval_number2(Left, Right, LeftV, RightV), Out is LeftV * RightV.
+eval_expr(Left / Right, Out)   :- !,
+    eval_number2(Left, Right, LeftV, RightV),
+    ( integer(LeftV), integer(RightV)
+    -> Out is LeftV // RightV
+    ; Out is LeftV / RightV
+    ).
 eval_expr(Left mod Right, Out) :- !, eval_int2(Left, Right, LeftV, RightV), Out is LeftV mod RightV.
 eval_expr(Braces, Canon) :- Braces = {}(_), !, json_canon(Braces, Canon).
 eval_expr([Head | Tail], Canon) :- !, json_canon([Head | Tail], Canon).
@@ -40,6 +46,12 @@ eval_expr(Value, Value).
 eval_int2(Left, Right, LeftV, RightV) :-
     eval_expr(Left, LeftV), eval_expr(Right, RightV),
     ( integer(LeftV), integer(RightV) -> true ; throw(arith_on_non_int(LeftV, RightV)) ).
+
+eval_number2(Left, Right, LeftV, RightV) :-
+    eval_expr(Left, LeftV), eval_expr(Right, RightV),
+    ( number(LeftV), number(RightV)
+    -> true
+    ; throw(arith_on_non_int(LeftV, RightV)) ).
 
 text_piece(Value, Value) :- atomic(Value), !.
 text_piece(Value, _) :- throw(non_display_in_concat(Value)).
@@ -56,10 +68,10 @@ comparison_goal(Goal) :-
     expression(Name/2, Family, _, _, _),
     memberchk(Family, [ordered_comparison, identity_comparison]).
 
-solve_comparison(Left < Right)   :- eval_int2(Left, Right, LeftV, RightV), LeftV < RightV.
-solve_comparison(Left =< Right)  :- eval_int2(Left, Right, LeftV, RightV), LeftV =< RightV.
-solve_comparison(Left > Right)   :- eval_int2(Left, Right, LeftV, RightV), LeftV > RightV.
-solve_comparison(Left >= Right)  :- eval_int2(Left, Right, LeftV, RightV), LeftV >= RightV.
+solve_comparison(Left < Right)   :- eval_number2(Left, Right, LeftV, RightV), LeftV < RightV.
+solve_comparison(Left =< Right)  :- eval_number2(Left, Right, LeftV, RightV), LeftV =< RightV.
+solve_comparison(Left > Right)   :- eval_number2(Left, Right, LeftV, RightV), LeftV > RightV.
+solve_comparison(Left >= Right)  :- eval_number2(Left, Right, LeftV, RightV), LeftV >= RightV.
 solve_comparison(Left == Right)  :- eval_expr(Left, LeftV), eval_expr(Right, RightV), LeftV == RightV.
 solve_comparison(Left \== Right) :- eval_expr(Left, LeftV), eval_expr(Right, RightV), LeftV \== RightV.
 

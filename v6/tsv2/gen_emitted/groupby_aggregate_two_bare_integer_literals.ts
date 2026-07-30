@@ -32,6 +32,7 @@ import type {
   IIncrementalRelationPlan,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -40,12 +41,12 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly (string | number)[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
   sql: string;
-  params: readonly (string | number)[];
+  params: readonly IRowValue[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
@@ -56,7 +57,27 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
+
+function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+  return arrivals.map((arrival): IArrivalRow => {
+    const types = relColumnTypes[arrival.rel];
+    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const row = arrival.row.map((value, index): IRowValue => {
+      const type = types[index];
+      if (type === "bool") {
+        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);
+        return value;
+      }
+      if (type === "float") {
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
+        return Object.is(value, -0) ? 0 : value;
+      }
+      return value;
+    });
+    return { ...arrival, row };
+  });
 }
 
 const ddl: readonly string[] = [
@@ -82,6 +103,11 @@ const relColumns: Record<string, readonly string[]> = {
   tallied: ["line", "column", "total"],
 };
 
+const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  source: ["text"],
+  tallied: ["int", "int", "int"],
+};
+
 const arrivalTargets: readonly string[] = ["source"];
 
 const boot: readonly IBootStatement[] = [
@@ -96,8 +122,8 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    source: selectRows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name" FROM "source"`, relColumns.source!),
-    tallied: selectRows(seam, `SELECT "line", "column", "total" FROM "tallied"`, relColumns.tallied!),
+    source: selectRows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name" FROM "source"`, relColumns.source!, relColumnTypes.source!),
+    tallied: selectRows(seam, `SELECT "line", "column", "total" FROM "tallied"`, relColumns.tallied!, relColumnTypes.tallied!),
   });
 }
 
@@ -133,8 +159,8 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "source", kind: "set", tableName: "source", deltaTableName: "__delta_source", frontierTableName: "__frontier_source", nextFrontierTableName: "__next_frontier_source", columns: ["name"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "source" ("name") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "name"`, arrivalDelSql: `DELETE FROM "source" WHERE ("name") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "name"`, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"` },
-  { rel: "tallied", kind: "set", tableName: "tallied", deltaTableName: "__delta_tallied", frontierTableName: "__frontier_tallied", nextFrontierTableName: "__next_frontier_tallied", columns: ["line", "column", "total"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "line", "column", "total", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tallied" WHERE "_sign" IN (-1, 1) GROUP BY "line", "column", "total", "_sign"` },
+  { rel: "source", kind: "set", tableName: "source", deltaTableName: "__delta_source", frontierTableName: "__frontier_source", nextFrontierTableName: "__next_frontier_source", columns: ["name"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "source" ("name") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "name"`, arrivalDelSql: `DELETE FROM "source" WHERE ("name") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "name"`, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"` },
+  { rel: "tallied", kind: "set", tableName: "tallied", deltaTableName: "__delta_tallied", frontierTableName: "__frontier_tallied", nextFrontierTableName: "__next_frontier_tallied", columns: ["line", "column", "total"], columnTypes: ["int", "int", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "line", "column", "total", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tallied" WHERE "_sign" IN (-1, 1) GROUP BY "line", "column", "total", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -190,6 +216,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 }
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validateArrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
     return runNaiveTick(seam, arrivals);
   }
@@ -209,6 +236,7 @@ export const program: IGenProgramWithBoot = {
   name: "groupby_aggregate_two_bare_integer_literals",
   ddl,
   relColumns,
+  relColumnTypes,
   arrivalTargets,
   boot,
   finalSelect,

@@ -183,7 +183,7 @@ program_violation(type_cycle, prog(Decls, _), Names) :-
 program_violation(column_type_unknown, prog(Decls, _), Name) :-
     type_definitions(Decls, Types),
     declared_column_type_use(Decls, Name),
-    \+ memberchk(Name, [int, text, json]),
+    \+ memberchk(Name, [int, text, json, bool, float]),
     \+ declared_type_name(Types, Name).
 
 % ── the two classes only the oracle used to check ────────────────────────────

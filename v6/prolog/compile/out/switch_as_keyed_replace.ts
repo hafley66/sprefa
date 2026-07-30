@@ -32,6 +32,7 @@ import type {
   IIncrementalRelationPlan,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -40,12 +41,12 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly (string | number)[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
   sql: string;
-  params: readonly (string | number)[];
+  params: readonly IRowValue[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
@@ -56,7 +57,27 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
+
+function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+  return arrivals.map((arrival): IArrivalRow => {
+    const types = relColumnTypes[arrival.rel];
+    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const row = arrival.row.map((value, index): IRowValue => {
+      const type = types[index];
+      if (type === "bool") {
+        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);
+        return value;
+      }
+      if (type === "float") {
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
+        return Object.is(value, -0) ? 0 : value;
+      }
+      return value;
+    });
+    return { ...arrival, row };
+  });
 }
 
 function triggerOccurrences(
@@ -126,6 +147,14 @@ const relColumns: Record<string, readonly string[]> = {
   route_view: ["route_id", "body"],
 };
 
+const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  demanded: ["text", "text"],
+  open_scope: ["text", "text"],
+  route_change: ["text", "text"],
+  route_row: ["text", "text"],
+  route_view: ["text", "text"],
+};
+
 const arrivalTargets: readonly string[] = ["route_change", "route_row"];
 
 const boot: readonly IBootStatement[] = [
@@ -147,11 +176,11 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    demanded: selectRows(seam, `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id" FROM "demanded"`, relColumns.demanded!),
-    open_scope: selectRows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target" FROM "open_scope"`, relColumns.open_scope!),
-    route_change: selectRows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("route_id") AND json_type("route_id") = 'object' THEN json_extract("route_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("route_id", '$.args')) || ')' ELSE "route_id" END AS "route_id" FROM "route_change"`, relColumns.route_change!),
-    route_row: selectRows(seam, `SELECT CASE WHEN json_valid("route_id") AND json_type("route_id") = 'object' THEN json_extract("route_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("route_id", '$.args')) || ')' ELSE "route_id" END AS "route_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "route_row"`, relColumns.route_row!),
-    route_view: selectRows(seam, `SELECT CASE WHEN json_valid("route_id") AND json_type("route_id") = 'object' THEN json_extract("route_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("route_id", '$.args')) || ')' ELSE "route_id" END AS "route_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "route_view"`, relColumns.route_view!),
+    demanded: selectRows(seam, `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id" FROM "demanded"`, relColumns.demanded!, relColumnTypes.demanded!),
+    open_scope: selectRows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target" FROM "open_scope"`, relColumns.open_scope!, relColumnTypes.open_scope!),
+    route_change: selectRows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("route_id") AND json_type("route_id") = 'object' THEN json_extract("route_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("route_id", '$.args')) || ')' ELSE "route_id" END AS "route_id" FROM "route_change"`, relColumns.route_change!, relColumnTypes.route_change!),
+    route_row: selectRows(seam, `SELECT CASE WHEN json_valid("route_id") AND json_type("route_id") = 'object' THEN json_extract("route_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("route_id", '$.args')) || ')' ELSE "route_id" END AS "route_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "route_row"`, relColumns.route_row!, relColumnTypes.route_row!),
+    route_view: selectRows(seam, `SELECT CASE WHEN json_valid("route_id") AND json_type("route_id") = 'object' THEN json_extract("route_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("route_id", '$.args')) || ')' ELSE "route_id" END AS "route_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "route_view"`, relColumns.route_view!, relColumnTypes.route_view!),
   });
 }
 
@@ -191,11 +220,11 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "demanded", kind: "set", tableName: "demanded", deltaTableName: "__delta_demanded", frontierTableName: "__frontier_demanded", nextFrontierTableName: "__next_frontier_demanded", columns: ["target", "session_id"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_demanded" WHERE "_sign" IN (-1, 1) GROUP BY "target", "session_id", "_sign"` },
-  { rel: "open_scope", kind: "set", tableName: "open_scope", deltaTableName: "__delta_open_scope", frontierTableName: "__frontier_open_scope", nextFrontierTableName: "__next_frontier_open_scope", columns: ["session_id", "target"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_open_scope" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "target", "_sign"` },
-  { rel: "route_change", kind: "log", tableName: "route_change", deltaTableName: "__delta_route_change", frontierTableName: "__frontier_route_change", nextFrontierTableName: "__next_frontier_route_change", columns: ["session_id", "route_id"], keyIndices: [], arrivalAddSql: `INSERT INTO "route_change" ("session_id", "route_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "session_id", "route_id"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("route_id") AND json_type("route_id") = 'object' THEN json_extract("route_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("route_id", '$.args')) || ')' ELSE "route_id" END AS "route_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_route_change" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "route_id", "_sign"` },
-  { rel: "route_row", kind: "set", tableName: "route_row", deltaTableName: "__delta_route_row", frontierTableName: "__frontier_route_row", nextFrontierTableName: "__next_frontier_route_row", columns: ["route_id", "body"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "route_row" ("route_id", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "route_id", "body"`, arrivalDelSql: `DELETE FROM "route_row" WHERE ("route_id", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "route_id", "body"`, boundarySql: `SELECT CASE WHEN json_valid("route_id") AND json_type("route_id") = 'object' THEN json_extract("route_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("route_id", '$.args')) || ')' ELSE "route_id" END AS "route_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_route_row" WHERE "_sign" IN (-1, 1) GROUP BY "route_id", "body", "_sign"` },
-  { rel: "route_view", kind: "set", tableName: "route_view", deltaTableName: "__delta_route_view", frontierTableName: "__frontier_route_view", nextFrontierTableName: "__next_frontier_route_view", columns: ["route_id", "body"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("route_id") AND json_type("route_id") = 'object' THEN json_extract("route_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("route_id", '$.args')) || ')' ELSE "route_id" END AS "route_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_route_view" WHERE "_sign" IN (-1, 1) GROUP BY "route_id", "body", "_sign"` },
+  { rel: "demanded", kind: "set", tableName: "demanded", deltaTableName: "__delta_demanded", frontierTableName: "__frontier_demanded", nextFrontierTableName: "__next_frontier_demanded", columns: ["target", "session_id"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_demanded" WHERE "_sign" IN (-1, 1) GROUP BY "target", "session_id", "_sign"` },
+  { rel: "open_scope", kind: "set", tableName: "open_scope", deltaTableName: "__delta_open_scope", frontierTableName: "__frontier_open_scope", nextFrontierTableName: "__next_frontier_open_scope", columns: ["session_id", "target"], columnTypes: ["text", "text"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' THEN json_extract("target", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("target", '$.args')) || ')' ELSE "target" END AS "target", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_open_scope" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "target", "_sign"` },
+  { rel: "route_change", kind: "log", tableName: "route_change", deltaTableName: "__delta_route_change", frontierTableName: "__frontier_route_change", nextFrontierTableName: "__next_frontier_route_change", columns: ["session_id", "route_id"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "route_change" ("session_id", "route_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "session_id", "route_id"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' THEN json_extract("session_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')) || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("route_id") AND json_type("route_id") = 'object' THEN json_extract("route_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("route_id", '$.args')) || ')' ELSE "route_id" END AS "route_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_route_change" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "route_id", "_sign"` },
+  { rel: "route_row", kind: "set", tableName: "route_row", deltaTableName: "__delta_route_row", frontierTableName: "__frontier_route_row", nextFrontierTableName: "__next_frontier_route_row", columns: ["route_id", "body"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "route_row" ("route_id", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "route_id", "body"`, arrivalDelSql: `DELETE FROM "route_row" WHERE ("route_id", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "route_id", "body"`, boundarySql: `SELECT CASE WHEN json_valid("route_id") AND json_type("route_id") = 'object' THEN json_extract("route_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("route_id", '$.args')) || ')' ELSE "route_id" END AS "route_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_route_row" WHERE "_sign" IN (-1, 1) GROUP BY "route_id", "body", "_sign"` },
+  { rel: "route_view", kind: "set", tableName: "route_view", deltaTableName: "__delta_route_view", frontierTableName: "__frontier_route_view", nextFrontierTableName: "__next_frontier_route_view", columns: ["route_id", "body"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("route_id") AND json_type("route_id") = 'object' THEN json_extract("route_id", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("route_id", '$.args')) || ')' ELSE "route_id" END AS "route_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_route_view" WHERE "_sign" IN (-1, 1) GROUP BY "route_id", "body", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -291,6 +320,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 }
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validateArrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
     return runNaiveTick(seam, arrivals);
   }
@@ -310,6 +340,7 @@ export const program: IGenProgramWithBoot = {
   name: "switch_as_keyed_replace",
   ddl,
   relColumns,
+  relColumnTypes,
   arrivalTargets,
   boot,
   finalSelect,

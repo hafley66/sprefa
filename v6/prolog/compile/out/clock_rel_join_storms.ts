@@ -32,6 +32,7 @@ import type {
   IIncrementalRelationPlan,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -40,12 +41,12 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly (string | number)[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
   sql: string;
-  params: readonly (string | number)[];
+  params: readonly IRowValue[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
@@ -56,7 +57,27 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
+
+function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+  return arrivals.map((arrival): IArrivalRow => {
+    const types = relColumnTypes[arrival.rel];
+    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const row = arrival.row.map((value, index): IRowValue => {
+      const type = types[index];
+      if (type === "bool") {
+        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);
+        return value;
+      }
+      if (type === "float") {
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
+        return Object.is(value, -0) ? 0 : value;
+      }
+      return value;
+    });
+    return { ...arrival, row };
+  });
 }
 
 function triggerOccurrences(
@@ -135,6 +156,15 @@ const relColumns: Record<string, readonly string[]> = {
   tick_rel: ["at"],
 };
 
+const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  diag_history: ["text", "int", "text", "int"],
+  diag_seen: ["text", "int", "text", "int"],
+  diagnostic: ["text", "int", "text", "text"],
+  file_line: ["text", "int", "text"],
+  ratchet: ["text", "int"],
+  tick_rel: ["int"],
+};
+
 const arrivalTargets: readonly string[] = ["file_line", "ratchet", "tick_rel"];
 
 const boot: readonly IBootStatement[] = [
@@ -153,12 +183,12 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    diag_history: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' THEN json_extract("code", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("code", '$.args')) || ')' ELSE "code" END AS "code", "opened_at" FROM "diag_history"`, relColumns.diag_history!),
-    diag_seen: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' THEN json_extract("code", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("code", '$.args')) || ')' ELSE "code" END AS "code", "at" FROM "diag_seen"`, relColumns.diag_seen!),
-    diagnostic: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' THEN json_extract("code", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("code", '$.args')) || ')' ELSE "code" END AS "code", CASE WHEN json_valid("col4") AND json_type("col4") = 'object' THEN json_extract("col4", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col4", '$.args')) || ')' ELSE "col4" END AS "col4" FROM "diagnostic"`, relColumns.diagnostic!),
-    file_line: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' THEN json_extract("code", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("code", '$.args')) || ')' ELSE "code" END AS "code" FROM "file_line"`, relColumns.file_line!),
-    ratchet: selectRows(seam, `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' THEN json_extract("col1", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col1", '$.args')) || ')' ELSE "col1" END AS "col1", "col2" FROM "ratchet"`, relColumns.ratchet!),
-    tick_rel: selectRows(seam, `SELECT "at" FROM "tick_rel"`, relColumns.tick_rel!),
+    diag_history: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' THEN json_extract("code", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("code", '$.args')) || ')' ELSE "code" END AS "code", "opened_at" FROM "diag_history"`, relColumns.diag_history!, relColumnTypes.diag_history!),
+    diag_seen: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' THEN json_extract("code", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("code", '$.args')) || ')' ELSE "code" END AS "code", "at" FROM "diag_seen"`, relColumns.diag_seen!, relColumnTypes.diag_seen!),
+    diagnostic: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' THEN json_extract("code", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("code", '$.args')) || ')' ELSE "code" END AS "code", CASE WHEN json_valid("col4") AND json_type("col4") = 'object' THEN json_extract("col4", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col4", '$.args')) || ')' ELSE "col4" END AS "col4" FROM "diagnostic"`, relColumns.diagnostic!, relColumnTypes.diagnostic!),
+    file_line: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' THEN json_extract("code", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("code", '$.args')) || ')' ELSE "code" END AS "code" FROM "file_line"`, relColumns.file_line!, relColumnTypes.file_line!),
+    ratchet: selectRows(seam, `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' THEN json_extract("col1", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col1", '$.args')) || ')' ELSE "col1" END AS "col1", "col2" FROM "ratchet"`, relColumns.ratchet!, relColumnTypes.ratchet!),
+    tick_rel: selectRows(seam, `SELECT "at" FROM "tick_rel"`, relColumns.tick_rel!, relColumnTypes.tick_rel!),
   });
 }
 
@@ -200,12 +230,12 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "diag_history", kind: "log", tableName: "diag_history", deltaTableName: "__delta_diag_history", frontierTableName: "__frontier_diag_history", nextFrontierTableName: "__next_frontier_diag_history", columns: ["path", "line", "code", "opened_at"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' THEN json_extract("code", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("code", '$.args')) || ')' ELSE "code" END AS "code", "opened_at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_diag_history" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line", "code", "opened_at", "_sign"` },
-  { rel: "diag_seen", kind: "log", tableName: "diag_seen", deltaTableName: "__delta_diag_seen", frontierTableName: "__frontier_diag_seen", nextFrontierTableName: "__next_frontier_diag_seen", columns: ["path", "line", "code", "at"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' THEN json_extract("code", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("code", '$.args')) || ')' ELSE "code" END AS "code", "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_diag_seen" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line", "code", "at", "_sign"` },
-  { rel: "diagnostic", kind: "set", tableName: "diagnostic", deltaTableName: "__delta_diagnostic", frontierTableName: "__frontier_diagnostic", nextFrontierTableName: "__next_frontier_diagnostic", columns: ["path", "line", "code", "col4"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' THEN json_extract("code", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("code", '$.args')) || ')' ELSE "code" END AS "code", CASE WHEN json_valid("col4") AND json_type("col4") = 'object' THEN json_extract("col4", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col4", '$.args')) || ')' ELSE "col4" END AS "col4", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_diagnostic" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line", "code", "col4", "_sign"` },
-  { rel: "file_line", kind: "set", tableName: "file_line", deltaTableName: "__delta_file_line", frontierTableName: "__frontier_file_line", nextFrontierTableName: "__next_frontier_file_line", columns: ["path", "line", "code"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "file_line" ("path", "line", "code") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "path", "line", "code"`, arrivalDelSql: `DELETE FROM "file_line" WHERE ("path", "line", "code") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "path", "line", "code"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' THEN json_extract("code", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("code", '$.args')) || ')' ELSE "code" END AS "code", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_file_line" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line", "code", "_sign"` },
-  { rel: "ratchet", kind: "set", tableName: "ratchet", deltaTableName: "__delta_ratchet", frontierTableName: "__frontier_ratchet", nextFrontierTableName: "__next_frontier_ratchet", columns: ["col1", "col2"], keyIndices: [0], arrivalAddSql: `INSERT INTO "ratchet" ("col1", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("col1") DO UPDATE SET "col2" = excluded."col2" RETURNING "col1", "col2"`, arrivalDelSql: `DELETE FROM "ratchet" WHERE ("col1", "col2") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "col1", "col2"`, boundarySql: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' THEN json_extract("col1", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col1", '$.args')) || ')' ELSE "col1" END AS "col1", "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_ratchet" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "col2", "_sign"` },
-  { rel: "tick_rel", kind: "set", tableName: "tick_rel", deltaTableName: "__delta_tick_rel", frontierTableName: "__frontier_tick_rel", nextFrontierTableName: "__next_frontier_tick_rel", columns: ["at"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "tick_rel" ("at") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "at"`, arrivalDelSql: `DELETE FROM "tick_rel" WHERE ("at") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "at"`, boundarySql: `SELECT "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tick_rel" WHERE "_sign" IN (-1, 1) GROUP BY "at", "_sign"` },
+  { rel: "diag_history", kind: "log", tableName: "diag_history", deltaTableName: "__delta_diag_history", frontierTableName: "__frontier_diag_history", nextFrontierTableName: "__next_frontier_diag_history", columns: ["path", "line", "code", "opened_at"], columnTypes: ["text", "int", "text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' THEN json_extract("code", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("code", '$.args')) || ')' ELSE "code" END AS "code", "opened_at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_diag_history" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line", "code", "opened_at", "_sign"` },
+  { rel: "diag_seen", kind: "log", tableName: "diag_seen", deltaTableName: "__delta_diag_seen", frontierTableName: "__frontier_diag_seen", nextFrontierTableName: "__next_frontier_diag_seen", columns: ["path", "line", "code", "at"], columnTypes: ["text", "int", "text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' THEN json_extract("code", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("code", '$.args')) || ')' ELSE "code" END AS "code", "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_diag_seen" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line", "code", "at", "_sign"` },
+  { rel: "diagnostic", kind: "set", tableName: "diagnostic", deltaTableName: "__delta_diagnostic", frontierTableName: "__frontier_diagnostic", nextFrontierTableName: "__next_frontier_diagnostic", columns: ["path", "line", "code", "col4"], columnTypes: ["text", "int", "text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' THEN json_extract("code", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("code", '$.args')) || ')' ELSE "code" END AS "code", CASE WHEN json_valid("col4") AND json_type("col4") = 'object' THEN json_extract("col4", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col4", '$.args')) || ')' ELSE "col4" END AS "col4", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_diagnostic" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line", "code", "col4", "_sign"` },
+  { rel: "file_line", kind: "set", tableName: "file_line", deltaTableName: "__delta_file_line", frontierTableName: "__frontier_file_line", nextFrontierTableName: "__next_frontier_file_line", columns: ["path", "line", "code"], columnTypes: ["text", "int", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "file_line" ("path", "line", "code") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "path", "line", "code"`, arrivalDelSql: `DELETE FROM "file_line" WHERE ("path", "line", "code") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "path", "line", "code"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' THEN json_extract("code", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("code", '$.args')) || ')' ELSE "code" END AS "code", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_file_line" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line", "code", "_sign"` },
+  { rel: "ratchet", kind: "set", tableName: "ratchet", deltaTableName: "__delta_ratchet", frontierTableName: "__frontier_ratchet", nextFrontierTableName: "__next_frontier_ratchet", columns: ["col1", "col2"], columnTypes: ["text", "int"], keyIndices: [0], arrivalAddSql: `INSERT INTO "ratchet" ("col1", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("col1") DO UPDATE SET "col2" = excluded."col2" RETURNING "col1", "col2"`, arrivalDelSql: `DELETE FROM "ratchet" WHERE ("col1", "col2") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "col1", "col2"`, boundarySql: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' THEN json_extract("col1", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col1", '$.args')) || ')' ELSE "col1" END AS "col1", "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_ratchet" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "col2", "_sign"` },
+  { rel: "tick_rel", kind: "set", tableName: "tick_rel", deltaTableName: "__delta_tick_rel", frontierTableName: "__frontier_tick_rel", nextFrontierTableName: "__next_frontier_tick_rel", columns: ["at"], columnTypes: ["int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "tick_rel" ("at") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "at"`, arrivalDelSql: `DELETE FROM "tick_rel" WHERE ("at") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "at"`, boundarySql: `SELECT "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tick_rel" WHERE "_sign" IN (-1, 1) GROUP BY "at", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -350,6 +380,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 }
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validateArrivals(arrivals);
   // Derived edge triggers consume the P1 current/next frontier, including drain carry.
   return runIncrementalTick(seam, arrivals);
 }
@@ -367,6 +398,7 @@ export const program: IGenProgramWithBoot = {
   name: "clock_rel_join_storms",
   ddl,
   relColumns,
+  relColumnTypes,
   arrivalTargets,
   boot,
   finalSelect,

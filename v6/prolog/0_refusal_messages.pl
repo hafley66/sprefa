@@ -15,6 +15,7 @@
           ]).
 
 :- use_module('compile/registry', [surface/5]).
+:- use_module('compile/3_clock_check', [clock_refusal_reason/1]).
 
 :- multifile prolog:message//1.
 
@@ -91,6 +92,8 @@ refusal_reason_producer(Reason) :-
     clause(analyze:edge_goal_refusal(_, _, _, Reason), _).
 refusal_reason_producer(Reason) :-
     clause(analyze:edge_trigger_shape(_, unsupported(Reason)), _).
+refusal_reason_producer(Reason) :-
+    clock_refusal_reason(Reason).
 
 reason_signature(Reason, Name/Arity) :-
     ( compound(Reason)

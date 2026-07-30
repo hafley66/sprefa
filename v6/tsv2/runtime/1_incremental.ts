@@ -29,7 +29,11 @@ function quoteIdentifier(identifier: string): string {
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) =>
-    typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value,
+    typeof value === "boolean"
+      ? BigInt(value ? 1 : 0)
+      : typeof value === "number" && Number.isInteger(value)
+        ? BigInt(value)
+        : value,
   );
 }
 
@@ -189,6 +193,14 @@ function rowKey(row: IRow, indices: readonly number[]): string {
 
 function rowsEqual(left: IRow, right: IRow): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function storageRow(relation: IIncrementalRelationPlan, row: IRow): IRow {
+  return row.map((value, index) =>
+    relation.columnTypes?.[index] === "bool" && typeof value === "boolean"
+      ? (value ? 1 : 0)
+      : value,
+  );
 }
 
 function keyedWriteStatement(
@@ -550,7 +562,22 @@ function boundaryDelta(
 ): IRelDelta {
   const weights = new Map<string, { row: IRow; weight: number }>();
   for (const resultRow of result.rows) {
-    const row = relation.columns.map((column) => resultRow[column] as IRowValue);
+    const row = relation.columns.map((column, index) => {
+      const value = resultRow[column];
+      const type = relation.columnTypes?.[index];
+      if (type === "bool") {
+        if (value === 0 || value === 0n) return false;
+        if (value === 1 || value === 1n) return true;
+        throw new Error(`bool column '${relation.rel}.${column}' crossed SQLite with ${JSON.stringify(value)}`);
+      }
+      if (type === "float") {
+        if (typeof value !== "number" || !Number.isFinite(value)) {
+          throw new Error(`float column '${relation.rel}.${column}' crossed SQLite with ${JSON.stringify(value)}`);
+        }
+        return Object.is(value, -0) ? 0 : value;
+      }
+      return value as IRowValue;
+    });
     const key = JSON.stringify(row);
     const weight = Number(resultRow.__sign) * Number(resultRow.__count);
     const previous = weights.get(key);
@@ -611,7 +638,7 @@ export const IncrementalRuntime: IIncrementalRuntime = {
         );
       }
       const previous = groupedArrivals.at(-1);
-      const entry = { sequence, row: arrival.row };
+      const entry = { sequence, row: storageRow(relation, arrival.row) };
       if (
         previous !== undefined &&
         previous.relation.rel === relation.rel &&

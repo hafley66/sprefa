@@ -32,6 +32,7 @@ import type {
   IIncrementalRelationPlan,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -40,12 +41,12 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly (string | number)[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
   sql: string;
-  params: readonly (string | number)[];
+  params: readonly IRowValue[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
@@ -56,7 +57,27 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
+
+function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+  return arrivals.map((arrival): IArrivalRow => {
+    const types = relColumnTypes[arrival.rel];
+    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const row = arrival.row.map((value, index): IRowValue => {
+      const type = types[index];
+      if (type === "bool") {
+        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);
+        return value;
+      }
+      if (type === "float") {
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
+        return Object.is(value, -0) ? 0 : value;
+      }
+      return value;
+    });
+    return { ...arrival, row };
+  });
 }
 
 const ddl: readonly string[] = [
@@ -100,6 +121,13 @@ const relColumns: Record<string, readonly string[]> = {
   resp_raw: ["endpoint", "status", "tag", "body"],
 };
 
+const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  fetch_result_error: ["text", "int"],
+  fetch_result_fresh: ["text", "text", "text"],
+  fetch_result_unchanged: ["text"],
+  resp_raw: ["text", "int", "text", "text"],
+};
+
 const arrivalTargets: readonly string[] = ["resp_raw"];
 
 const boot: readonly IBootStatement[] = [
@@ -120,10 +148,10 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    fetch_result_error: selectRows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint", "status" FROM "fetch_result_error"`, relColumns.fetch_result_error!),
-    fetch_result_fresh: selectRows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "fetch_result_fresh"`, relColumns.fetch_result_fresh!),
-    fetch_result_unchanged: selectRows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint" FROM "fetch_result_unchanged"`, relColumns.fetch_result_unchanged!),
-    resp_raw: selectRows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint", "status", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "resp_raw"`, relColumns.resp_raw!),
+    fetch_result_error: selectRows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint", "status" FROM "fetch_result_error"`, relColumns.fetch_result_error!, relColumnTypes.fetch_result_error!),
+    fetch_result_fresh: selectRows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "fetch_result_fresh"`, relColumns.fetch_result_fresh!, relColumnTypes.fetch_result_fresh!),
+    fetch_result_unchanged: selectRows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint" FROM "fetch_result_unchanged"`, relColumns.fetch_result_unchanged!, relColumnTypes.fetch_result_unchanged!),
+    resp_raw: selectRows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint", "status", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body" FROM "resp_raw"`, relColumns.resp_raw!, relColumnTypes.resp_raw!),
   });
 }
 
@@ -161,10 +189,10 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "fetch_result_error", kind: "set", tableName: "fetch_result_error", deltaTableName: "__delta_fetch_result_error", frontierTableName: "__frontier_fetch_result_error", nextFrontierTableName: "__next_frontier_fetch_result_error", columns: ["endpoint", "status"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint", "status", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fetch_result_error" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "status", "_sign"` },
-  { rel: "fetch_result_fresh", kind: "set", tableName: "fetch_result_fresh", deltaTableName: "__delta_fetch_result_fresh", frontierTableName: "__frontier_fetch_result_fresh", nextFrontierTableName: "__next_frontier_fetch_result_fresh", columns: ["endpoint", "tag", "body"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fetch_result_fresh" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "tag", "body", "_sign"` },
-  { rel: "fetch_result_unchanged", kind: "set", tableName: "fetch_result_unchanged", deltaTableName: "__delta_fetch_result_unchanged", frontierTableName: "__frontier_fetch_result_unchanged", nextFrontierTableName: "__next_frontier_fetch_result_unchanged", columns: ["endpoint"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fetch_result_unchanged" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "_sign"` },
-  { rel: "resp_raw", kind: "log", tableName: "resp_raw", deltaTableName: "__delta_resp_raw", frontierTableName: "__frontier_resp_raw", nextFrontierTableName: "__next_frontier_resp_raw", columns: ["endpoint", "status", "tag", "body"], keyIndices: [], arrivalAddSql: `INSERT INTO "resp_raw" ("endpoint", "status", "tag", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "endpoint", "status", "tag", "body"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint", "status", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_resp_raw" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "status", "tag", "body", "_sign"` },
+  { rel: "fetch_result_error", kind: "set", tableName: "fetch_result_error", deltaTableName: "__delta_fetch_result_error", frontierTableName: "__frontier_fetch_result_error", nextFrontierTableName: "__next_frontier_fetch_result_error", columns: ["endpoint", "status"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint", "status", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fetch_result_error" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "status", "_sign"` },
+  { rel: "fetch_result_fresh", kind: "set", tableName: "fetch_result_fresh", deltaTableName: "__delta_fetch_result_fresh", frontierTableName: "__frontier_fetch_result_fresh", nextFrontierTableName: "__next_frontier_fetch_result_fresh", columns: ["endpoint", "tag", "body"], columnTypes: ["text", "text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fetch_result_fresh" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "tag", "body", "_sign"` },
+  { rel: "fetch_result_unchanged", kind: "set", tableName: "fetch_result_unchanged", deltaTableName: "__delta_fetch_result_unchanged", frontierTableName: "__frontier_fetch_result_unchanged", nextFrontierTableName: "__next_frontier_fetch_result_unchanged", columns: ["endpoint"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fetch_result_unchanged" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "_sign"` },
+  { rel: "resp_raw", kind: "log", tableName: "resp_raw", deltaTableName: "__delta_resp_raw", frontierTableName: "__frontier_resp_raw", nextFrontierTableName: "__next_frontier_resp_raw", columns: ["endpoint", "status", "tag", "body"], columnTypes: ["text", "int", "text", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "resp_raw" ("endpoint", "status", "tag", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "endpoint", "status", "tag", "body"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint", "status", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag", CASE WHEN json_valid("body") AND json_type("body") = 'object' THEN json_extract("body", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("body", '$.args')) || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_resp_raw" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "status", "tag", "body", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -226,6 +254,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 }
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validateArrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
     return runNaiveTick(seam, arrivals);
   }
@@ -245,6 +274,7 @@ export const program: IGenProgramWithBoot = {
   name: "match_classify_response_desugared",
   ddl,
   relColumns,
+  relColumnTypes,
   arrivalTargets,
   boot,
   finalSelect,

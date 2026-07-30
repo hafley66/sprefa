@@ -29,6 +29,7 @@
             body_guard_goals/2, guard_goal/1, bind_goal/3, tick_goal/2,
             program_uses_tick/2,
             program_column_types/7,
+            literal_witness/1,
             % Body traversals, exported as the characterization seam for the
             % shared-walker consolidation (rank R1). The oracle ships its own
             % copy of the latest/1 and pre/1 scans, so the test that pins them
@@ -385,7 +386,7 @@ column_type_at_decl(Decls, Rules, Initial, Schedule, Ref, Columns, Position, Typ
        findall(WitnessType,
                 ( column_source_args(Rules, Initial, Schedule, Ref, Args),
                   nth1(Position, Args, Witness),
-                  atomic(Witness),
+                  literal_witness(Witness),
                   literal_witness_type(Witness, WitnessType)
                 ), WitnessTypes),
        ( Storage = ref(_)
@@ -398,18 +399,35 @@ column_type_at_decl(Decls, Rules, Initial, Schedule, Ref, Columns, Position, Typ
     ; column_type_at(Rules, Initial, Schedule, Ref, Position, Type)
     ).
 
+literal_witness(Witness) :-
+    nonvar(Witness),
+    Witness = bool_lit(Boolean),
+    memberchk(Boolean, [true, false]),
+    !.
+literal_witness(Witness) :- atomic(Witness).
+
+literal_witness_type(bool_lit(_), bool) :- !.
 literal_witness_type(Witness, int) :- integer(Witness), !.
+literal_witness_type(Witness, float) :- float(Witness), !.
 literal_witness_type(_, text).
 
 column_type_at(Rules, Initial, Schedule, Ref, Position, Type) :-
     findall(Witness,
             ( column_source_args(Rules, Initial, Schedule, Ref, Args),
               nth1(Position, Args, Witness),
-              atomic(Witness)
+              literal_witness(Witness)
             ), AtomicWitnesses),
-    ( AtomicWitnesses \== [], forall(member(Witness, AtomicWitnesses), integer(Witness))
-    -> Type = int
-    ;  Type = text
+    literal_witnesses_type(AtomicWitnesses, Type).
+
+literal_witnesses_type([], text) :- !.
+literal_witnesses_type(Witnesses, Type) :-
+    maplist(literal_witness_type, Witnesses, Types),
+    sort(Types, Distinct),
+    ( Distinct = [Only]
+    -> Type = Only
+    ; subset(Distinct, [float, int])
+    -> Type = float
+    ; Type = text
     ).
 
 % ═══ program-wide column typing (EXPRESSION + AGGREGATE LIFT) ══════════════
@@ -487,7 +505,7 @@ seed_column_contribution(Decls, Rules, Initial, Schedule, Ref, Columns, Position
     ;  findall(Witness,
                ( column_source_args(Rules, Initial, Schedule, Ref, Args),
                  nth1(Position, Args, Witness),
-                 atomic(Witness)
+                 literal_witness(Witness)
                ), LiteralWitnesses),
        % now/1 is a witness the way a literal is: the kernel tick is an
        % INTEGER (engine.pl run_ticks/7 counts from 1, step 8 "never an
@@ -503,9 +521,8 @@ seed_column_contribution(Decls, Rules, Initial, Schedule, Ref, Columns, Position
        ),
        ( AtomicWitnesses == []
        -> Seed = open(none)
-       ;  forall(member(Witness, AtomicWitnesses), integer(Witness))
-       -> Seed = open(int)
-       ;  Seed = open(text)
+       ; literal_witnesses_type(AtomicWitnesses, WitnessType),
+         Seed = open(WitnessType)
        )
     ).
 
@@ -578,6 +595,8 @@ head_arg_contribution(Environment, Arg, Type) :-
 % refused at lowering time, not silently retyped).
 aggregate_arg_contribution(_, Arg, int) :-
     nonvar(Arg), surface_for_term(Arg, count/1, aggregate, _, _, _), !.
+aggregate_arg_contribution(_, Arg, float) :-
+    nonvar(Arg), surface_for_term(Arg, avg/1, aggregate, _, _, _), !.
 aggregate_arg_contribution(Environment, Arg, Type) :-
     nonvar(Arg),
     surface_for_term(Arg, Kind/1, aggregate, _, _, _),
@@ -645,7 +664,9 @@ environment_lookup([Variable-Type | Rest], Target, Found) :-
 expression_type(Expr, Environment, Type) :-
     var(Expr), !,
     ( environment_lookup(Environment, Expr, Type) -> true ; Type = none ).
+expression_type(bool_lit(_), _, bool) :- !.
 expression_type(Expr, _, int) :- integer(Expr), !.
+expression_type(Expr, _, float) :- float(Expr), !.
 expression_type(Expr, _, text) :- atomic(Expr), !.
 expression_type(concat(_), _, text) :- !.
 expression_type(Expr, Environment, text) :-
@@ -653,17 +674,33 @@ expression_type(Expr, Environment, text) :-
     expression_type(Argument, Environment, ArgumentType),
     ( ArgumentType == text ; ArgumentType == none ).
 expression_type(Expr, Environment, Type) :-
-    arithmetic_expression(Expr, Left, Right), !,
+    arithmetic_expression(Expr, Operator, Left, Right), !,
     expression_type(Left, Environment, LeftType),
     expression_type(Right, Environment, RightType),
-    ( ( LeftType == text ; RightType == text ) -> Type = text ; Type = int ).
+    arithmetic_result_type(Operator, LeftType, RightType, Type).
 expression_type(_, _, text).
 
 % Operator inventory from registry.pl's expression/5 (rank R5 of
 % plans/2026-07-29-prolog-org-review.md), not a local list.
-arithmetic_expression(Expr, Left, Right) :-
+arithmetic_expression(Expr, Operator, Left, Right) :-
     compound(Expr), Expr =.. [Functor, Left, Right],
-    expression(Functor/2, arithmetic, _, _, _).
+    expression(Functor/2, arithmetic, _, _, _),
+    Operator = Functor.
+
+arithmetic_result_type(mod, Left, Right, int) :-
+    memberchk(Left, [int, none]),
+    memberchk(Right, [int, none]),
+    !.
+arithmetic_result_type(mod, _, _, text) :- !.
+arithmetic_result_type(_, float, Right, float) :-
+    memberchk(Right, [int, float, none]), !.
+arithmetic_result_type(_, Left, float, float) :-
+    memberchk(Left, [int, float, none]), !.
+arithmetic_result_type(_, Left, Right, int) :-
+    memberchk(Left, [int, none]),
+    memberchk(Right, [int, none]),
+    !.
+arithmetic_result_type(_, _, _, text).
 
 text_scalar_expression(Expr, Argument) :-
     compound(Expr), Expr =.. [Functor, Argument],
@@ -696,6 +733,13 @@ merge_type(Left, Right, _) :-
     throw(unsupported_construct(column_ref_type_conflict(Left, Right))).
 merge_type(text, _, text) :- !.
 merge_type(_, text, text) :- !.
+merge_type(float, int, float) :- !.
+merge_type(int, float, float) :- !.
+merge_type(float, _, float) :- !.
+merge_type(_, float, float) :- !.
+merge_type(bool, bool, bool) :- !.
+merge_type(bool, _, text) :- !.
+merge_type(_, bool, text) :- !.
 merge_type(int, _, int) :- !.
 merge_type(_, int, int) :- !.
 merge_type(_, _, none).

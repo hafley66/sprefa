@@ -141,7 +141,7 @@ export class LiveEngine implements ILiveEngine {
     if (sql === undefined || columns === undefined) {
       return throwError(() => new Error(`unknown rel '${rel}' in program '${this.program.name}'`));
     }
-    return selectRows(this.seam, sql, columns);
+    return selectRows(this.seam, sql, columns, this.program.relColumnTypes?.[rel]);
   }
 
   /** One queued batch: its own tick, then drain ticks while the program carries

@@ -1,0 +1,6 @@
+rel df_arg(caller_path: text, call_start: int, call_end: int, pos: int, arg: text, arg_end: int).
+rel resolved_call_edge(caller_path: text, call_start: int, call_end: int, callee_path: text, callee_name: text).
+rel df_param(callee_path: text, param: text, pos: int, param_end: int).
+rel flow_edge(from: text, to: text).
+
+flow_edge(Arg, Param) <- df_arg(CallerPath, CallStart, CallEnd, Pos, Arg, _), resolved_call_edge(CallerPath, CallStart, CallEnd, CalleePath, _), df_param(CalleePath, Param, Pos, _).

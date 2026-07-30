@@ -32,6 +32,7 @@ import type {
   IIncrementalRelationPlan,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -40,12 +41,12 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly (string | number)[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
   sql: string;
-  params: readonly (string | number)[];
+  params: readonly IRowValue[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
@@ -56,7 +57,27 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
+
+function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+  return arrivals.map((arrival): IArrivalRow => {
+    const types = relColumnTypes[arrival.rel];
+    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const row = arrival.row.map((value, index): IRowValue => {
+      const type = types[index];
+      if (type === "bool") {
+        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);
+        return value;
+      }
+      if (type === "float") {
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
+        return Object.is(value, -0) ? 0 : value;
+      }
+      return value;
+    });
+    return { ...arrival, row };
+  });
 }
 
 function triggerOccurrences(
@@ -108,6 +129,12 @@ const relColumns: Record<string, readonly string[]> = {
   latest: ["key", "value"],
 };
 
+const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  from_poll: ["text", "text"],
+  from_push: ["text", "text"],
+  latest: ["text", "text"],
+};
+
 const arrivalTargets: readonly string[] = ["from_poll", "from_push"];
 
 const boot: readonly IBootStatement[] = [
@@ -121,9 +148,9 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    from_poll: selectRows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value" FROM "from_poll"`, relColumns.from_poll!),
-    from_push: selectRows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value" FROM "from_push"`, relColumns.from_push!),
-    latest: selectRows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value" FROM "latest"`, relColumns.latest!),
+    from_poll: selectRows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value" FROM "from_poll"`, relColumns.from_poll!, relColumnTypes.from_poll!),
+    from_push: selectRows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value" FROM "from_push"`, relColumns.from_push!, relColumnTypes.from_push!),
+    latest: selectRows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value" FROM "latest"`, relColumns.latest!, relColumnTypes.latest!),
   });
 }
 
@@ -161,9 +188,9 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "from_poll", kind: "log", tableName: "from_poll", deltaTableName: "__delta_from_poll", frontierTableName: "__frontier_from_poll", nextFrontierTableName: "__next_frontier_from_poll", columns: ["key", "value"], keyIndices: [], arrivalAddSql: `INSERT INTO "from_poll" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_from_poll" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"` },
-  { rel: "from_push", kind: "log", tableName: "from_push", deltaTableName: "__delta_from_push", frontierTableName: "__frontier_from_push", nextFrontierTableName: "__next_frontier_from_push", columns: ["key", "value"], keyIndices: [], arrivalAddSql: `INSERT INTO "from_push" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_from_push" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"` },
-  { rel: "latest", kind: "set", tableName: "latest", deltaTableName: "__delta_latest", frontierTableName: "__frontier_latest", nextFrontierTableName: "__next_frontier_latest", columns: ["key", "value"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_latest" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"` },
+  { rel: "from_poll", kind: "log", tableName: "from_poll", deltaTableName: "__delta_from_poll", frontierTableName: "__frontier_from_poll", nextFrontierTableName: "__next_frontier_from_poll", columns: ["key", "value"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "from_poll" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_from_poll" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"` },
+  { rel: "from_push", kind: "log", tableName: "from_push", deltaTableName: "__delta_from_push", frontierTableName: "__frontier_from_push", nextFrontierTableName: "__next_frontier_from_push", columns: ["key", "value"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "from_push" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_from_push" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"` },
+  { rel: "latest", kind: "set", tableName: "latest", deltaTableName: "__delta_latest", frontierTableName: "__frontier_latest", nextFrontierTableName: "__next_frontier_latest", columns: ["key", "value"], columnTypes: ["text", "text"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_latest" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -277,6 +304,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 }
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validateArrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
     return runNaiveTick(seam, arrivals);
   }
@@ -296,6 +324,7 @@ export const program: IGenProgramWithBoot = {
   name: "key_same_tick_ordered_not_conflict",
   ddl,
   relColumns,
+  relColumnTypes,
   arrivalTargets,
   boot,
   finalSelect,

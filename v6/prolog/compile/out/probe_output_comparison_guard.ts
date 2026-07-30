@@ -32,6 +32,7 @@ import type {
   IIncrementalRelationPlan,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -40,23 +41,43 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly (string | number)[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
   sql: string;
-  params: readonly (string | number)[];
+  params: readonly IRowValue[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [{ name: "score", inputs: [{ name: "path", type: "text" }], outputs: [{ name: "score", type: "int" }], template: "score {path}", demandRel: "__host_demand_score", responseRel: "__host_response_score", execution: "live_sh" }];
+export const hostPlans: readonly IHostPlanData[] = [{ name: "score", inputs: [{ name: "path", type: "text" }], outputs: [{ name: "score", type: "int" }], template: "score {path}", demandRel: "__host_demand_score", responseRel: "__host_response_score", execution: "shell" }];
 export const bindPlans: readonly IBindPlanData[] = [];
 export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
+
+function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+  return arrivals.map((arrival): IArrivalRow => {
+    const types = relColumnTypes[arrival.rel];
+    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const row = arrival.row.map((value, index): IRowValue => {
+      const type = types[index];
+      if (type === "bool") {
+        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);
+        return value;
+      }
+      if (type === "float") {
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
+        return Object.is(value, -0) ? 0 : value;
+      }
+      return value;
+    });
+    return { ...arrival, row };
+  });
 }
 
 const ddl: readonly string[] = [
@@ -99,6 +120,13 @@ const relColumns: Record<string, readonly string[]> = {
   input: ["path"],
 };
 
+const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  __host_demand_score: ["text", "text", "text"],
+  __host_response_score: ["text", "int", "text", "int"],
+  accepted: ["text", "int"],
+  input: ["text"],
+};
+
 const arrivalTargets: readonly string[] = ["__host_response_score", "input"];
 
 const boot: readonly IBootStatement[] = [
@@ -118,10 +146,10 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    __host_demand_score: selectRows(seam, `SELECT CASE WHEN json_valid("identity_digest") AND json_type("identity_digest") = 'object' THEN json_extract("identity_digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("identity_digest", '$.args')) || ')' ELSE "identity_digest" END AS "identity_digest", CASE WHEN json_valid("witness_digest") AND json_type("witness_digest") = 'object' THEN json_extract("witness_digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("witness_digest", '$.args')) || ')' ELSE "witness_digest" END AS "witness_digest", CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path" FROM "__host_demand_score"`, relColumns.__host_demand_score!),
-    __host_response_score: selectRows(seam, `SELECT CASE WHEN json_valid("witness_digest") AND json_type("witness_digest") = 'object' THEN json_extract("witness_digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("witness_digest", '$.args')) || ')' ELSE "witness_digest" END AS "witness_digest", "ordinal", CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "score" FROM "__host_response_score"`, relColumns.__host_response_score!),
-    accepted: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "score" FROM "accepted"`, relColumns.accepted!),
-    input: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path" FROM "input"`, relColumns.input!),
+    __host_demand_score: selectRows(seam, `SELECT CASE WHEN json_valid("identity_digest") AND json_type("identity_digest") = 'object' THEN json_extract("identity_digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("identity_digest", '$.args')) || ')' ELSE "identity_digest" END AS "identity_digest", CASE WHEN json_valid("witness_digest") AND json_type("witness_digest") = 'object' THEN json_extract("witness_digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("witness_digest", '$.args')) || ')' ELSE "witness_digest" END AS "witness_digest", CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path" FROM "__host_demand_score"`, relColumns.__host_demand_score!, relColumnTypes.__host_demand_score!),
+    __host_response_score: selectRows(seam, `SELECT CASE WHEN json_valid("witness_digest") AND json_type("witness_digest") = 'object' THEN json_extract("witness_digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("witness_digest", '$.args')) || ')' ELSE "witness_digest" END AS "witness_digest", "ordinal", CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "score" FROM "__host_response_score"`, relColumns.__host_response_score!, relColumnTypes.__host_response_score!),
+    accepted: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "score" FROM "accepted"`, relColumns.accepted!, relColumnTypes.accepted!),
+    input: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path" FROM "input"`, relColumns.input!, relColumnTypes.input!),
   });
 }
 
@@ -160,10 +188,10 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "__host_demand_score", kind: "set", tableName: "__host_demand_score", deltaTableName: "__delta___host_demand_score", frontierTableName: "__frontier___host_demand_score", nextFrontierTableName: "__next_frontier___host_demand_score", columns: ["identity_digest", "witness_digest", "path"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("identity_digest") AND json_type("identity_digest") = 'object' THEN json_extract("identity_digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("identity_digest", '$.args')) || ')' ELSE "identity_digest" END AS "identity_digest", CASE WHEN json_valid("witness_digest") AND json_type("witness_digest") = 'object' THEN json_extract("witness_digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("witness_digest", '$.args')) || ')' ELSE "witness_digest" END AS "witness_digest", CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta___host_demand_score" WHERE "_sign" IN (-1, 1) GROUP BY "identity_digest", "witness_digest", "path", "_sign"` },
-  { rel: "__host_response_score", kind: "set", tableName: "__host_response_score", deltaTableName: "__delta___host_response_score", frontierTableName: "__frontier___host_response_score", nextFrontierTableName: "__next_frontier___host_response_score", columns: ["witness_digest", "ordinal", "path", "score"], keyIndices: [0, 1], arrivalAddSql: `INSERT INTO "__host_response_score" ("witness_digest", "ordinal", "path", "score") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) WHERE true ON CONFLICT ("witness_digest", "ordinal") DO UPDATE SET "path" = excluded."path", "score" = excluded."score" RETURNING "witness_digest", "ordinal", "path", "score"`, arrivalDelSql: `DELETE FROM "__host_response_score" WHERE ("witness_digest", "ordinal", "path", "score") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "witness_digest", "ordinal", "path", "score"`, boundarySql: `SELECT CASE WHEN json_valid("witness_digest") AND json_type("witness_digest") = 'object' THEN json_extract("witness_digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("witness_digest", '$.args')) || ')' ELSE "witness_digest" END AS "witness_digest", "ordinal", CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "score", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta___host_response_score" WHERE "_sign" IN (-1, 1) GROUP BY "witness_digest", "ordinal", "path", "score", "_sign"` },
-  { rel: "accepted", kind: "set", tableName: "accepted", deltaTableName: "__delta_accepted", frontierTableName: "__frontier_accepted", nextFrontierTableName: "__next_frontier_accepted", columns: ["path", "score"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "score", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_accepted" WHERE "_sign" IN (-1, 1) GROUP BY "path", "score", "_sign"` },
-  { rel: "input", kind: "set", tableName: "input", deltaTableName: "__delta_input", frontierTableName: "__frontier_input", nextFrontierTableName: "__next_frontier_input", columns: ["path"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "input" ("path") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "path"`, arrivalDelSql: `DELETE FROM "input" WHERE ("path") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "path"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_input" WHERE "_sign" IN (-1, 1) GROUP BY "path", "_sign"` },
+  { rel: "__host_demand_score", kind: "set", tableName: "__host_demand_score", deltaTableName: "__delta___host_demand_score", frontierTableName: "__frontier___host_demand_score", nextFrontierTableName: "__next_frontier___host_demand_score", columns: ["identity_digest", "witness_digest", "path"], columnTypes: ["text", "text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("identity_digest") AND json_type("identity_digest") = 'object' THEN json_extract("identity_digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("identity_digest", '$.args')) || ')' ELSE "identity_digest" END AS "identity_digest", CASE WHEN json_valid("witness_digest") AND json_type("witness_digest") = 'object' THEN json_extract("witness_digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("witness_digest", '$.args')) || ')' ELSE "witness_digest" END AS "witness_digest", CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta___host_demand_score" WHERE "_sign" IN (-1, 1) GROUP BY "identity_digest", "witness_digest", "path", "_sign"` },
+  { rel: "__host_response_score", kind: "set", tableName: "__host_response_score", deltaTableName: "__delta___host_response_score", frontierTableName: "__frontier___host_response_score", nextFrontierTableName: "__next_frontier___host_response_score", columns: ["witness_digest", "ordinal", "path", "score"], columnTypes: ["text", "int", "text", "int"], keyIndices: [0, 1], arrivalAddSql: `INSERT INTO "__host_response_score" ("witness_digest", "ordinal", "path", "score") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) WHERE true ON CONFLICT ("witness_digest", "ordinal") DO UPDATE SET "path" = excluded."path", "score" = excluded."score" RETURNING "witness_digest", "ordinal", "path", "score"`, arrivalDelSql: `DELETE FROM "__host_response_score" WHERE ("witness_digest", "ordinal", "path", "score") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "witness_digest", "ordinal", "path", "score"`, boundarySql: `SELECT CASE WHEN json_valid("witness_digest") AND json_type("witness_digest") = 'object' THEN json_extract("witness_digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("witness_digest", '$.args')) || ')' ELSE "witness_digest" END AS "witness_digest", "ordinal", CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "score", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta___host_response_score" WHERE "_sign" IN (-1, 1) GROUP BY "witness_digest", "ordinal", "path", "score", "_sign"` },
+  { rel: "accepted", kind: "set", tableName: "accepted", deltaTableName: "__delta_accepted", frontierTableName: "__frontier_accepted", nextFrontierTableName: "__next_frontier_accepted", columns: ["path", "score"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "score", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_accepted" WHERE "_sign" IN (-1, 1) GROUP BY "path", "score", "_sign"` },
+  { rel: "input", kind: "set", tableName: "input", deltaTableName: "__delta_input", frontierTableName: "__frontier_input", nextFrontierTableName: "__next_frontier_input", columns: ["path"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "input" ("path") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "path"`, arrivalDelSql: `DELETE FROM "input" WHERE ("path") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "path"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_input" WHERE "_sign" IN (-1, 1) GROUP BY "path", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -224,6 +252,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 }
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validateArrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
     return runNaiveTick(seam, arrivals);
   }
@@ -243,6 +272,7 @@ export const program: IGenProgramWithBoot = {
   name: "probe_output_comparison_guard",
   ddl,
   relColumns,
+  relColumnTypes,
   arrivalTargets,
   boot,
   finalSelect,

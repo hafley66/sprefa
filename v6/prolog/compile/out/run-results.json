@@ -85,66 +85,73 @@
   },
   {
     "name": "struct_arrival_key_order_canonicalized",
-    "bucket": "wrong",
-    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"finding\":{\"add\":[[\"a.rs\",1]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"finding\":{\"add\":[[\"a.rs\",{\"end\":9,\"start\":3}]],\"del\":[]}}}",
-    "finalBucket": "final_wrong",
-    "finalDetail": "actual={\"final\":{\"finding\":[[\"a.rs\",1]],\"span\":[[3,9]]}} oracle={\"final\":{\"finding\":[[\"a.rs\",{\"end\":9,\"start\":3}]]}}"
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "struct_column_renders_canonical_json",
-    "bucket": "wrong",
-    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"finding\":{\"add\":[[\"a.rs\",1]],\"del\":[]},\"touched\":{\"add\":[[\"a.rs\"]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"finding\":{\"add\":[[\"a.rs\",{\"end\":9,\"start\":3}]],\"del\":[]},\"touched\":{\"add\":[[\"a.rs\"]],\"del\":[]}}}",
-    "finalBucket": "final_wrong",
-    "finalDetail": "actual={\"final\":{\"finding\":[[\"a.rs\",1],[\"b.rs\",2]],\"span\":[[1,4],[3,9]],\"touched\":[[\"a.rs\"],[\"b.rs\"]]}} oracle={\"final\":{\"finding\":[[\"a.rs\",{\"end\":9,\"start\":3}],[\"b.rs\",{\"end\":4,\"start\":1}]],\"touched\":[[\"a.rs\"],[\"b.rs\"]]}}"
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "struct_intern_order_a",
-    "bucket": "wrong",
-    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"mark\":{\"add\":[[1]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"mark\":{\"add\":[[{\"end\":2,\"start\":1}]],\"del\":[]}}}",
-    "finalBucket": "final_wrong",
-    "finalDetail": "actual={\"final\":{\"mark\":[[1],[2]],\"span\":[[1,2],[3,4]]}} oracle={\"final\":{\"mark\":[[{\"end\":2,\"start\":1}],[{\"end\":4,\"start\":3}]]}}"
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "struct_intern_order_b",
-    "bucket": "wrong",
-    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"mark\":{\"add\":[[1]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"mark\":{\"add\":[[{\"end\":4,\"start\":3}]],\"del\":[]}}}",
-    "finalBucket": "final_wrong",
-    "finalDetail": "actual={\"final\":{\"mark\":[[1],[2]],\"span\":[[1,2],[3,4]]}} oracle={\"final\":{\"mark\":[[{\"end\":2,\"start\":1}],[{\"end\":4,\"start\":3}]]}}"
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "struct_nested_value_renders_whole_tree",
-    "bucket": "wrong",
-    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"diag\":{\"add\":[[1,\"unused\"]],\"del\":[]},\"diag_file\":{\"add\":[[\"a.rs\"]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"diag\":{\"add\":[[{\"at\":{\"end\":9,\"start\":3},\"file\":\"a.rs\"},\"unused\"]],\"del\":[]},\"diag_file\":{\"add\":[[\"a.rs\"]],\"del\":[]}}}",
-    "finalBucket": "final_wrong",
-    "finalDetail": "actual={\"final\":{\"diag\":[[1,\"unused\"]],\"diag_file\":[[\"a.rs\"]],\"place\":[[\"a.rs\",1]],\"span\":[[3,9]]}} oracle={\"final\":{\"diag\":[[{\"at\":{\"end\":9,\"start\":3},\"file\":\"a.rs\"},\"unused\"]],\"diag_file\":[[\"a.rs\"]]}}"
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "struct_ghcacher_stars_normalization",
-    "bucket": "wrong",
-    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"current_body\":{\"add\":[[\"repo\",1]],\"del\":[]},\"stars\":{\"add\":[[\"repo\",17]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"current_body\":{\"add\":[[\"repo\",{\"full_name\":\"cli\",\"stargazers_count\":17}]],\"del\":[]},\"stars\":{\"add\":[[\"repo\",17]],\"del\":[]}}}",
-    "finalBucket": "final_wrong",
-    "finalDetail": "actual={\"final\":{\"current_body\":[[\"other\",2],[\"repo\",1]],\"repo_body\":[[\"cli\",17],[\"hub\",4]],\"stars\":[[\"other\",4],[\"repo\",17]]}} oracle={\"final\":{\"current_body\":[[\"other\",{\"full_name\":\"hub\",\"stargazers_count\":4}],[\"repo\",{\"full_name\":\"cli\",\"stargazers_count\":17}]],\"stars\":[[\"other\",4],[\"repo\",17]]}}"
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "struct_span_columns_are_int_after_decode",
-    "bucket": "wrong",
-    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"def_start\":{\"add\":[[\"a.rs\",17]],\"del\":[]},\"node_fact\":{\"add\":[[\"a.rs\",\"main\",1]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"def_start\":{\"add\":[[\"a.rs\",17]],\"del\":[]},\"node_fact\":{\"add\":[[\"a.rs\",\"main\",{\"end\":42,\"start\":17}]],\"del\":[]}}}",
-    "finalBucket": "final_wrong",
-    "finalDetail": "actual={\"final\":{\"def_start\":[[\"a.rs\",17],[\"b.rs\",3]],\"node_fact\":[[\"a.rs\",\"main\",1],[\"b.rs\",\"helper\",2]],\"span\":[[42,17],[9,3]]}} oracle={\"final\":{\"def_start\":[[\"a.rs\",17],[\"b.rs\",3]],\"node_fact\":[[\"a.rs\",\"main\",{\"end\":42,\"start\":17}],[\"b.rs\",\"helper\",{\"end\":9,\"start\":3}]]}}"
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "struct_host_output_schedule_answer_interned",
-    "bucket": "wrong",
-    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"__host_response_scan_span\":{\"add\":[[\"witness|scan_span|path:text=a.rs\",0,\"a.rs\",1]],\"del\":[]},\"host_span\":{\"add\":[[\"a.rs\",1]],\"del\":[]},\"host_start\":{\"add\":[[\"a.rs\",17]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"__host_response_scan_span\":{\"add\":[[\"witness|scan_span|path:text=a.rs\",0,\"a.rs\",{\"end\":42,\"start\":17}]],\"del\":[]},\"host_span\":{\"add\":[[\"a.rs\",{\"end\":42,\"start\":17}]],\"del\":[]},\"host_start\":{\"add\":[[\"a.rs\",17]],\"del\":[]}}}",
-    "finalBucket": "final_wrong",
-    "finalDetail": "actual={\"final\":{\"__host_demand_scan_span\":[[\"identity|scan_span|path:text=a.rs\",\"witness|scan_span|path:text=a.rs\",\"a.rs\"]],\"__host_response_scan_span\":[[\"witness|scan_span|path:text=a.rs\",0,\"a.rs\",1]],\"host_span\":[[\"a.rs\",1]],\"host_start\":[[\"a.rs\",17]],\"source_path\":[[\"a.rs\"]],\"span\":[[42,17]]}} oracle={\"final\":{\"__host_demand_scan_span\":[[\"identity|scan_span|path:text=a.rs\",\"witness|scan_span|path:text=a.rs\",\"a.rs\"]],\"__host_response_scan_span\":[[\"witness|scan_span|path:text=a.rs\",0,\"a.rs\",{\"end\":42,\"start\":17}]],\"host_span\":[[\"a.rs\",{\"end\":42,\"start\":17}]],\"host_start\":[[\"a.rs\",17]],\"source_path\":[[\"a.rs\"]]}}"
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "struct_shared_child_survives_one_release",
-    "bucket": "wrong",
-    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"hit\":{\"add\":[[\"left\",1],[\"right\",1]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"hit\":{\"add\":[[\"left\",{\"end\":2,\"start\":1}],[\"right\",{\"end\":2,\"start\":1}]],\"del\":[]}}}",
-    "finalBucket": "final_wrong",
-    "finalDetail": "actual={\"final\":{\"span\":[[1,2]]}} oracle={\"final\":{}}"
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "relation_reference_target_and_parent_share_tick",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
   },
   {
     "name": "groupby_two_bare_integer_literals",
@@ -176,6 +183,62 @@
   },
   {
     "name": "flow_sig_owner_join_types_the_resolved_callee",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "bool_literals_round_trip",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "bool_identity_comparison_filters",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "bool_relation_negation_is_two_valued",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "float_arithmetic_is_binary64",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "float_avg_is_grouped",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "float_exact_comparison_has_no_epsilon",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "float_negative_zero_canonical_boundary",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "float_integral_value_keeps_real_storage",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -392,6 +455,62 @@
     "finalDetail": ""
   },
   {
+    "name": "counter_fold_matches_hand_computation",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "batched_increments_both_count",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "increment_decrement_same_tick_nets_zero",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "log_driver_fold_needs_no_id_column",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "identical_increments_stack_as_log_deltas",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "lww_fold_follows_arrival_order",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "concat_fold_follows_arrival_order",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "concat_fold_reversed_arrival_reverses_result",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "log_deltas_follow_arrival_order",
     "bucket": "identical",
     "detail": "",
@@ -483,7 +602,28 @@
     "finalDetail": ""
   },
   {
+    "name": "concat_program_queue",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "completion_propagation_lattice_tick",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "take_until_keyed_replace_negated_done",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "state_flap_nets_to_zero_scope_churn",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",

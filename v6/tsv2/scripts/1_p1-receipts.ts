@@ -27,6 +27,7 @@ import {
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import type {
   IArrivalBatch,
+  IBootStatement,
   IGenProgram,
   IIncrementalEdgeStatement,
   IIncrementalLevelStatement,
@@ -131,10 +132,7 @@ function scheduleFor(shape: Shape, rows: number): readonly IArrivalBatch[] {
 }
 
 type ProgramWithBoot = IGenProgram & {
-  readonly boot: readonly {
-    readonly sql: string;
-    readonly params: readonly (string | number)[];
-  }[];
+  readonly boot: readonly IBootStatement[];
 };
 
 async function runBoot(seam: ISqlSeam, selectedProgram: ProgramWithBoot): Promise<void> {

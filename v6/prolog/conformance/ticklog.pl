@@ -108,9 +108,34 @@ row_json(Row, Json) :-
     format(atom(Json), '[~w]', [Inner]).
 
 value_json(Value, Json) :- integer(Value), !, format(atom(Json), '~w', [Value]).
+value_json(bool_lit(Boolean), Json) :- !, format(atom(Json), '~w', [Boolean]).
+value_json(Value, Json) :- float(Value), !, finite_float_json(Value, Json).
 value_json(Value, Json) :- json_value_term(Value), !, json_value_json(Value, Json).
 value_json(Value, Json) :- compound(Value), !, term_text(Value, Text), string_json(Text, Json).
 value_json(Value, Json) :- string_json(Value, Json).
+
+finite_float_json(Value, Json) :-
+    float_class(Value, Class),
+    memberchk(Class, [normal, subnormal, zero]),
+    ( Value =:= 0.0
+    -> Json = '0'
+    ; format(atom(Raw), '~h', [Value]),
+      normalize_float_json_atom(Raw, Json)
+    ).
+
+normalize_float_json_atom(Raw, Text) :-
+    ( sub_atom(Raw, Before, 2, After, '.0'),
+      ( After =:= 0
+      ; Start is Before + 2,
+        sub_atom(Raw, Start, _, 0, Exponent),
+        ( sub_atom(Exponent, 0, 1, _, 'e')
+        ; sub_atom(Exponent, 0, 1, _, 'E') ) )
+    -> sub_atom(Raw, 0, Before, _, Prefix),
+       Start2 is Before + 2,
+       sub_atom(Raw, Start2, After, 0, Suffix),
+       atom_concat(Prefix, Suffix, Text)
+    ; Text = Raw
+    ).
 
 % The forms below are the landed JSON representation from body.pl: lists for
 % arrays and obj(SortedPairs) for objects. A braces literal is still written

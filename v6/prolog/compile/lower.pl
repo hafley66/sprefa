@@ -206,11 +206,18 @@ quote_ident(Name, Quoted) :- format(atom(Quoted), '"~w"', [Name]).
 sql_literal(Atom, Literal) :-
     atomic(Atom),
     ( number(Atom)
-    -> format(atom(Literal), '~w', [Atom])
+    -> ( float(Atom)
+       -> float_class(Atom, Class),
+          ( memberchk(Class, [normal, subnormal, zero])
+          -> format(atom(Literal), '~h', [Atom])
+          ; throw(unsupported_construct(non_finite_float_literal(Atom))) )
+       ; format(atom(Literal), '~w', [Atom]) )
     ;  ( sub_atom(Atom, _, _, _, '\'')
        -> throw(unsupported_construct(quote_in_literal(Atom)))
        ; format(atom(Literal), '\'~w\'', [Atom]) )
     ).
+sql_literal(bool_lit(true), '1') :- !.
+sql_literal(bool_lit(false), '0') :- !.
 
 % ═══ relplan lookup ══════════════════════════════════════════════════════════
 
@@ -241,6 +248,8 @@ compile_pattern_arg(Arg, ColumnExpr, ColumnType, Bound0, Bound, WhereParts, Mode
        -> WhereParts = [], Bound = [Arg-typed(ColumnExpr, ColumnType) | Bound0]
        ; WhereParts = [], Bound = Bound0
        )
+    ; Arg = bool_lit(_)
+    -> WhereParts = [lit(ColumnExpr, Arg)], Bound = Bound0
     ; compound(Arg)
     -> Arg =.. [Functor | SubArgs],
        FnCheck = pair_lit(ColumnExpr, Functor),
@@ -414,11 +423,15 @@ compile_expr(Expr, Bound, Sql, Type) :-
     -> ( bound_lookup(Bound, Expr, typed(Sql, Type))
        -> true
        ;  throw(unsupported_construct(unbound_head_var(Expr))) )
+    ; Expr = bool_lit(_)
+    -> sql_literal(Expr, Sql), Type = bool
     ; compound(Expr),
       bound_lookup(Bound, Expr, typed(Sql, Type))
     -> true
     ; integer(Expr)
     -> sql_literal(Expr, Sql), Type = int
+    ; float(Expr)
+    -> sql_literal(Expr, Sql), Type = float
     ; atomic(Expr)
     -> sql_literal(Expr, Sql), Type = text
     ; Expr = concat(Parts)
@@ -431,10 +444,10 @@ compile_expr(Expr, Bound, Sql, Type) :-
        text_scalar_sql(Function, ArgumentSql, Sql),
        Type = text
     ; arithmetic_expr(Expr, Operator, Left, Right)
-    -> compile_int_operand(Left, Bound, Expr, LeftSql),
-       compile_int_operand(Right, Bound, Expr, RightSql),
-       arithmetic_sql(Operator, LeftSql, RightSql, Sql),
-       Type = int
+    -> compile_numeric_operand(Operator, Left, Bound, Expr, LeftSql, LeftType),
+       compile_numeric_operand(Operator, Right, Bound, Expr, RightSql, RightType),
+       arithmetic_sql(Operator, LeftSql, RightSql, LeftType, RightType, Sql),
+       arithmetic_result_type(Operator, LeftType, RightType, Type)
     ; json_value_expr(Expr)
     -> throw(unsupported_construct(json_value_expression(Expr)))
     ; compound(Expr)
@@ -510,18 +523,39 @@ compile_int_operand(Operand, Bound, Whole, Sql) :-
     ;  throw(unsupported_construct(arith_operand_not_int(Whole, Operand, Type)))
     ).
 
+compile_numeric_operand(mod, Operand, Bound, Whole, Sql, int) :-
+    !,
+    compile_int_operand(Operand, Bound, Whole, Sql).
+compile_numeric_operand(_, Operand, Bound, Whole, Sql, Type) :-
+    compile_expr(Operand, Bound, Sql, Type),
+    ( memberchk(Type, [int, float])
+    -> true
+    ; throw(unsupported_construct(arith_operand_not_number(Whole, Operand, Type)))
+    ).
+
 % Rendering comes from the table's SqlRendering field. sign_corrected_modulo
 % is there because SQLite's % takes the sign of the dividend while this
 % language's mod follows the divisor.
-arithmetic_sql(Operator, LeftSql, RightSql, Sql) :-
+arithmetic_sql(Operator, LeftSql, RightSql, LeftType, RightType, Sql) :-
     expression(Operator/2, arithmetic, _, Rendering, _),
-    arithmetic_rendering(Rendering, LeftSql, RightSql, Sql).
+    arithmetic_rendering(Rendering, LeftSql, RightSql, LeftType, RightType, Sql).
 
-arithmetic_rendering(sign_corrected_modulo, LeftSql, RightSql, Sql) :- !,
+arithmetic_rendering(sign_corrected_modulo, LeftSql, RightSql, _, _, Sql) :- !,
     format(atom(Sql), '(((~w % ~w) + ~w) % ~w)',
            [LeftSql, RightSql, RightSql, RightSql]).
-arithmetic_rendering(infix(SqlOperator), LeftSql, RightSql, Sql) :-
+arithmetic_rendering(numeric_division, LeftSql, RightSql, int, int, Sql) :- !,
+    format(atom(Sql), '(~w / ~w)', [LeftSql, RightSql]).
+arithmetic_rendering(numeric_division, LeftSql, RightSql, _, _, Sql) :- !,
+    format(atom(Sql), '(CAST(~w AS REAL) / ~w)', [LeftSql, RightSql]).
+arithmetic_rendering(infix(SqlOperator), LeftSql, RightSql, _, _, Sql) :-
     format(atom(Sql), '(~w ~w ~w)', [LeftSql, SqlOperator, RightSql]).
+
+arithmetic_result_type(mod, int, int, int) :- !.
+arithmetic_result_type(_, float, Right, float) :-
+    memberchk(Right, [int, float]), !.
+arithmetic_result_type(_, Left, float, float) :-
+    memberchk(Left, [int, float]), !.
+arithmetic_result_type(_, int, int, int).
 
 % engine.pl text_piece/2 throws non_display_in_concat on a compound piece;
 % an int piece auto-converts (atomic_list_concat), which SQLite's `||` also
@@ -626,6 +660,13 @@ check_comparison_types(both_int, Goal, LeftType, RightType) :-
     ;   throw(unsupported_construct(
                   comparison_operand_not_int(Goal, LeftType, RightType)))
     ).
+check_comparison_types(both_number, Goal, LeftType, RightType) :-
+    (   memberchk(LeftType, [int, float]),
+        memberchk(RightType, [int, float])
+    ->  true
+    ;   throw(unsupported_construct(
+                  comparison_operand_not_number(Goal, LeftType, RightType)))
+    ).
 check_comparison_types(same_type, Goal, LeftType, RightType) :-
     (   LeftType == RightType
     ->  true
@@ -704,6 +745,13 @@ rel_ddl(Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
 % compound-term columns stay inline-flat text, never their own storage
 % type).
 column_def(QuotedColumn, int, Def) :- !, format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
+column_def(QuotedColumn, bool, Def) :- !,
+    format(atom(Def), '~w INTEGER NOT NULL CHECK (~w IN (0,1))',
+           [QuotedColumn, QuotedColumn]).
+column_def(QuotedColumn, float, Def) :- !,
+    format(atom(Def),
+           '~w REAL NOT NULL CHECK (typeof(~w) = \'real\' AND ~w BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308)',
+           [QuotedColumn, QuotedColumn, QuotedColumn]).
 % A ref column stores the dense target-row id and nothing else. No FOREIGN
 % KEY clause and no ON DELETE clause: the retraction
 % lab measured SQL cascade deleting a shared child out from under a live
@@ -1845,22 +1893,25 @@ aggregate_select_expr(plain(Expr), Bound, Sql) :- !,
     compile_expr(Expr, Bound, Sql, _Type).
 aggregate_select_expr(agg(count, _Expr), _Bound, 'count(*)') :- !.
 aggregate_select_expr(agg(sum, Expr), Bound, Sql) :- !,
-    compile_aggregate_int_operand(sum, Expr, Bound, InnerSql),
+    compile_aggregate_number_operand(sum, Expr, Bound, InnerSql, _),
     format(atom(Sql), 'sum(~w)', [InnerSql]).
+aggregate_select_expr(agg(avg, Expr), Bound, Sql) :- !,
+    compile_aggregate_number_operand(avg, Expr, Bound, InnerSql, _),
+    format(atom(Sql), 'avg(~w)', [InnerSql]).
 aggregate_select_expr(agg(min, Expr), Bound, Sql) :- !,
-    compile_aggregate_int_operand(min, Expr, Bound, InnerSql),
+    compile_aggregate_number_operand(min, Expr, Bound, InnerSql, _),
     format(atom(Sql), 'min(~w)', [InnerSql]).
 aggregate_select_expr(agg(max, Expr), Bound, Sql) :- !,
-    compile_aggregate_int_operand(max, Expr, Bound, InnerSql),
+    compile_aggregate_number_operand(max, Expr, Bound, InnerSql, _),
     format(atom(Sql), 'max(~w)', [InnerSql]).
 aggregate_select_expr(agg(Kind, _), _, _) :-
     throw(unsupported_construct(aggregate_kind_not_lowered(Kind))).
 
-compile_aggregate_int_operand(Kind, Expr, Bound, Sql) :-
+compile_aggregate_number_operand(Kind, Expr, Bound, Sql, Type) :-
     compile_expr(Expr, Bound, Sql, Type),
-    ( Type == int
+    ( memberchk(Type, [int, float])
     -> true
-    ;  throw(unsupported_construct(aggregate_operand_not_int(Kind, Expr, Type)))
+    ;  throw(unsupported_construct(aggregate_operand_not_number(Kind, Expr, Type)))
     ).
 
 aggregate_group_exprs(Template, Bound, GroupExprs) :-
@@ -2140,6 +2191,12 @@ support_ddl(RelPlans, levelstmt(HeadRef, _, _, _, _, _), [Ddl]) :-
 % numeric-looking atom like '123' is itself valid JSON. group_concat over
 % json_each's '$.args' array renders any number of arguments in original order.
 canonical_column_expr(Column, int, QuotedColumn) :-
+    !,
+    quote_ident(Column, QuotedColumn).
+canonical_column_expr(Column, bool, QuotedColumn) :-
+    !,
+    quote_ident(Column, QuotedColumn).
+canonical_column_expr(Column, float, QuotedColumn) :-
     !,
     quote_ident(Column, QuotedColumn).
 % STRUCT-AS-ROWS, arc header Edge 1: a ref column reads its VALUE, never its

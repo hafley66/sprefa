@@ -33,6 +33,7 @@ import type {
   IIncrementalRelationPlan,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   IStructRefColumns,
@@ -43,12 +44,12 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly (string | number)[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
   sql: string;
-  params: readonly (string | number)[];
+  params: readonly IRowValue[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
@@ -59,7 +60,27 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
+
+function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+  return arrivals.map((arrival): IArrivalRow => {
+    const types = relColumnTypes[arrival.rel];
+    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const row = arrival.row.map((value, index): IRowValue => {
+      const type = types[index];
+      if (type === "bool") {
+        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);
+        return value;
+      }
+      if (type === "float") {
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
+        return Object.is(value, -0) ? 0 : value;
+      }
+      return value;
+    });
+    return { ...arrival, row };
+  });
 }
 
 export const STRUCT_TYPES: readonly IStructTypePlan[] = [
@@ -102,6 +123,12 @@ const relColumns: Record<string, readonly string[]> = {
   stars: ["ep", "n"],
 };
 
+const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  current_body: ["text", "ref"],
+  repo_body: ["text", "int"],
+  stars: ["text", "int"],
+};
+
 const arrivalTargets: readonly string[] = ["current_body", "repo_body"];
 
 const boot: readonly IBootStatement[] = [
@@ -117,9 +144,9 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    current_body: selectRows(seam, `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' THEN json_extract("ep", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ep", '$.args')) || ')' ELSE "ep" END AS "ep", (SELECT d."__rendered" FROM "__ref_repo_body" d WHERE d."__id" = "body") AS "body" FROM "current_body"`, relColumns.current_body!),
-    repo_body: selectRows(seam, `SELECT CASE WHEN json_valid("full_name") AND json_type("full_name") = 'object' THEN json_extract("full_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("full_name", '$.args')) || ')' ELSE "full_name" END AS "full_name", "stargazers_count" FROM "repo_body"`, relColumns.repo_body!),
-    stars: selectRows(seam, `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' THEN json_extract("ep", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ep", '$.args')) || ')' ELSE "ep" END AS "ep", "n" FROM "stars"`, relColumns.stars!),
+    current_body: selectRows(seam, `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' THEN json_extract("ep", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ep", '$.args')) || ')' ELSE "ep" END AS "ep", (SELECT d."__rendered" FROM "__ref_repo_body" d WHERE d."__id" = "body") AS "body" FROM "current_body"`, relColumns.current_body!, relColumnTypes.current_body!),
+    repo_body: selectRows(seam, `SELECT CASE WHEN json_valid("full_name") AND json_type("full_name") = 'object' THEN json_extract("full_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("full_name", '$.args')) || ')' ELSE "full_name" END AS "full_name", "stargazers_count" FROM "repo_body"`, relColumns.repo_body!, relColumnTypes.repo_body!),
+    stars: selectRows(seam, `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' THEN json_extract("ep", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ep", '$.args')) || ')' ELSE "ep" END AS "ep", "n" FROM "stars"`, relColumns.stars!, relColumnTypes.stars!),
   });
 }
 
@@ -157,9 +184,9 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "current_body", kind: "set", tableName: "current_body", deltaTableName: "__delta_current_body", frontierTableName: "__frontier_current_body", nextFrontierTableName: "__next_frontier_current_body", columns: ["ep", "body"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "current_body" ("ep", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "ep", "body"`, arrivalDelSql: `DELETE FROM "current_body" WHERE ("ep", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "ep", "body"`, boundarySql: `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' THEN json_extract("ep", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ep", '$.args')) || ')' ELSE "ep" END AS "ep", (SELECT d."__rendered" FROM "__ref_repo_body" d WHERE d."__id" = "body") AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_current_body" WHERE "_sign" IN (-1, 1) GROUP BY "ep", "body", "_sign"` },
-  { rel: "repo_body", kind: "set", tableName: "repo_body", deltaTableName: "__delta_repo_body", frontierTableName: "__frontier_repo_body", nextFrontierTableName: "__next_frontier_repo_body", columns: ["full_name", "stargazers_count"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "repo_body" ("full_name", "stargazers_count") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "full_name", "stargazers_count"`, arrivalDelSql: `DELETE FROM "repo_body" WHERE ("full_name", "stargazers_count") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "full_name", "stargazers_count"`, boundarySql: `SELECT CASE WHEN json_valid("full_name") AND json_type("full_name") = 'object' THEN json_extract("full_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("full_name", '$.args')) || ')' ELSE "full_name" END AS "full_name", "stargazers_count", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_repo_body" WHERE "_sign" IN (-1, 1) GROUP BY "full_name", "stargazers_count", "_sign"` },
-  { rel: "stars", kind: "set", tableName: "stars", deltaTableName: "__delta_stars", frontierTableName: "__frontier_stars", nextFrontierTableName: "__next_frontier_stars", columns: ["ep", "n"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' THEN json_extract("ep", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ep", '$.args')) || ')' ELSE "ep" END AS "ep", "n", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_stars" WHERE "_sign" IN (-1, 1) GROUP BY "ep", "n", "_sign"` },
+  { rel: "current_body", kind: "set", tableName: "current_body", deltaTableName: "__delta_current_body", frontierTableName: "__frontier_current_body", nextFrontierTableName: "__next_frontier_current_body", columns: ["ep", "body"], columnTypes: ["text", "ref"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "current_body" ("ep", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "ep", "body"`, arrivalDelSql: `DELETE FROM "current_body" WHERE ("ep", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "ep", "body"`, boundarySql: `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' THEN json_extract("ep", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ep", '$.args')) || ')' ELSE "ep" END AS "ep", (SELECT d."__rendered" FROM "__ref_repo_body" d WHERE d."__id" = "body") AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_current_body" WHERE "_sign" IN (-1, 1) GROUP BY "ep", "body", "_sign"` },
+  { rel: "repo_body", kind: "set", tableName: "repo_body", deltaTableName: "__delta_repo_body", frontierTableName: "__frontier_repo_body", nextFrontierTableName: "__next_frontier_repo_body", columns: ["full_name", "stargazers_count"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "repo_body" ("full_name", "stargazers_count") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "full_name", "stargazers_count"`, arrivalDelSql: `DELETE FROM "repo_body" WHERE ("full_name", "stargazers_count") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "full_name", "stargazers_count"`, boundarySql: `SELECT CASE WHEN json_valid("full_name") AND json_type("full_name") = 'object' THEN json_extract("full_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("full_name", '$.args')) || ')' ELSE "full_name" END AS "full_name", "stargazers_count", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_repo_body" WHERE "_sign" IN (-1, 1) GROUP BY "full_name", "stargazers_count", "_sign"` },
+  { rel: "stars", kind: "set", tableName: "stars", deltaTableName: "__delta_stars", frontierTableName: "__frontier_stars", nextFrontierTableName: "__next_frontier_stars", columns: ["ep", "n"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' THEN json_extract("ep", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ep", '$.args')) || ')' ELSE "ep" END AS "ep", "n", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_stars" WHERE "_sign" IN (-1, 1) GROUP BY "ep", "n", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -223,6 +250,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 }
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validateArrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
     return runNaiveTick(seam, arrivals);
   }
@@ -242,6 +270,7 @@ export const program: IGenProgramWithBoot = {
   name: "struct_ghcacher_stars_normalization",
   ddl,
   relColumns,
+  relColumnTypes,
   arrivalTargets,
   boot,
   finalSelect,

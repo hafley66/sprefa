@@ -36,8 +36,8 @@ use std::collections::BTreeSet;
 
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
-    CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfNodeKind,
-    DfParam, ProjectEdge, SigSlot, TypeEntityKind, TypeF, TypeSig,
+    CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfNodeKind, DfParam,
+    ProjectEdge, SigSlot, TypeEntityKind, TypeF, TypeSig,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{corpus_defs, covering_def, def_named, DefIndex, Parser, Project, Resolve};
@@ -1093,7 +1093,8 @@ impl Resolve<CallF> for KotlinSource {
                 continue;
             };
             let callee = output.strings.lookup(site.callee);
-            let Some((dst_blob, dst_span)) = KotlinSource::call_name_match(output, def_index, callee)
+            let Some((dst_blob, dst_span)) =
+                KotlinSource::call_name_match(output, def_index, callee)
             else {
                 continue;
             };

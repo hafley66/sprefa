@@ -40,10 +40,18 @@ fn df_aux_cli_goldens_cover_all_projectors() {
         let aux = output
             .stdout
             .split(|byte| *byte == b'\n')
-            .filter(|line| line.starts_with(b"{\"record\":\"param\"") || line.starts_with(b"{\"record\":\"arg\""))
+            .filter(|line| {
+                line.starts_with(b"{\"record\":\"param\"")
+                    || line.starts_with(b"{\"record\":\"arg\"")
+            })
             .map(|line| String::from_utf8(line.to_vec()).expect("JSONL is UTF-8"))
             .collect::<Vec<_>>()
             .join("\n");
-        assert_eq!(format!("{aux}\n"), case.golden, "{} aux records", case.source);
+        assert_eq!(
+            format!("{aux}\n"),
+            case.golden,
+            "{} aux records",
+            case.source
+        );
     }
 }

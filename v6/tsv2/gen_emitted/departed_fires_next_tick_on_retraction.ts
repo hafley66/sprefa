@@ -32,6 +32,7 @@ import type {
   IIncrementalRelationPlan,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -40,12 +41,12 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly (string | number)[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
   sql: string;
-  params: readonly (string | number)[];
+  params: readonly IRowValue[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
@@ -56,7 +57,27 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
+
+function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+  return arrivals.map((arrival): IArrivalRow => {
+    const types = relColumnTypes[arrival.rel];
+    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const row = arrival.row.map((value, index): IRowValue => {
+      const type = types[index];
+      if (type === "bool") {
+        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);
+        return value;
+      }
+      if (type === "float") {
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
+        return Object.is(value, -0) ? 0 : value;
+      }
+      return value;
+    });
+    return { ...arrival, row };
+  });
 }
 
 function triggerOccurrences(
@@ -119,6 +140,12 @@ const relColumns: Record<string, readonly string[]> = {
   source_row: ["item"],
 };
 
+const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  closed_at: ["text", "int"],
+  mirror: ["text"],
+  source_row: ["text"],
+};
+
 const arrivalTargets: readonly string[] = ["source_row"];
 
 const boot: readonly IBootStatement[] = [
@@ -134,9 +161,9 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    closed_at: selectRows(seam, `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' THEN json_extract("item", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item", '$.args')) || ')' ELSE "item" END AS "item", "tick" FROM "closed_at"`, relColumns.closed_at!),
-    mirror: selectRows(seam, `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' THEN json_extract("item", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item", '$.args')) || ')' ELSE "item" END AS "item" FROM "mirror"`, relColumns.mirror!),
-    source_row: selectRows(seam, `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' THEN json_extract("item", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item", '$.args')) || ')' ELSE "item" END AS "item" FROM "source_row"`, relColumns.source_row!),
+    closed_at: selectRows(seam, `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' THEN json_extract("item", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item", '$.args')) || ')' ELSE "item" END AS "item", "tick" FROM "closed_at"`, relColumns.closed_at!, relColumnTypes.closed_at!),
+    mirror: selectRows(seam, `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' THEN json_extract("item", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item", '$.args')) || ')' ELSE "item" END AS "item" FROM "mirror"`, relColumns.mirror!, relColumnTypes.mirror!),
+    source_row: selectRows(seam, `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' THEN json_extract("item", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item", '$.args')) || ')' ELSE "item" END AS "item" FROM "source_row"`, relColumns.source_row!, relColumnTypes.source_row!),
   });
 }
 
@@ -173,9 +200,9 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "closed_at", kind: "log", tableName: "closed_at", deltaTableName: "__delta_closed_at", frontierTableName: "__frontier_closed_at", nextFrontierTableName: "__next_frontier_closed_at", columns: ["item", "tick"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' THEN json_extract("item", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item", '$.args')) || ')' ELSE "item" END AS "item", "tick", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_closed_at" WHERE "_sign" IN (-1, 1) GROUP BY "item", "tick", "_sign"` },
-  { rel: "mirror", kind: "set", tableName: "mirror", deltaTableName: "__delta_mirror", frontierTableName: "__frontier_mirror", nextFrontierTableName: "__next_frontier_mirror", columns: ["item"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' THEN json_extract("item", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item", '$.args')) || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_mirror" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"`, departureFrontierTableName: "__departure_frontier_mirror" },
-  { rel: "source_row", kind: "set", tableName: "source_row", deltaTableName: "__delta_source_row", frontierTableName: "__frontier_source_row", nextFrontierTableName: "__next_frontier_source_row", columns: ["item"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "source_row" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrivalDelSql: `DELETE FROM "source_row" WHERE ("item") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "item"`, boundarySql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' THEN json_extract("item", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item", '$.args')) || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source_row" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"` },
+  { rel: "closed_at", kind: "log", tableName: "closed_at", deltaTableName: "__delta_closed_at", frontierTableName: "__frontier_closed_at", nextFrontierTableName: "__next_frontier_closed_at", columns: ["item", "tick"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' THEN json_extract("item", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item", '$.args')) || ')' ELSE "item" END AS "item", "tick", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_closed_at" WHERE "_sign" IN (-1, 1) GROUP BY "item", "tick", "_sign"` },
+  { rel: "mirror", kind: "set", tableName: "mirror", deltaTableName: "__delta_mirror", frontierTableName: "__frontier_mirror", nextFrontierTableName: "__next_frontier_mirror", columns: ["item"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' THEN json_extract("item", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item", '$.args')) || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_mirror" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"`, departureFrontierTableName: "__departure_frontier_mirror" },
+  { rel: "source_row", kind: "set", tableName: "source_row", deltaTableName: "__delta_source_row", frontierTableName: "__frontier_source_row", nextFrontierTableName: "__next_frontier_source_row", columns: ["item"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "source_row" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrivalDelSql: `DELETE FROM "source_row" WHERE ("item") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "item"`, boundarySql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' THEN json_extract("item", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("item", '$.args')) || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source_row" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -279,6 +306,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 }
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validateArrivals(arrivals);
   // Derived edge triggers consume the P1 current/next frontier, including drain carry.
   return runIncrementalTick(seam, arrivals);
 }
@@ -296,6 +324,7 @@ export const program: IGenProgramWithBoot = {
   name: "departed_fires_next_tick_on_retraction",
   ddl,
   relColumns,
+  relColumnTypes,
   arrivalTargets,
   boot,
   finalSelect,

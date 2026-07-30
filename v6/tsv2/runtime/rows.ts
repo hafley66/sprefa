@@ -7,10 +7,11 @@
 
 import { map, type Observable } from "rxjs";
 
-import type { IRow, IRowValue, ISqlSeam } from "./types.ts";
+import type { IRow, IRowColumnType, IRowValue, ISqlSeam } from "./types.ts";
 
-/** A generated program's columns are TEXT or INTEGER (PHASE C2 RULING 1;
- *  never NULL), so `IRowValue` (string | number) covers every value a
+/** A generated program's scalar columns are TEXT, INTEGER, or REAL and never
+ *  NULL. Bool columns use constrained INTEGER storage and cross this boundary
+ *  as booleans; float columns use finite REAL storage. `IRowValue` covers every value a
  *  SELECT can hand back here without a runtime check: libsql returns an
  *  INTEGER-affinity column as a plain JS `number` (verified empirically,
  *  not assumed -- this driver's default `intMode` is "number", not
@@ -18,8 +19,33 @@ import type { IRow, IRowValue, ISqlSeam } from "./types.ts";
  *  narrow (libsql's `Value` is `null | string | number | bigint |
  *  ArrayBuffer`) and would need widening only if a future column type
  *  introduces `bigint` or `null` into this seam. */
-export function selectRows(seam: ISqlSeam, sql: string, columns: readonly string[]): Observable<IRow[]> {
+export function rowValueFromSql(type: IRowColumnType | undefined, value: unknown): IRowValue {
+  if (type === "bool") {
+    if (value === 0 || value === 0n) return false;
+    if (value === 1 || value === 1n) return true;
+    throw new Error(`bool column crossed SQLite with ${JSON.stringify(value)}`);
+  }
+  if (type === "float") {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      throw new Error(`float column crossed SQLite with ${JSON.stringify(value)}`);
+    }
+    return Object.is(value, -0) ? 0 : value;
+  }
+  return value as IRowValue;
+}
+
+export function selectRows(
+  seam: ISqlSeam,
+  sql: string,
+  columns: readonly string[],
+  columnTypes: readonly IRowColumnType[] = [],
+): Observable<IRow[]> {
   return seam.runner.execute(seam.db, sql).pipe(
-    map((result) => result.rows.map((row): IRow => columns.map((column) => row[column] as IRowValue))),
+    map((result) =>
+      result.rows.map(
+        (row): IRow =>
+          columns.map((column, index) => rowValueFromSql(columnTypes[index], row[column])),
+      ),
+    ),
   );
 }

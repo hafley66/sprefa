@@ -32,6 +32,7 @@ import type {
   IIncrementalRelationPlan,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -40,12 +41,12 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly (string | number)[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
   sql: string;
-  params: readonly (string | number)[];
+  params: readonly IRowValue[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
@@ -56,7 +57,27 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
+
+function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+  return arrivals.map((arrival): IArrivalRow => {
+    const types = relColumnTypes[arrival.rel];
+    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const row = arrival.row.map((value, index): IRowValue => {
+      const type = types[index];
+      if (type === "bool") {
+        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);
+        return value;
+      }
+      if (type === "float") {
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
+        return Object.is(value, -0) ? 0 : value;
+      }
+      return value;
+    });
+    return { ...arrival, row };
+  });
 }
 
 function triggerOccurrences(
@@ -125,6 +146,14 @@ const relColumns: Record<string, readonly string[]> = {
   worktree_file: ["path", "digest"],
 };
 
+const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  dirty: ["text"],
+  head: ["int", "int"],
+  tree_file: ["int", "text", "text"],
+  worktree_edit: ["text", "text"],
+  worktree_file: ["text", "text"],
+};
+
 const arrivalTargets: readonly string[] = ["head", "tree_file", "worktree_edit"];
 
 const boot: readonly IBootStatement[] = [
@@ -145,11 +174,11 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    dirty: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path" FROM "dirty"`, relColumns.dirty!),
-    head: selectRows(seam, `SELECT "_repo_id", "rev_id" FROM "head"`, relColumns.head!),
-    tree_file: selectRows(seam, `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("tree_digest") AND json_type("tree_digest") = 'object' THEN json_extract("tree_digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tree_digest", '$.args')) || ')' ELSE "tree_digest" END AS "tree_digest" FROM "tree_file"`, relColumns.tree_file!),
-    worktree_edit: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' THEN json_extract("digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("digest", '$.args')) || ')' ELSE "digest" END AS "digest" FROM "worktree_edit"`, relColumns.worktree_edit!),
-    worktree_file: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' THEN json_extract("digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("digest", '$.args')) || ')' ELSE "digest" END AS "digest" FROM "worktree_file"`, relColumns.worktree_file!),
+    dirty: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path" FROM "dirty"`, relColumns.dirty!, relColumnTypes.dirty!),
+    head: selectRows(seam, `SELECT "_repo_id", "rev_id" FROM "head"`, relColumns.head!, relColumnTypes.head!),
+    tree_file: selectRows(seam, `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("tree_digest") AND json_type("tree_digest") = 'object' THEN json_extract("tree_digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tree_digest", '$.args')) || ')' ELSE "tree_digest" END AS "tree_digest" FROM "tree_file"`, relColumns.tree_file!, relColumnTypes.tree_file!),
+    worktree_edit: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' THEN json_extract("digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("digest", '$.args')) || ')' ELSE "digest" END AS "digest" FROM "worktree_edit"`, relColumns.worktree_edit!, relColumnTypes.worktree_edit!),
+    worktree_file: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' THEN json_extract("digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("digest", '$.args')) || ')' ELSE "digest" END AS "digest" FROM "worktree_file"`, relColumns.worktree_file!, relColumnTypes.worktree_file!),
   });
 }
 
@@ -190,11 +219,11 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "dirty", kind: "set", tableName: "dirty", deltaTableName: "__delta_dirty", frontierTableName: "__frontier_dirty", nextFrontierTableName: "__next_frontier_dirty", columns: ["path"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dirty" WHERE "_sign" IN (-1, 1) GROUP BY "path", "_sign"` },
-  { rel: "head", kind: "set", tableName: "head", deltaTableName: "__delta_head", frontierTableName: "__frontier_head", nextFrontierTableName: "__next_frontier_head", columns: ["_repo_id", "rev_id"], keyIndices: [0], arrivalAddSql: `INSERT INTO "head" ("_repo_id", "rev_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("_repo_id") DO UPDATE SET "rev_id" = excluded."rev_id" RETURNING "_repo_id", "rev_id"`, arrivalDelSql: `DELETE FROM "head" WHERE ("_repo_id", "rev_id") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "_repo_id", "rev_id"`, boundarySql: `SELECT "_repo_id", "rev_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head" WHERE "_sign" IN (-1, 1) GROUP BY "_repo_id", "rev_id", "_sign"` },
-  { rel: "tree_file", kind: "set", tableName: "tree_file", deltaTableName: "__delta_tree_file", frontierTableName: "__frontier_tree_file", nextFrontierTableName: "__next_frontier_tree_file", columns: ["rev_id", "path", "tree_digest"], keyIndices: [0, 1], arrivalAddSql: `INSERT INTO "tree_file" ("rev_id", "path", "tree_digest") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) WHERE true ON CONFLICT ("rev_id", "path") DO UPDATE SET "tree_digest" = excluded."tree_digest" RETURNING "rev_id", "path", "tree_digest"`, arrivalDelSql: `DELETE FROM "tree_file" WHERE ("rev_id", "path", "tree_digest") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "rev_id", "path", "tree_digest"`, boundarySql: `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("tree_digest") AND json_type("tree_digest") = 'object' THEN json_extract("tree_digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tree_digest", '$.args')) || ')' ELSE "tree_digest" END AS "tree_digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tree_file" WHERE "_sign" IN (-1, 1) GROUP BY "rev_id", "path", "tree_digest", "_sign"` },
-  { rel: "worktree_edit", kind: "log", tableName: "worktree_edit", deltaTableName: "__delta_worktree_edit", frontierTableName: "__frontier_worktree_edit", nextFrontierTableName: "__next_frontier_worktree_edit", columns: ["path", "digest"], keyIndices: [], arrivalAddSql: `INSERT INTO "worktree_edit" ("path", "digest") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "digest"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' THEN json_extract("digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("digest", '$.args')) || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_worktree_edit" WHERE "_sign" IN (-1, 1) GROUP BY "path", "digest", "_sign"` },
-  { rel: "worktree_file", kind: "set", tableName: "worktree_file", deltaTableName: "__delta_worktree_file", frontierTableName: "__frontier_worktree_file", nextFrontierTableName: "__next_frontier_worktree_file", columns: ["path", "digest"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' THEN json_extract("digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("digest", '$.args')) || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_worktree_file" WHERE "_sign" IN (-1, 1) GROUP BY "path", "digest", "_sign"` },
+  { rel: "dirty", kind: "set", tableName: "dirty", deltaTableName: "__delta_dirty", frontierTableName: "__frontier_dirty", nextFrontierTableName: "__next_frontier_dirty", columns: ["path"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dirty" WHERE "_sign" IN (-1, 1) GROUP BY "path", "_sign"` },
+  { rel: "head", kind: "set", tableName: "head", deltaTableName: "__delta_head", frontierTableName: "__frontier_head", nextFrontierTableName: "__next_frontier_head", columns: ["_repo_id", "rev_id"], columnTypes: ["int", "int"], keyIndices: [0], arrivalAddSql: `INSERT INTO "head" ("_repo_id", "rev_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("_repo_id") DO UPDATE SET "rev_id" = excluded."rev_id" RETURNING "_repo_id", "rev_id"`, arrivalDelSql: `DELETE FROM "head" WHERE ("_repo_id", "rev_id") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "_repo_id", "rev_id"`, boundarySql: `SELECT "_repo_id", "rev_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head" WHERE "_sign" IN (-1, 1) GROUP BY "_repo_id", "rev_id", "_sign"` },
+  { rel: "tree_file", kind: "set", tableName: "tree_file", deltaTableName: "__delta_tree_file", frontierTableName: "__frontier_tree_file", nextFrontierTableName: "__next_frontier_tree_file", columns: ["rev_id", "path", "tree_digest"], columnTypes: ["int", "text", "text"], keyIndices: [0, 1], arrivalAddSql: `INSERT INTO "tree_file" ("rev_id", "path", "tree_digest") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) WHERE true ON CONFLICT ("rev_id", "path") DO UPDATE SET "tree_digest" = excluded."tree_digest" RETURNING "rev_id", "path", "tree_digest"`, arrivalDelSql: `DELETE FROM "tree_file" WHERE ("rev_id", "path", "tree_digest") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "rev_id", "path", "tree_digest"`, boundarySql: `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("tree_digest") AND json_type("tree_digest") = 'object' THEN json_extract("tree_digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tree_digest", '$.args')) || ')' ELSE "tree_digest" END AS "tree_digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tree_file" WHERE "_sign" IN (-1, 1) GROUP BY "rev_id", "path", "tree_digest", "_sign"` },
+  { rel: "worktree_edit", kind: "log", tableName: "worktree_edit", deltaTableName: "__delta_worktree_edit", frontierTableName: "__frontier_worktree_edit", nextFrontierTableName: "__next_frontier_worktree_edit", columns: ["path", "digest"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "worktree_edit" ("path", "digest") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "digest"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' THEN json_extract("digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("digest", '$.args')) || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_worktree_edit" WHERE "_sign" IN (-1, 1) GROUP BY "path", "digest", "_sign"` },
+  { rel: "worktree_file", kind: "set", tableName: "worktree_file", deltaTableName: "__delta_worktree_file", frontierTableName: "__frontier_worktree_file", nextFrontierTableName: "__next_frontier_worktree_file", columns: ["path", "digest"], columnTypes: ["text", "text"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' THEN json_extract("digest", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("digest", '$.args')) || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_worktree_file" WHERE "_sign" IN (-1, 1) GROUP BY "path", "digest", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -289,6 +318,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 }
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validateArrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
     return runNaiveTick(seam, arrivals);
   }
@@ -308,6 +338,7 @@ export const program: IGenProgramWithBoot = {
   name: "dirty_derives_from_digest_mismatch",
   ddl,
   relColumns,
+  relColumnTypes,
   arrivalTargets,
   boot,
   finalSelect,

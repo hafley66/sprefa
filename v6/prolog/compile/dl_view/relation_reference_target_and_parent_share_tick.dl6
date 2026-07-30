@@ -1,0 +1,5 @@
+rel span(start: int, end: int).
+rel finding(at: span).
+rel span_seen(start: int, end: int).
+
+span_seen(Start, End) <- span(Start, End).

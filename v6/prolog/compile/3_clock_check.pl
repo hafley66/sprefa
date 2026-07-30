@@ -1,0 +1,332 @@
+% 3_clock_check.pl : ring, sign, grade and inferred-clock projection.
+%
+% The checker reads the expanded program already used by analyze/strat/lower.
+% It introduces no source syntax and no runtime storage. Its facts are
+% queryable Prolog terms during compilation and in deterministic receipts.
+
+:- module(clock_check,
+          [ clock_dependencies/2,
+            clock_dependency/8,
+            inferred_clock/4,
+            clock_fact/5,
+            clock_scc/3,
+            clock_violation/2,
+            clock_refusal_reason/1,
+            check_clock_program/1
+          ]).
+
+:- use_module(library(lists)).
+:- use_module(analyze,
+              [ conjunction_goals/2, edge_headed_refs/2,
+                program_refs/2, rule_head_ref/2,
+                rule_is_edge/1, rule_is_level/1 ]).
+:- use_module(registry, [ body_surface_for_term/6, clock_role/4 ]).
+:- use_module('../0_program_check', [relation_kind/3]).
+:- use_module('../conformance/body', [rel_ref/2]).
+
+:- op(1150, xfx, <-).
+:- op(1150, xfx, <+).
+
+% clock_dependency(
+%   Program, RuleId, FromRef, ToRef, ReadRing, WriteRing, Sign, Grade).
+clock_dependency(Program, RuleId, From, To, ReadRing, WriteRing, Sign, Grade) :-
+    clock_dependencies(Program, Dependencies),
+    member(dependency(RuleId, From, To, ReadRing, WriteRing, Sign, Grade, _),
+           Dependencies).
+
+clock_dependencies(prog(Decls, Rules), Dependencies) :-
+    edge_headed_refs(Rules, EdgeHeaded),
+    findall(Dependency,
+            ( nth1(Index, Rules, Rule),
+              rule_dependencies(Decls, EdgeHeaded, Index, Rule, RuleDependencies),
+              member(Dependency, RuleDependencies)
+            ),
+            Dependencies0),
+    sort(Dependencies0, Dependencies).
+
+rule_dependencies(Decls, _EdgeHeaded, Index, Rule, Dependencies) :-
+    rule_is_level(Rule),
+    !,
+    rule_head_ref(Rule, HeadRef),
+    Rule = (_ <- Body),
+    conjunction_goals(Body, Goals),
+    findall(Dependency,
+            ( member(Goal, Goals),
+              level_goal_dependency(Decls, Index, HeadRef, Goal, Dependency)
+            ),
+            Dependencies).
+rule_dependencies(Decls, EdgeHeaded, Index, Rule, Dependencies) :-
+    rule_is_edge(Rule),
+    rule_head_ref(Rule, HeadRef),
+    Rule = (_ <+ Body),
+    conjunction_goals(Body, Goals),
+    edge_goal_dependencies(Decls, EdgeHeaded, Index, HeadRef, Goals,
+                           Dependencies).
+
+level_goal_dependency(Decls, Index, HeadRef, not(Atom), Dependency) :-
+    !,
+    relation_atom(Atom, FromRef),
+    dependency_from_role(Decls, rule(Index, level, HeadRef), FromRef, HeadRef,
+                         level_absence, Dependency).
+level_goal_dependency(Decls, Index, HeadRef, latest(Atom), Dependency) :-
+    !,
+    relation_atom(Atom, FromRef),
+    dependency_from_role(Decls, rule(Index, level, HeadRef), FromRef, HeadRef,
+                         edge_sample, Dependency).
+level_goal_dependency(Decls, Index, HeadRef, pre(Atom),
+                      dependency(rule(Index, level, HeadRef), FromRef, HeadRef,
+                                 b, b, previous, -1, pre_in_level)) :-
+    !,
+    relation_atom(Atom, FromRef),
+    relation_plane(Decls, HeadRef, b).
+level_goal_dependency(Decls, Index, HeadRef, finalize(Atom),
+                      dependency(rule(Index, level, HeadRef), FromRef, HeadRef,
+                                 z, b, negative, 1, finalize_in_level)) :-
+    !,
+    relation_atom(Atom, FromRef),
+    relation_plane(Decls, HeadRef, b).
+level_goal_dependency(Decls, Index, HeadRef, Atom, Dependency) :-
+    relation_atom(Atom, FromRef),
+    dependency_from_role(Decls, rule(Index, level, HeadRef), FromRef, HeadRef,
+                         level_read, Dependency).
+
+edge_goal_dependencies(Decls, EdgeHeaded, Index, HeadRef, Goals,
+                       Dependencies) :-
+    ( member(finalize(_), Goals) -> HasDeparture = true ; HasDeparture = false ),
+    findall(Dependency,
+            ( member(Goal, Goals),
+              edge_goal_dependency(Decls, EdgeHeaded, Index, HeadRef,
+                                   HasDeparture, Goal, Dependency) ),
+            Dependencies).
+
+edge_goal_dependency(Decls, _EdgeHeaded, Index, HeadRef, _,
+                     finalize(Atom), Dependency) :-
+    !,
+    relation_atom(Atom, FromRef),
+    dependency_from_role(Decls, rule(Index, edge, HeadRef), FromRef, HeadRef,
+                         edge_departure, Dependency).
+edge_goal_dependency(Decls, _EdgeHeaded, Index, HeadRef, _, latest(Atom),
+                     Dependency) :-
+    !,
+    relation_atom(Atom, FromRef),
+    dependency_from_role(Decls, rule(Index, edge, HeadRef), FromRef, HeadRef,
+                         edge_sample, Dependency).
+edge_goal_dependency(Decls, _EdgeHeaded, Index, HeadRef, _, pre(Atom),
+                     Dependency) :-
+    !,
+    relation_atom(Atom, FromRef),
+    dependency_from_role(Decls, rule(Index, edge, HeadRef), FromRef, HeadRef,
+                         edge_pre, Dependency).
+edge_goal_dependency(Decls, _EdgeHeaded, Index, HeadRef, _, not(Atom),
+                     Dependency) :-
+    !,
+    relation_atom(Atom, FromRef),
+    dependency_from_role(Decls, rule(Index, edge, HeadRef), FromRef, HeadRef,
+                         edge_absence, Dependency).
+edge_goal_dependency(Decls, _EdgeHeaded, Index, HeadRef, true, Atom,
+                     Dependency) :-
+    relation_atom(Atom, FromRef),
+    !,
+    dependency_from_role(Decls, rule(Index, edge, HeadRef), FromRef, HeadRef,
+                         edge_sample, Dependency).
+edge_goal_dependency(Decls, EdgeHeaded, Index, HeadRef, false, Atom,
+                     dependency(rule(Index, edge, HeadRef), FromRef, HeadRef,
+                                ReadRing, WriteRing, Sign, Grade, trigger)) :-
+    relation_atom(Atom, FromRef),
+    clock_role(edge_trigger, ReadRing, Sign, source_delay),
+    relation_plane(Decls, HeadRef, WriteRing),
+    ( memberchk(FromRef, EdgeHeaded) -> Grade = 1 ; Grade = 0 ).
+
+dependency_from_role(Decls, RuleId, FromRef, HeadRef, Role,
+                     dependency(RuleId, FromRef, HeadRef, ReadRing, WriteRing,
+                                Sign, Grade, Role)) :-
+    clock_role(Role, ReadRing, Sign, Grade),
+    relation_plane(Decls, HeadRef, WriteRing).
+
+relation_atom(Atom, Ref) :-
+    compound(Atom),
+    \+ body_surface_for_term(Atom, _, _, _, _, _),
+    rel_ref(Atom, Ref).
+
+relation_plane(Decls, Ref, n) :- relation_kind(Decls, Ref, log), !.
+relation_plane(_, _, b).
+
+% Only trigger and level-state dependencies advance a relation's inferred
+% occurrence clock. Samples constrain an arm at its trigger clock but do not
+% schedule it.
+causal_dependency(dependency(_, From, To, _, _, _, Grade, Role),
+                  From, To, Grade) :-
+    memberchk(Role, [level_read, level_absence, trigger, edge_departure,
+                     finalize_in_level]).
+
+inferred_clock(Program, Ref, Origin, Offset) :-
+    clock_dependencies(Program, Dependencies),
+    program_nodes(Program, Dependencies, Nodes),
+    clock_origin(Nodes, Dependencies, Origin),
+    clock_path(Origin, Ref, Dependencies, [Origin], 0, Offset, _).
+
+clock_fact(Program, Ref, Ring, clock(Origin, Offset), SccClass) :-
+    Program = prog(Decls, _),
+    inferred_clock(Program, Ref, Origin, Offset),
+    relation_plane(Decls, Ref, Ring),
+    ( clock_scc(Program, Component, SccClass), memberchk(Ref, Component)
+    -> true
+    ; SccClass = acyclic
+    ).
+
+program_nodes(prog(_, Rules), Dependencies, Nodes) :-
+    program_refs(Rules, RuleRefs),
+    findall(Ref,
+            ( member(Dependency, Dependencies),
+              ( Dependency = dependency(_, Ref, _, _, _, _, _, _)
+              ; Dependency = dependency(_, _, Ref, _, _, _, _, _) )
+            ),
+            DependencyRefs),
+    append(RuleRefs, DependencyRefs, All),
+    sort(All, Nodes).
+
+clock_origin(Nodes, Dependencies, Origin) :-
+    member(Origin, Nodes),
+    \+ ( member(Dependency, Dependencies),
+         causal_dependency(Dependency, _, Origin, _) ).
+
+clock_path(Origin, Origin, _, _, Offset, Offset, [Origin]).
+clock_path(Origin, Target, Dependencies, Visited, Offset0, Offset,
+           [Origin | Path]) :-
+    member(Dependency, Dependencies),
+    causal_dependency(Dependency, Origin, Next, Grade),
+    \+ memberchk(Next, Visited),
+    Offset1 is Offset0 + Grade,
+    clock_path(Next, Target, Dependencies, [Next | Visited], Offset1, Offset,
+               Path).
+
+% SCC classification is queryable separately from backend capability.
+% A zero-grade positive B cycle is constructive. A delayed recurrence is
+% productive when every simple cycle has a positive total grade.
+clock_scc(Program, Component, Class) :-
+    clock_dependencies(Program, Dependencies),
+    program_nodes(Program, Dependencies, Nodes),
+    member(Node, Nodes),
+    findall(Peer,
+            ( member(Peer, Nodes),
+              graph_reachable(Node, Peer, Dependencies),
+              graph_reachable(Peer, Node, Dependencies) ),
+            Component0),
+    sort(Component0, Component),
+    Component \== [],
+    component_has_cycle(Component, Dependencies),
+    Component = [First | _],
+    Node == First,
+    classify_component(Component, Dependencies, DerivedClass),
+    Class = DerivedClass.
+
+graph_reachable(From, To, Dependencies) :-
+    graph_reachable(From, To, Dependencies, [From]).
+
+graph_reachable(From, To, Dependencies, _) :-
+    member(Dependency, Dependencies),
+    causal_dependency(Dependency, From, To, _).
+graph_reachable(From, To, Dependencies, Visited) :-
+    member(Dependency, Dependencies),
+    causal_dependency(Dependency, From, Next, _),
+    \+ memberchk(Next, Visited),
+    graph_reachable(Next, To, Dependencies, [Next | Visited]).
+
+component_has_cycle([Only], Dependencies) :-
+    !,
+    member(Dependency, Dependencies),
+    causal_dependency(Dependency, Only, Only, _).
+component_has_cycle([_, _ | _], _).
+
+classify_component(Component, Dependencies, constructive_b) :-
+    component_edges(Component, Dependencies, Edges),
+    Edges \== [],
+    forall(member(Edge, Edges),
+           Edge = dependency(_, _, _, b, b, positive, 0, _)),
+    !.
+classify_component(Component, Dependencies, productive_delayed) :-
+    findall(Sum, component_cycle_sum(Component, Dependencies, Sum), Sums),
+    Sums \== [],
+    forall(member(Sum, Sums), Sum > 0),
+    !.
+classify_component(Component, Dependencies, invalid(Reason)) :-
+    findall(Sum, component_cycle_sum(Component, Dependencies, Sum), Sums),
+    min_list(Sums, Minimum),
+    ( Minimum =< 0
+    -> Reason = nonpositive_cycle(Minimum)
+    ; Reason = nonconstructive_cycle
+    ).
+
+component_edges(Component, Dependencies, Edges) :-
+    include(edge_inside(Component), Dependencies, Edges).
+
+edge_inside(Component, dependency(_, From, To, _, _, _, _, _)) :-
+    memberchk(From, Component),
+    memberchk(To, Component).
+
+component_cycle_sum(Component, Dependencies, Sum) :-
+    member(Start, Component),
+    cycle_from(Start, Start, Component, Dependencies, [Start], 0, Sum).
+
+cycle_from(Start, Current, Component, Dependencies, Visited, Sum0, Sum) :-
+    member(Dependency, Dependencies),
+    causal_dependency(Dependency, Current, Next, Grade),
+    memberchk(Next, Component),
+    Sum1 is Sum0 + Grade,
+    ( Next == Start
+    -> Sum = Sum1
+    ; \+ memberchk(Next, Visited),
+      cycle_from(Start, Next, Component, Dependencies, [Next | Visited],
+                 Sum1, Sum)
+    ).
+
+clock_violation(Program, cross_plane(finalize_in_level_rule(Ref))) :-
+    clock_dependencies(Program, Dependencies),
+    member(dependency(_, Ref, _, z, b, negative, 1, finalize_in_level),
+           Dependencies).
+clock_violation(Program, cross_plane(pre_in_level_rule(Ref))) :-
+    clock_dependencies(Program, Dependencies),
+    member(dependency(_, Ref, _, b, b, previous, -1, pre_in_level),
+           Dependencies).
+clock_violation(prog(Decls, Rules), cross_plane(log_on_level_headed_rel(Ref))) :-
+    member(kind(Ref, log), Decls),
+    member(Rule, Rules),
+    rule_is_level(Rule),
+    rule_head_ref(Rule, Ref).
+clock_violation(prog(Decls, Rules), cross_plane(keyed_level_head(Ref))) :-
+    member(keyed(Ref, _), Decls),
+    member(Rule, Rules),
+    rule_is_level(Rule),
+    rule_head_ref(Rule, Ref).
+clock_violation(Program, cross_plane(latest_in_level_rule(Ref))) :-
+    Program = prog(_, Rules),
+    member((_ <- Body), Rules),
+    conjunction_goals(Body, Goals),
+    member(latest(Atom), Goals),
+    relation_atom(Atom, Ref).
+clock_violation(Program, clock_path_conflict(Origin, Ref, Left, Right)) :-
+    setof(Offset, recurrence_free_clock(Program, Ref, Origin, Offset), Offsets),
+    select(Left, Offsets, Rest),
+    member(Right, Rest),
+    Left < Right,
+    !.
+clock_violation(Program, unconstructive_clock_cycle(Component, Reason)) :-
+    clock_scc(Program, Component, invalid(Reason)).
+
+clock_refusal_reason(clock_path_conflict(_, _, _, _)).
+clock_refusal_reason(unconstructive_clock_cycle(_, _)).
+
+recurrence_free_clock(Program, Ref, Origin, Offset) :-
+    clock_dependencies(Program, Dependencies),
+    program_nodes(Program, Dependencies, Nodes),
+    clock_origin(Nodes, Dependencies, Origin),
+    clock_path(Origin, Ref, Dependencies, [Origin], 0, Offset, Path),
+    \+ ( clock_scc(Program, Component, productive_delayed),
+         member(Node, Path),
+         memberchk(Node, Component) ).
+
+check_clock_program(Program) :-
+    ( clock_violation(Program, Violation)
+    -> throw(unsupported_construct(Violation))
+    ; true
+    ).

@@ -20,7 +20,7 @@
 :- use_module('../lower',
               [ lower_program/2, compile_expr/4, compile_comparison/3,
                 canonical_column_expr/2, level_support_sql/4 ]).
-:- use_module('../analyze', [ check_supported_subset/1 ]).
+:- use_module('../analyze', [ check_supported_subset/1, literal_witness/1 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
 :- use_module('../../1_expansion', [ expansion_phase/3, expand_program/3 ]).
@@ -55,6 +55,7 @@
               [ goal_rel_refs/3, split_rules/4 ]).
 :- use_module('../../conformance/body', [ body_atoms/2, comparison_goal/1 ]).
 :- use_module('../../1_host_expand', [ body_goals/2 ]).
+:- ensure_loaded('3_clock_check.test.pl').
 
 % Resolved relative to this file's own load-time directory (mirrors
 % sweep.pl's compile_dir/1 pattern -- prolog_load_context/2 only answers
@@ -2301,15 +2302,15 @@ test(driver_expands_enum_and_match_together) :-
 
 % The full inventory, written out rather than derived, so a row appearing or
 % disappearing is a visible edit here.
-expected_row('+'/2,    arithmetic,          1, infix('+'),            both_int).
-expected_row('-'/2,    arithmetic,          1, infix('-'),            both_int).
-expected_row('*'/2,    arithmetic,          2, infix('*'),            both_int).
-expected_row('/'/2,    arithmetic,          2, infix('/'),            both_int).
+expected_row('+'/2,    arithmetic,          1, infix('+'),            both_number).
+expected_row('-'/2,    arithmetic,          1, infix('-'),            both_number).
+expected_row('*'/2,    arithmetic,          2, infix('*'),            both_number).
+expected_row('/'/2,    arithmetic,          2, numeric_division,      both_number).
 expected_row(mod/2,    arithmetic,          2, sign_corrected_modulo, both_int).
-expected_row('<'/2,    ordered_comparison,  0, infix('<'),            both_int).
-expected_row('=<'/2,   ordered_comparison,  0, infix('<='),           both_int).
-expected_row('>'/2,    ordered_comparison,  0, infix('>'),            both_int).
-expected_row('>='/2,   ordered_comparison,  0, infix('>='),           both_int).
+expected_row('<'/2,    ordered_comparison,  0, infix('<'),            both_number).
+expected_row('=<'/2,   ordered_comparison,  0, infix('<='),           both_number).
+expected_row('>'/2,    ordered_comparison,  0, infix('>'),            both_number).
+expected_row('>='/2,   ordered_comparison,  0, infix('>='),           both_number).
 expected_row('=='/2,   identity_comparison, 0, infix('='),            same_type).
 expected_row('\\=='/2, identity_comparison, 0, infix('<>'),           same_type).
 expected_row(norm/1,    text_scalar,         3, ascii_alnum_lower,    text_only).
@@ -2389,6 +2390,70 @@ test(printer_precedence_comes_from_the_table) :-
 
 :- end_tests(expression_inventory).
 
+:- begin_tests(phase5_value_plane).
+
+test(parser_and_printer_round_trip_bool_and_float_without_surface_wrappers) :-
+    string_codes(
+      "rel sample(name: text, enabled: bool, score: float).\nselected(Name) <- sample(Name, true, Score), Score >= 0.25.\n",
+      Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    Program =@=
+      prog(
+        [ col_type(sample/3, name, text),
+          col_type(sample/3, enabled, bool),
+          col_type(sample/3, score, float) ],
+        [ (selected(Name) <-
+              sample(Name, bool_lit(true), Score),
+              Score >= 0.25) ]),
+    print_dl_program(Program, Bindings, Printed),
+    assertion(sub_atom(Printed, _, _, _, "enabled: bool")),
+    assertion(sub_atom(Printed, _, _, _, "score: float")),
+    assertion(sub_atom(Printed, _, _, _, "sample(Name, true, Score)")),
+    atom_codes(Printed, PrintedCodes),
+    parse_dl(PrintedCodes, Reparsed, _, []),
+    assertion(Program =@= Reparsed).
+
+test(unbound_variable_is_not_a_bool_literal_witness, [fail]) :-
+    literal_witness(_).
+
+test(bool_and_float_storage_constraints_are_exact) :-
+    lowered_for('5_value_plane.pl', bool_literals_round_trip, BoolLowered),
+    BoolLowered = lowered(_, BoolDdl, _, _, _, _, _, _),
+    memberchk(
+      'CREATE TABLE "flag" ("name" TEXT NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)), PRIMARY KEY ("name", "enabled")) WITHOUT ROWID',
+      BoolDdl),
+    lowered_for('5_value_plane.pl', float_arithmetic_is_binary64, FloatLowered),
+    FloatLowered = lowered(_, FloatDdl, _, _, _, _, _, _),
+    once(( member(ScoreDdl, FloatDdl),
+           sub_atom(ScoreDdl, 0, _, _, 'CREATE TABLE "score"'),
+           sub_atom(ScoreDdl, _, _, _,
+                    '"value" REAL NOT NULL CHECK (typeof("value") = \'real\' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308)') )).
+
+test(float_division_and_avg_lower_to_sqlite_real_operations) :-
+    compile_expr(5 / 2, [], IntDivision, int),
+    assertion(IntDivision == '(5 / 2)'),
+    compile_expr(5.0 / 2, [], FloatDivision, float),
+    assertion(FloatDivision == '(CAST(5.0 AS REAL) / 2)'),
+    lowered_for('5_value_plane.pl', float_avg_is_grouped, Lowered),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    memberchk(levelstmt(mean/2, _, [InsertSql], _, _, _), LevelStatements),
+    assertion(sub_atom(InsertSql, _, _, _, 'avg(b0."value")')).
+
+test(arithmetic_operator_constraint_keeps_unwitnessed_scan_state_numeric) :-
+    Prog = prog(
+      [ kind(increment/2, log),
+        keep(increment/2, all),
+        keyed(counter/2, [1]) ],
+      [ (counter(Name, Next) <+
+            increment(Name, _),
+            pre(counter(Name, Total)),
+            Next := Total + 1) ]),
+    program_plan(fixture(scan_numeric_constraint, Prog, [], [], [])-[], Plan),
+    Plan = plan(_, _, RelPlans, _, _, _),
+    memberchk(relplan(counter/2, _, _, _, [text, int]), RelPlans).
+
+:- end_tests(phase5_value_plane).
+
 % ═══════════════════════════════════════════════════════════════════════════
 % REGISTRY ROW TO ORACLE CLASSIFICATION (rank R4)
 %
@@ -2433,11 +2498,11 @@ test(every_registry_aggregate_row_is_an_oracle_aggregate) :-
              AggregateRules =@= [Rule],
              PlainLevel == [] )).
 
-% The registry has to actually carry the six, or the test above is vacuous.
-test(registry_carries_the_six_aggregate_rows) :-
+% The registry has to actually carry the seven, or the test above is vacuous.
+test(registry_carries_the_seven_aggregate_rows) :-
     findall(Signature, surface(Signature, aggregate, _, _, _), Rows),
     msort(Rows, Sorted),
-    Sorted == [ count/1, json_array/1, json_object/2, max/1, min/1, sum/1 ].
+    Sorted == [ avg/1, count/1, json_array/1, json_object/2, max/1, min/1, sum/1 ].
 
 % The oracle stays WIDER than the compiler. Both json rows are refused by the
 % compiler and both are still oracle aggregates.

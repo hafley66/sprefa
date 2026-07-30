@@ -32,6 +32,7 @@ import type {
   IIncrementalRelationPlan,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -40,12 +41,12 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly (string | number)[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
   sql: string;
-  params: readonly (string | number)[];
+  params: readonly IRowValue[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
@@ -56,7 +57,27 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
+
+function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+  return arrivals.map((arrival): IArrivalRow => {
+    const types = relColumnTypes[arrival.rel];
+    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const row = arrival.row.map((value, index): IRowValue => {
+      const type = types[index];
+      if (type === "bool") {
+        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);
+        return value;
+      }
+      if (type === "float") {
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
+        return Object.is(value, -0) ? 0 : value;
+      }
+      return value;
+    });
+    return { ...arrival, row };
+  });
 }
 
 const ddl: readonly string[] = [
@@ -90,6 +111,12 @@ const relColumns: Record<string, readonly string[]> = {
   body_tag: ["id", "tag"],
 };
 
+const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  body_page: ["int", "int"],
+  body_redirect: ["int", "text"],
+  body_tag: ["int", "text"],
+};
+
 const arrivalTargets: readonly string[] = ["body_page", "body_redirect"];
 
 const boot: readonly IBootStatement[] = [
@@ -106,9 +133,9 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    body_page: selectRows(seam, `SELECT "id", "view" FROM "body_page"`, relColumns.body_page!),
-    body_redirect: selectRows(seam, `SELECT "id", CASE WHEN json_valid("to") AND json_type("to") = 'object' THEN json_extract("to", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to", '$.args')) || ')' ELSE "to" END AS "to" FROM "body_redirect"`, relColumns.body_redirect!),
-    body_tag: selectRows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag" FROM "body_tag"`, relColumns.body_tag!),
+    body_page: selectRows(seam, `SELECT "id", "view" FROM "body_page"`, relColumns.body_page!, relColumnTypes.body_page!),
+    body_redirect: selectRows(seam, `SELECT "id", CASE WHEN json_valid("to") AND json_type("to") = 'object' THEN json_extract("to", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to", '$.args')) || ')' ELSE "to" END AS "to" FROM "body_redirect"`, relColumns.body_redirect!, relColumnTypes.body_redirect!),
+    body_tag: selectRows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag" FROM "body_tag"`, relColumns.body_tag!, relColumnTypes.body_tag!),
   });
 }
 
@@ -146,9 +173,9 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "body_page", kind: "set", tableName: "body_page", deltaTableName: "__delta_body_page", frontierTableName: "__frontier_body_page", nextFrontierTableName: "__next_frontier_body_page", columns: ["id", "view"], keyIndices: [1], arrivalAddSql: `INSERT INTO "body_page" ("id", "view") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("view") DO UPDATE SET "id" = excluded."id" RETURNING "id", "view"`, arrivalDelSql: `DELETE FROM "body_page" WHERE ("id", "view") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "view"`, boundarySql: `SELECT "id", "view", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_page" WHERE "_sign" IN (-1, 1) GROUP BY "id", "view", "_sign"` },
-  { rel: "body_redirect", kind: "set", tableName: "body_redirect", deltaTableName: "__delta_body_redirect", frontierTableName: "__frontier_body_redirect", nextFrontierTableName: "__next_frontier_body_redirect", columns: ["id", "to"], keyIndices: [1], arrivalAddSql: `INSERT INTO "body_redirect" ("id", "to") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("to") DO UPDATE SET "id" = excluded."id" RETURNING "id", "to"`, arrivalDelSql: `DELETE FROM "body_redirect" WHERE ("id", "to") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "to"`, boundarySql: `SELECT "id", CASE WHEN json_valid("to") AND json_type("to") = 'object' THEN json_extract("to", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to", '$.args')) || ')' ELSE "to" END AS "to", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_redirect" WHERE "_sign" IN (-1, 1) GROUP BY "id", "to", "_sign"` },
-  { rel: "body_tag", kind: "set", tableName: "body_tag", deltaTableName: "__delta_body_tag", frontierTableName: "__frontier_body_tag", nextFrontierTableName: "__next_frontier_body_tag", columns: ["id", "tag"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"` },
+  { rel: "body_page", kind: "set", tableName: "body_page", deltaTableName: "__delta_body_page", frontierTableName: "__frontier_body_page", nextFrontierTableName: "__next_frontier_body_page", columns: ["id", "view"], columnTypes: ["int", "int"], keyIndices: [1], arrivalAddSql: `INSERT INTO "body_page" ("id", "view") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("view") DO UPDATE SET "id" = excluded."id" RETURNING "id", "view"`, arrivalDelSql: `DELETE FROM "body_page" WHERE ("id", "view") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "view"`, boundarySql: `SELECT "id", "view", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_page" WHERE "_sign" IN (-1, 1) GROUP BY "id", "view", "_sign"` },
+  { rel: "body_redirect", kind: "set", tableName: "body_redirect", deltaTableName: "__delta_body_redirect", frontierTableName: "__frontier_body_redirect", nextFrontierTableName: "__next_frontier_body_redirect", columns: ["id", "to"], columnTypes: ["int", "text"], keyIndices: [1], arrivalAddSql: `INSERT INTO "body_redirect" ("id", "to") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("to") DO UPDATE SET "id" = excluded."id" RETURNING "id", "to"`, arrivalDelSql: `DELETE FROM "body_redirect" WHERE ("id", "to") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "to"`, boundarySql: `SELECT "id", CASE WHEN json_valid("to") AND json_type("to") = 'object' THEN json_extract("to", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to", '$.args')) || ')' ELSE "to" END AS "to", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_redirect" WHERE "_sign" IN (-1, 1) GROUP BY "id", "to", "_sign"` },
+  { rel: "body_tag", kind: "set", tableName: "body_tag", deltaTableName: "__delta_body_tag", frontierTableName: "__frontier_body_tag", nextFrontierTableName: "__next_frontier_body_tag", columns: ["id", "tag"], columnTypes: ["int", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -206,6 +233,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 }
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validateArrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
     return runNaiveTick(seam, arrivals);
   }
@@ -225,6 +253,7 @@ export const program: IGenProgramWithBoot = {
   name: "enum_decl_variant_rows_round_trip_through_tag_view",
   ddl,
   relColumns,
+  relColumnTypes,
   arrivalTargets,
   boot,
   finalSelect,

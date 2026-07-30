@@ -37,6 +37,7 @@
 :- use_module('../1_expansion', [expand_program/3]).
 :- use_module('../1_host_expand', [prepare_program/5]).
 :- use_module(analyze).
+:- use_module('3_clock_check', [check_clock_program/1]).
 :- use_module(strat).
 :- use_module(lower).
 :- use_module(emit_ts).
@@ -111,6 +112,7 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     % here, and the sugared entry expands again. That second expansion was the
     % redundant order site rank R3 removes.
     check_supported_subset_expanded(Prog),
+    check_clock_program(Prog),
     % STRUCT-AS-ROWS, the compiler's half of SLOT-ARRIVAL-MALFORMED. The
     % oracle refuses the same rows in engine.pl:check_world_shapes/3; here it
     % runs at PLAN time so a malformed program never reaches emission and

@@ -15,6 +15,7 @@
 :- discontiguous verification/2.
 :- discontiguous next_action/2.
 :- discontiguous session_task/2.
+:- discontiguous ruled_this_session/2.
 :- discontiguous locked/2.
 :- discontiguous leading_hypothesis/2.
 :- discontiguous closed/2.
@@ -357,3 +358,15 @@ session_task(v6_completion_drive,
              'plans/2026-07-29-v6-completion-drive.pl').
 next_action(parallel_completion_lanes,
             'integrate ordered event scan, ghcacher tick golden, and extract tick golden; then build queryable signatures and expansion-only switchMap/scan').
+session_task(match_left_to_right_surface,
+             'active Sol lane: optional leading semicolon plus Guard |-> Head and Guard |+> Head surface lowering').
+session_task(scan_match_value_lab,
+             'active Sol lane: consultable Prolog receipts for match relational values composed with exactly-one scan reducers').
+ruled_this_session(match_arm_direction,
+                    'left-to-right surface pair Guard |-> Head and Guard |+> Head; existing internal arrows remain canonical').
+session_task(rel_definition_hash_lab,
+             'active Sol lab: canonical relation/SCC hashes and specialization reuse').
+session_task(scan_instantiation_generics_lab,
+             'active Sol lab: instantiate scan from named relation and rule parameters with measured table shape').
+session_task(select_scan_cache_lab,
+             'active Sol lab: merged select loop, Redux scan, delayed writes, and generic switch-map cache').

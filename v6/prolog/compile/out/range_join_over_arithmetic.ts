@@ -32,6 +32,7 @@ import type {
   IIncrementalRelationPlan,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -40,12 +41,12 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly (string | number)[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
   sql: string;
-  params: readonly (string | number)[];
+  params: readonly IRowValue[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
@@ -56,7 +57,27 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
+
+function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+  return arrivals.map((arrival): IArrivalRow => {
+    const types = relColumnTypes[arrival.rel];
+    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const row = arrival.row.map((value, index): IRowValue => {
+      const type = types[index];
+      if (type === "bool") {
+        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);
+        return value;
+      }
+      if (type === "float") {
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
+        return Object.is(value, -0) ? 0 : value;
+      }
+      return value;
+    });
+    return { ...arrival, row };
+  });
 }
 
 const ddl: readonly string[] = [
@@ -90,6 +111,12 @@ const relColumns: Record<string, readonly string[]> = {
   eprintln_waiver_line: ["path", "waiver_line"],
 };
 
+const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  eprintln_hit: ["text", "int"],
+  eprintln_waived: ["text", "int"],
+  eprintln_waiver_line: ["text", "int"],
+};
+
 const arrivalTargets: readonly string[] = ["eprintln_hit", "eprintln_waiver_line"];
 
 const boot: readonly IBootStatement[] = [
@@ -108,9 +135,9 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    eprintln_hit: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line_number" FROM "eprintln_hit"`, relColumns.eprintln_hit!),
-    eprintln_waived: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line_number" FROM "eprintln_waived"`, relColumns.eprintln_waived!),
-    eprintln_waiver_line: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "waiver_line" FROM "eprintln_waiver_line"`, relColumns.eprintln_waiver_line!),
+    eprintln_hit: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line_number" FROM "eprintln_hit"`, relColumns.eprintln_hit!, relColumnTypes.eprintln_hit!),
+    eprintln_waived: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line_number" FROM "eprintln_waived"`, relColumns.eprintln_waived!, relColumnTypes.eprintln_waived!),
+    eprintln_waiver_line: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "waiver_line" FROM "eprintln_waiver_line"`, relColumns.eprintln_waiver_line!, relColumnTypes.eprintln_waiver_line!),
   });
 }
 
@@ -148,9 +175,9 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "eprintln_hit", kind: "set", tableName: "eprintln_hit", deltaTableName: "__delta_eprintln_hit", frontierTableName: "__frontier_eprintln_hit", nextFrontierTableName: "__next_frontier_eprintln_hit", columns: ["path", "line_number"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_number") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "line_number"`, arrivalDelSql: `DELETE FROM "eprintln_hit" WHERE ("path", "line_number") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "line_number"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line_number", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_eprintln_hit" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line_number", "_sign"` },
-  { rel: "eprintln_waived", kind: "set", tableName: "eprintln_waived", deltaTableName: "__delta_eprintln_waived", frontierTableName: "__frontier_eprintln_waived", nextFrontierTableName: "__next_frontier_eprintln_waived", columns: ["path", "line_number"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line_number", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_eprintln_waived" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line_number", "_sign"` },
-  { rel: "eprintln_waiver_line", kind: "set", tableName: "eprintln_waiver_line", deltaTableName: "__delta_eprintln_waiver_line", frontierTableName: "__frontier_eprintln_waiver_line", nextFrontierTableName: "__next_frontier_eprintln_waiver_line", columns: ["path", "waiver_line"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "eprintln_waiver_line" ("path", "waiver_line") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "waiver_line"`, arrivalDelSql: `DELETE FROM "eprintln_waiver_line" WHERE ("path", "waiver_line") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "waiver_line"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "waiver_line", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_eprintln_waiver_line" WHERE "_sign" IN (-1, 1) GROUP BY "path", "waiver_line", "_sign"` },
+  { rel: "eprintln_hit", kind: "set", tableName: "eprintln_hit", deltaTableName: "__delta_eprintln_hit", frontierTableName: "__frontier_eprintln_hit", nextFrontierTableName: "__next_frontier_eprintln_hit", columns: ["path", "line_number"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_number") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "line_number"`, arrivalDelSql: `DELETE FROM "eprintln_hit" WHERE ("path", "line_number") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "line_number"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line_number", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_eprintln_hit" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line_number", "_sign"` },
+  { rel: "eprintln_waived", kind: "set", tableName: "eprintln_waived", deltaTableName: "__delta_eprintln_waived", frontierTableName: "__frontier_eprintln_waived", nextFrontierTableName: "__next_frontier_eprintln_waived", columns: ["path", "line_number"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "line_number", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_eprintln_waived" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line_number", "_sign"` },
+  { rel: "eprintln_waiver_line", kind: "set", tableName: "eprintln_waiver_line", deltaTableName: "__delta_eprintln_waiver_line", frontierTableName: "__frontier_eprintln_waiver_line", nextFrontierTableName: "__next_frontier_eprintln_waiver_line", columns: ["path", "waiver_line"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "eprintln_waiver_line" ("path", "waiver_line") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "waiver_line"`, arrivalDelSql: `DELETE FROM "eprintln_waiver_line" WHERE ("path", "waiver_line") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "waiver_line"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", "waiver_line", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_eprintln_waiver_line" WHERE "_sign" IN (-1, 1) GROUP BY "path", "waiver_line", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -208,6 +235,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 }
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validateArrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
     return runNaiveTick(seam, arrivals);
   }
@@ -227,6 +255,7 @@ export const program: IGenProgramWithBoot = {
   name: "range_join_over_arithmetic",
   ddl,
   relColumns,
+  relColumnTypes,
   arrivalTargets,
   boot,
   finalSelect,

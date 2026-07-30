@@ -56,6 +56,24 @@ drive_task(ghcacher_tick_golden, active, [],
 drive_task(extract_tick_golden, active, [],
            terra,
            'one deterministic file edit proves extract demand, multi-row response, derived findings, retraction, and bounded statement shape').
+drive_task(match_left_to_right_surface, active, [],
+           sol,
+           'match accepts a leading semicolon; Guard |-> Head lowers to the existing level arm and Guard |+> Head lowers to the existing event arm').
+drive_task(scan_match_value_lab, active,
+           [higher_order_rel_scan],
+           sol,
+           'runnable receipts define match as a zero-one-many relational value and the exactly-one next-state contract required by scan').
+drive_task(rel_definition_hash_lab, active, [],
+           sol,
+           'canonical relation definitions, recursive SCC hashing, and specialization reuse are measured against the current Prolog IR and emitted SQL').
+drive_task(scan_instantiation_generics_lab, active,
+           [higher_order_rel_scan],
+           sol,
+           'prove how named event, state, init, and reducer relations instantiate scan without runtime relation values or uncontrolled table creation').
+drive_task(select_scan_cache_lab, active,
+           [scan_match_value_lab],
+           sol,
+           'prove Redux-style merged event selection, keyed scan state, delayed side writes, and generic switch-map cache from current relational rules').
 drive_task(clock_signature_projection, queued,
            [ordered_event_scan],
            coordinator,
@@ -88,6 +106,16 @@ forbidden(all_lanes, 'dynamic relation creation').
 forbidden(all_lanes, 'editing unrelated dirty files').
 forbidden(golden_lanes, 'production compiler or runtime edits').
 forbidden(agent_lanes, 'commits, pushes, or shared manifest regeneration').
+
+surface_ruling(match_arm_layout, optional_leading_semicolon).
+surface_ruling(match_level_arm, 'Guard |-> Head').
+surface_ruling(match_event_arm, 'Guard |+> Head').
+surface_ruling(match_internal_form,
+               'existing Head <- Body and Head <+ Body Prolog terms remain canonical after parsing').
+
+value_law(match, 'zero rows = failure, one row = one value, many rows = fan-out').
+value_law(scan_reducer,
+          'each key and event requires exactly one next-state value; delayed event writes are separate outputs').
 
 next_ready(Name) :-
     drive_task(Name, queued, Dependencies, _, _),

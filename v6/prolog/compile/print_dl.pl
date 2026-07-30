@@ -445,8 +445,12 @@ interleave_host_inputs([col(Name, _) | Columns], [Role | Roles],
 print_term(Term, Bindings, ParentPrec, Side, Text) :-
     ( var(Term)
     -> print_var(Term, Bindings, Text)
+    ; Term = bool_lit(Boolean)
+    -> format(atom(Text), "~w", [Boolean])
     ; integer(Term)
     -> format(atom(Text), "~w", [Term])
+    ; float(Term)
+    -> finite_float_text(Term, Text)
     ; string(Term)
     -> quote_value(Term, 0'", Text)
     ; is_list(Term)
@@ -467,6 +471,11 @@ print_term(Term, Bindings, ParentPrec, Side, Text) :-
     -> quote_value(Term, 0'\', Text)
     ; format(atom(Text), "~w", [Term])
     ).
+
+finite_float_text(Value, Text) :-
+    float_class(Value, Class),
+    memberchk(Class, [normal, subnormal, zero]),
+    format(atom(Text), "~h", [Value]).
 
 print_arg(Bindings, Arg, Text) :- print_term(Arg, Bindings, 0, top, Text).
 

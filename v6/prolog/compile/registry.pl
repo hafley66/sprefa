@@ -30,7 +30,8 @@
             http_route/3,
             expression/5,
             expression_for_term/5,
-            cli_command/3
+            cli_command/3,
+            clock_role/4
           ]).
 
 % Contextual gate: live around one plain relation atom in an edge body;
@@ -89,6 +90,7 @@ surface(count/1,        aggregate, no_refs,                      head(lower),   
 surface(sum/1,          aggregate, no_refs,                      head(lower),                           live).
 surface(min/1,          aggregate, no_refs,                      head(lower),                           live).
 surface(max/1,          aggregate, no_refs,                      head(lower),                           live).
+surface(avg/1,          aggregate, no_refs,                      head(lower),                           live).
 % json_array/json_object stay REFUSED per ruling json_ticklog_encoding:
 % the oracle tick-log and final-state encoders now emit canonical JSON text
 % for JSON values, with sorted object keys and no whitespace, while plain
@@ -117,6 +119,25 @@ surface(query/1,         read,      no_refs,                      decl(query_pla
 surface(ts_query/1,      world,     no_refs,                      value(tree_sitter_query),               live).
 surface(sg_pattern/3,    world,     no_refs,                      value(refuse(slot_sg_metavariable_semantics)), refused).
 
+% ═══ clock dependency roles ════════════════════════════════════════════════
+%
+% These rows classify the existing rule-body roles. They add no surface
+% construct and no second type vocabulary. `3_clock_check.pl` projects them
+% onto ordinary relation dependencies as:
+%
+%   clock_dependency(Rule, From, To, ReadRing, WriteRing, Sign, Grade)
+%
+% `source_delay` is resolved from the program graph: an outside or level
+% boundary can fire an edge arm in the current tick, while an occurrence
+% written by another edge arm is carried to the next tick.
+clock_role(level_read,       b, positive, 0).
+clock_role(level_absence,    b, negative, 0).
+clock_role(edge_trigger,     z, positive, source_delay).
+clock_role(edge_departure,   z, negative, 1).
+clock_role(edge_sample,      b, state,    0).
+clock_role(edge_pre,         b, previous, -1).
+clock_role(edge_absence,     b, negative, 0).
+
 % ═══ expression operators ═══════════════════════════════════════════════════
 %
 % expression(Operator/Arity, Family, PrintPrecedence, SqlRendering, TypeRule)
@@ -139,16 +160,16 @@ surface(sg_pattern/3,    world,     no_refs,                      value(refuse(s
 % SQLite's % takes the sign of the dividend, while this language's mod follows
 % the divisor, so it renders as a sign-corrected template.
 
-expression('+'/2,    arithmetic,          1, infix('+'),             both_int).
-expression('-'/2,    arithmetic,          1, infix('-'),             both_int).
-expression('*'/2,    arithmetic,          2, infix('*'),             both_int).
-expression('/'/2,    arithmetic,          2, infix('/'),             both_int).
+expression('+'/2,    arithmetic,          1, infix('+'),             both_number).
+expression('-'/2,    arithmetic,          1, infix('-'),             both_number).
+expression('*'/2,    arithmetic,          2, infix('*'),             both_number).
+expression('/'/2,    arithmetic,          2, numeric_division,       both_number).
 expression(mod/2,    arithmetic,          2, sign_corrected_modulo,  both_int).
 
-expression('<'/2,    ordered_comparison,  0, infix('<'),             both_int).
-expression('=<'/2,   ordered_comparison,  0, infix('<='),            both_int).
-expression('>'/2,    ordered_comparison,  0, infix('>'),             both_int).
-expression('>='/2,   ordered_comparison,  0, infix('>='),            both_int).
+expression('<'/2,    ordered_comparison,  0, infix('<'),             both_number).
+expression('=<'/2,   ordered_comparison,  0, infix('<='),            both_number).
+expression('>'/2,    ordered_comparison,  0, infix('>'),             both_number).
+expression('>='/2,   ordered_comparison,  0, infix('>='),            both_number).
 
 expression('=='/2,   identity_comparison, 0, infix('='),             same_type).
 expression('\\=='/2, identity_comparison, 0, infix('<>'),            same_type).

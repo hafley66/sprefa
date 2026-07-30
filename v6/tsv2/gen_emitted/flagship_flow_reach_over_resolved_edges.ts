@@ -32,6 +32,7 @@ import type {
   IIncrementalRelationPlan,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -40,12 +41,12 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly (string | number)[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
   sql: string;
-  params: readonly (string | number)[];
+  params: readonly IRowValue[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
@@ -56,7 +57,27 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
+
+function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+  return arrivals.map((arrival): IArrivalRow => {
+    const types = relColumnTypes[arrival.rel];
+    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const row = arrival.row.map((value, index): IRowValue => {
+      const type = types[index];
+      if (type === "bool") {
+        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);
+        return value;
+      }
+      if (type === "float") {
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
+        return Object.is(value, -0) ? 0 : value;
+      }
+      return value;
+    });
+    return { ...arrival, row };
+  });
 }
 
 const ddl: readonly string[] = [
@@ -91,6 +112,12 @@ const relColumns: Record<string, readonly string[]> = {
   resolved_call_edge: ["caller_path", "caller_name", "callee_path", "callee_name"],
 };
 
+const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  flow_edge: ["text", "text", "text", "text"],
+  flow_reach: ["text", "text", "text", "text"],
+  resolved_call_edge: ["text", "text", "text", "text"],
+};
+
 const arrivalTargets: readonly string[] = ["resolved_call_edge"];
 
 const boot: readonly IBootStatement[] = [
@@ -109,9 +136,9 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    flow_edge: selectRows(seam, `SELECT CASE WHEN json_valid("from_path") AND json_type("from_path") = 'object' THEN json_extract("from_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("from_path", '$.args')) || ')' ELSE "from_path" END AS "from_path", CASE WHEN json_valid("from_name") AND json_type("from_name") = 'object' THEN json_extract("from_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("from_name", '$.args')) || ')' ELSE "from_name" END AS "from_name", CASE WHEN json_valid("to_path") AND json_type("to_path") = 'object' THEN json_extract("to_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to_path", '$.args')) || ')' ELSE "to_path" END AS "to_path", CASE WHEN json_valid("to_name") AND json_type("to_name") = 'object' THEN json_extract("to_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to_name", '$.args')) || ')' ELSE "to_name" END AS "to_name" FROM "flow_edge"`, relColumns.flow_edge!),
-    flow_reach: selectRows(seam, `SELECT CASE WHEN json_valid("from_path") AND json_type("from_path") = 'object' THEN json_extract("from_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("from_path", '$.args')) || ')' ELSE "from_path" END AS "from_path", CASE WHEN json_valid("from_name") AND json_type("from_name") = 'object' THEN json_extract("from_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("from_name", '$.args')) || ')' ELSE "from_name" END AS "from_name", CASE WHEN json_valid("to_path") AND json_type("to_path") = 'object' THEN json_extract("to_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to_path", '$.args')) || ')' ELSE "to_path" END AS "to_path", CASE WHEN json_valid("to_name") AND json_type("to_name") = 'object' THEN json_extract("to_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to_name", '$.args')) || ')' ELSE "to_name" END AS "to_name" FROM "flow_reach"`, relColumns.flow_reach!),
-    resolved_call_edge: selectRows(seam, `SELECT CASE WHEN json_valid("caller_path") AND json_type("caller_path") = 'object' THEN json_extract("caller_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("caller_path", '$.args')) || ')' ELSE "caller_path" END AS "caller_path", CASE WHEN json_valid("caller_name") AND json_type("caller_name") = 'object' THEN json_extract("caller_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("caller_name", '$.args')) || ')' ELSE "caller_name" END AS "caller_name", CASE WHEN json_valid("callee_path") AND json_type("callee_path") = 'object' THEN json_extract("callee_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("callee_path", '$.args')) || ')' ELSE "callee_path" END AS "callee_path", CASE WHEN json_valid("callee_name") AND json_type("callee_name") = 'object' THEN json_extract("callee_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("callee_name", '$.args')) || ')' ELSE "callee_name" END AS "callee_name" FROM "resolved_call_edge"`, relColumns.resolved_call_edge!),
+    flow_edge: selectRows(seam, `SELECT CASE WHEN json_valid("from_path") AND json_type("from_path") = 'object' THEN json_extract("from_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("from_path", '$.args')) || ')' ELSE "from_path" END AS "from_path", CASE WHEN json_valid("from_name") AND json_type("from_name") = 'object' THEN json_extract("from_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("from_name", '$.args')) || ')' ELSE "from_name" END AS "from_name", CASE WHEN json_valid("to_path") AND json_type("to_path") = 'object' THEN json_extract("to_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to_path", '$.args')) || ')' ELSE "to_path" END AS "to_path", CASE WHEN json_valid("to_name") AND json_type("to_name") = 'object' THEN json_extract("to_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to_name", '$.args')) || ')' ELSE "to_name" END AS "to_name" FROM "flow_edge"`, relColumns.flow_edge!, relColumnTypes.flow_edge!),
+    flow_reach: selectRows(seam, `SELECT CASE WHEN json_valid("from_path") AND json_type("from_path") = 'object' THEN json_extract("from_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("from_path", '$.args')) || ')' ELSE "from_path" END AS "from_path", CASE WHEN json_valid("from_name") AND json_type("from_name") = 'object' THEN json_extract("from_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("from_name", '$.args')) || ')' ELSE "from_name" END AS "from_name", CASE WHEN json_valid("to_path") AND json_type("to_path") = 'object' THEN json_extract("to_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to_path", '$.args')) || ')' ELSE "to_path" END AS "to_path", CASE WHEN json_valid("to_name") AND json_type("to_name") = 'object' THEN json_extract("to_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to_name", '$.args')) || ')' ELSE "to_name" END AS "to_name" FROM "flow_reach"`, relColumns.flow_reach!, relColumnTypes.flow_reach!),
+    resolved_call_edge: selectRows(seam, `SELECT CASE WHEN json_valid("caller_path") AND json_type("caller_path") = 'object' THEN json_extract("caller_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("caller_path", '$.args')) || ')' ELSE "caller_path" END AS "caller_path", CASE WHEN json_valid("caller_name") AND json_type("caller_name") = 'object' THEN json_extract("caller_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("caller_name", '$.args')) || ')' ELSE "caller_name" END AS "caller_name", CASE WHEN json_valid("callee_path") AND json_type("callee_path") = 'object' THEN json_extract("callee_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("callee_path", '$.args')) || ')' ELSE "callee_path" END AS "callee_path", CASE WHEN json_valid("callee_name") AND json_type("callee_name") = 'object' THEN json_extract("callee_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("callee_name", '$.args')) || ')' ELSE "callee_name" END AS "callee_name" FROM "resolved_call_edge"`, relColumns.resolved_call_edge!, relColumnTypes.resolved_call_edge!),
   });
 }
 
@@ -148,9 +175,9 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "flow_edge", kind: "set", tableName: "flow_edge", deltaTableName: "__delta_flow_edge", frontierTableName: "__frontier_flow_edge", nextFrontierTableName: "__next_frontier_flow_edge", columns: ["from_path", "from_name", "to_path", "to_name"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("from_path") AND json_type("from_path") = 'object' THEN json_extract("from_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("from_path", '$.args')) || ')' ELSE "from_path" END AS "from_path", CASE WHEN json_valid("from_name") AND json_type("from_name") = 'object' THEN json_extract("from_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("from_name", '$.args')) || ')' ELSE "from_name" END AS "from_name", CASE WHEN json_valid("to_path") AND json_type("to_path") = 'object' THEN json_extract("to_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to_path", '$.args')) || ')' ELSE "to_path" END AS "to_path", CASE WHEN json_valid("to_name") AND json_type("to_name") = 'object' THEN json_extract("to_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to_name", '$.args')) || ')' ELSE "to_name" END AS "to_name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_flow_edge" WHERE "_sign" IN (-1, 1) GROUP BY "from_path", "from_name", "to_path", "to_name", "_sign"` },
-  { rel: "flow_reach", kind: "set", tableName: "flow_reach", deltaTableName: "__delta_flow_reach", frontierTableName: "__frontier_flow_reach", nextFrontierTableName: "__next_frontier_flow_reach", columns: ["from_path", "from_name", "to_path", "to_name"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("from_path") AND json_type("from_path") = 'object' THEN json_extract("from_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("from_path", '$.args')) || ')' ELSE "from_path" END AS "from_path", CASE WHEN json_valid("from_name") AND json_type("from_name") = 'object' THEN json_extract("from_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("from_name", '$.args')) || ')' ELSE "from_name" END AS "from_name", CASE WHEN json_valid("to_path") AND json_type("to_path") = 'object' THEN json_extract("to_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to_path", '$.args')) || ')' ELSE "to_path" END AS "to_path", CASE WHEN json_valid("to_name") AND json_type("to_name") = 'object' THEN json_extract("to_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to_name", '$.args')) || ')' ELSE "to_name" END AS "to_name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_flow_reach" WHERE "_sign" IN (-1, 1) GROUP BY "from_path", "from_name", "to_path", "to_name", "_sign"` },
-  { rel: "resolved_call_edge", kind: "set", tableName: "resolved_call_edge", deltaTableName: "__delta_resolved_call_edge", frontierTableName: "__frontier_resolved_call_edge", nextFrontierTableName: "__next_frontier_resolved_call_edge", columns: ["caller_path", "caller_name", "callee_path", "callee_name"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "resolved_call_edge" ("caller_path", "caller_name", "callee_path", "callee_name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "caller_path", "caller_name", "callee_path", "callee_name"`, arrivalDelSql: `DELETE FROM "resolved_call_edge" WHERE ("caller_path", "caller_name", "callee_path", "callee_name") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "caller_path", "caller_name", "callee_path", "callee_name"`, boundarySql: `SELECT CASE WHEN json_valid("caller_path") AND json_type("caller_path") = 'object' THEN json_extract("caller_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("caller_path", '$.args')) || ')' ELSE "caller_path" END AS "caller_path", CASE WHEN json_valid("caller_name") AND json_type("caller_name") = 'object' THEN json_extract("caller_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("caller_name", '$.args')) || ')' ELSE "caller_name" END AS "caller_name", CASE WHEN json_valid("callee_path") AND json_type("callee_path") = 'object' THEN json_extract("callee_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("callee_path", '$.args')) || ')' ELSE "callee_path" END AS "callee_path", CASE WHEN json_valid("callee_name") AND json_type("callee_name") = 'object' THEN json_extract("callee_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("callee_name", '$.args')) || ')' ELSE "callee_name" END AS "callee_name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_resolved_call_edge" WHERE "_sign" IN (-1, 1) GROUP BY "caller_path", "caller_name", "callee_path", "callee_name", "_sign"` },
+  { rel: "flow_edge", kind: "set", tableName: "flow_edge", deltaTableName: "__delta_flow_edge", frontierTableName: "__frontier_flow_edge", nextFrontierTableName: "__next_frontier_flow_edge", columns: ["from_path", "from_name", "to_path", "to_name"], columnTypes: ["text", "text", "text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("from_path") AND json_type("from_path") = 'object' THEN json_extract("from_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("from_path", '$.args')) || ')' ELSE "from_path" END AS "from_path", CASE WHEN json_valid("from_name") AND json_type("from_name") = 'object' THEN json_extract("from_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("from_name", '$.args')) || ')' ELSE "from_name" END AS "from_name", CASE WHEN json_valid("to_path") AND json_type("to_path") = 'object' THEN json_extract("to_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to_path", '$.args')) || ')' ELSE "to_path" END AS "to_path", CASE WHEN json_valid("to_name") AND json_type("to_name") = 'object' THEN json_extract("to_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to_name", '$.args')) || ')' ELSE "to_name" END AS "to_name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_flow_edge" WHERE "_sign" IN (-1, 1) GROUP BY "from_path", "from_name", "to_path", "to_name", "_sign"` },
+  { rel: "flow_reach", kind: "set", tableName: "flow_reach", deltaTableName: "__delta_flow_reach", frontierTableName: "__frontier_flow_reach", nextFrontierTableName: "__next_frontier_flow_reach", columns: ["from_path", "from_name", "to_path", "to_name"], columnTypes: ["text", "text", "text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("from_path") AND json_type("from_path") = 'object' THEN json_extract("from_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("from_path", '$.args')) || ')' ELSE "from_path" END AS "from_path", CASE WHEN json_valid("from_name") AND json_type("from_name") = 'object' THEN json_extract("from_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("from_name", '$.args')) || ')' ELSE "from_name" END AS "from_name", CASE WHEN json_valid("to_path") AND json_type("to_path") = 'object' THEN json_extract("to_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to_path", '$.args')) || ')' ELSE "to_path" END AS "to_path", CASE WHEN json_valid("to_name") AND json_type("to_name") = 'object' THEN json_extract("to_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("to_name", '$.args')) || ')' ELSE "to_name" END AS "to_name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_flow_reach" WHERE "_sign" IN (-1, 1) GROUP BY "from_path", "from_name", "to_path", "to_name", "_sign"` },
+  { rel: "resolved_call_edge", kind: "set", tableName: "resolved_call_edge", deltaTableName: "__delta_resolved_call_edge", frontierTableName: "__frontier_resolved_call_edge", nextFrontierTableName: "__next_frontier_resolved_call_edge", columns: ["caller_path", "caller_name", "callee_path", "callee_name"], columnTypes: ["text", "text", "text", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "resolved_call_edge" ("caller_path", "caller_name", "callee_path", "callee_name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "caller_path", "caller_name", "callee_path", "callee_name"`, arrivalDelSql: `DELETE FROM "resolved_call_edge" WHERE ("caller_path", "caller_name", "callee_path", "callee_name") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "caller_path", "caller_name", "callee_path", "callee_name"`, boundarySql: `SELECT CASE WHEN json_valid("caller_path") AND json_type("caller_path") = 'object' THEN json_extract("caller_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("caller_path", '$.args')) || ')' ELSE "caller_path" END AS "caller_path", CASE WHEN json_valid("caller_name") AND json_type("caller_name") = 'object' THEN json_extract("caller_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("caller_name", '$.args')) || ')' ELSE "caller_name" END AS "caller_name", CASE WHEN json_valid("callee_path") AND json_type("callee_path") = 'object' THEN json_extract("callee_path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("callee_path", '$.args')) || ')' ELSE "callee_path" END AS "callee_path", CASE WHEN json_valid("callee_name") AND json_type("callee_name") = 'object' THEN json_extract("callee_name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("callee_name", '$.args')) || ')' ELSE "callee_name" END AS "callee_name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_resolved_call_edge" WHERE "_sign" IN (-1, 1) GROUP BY "caller_path", "caller_name", "callee_path", "callee_name", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -209,6 +236,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 }
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validateArrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
     return runNaiveTick(seam, arrivals);
   }
@@ -228,6 +256,7 @@ export const program: IGenProgramWithBoot = {
   name: "flagship_flow_reach_over_resolved_edges",
   ddl,
   relColumns,
+  relColumnTypes,
   arrivalTargets,
   boot,
   finalSelect,

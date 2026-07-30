@@ -36,7 +36,11 @@ function canonicalJsonText(value: string): string | null {
 }
 
 function encodeValue(value: IRowValue): string {
-  if (typeof value === "number") return String(value);
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error(`non-finite float at tick boundary: ${String(value)}`);
+    return JSON.stringify(value);
+  }
+  if (typeof value === "boolean") return value ? "true" : "false";
   return canonicalJsonText(value) ?? JSON.stringify(value);
 }
 

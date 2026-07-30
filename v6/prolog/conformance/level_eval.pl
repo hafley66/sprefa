@@ -233,6 +233,10 @@ template_arg_out(agg(Kind, _), Position, Group, Value) :-
 
 agg_compute(count, Contributions, Count) :- length(Contributions, Count).
 agg_compute(sum, Contributions, Sum) :- sum_list(Contributions, Sum).
+agg_compute(avg, Contributions, Average) :-
+    sum_list(Contributions, Sum),
+    length(Contributions, Count),
+    Average is Sum / Count.
 agg_compute(min, Contributions, Min) :- min_list(Contributions, Min).
 agg_compute(max, Contributions, Max) :- max_list(Contributions, Max).
 agg_compute(json_array, Contributions, Array) :- msort(Contributions, Array).

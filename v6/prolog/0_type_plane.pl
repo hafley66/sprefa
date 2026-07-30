@@ -70,6 +70,8 @@ declared_type_name(Types, Name) :- memberchk(type_def(Name, _, _), Types).
 column_storage(_, int,  int) :- !.
 column_storage(_, text, text) :- !.
 column_storage(_, json, text) :- !.
+column_storage(_, bool, bool) :- !.
+column_storage(_, float, float) :- !.
 column_storage(Types, Name, ref(Name)) :- declared_type_name(Types, Name), !.
 column_storage(_, Name, _) :-
     throw(unsupported_construct(column_type_unknown(Name))).
@@ -174,6 +176,12 @@ field_shape_error(Types, _, _, ChildType, ChildValue, Reason) :-
 field_shape_error(_, TypeName, Column, int, ChildValue, Reason) :-
     \+ integer(ChildValue), !,
     Reason = field_not_int(TypeName, Column, ChildValue).
+field_shape_error(_, TypeName, Column, bool, ChildValue, Reason) :-
+    \+ bool_value(ChildValue), !,
+    Reason = field_not_bool(TypeName, Column, ChildValue).
+field_shape_error(_, TypeName, Column, float, ChildValue, Reason) :-
+    \+ finite_float(ChildValue), !,
+    Reason = field_not_finite_float(TypeName, Column, ChildValue).
 field_shape_error(_, TypeName, Column, text, ChildValue, Reason) :-
     \+ atomic(ChildValue), !,
     Reason = field_not_text(TypeName, Column, ChildValue).
@@ -328,7 +336,6 @@ canonical_field_value(Types, Columns, ColumnTypes, Key-Value0, Key-Value) :-
 % repeats it at intern time, where the data is not.
 world_row_shape_violation(Decls, Rows, mismatch(Ref, Column, TypeName, Reason)) :-
     type_definitions(Decls, Types),
-    Types \== [],
     member(SignedRow, Rows),
     bare_row(SignedRow, Row),
     compound(Row),
@@ -337,11 +344,26 @@ world_row_shape_violation(Decls, Rows, mismatch(Ref, Column, TypeName, Reason)) 
     ref_column_names(Decls, Ref, Arity, Columns),
     nth1(Position, Columns, Column),
     memberchk(col_type(Ref, Column, TypeName), Decls),
-    declared_type_name(Types, TypeName),
     arg(Position, Row, Value),
     nonvar(Value),
-    type_shape_error(Types, TypeName, Value, Reason),
+    column_value_shape_error(Types, TypeName, Value, Reason),
     !.
+
+column_value_shape_error(_, bool, Value, field_not_bool(Value)) :-
+    \+ bool_value(Value), !.
+column_value_shape_error(_, float, Value, field_not_finite_float(Value)) :-
+    \+ finite_float(Value), !.
+column_value_shape_error(Types, TypeName, Value, Reason) :-
+    declared_type_name(Types, TypeName),
+    type_shape_error(Types, TypeName, Value, Reason).
+
+bool_value(bool_lit(true)).
+bool_value(bool_lit(false)).
+
+finite_float(Value) :-
+    float(Value),
+    float_class(Value, Class),
+    memberchk(Class, [normal, subnormal, zero]).
 
 bare_row(+(Row), Row) :- !.
 bare_row(-(Row), Row) :- !.
@@ -414,6 +436,8 @@ type_field_json(_, _, ChildValue, Text) :- canonical_json_text(ChildValue, Text)
 % grade itself.
 
 canonical_json_text(Value, Text) :- integer(Value), !, format(atom(Text), '~w', [Value]).
+canonical_json_text(bool_lit(Boolean), Text) :- !, format(atom(Text), '~w', [Boolean]).
+canonical_json_text(Value, Text) :- float(Value), !, finite_float_json(Value, Text).
 canonical_json_text(Value, Text) :- json_object_value(Value, Pairs), !,
     findall(Entry,
             ( member(Key-Raw, Pairs),
@@ -430,6 +454,29 @@ canonical_json_text(Value, Text) :- is_list(Value), !,
 canonical_json_text(Value, Text) :- compound(Value), !,
     term_json_text(Value, Raw), json_string_text(Raw, Text).
 canonical_json_text(Value, Text) :- json_string_text(Value, Text).
+
+finite_float_json(Value, Text) :-
+    float_class(Value, Class),
+    memberchk(Class, [normal, subnormal, zero]),
+    ( Value =:= 0.0
+    -> Text = '0'
+    ; format(atom(Raw), '~h', [Value]),
+      normalize_float_json_atom(Raw, Text)
+    ).
+
+normalize_float_json_atom(Raw, Text) :-
+    ( sub_atom(Raw, Before, 2, After, '.0'),
+      ( After =:= 0
+      ; Start is Before + 2,
+        sub_atom(Raw, Start, _, 0, Exponent),
+        ( sub_atom(Exponent, 0, 1, _, 'e')
+        ; sub_atom(Exponent, 0, 1, _, 'E') ) )
+    -> sub_atom(Raw, 0, Before, _, Prefix),
+       Start2 is Before + 2,
+       sub_atom(Raw, Start2, After, 0, Suffix),
+       atom_concat(Prefix, Suffix, Text)
+    ; Text = Raw
+    ).
 
 term_json_text(Value, Text) :- atomic(Value), !, format(atom(Text), '~w', [Value]).
 term_json_text(Value, Text) :- compound(Value), !,

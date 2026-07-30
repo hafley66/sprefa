@@ -82,6 +82,7 @@
 :- use_module('../0_body_walk', [walk_body/3, body_wrapper_refs/4]).
 :- use_module('../0_program_check',
               [ first_violation/3, relation_kind/3, declared_key/3 ]).
+:- use_module('../compile/3_clock_check', [clock_violation/2]).
 :- use_module('../0_type_plane',
               [ world_row_shape_violation/3,
                 canonicalize_world_rows/3,
@@ -151,6 +152,8 @@ check_program(Program) :-
     (   first_violation(Program, Order, violation(Name, Payload))
     ->  engine_refusal(Name, Payload, Term),
         throw(Term)
+    ;   clock_violation(Program, ClockViolation)
+    ->  throw(ClockViolation)
     ;   true
     ).
 

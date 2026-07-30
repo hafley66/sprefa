@@ -32,6 +32,7 @@ import type {
   IIncrementalRelationPlan,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -40,12 +41,12 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly (string | number)[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
   sql: string;
-  params: readonly (string | number)[];
+  params: readonly IRowValue[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
@@ -56,7 +57,27 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
+
+function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+  return arrivals.map((arrival): IArrivalRow => {
+    const types = relColumnTypes[arrival.rel];
+    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const row = arrival.row.map((value, index): IRowValue => {
+      const type = types[index];
+      if (type === "bool") {
+        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);
+        return value;
+      }
+      if (type === "float") {
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
+        return Object.is(value, -0) ? 0 : value;
+      }
+      return value;
+    });
+    return { ...arrival, row };
+  });
 }
 
 function triggerOccurrences(
@@ -125,6 +146,14 @@ const relColumns: Record<string, readonly string[]> = {
   stale_pin: ["dep_repo_id", "ref_text"],
 };
 
+const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  demand_rev: ["int", "text"],
+  pin_want: ["int", "int", "text"],
+  rev_fill: ["int", "text", "int", "int"],
+  rev_status: ["int", "text", "int", "int"],
+  stale_pin: ["int", "text"],
+};
+
 const arrivalTargets: readonly string[] = ["pin_want", "rev_fill"];
 
 const boot: readonly IBootStatement[] = [
@@ -142,11 +171,11 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    demand_rev: selectRows(seam, `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' THEN json_extract("ref_text", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')) || ')' ELSE "ref_text" END AS "ref_text" FROM "demand_rev"`, relColumns.demand_rev!),
-    pin_want: selectRows(seam, `SELECT "col1", "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' THEN json_extract("ref_text", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')) || ')' ELSE "ref_text" END AS "ref_text" FROM "pin_want"`, relColumns.pin_want!),
-    rev_fill: selectRows(seam, `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' THEN json_extract("ref_text", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')) || ')' ELSE "ref_text" END AS "ref_text", "behind", "ahead" FROM "rev_fill"`, relColumns.rev_fill!),
-    rev_status: selectRows(seam, `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' THEN json_extract("ref_text", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')) || ')' ELSE "ref_text" END AS "ref_text", "behind", "ahead" FROM "rev_status"`, relColumns.rev_status!),
-    stale_pin: selectRows(seam, `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' THEN json_extract("ref_text", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')) || ')' ELSE "ref_text" END AS "ref_text" FROM "stale_pin"`, relColumns.stale_pin!),
+    demand_rev: selectRows(seam, `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' THEN json_extract("ref_text", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')) || ')' ELSE "ref_text" END AS "ref_text" FROM "demand_rev"`, relColumns.demand_rev!, relColumnTypes.demand_rev!),
+    pin_want: selectRows(seam, `SELECT "col1", "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' THEN json_extract("ref_text", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')) || ')' ELSE "ref_text" END AS "ref_text" FROM "pin_want"`, relColumns.pin_want!, relColumnTypes.pin_want!),
+    rev_fill: selectRows(seam, `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' THEN json_extract("ref_text", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')) || ')' ELSE "ref_text" END AS "ref_text", "behind", "ahead" FROM "rev_fill"`, relColumns.rev_fill!, relColumnTypes.rev_fill!),
+    rev_status: selectRows(seam, `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' THEN json_extract("ref_text", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')) || ')' ELSE "ref_text" END AS "ref_text", "behind", "ahead" FROM "rev_status"`, relColumns.rev_status!, relColumnTypes.rev_status!),
+    stale_pin: selectRows(seam, `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' THEN json_extract("ref_text", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')) || ')' ELSE "ref_text" END AS "ref_text" FROM "stale_pin"`, relColumns.stale_pin!, relColumnTypes.stale_pin!),
   });
 }
 
@@ -186,11 +215,11 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "demand_rev", kind: "set", tableName: "demand_rev", deltaTableName: "__delta_demand_rev", frontierTableName: "__frontier_demand_rev", nextFrontierTableName: "__next_frontier_demand_rev", columns: ["dep_repo_id", "ref_text"], keyIndices: [0, 1], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' THEN json_extract("ref_text", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')) || ')' ELSE "ref_text" END AS "ref_text", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_demand_rev" WHERE "_sign" IN (-1, 1) GROUP BY "dep_repo_id", "ref_text", "_sign"` },
-  { rel: "pin_want", kind: "log", tableName: "pin_want", deltaTableName: "__delta_pin_want", frontierTableName: "__frontier_pin_want", nextFrontierTableName: "__next_frontier_pin_want", columns: ["col1", "dep_repo_id", "ref_text"], keyIndices: [], arrivalAddSql: `INSERT INTO "pin_want" ("col1", "dep_repo_id", "ref_text") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "col1", "dep_repo_id", "ref_text"`, arrivalDelSql: null, boundarySql: `SELECT "col1", "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' THEN json_extract("ref_text", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')) || ')' ELSE "ref_text" END AS "ref_text", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_pin_want" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "dep_repo_id", "ref_text", "_sign"` },
-  { rel: "rev_fill", kind: "log", tableName: "rev_fill", deltaTableName: "__delta_rev_fill", frontierTableName: "__frontier_rev_fill", nextFrontierTableName: "__next_frontier_rev_fill", columns: ["dep_repo_id", "ref_text", "behind", "ahead"], keyIndices: [], arrivalAddSql: `INSERT INTO "rev_fill" ("dep_repo_id", "ref_text", "behind", "ahead") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "dep_repo_id", "ref_text", "behind", "ahead"`, arrivalDelSql: null, boundarySql: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' THEN json_extract("ref_text", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')) || ')' ELSE "ref_text" END AS "ref_text", "behind", "ahead", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_rev_fill" WHERE "_sign" IN (-1, 1) GROUP BY "dep_repo_id", "ref_text", "behind", "ahead", "_sign"` },
-  { rel: "rev_status", kind: "set", tableName: "rev_status", deltaTableName: "__delta_rev_status", frontierTableName: "__frontier_rev_status", nextFrontierTableName: "__next_frontier_rev_status", columns: ["dep_repo_id", "ref_text", "behind", "ahead"], keyIndices: [0, 1], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' THEN json_extract("ref_text", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')) || ')' ELSE "ref_text" END AS "ref_text", "behind", "ahead", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_rev_status" WHERE "_sign" IN (-1, 1) GROUP BY "dep_repo_id", "ref_text", "behind", "ahead", "_sign"` },
-  { rel: "stale_pin", kind: "set", tableName: "stale_pin", deltaTableName: "__delta_stale_pin", frontierTableName: "__frontier_stale_pin", nextFrontierTableName: "__next_frontier_stale_pin", columns: ["dep_repo_id", "ref_text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' THEN json_extract("ref_text", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')) || ')' ELSE "ref_text" END AS "ref_text", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_stale_pin" WHERE "_sign" IN (-1, 1) GROUP BY "dep_repo_id", "ref_text", "_sign"` },
+  { rel: "demand_rev", kind: "set", tableName: "demand_rev", deltaTableName: "__delta_demand_rev", frontierTableName: "__frontier_demand_rev", nextFrontierTableName: "__next_frontier_demand_rev", columns: ["dep_repo_id", "ref_text"], columnTypes: ["int", "text"], keyIndices: [0, 1], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' THEN json_extract("ref_text", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')) || ')' ELSE "ref_text" END AS "ref_text", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_demand_rev" WHERE "_sign" IN (-1, 1) GROUP BY "dep_repo_id", "ref_text", "_sign"` },
+  { rel: "pin_want", kind: "log", tableName: "pin_want", deltaTableName: "__delta_pin_want", frontierTableName: "__frontier_pin_want", nextFrontierTableName: "__next_frontier_pin_want", columns: ["col1", "dep_repo_id", "ref_text"], columnTypes: ["int", "int", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "pin_want" ("col1", "dep_repo_id", "ref_text") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "col1", "dep_repo_id", "ref_text"`, arrivalDelSql: null, boundarySql: `SELECT "col1", "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' THEN json_extract("ref_text", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')) || ')' ELSE "ref_text" END AS "ref_text", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_pin_want" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "dep_repo_id", "ref_text", "_sign"` },
+  { rel: "rev_fill", kind: "log", tableName: "rev_fill", deltaTableName: "__delta_rev_fill", frontierTableName: "__frontier_rev_fill", nextFrontierTableName: "__next_frontier_rev_fill", columns: ["dep_repo_id", "ref_text", "behind", "ahead"], columnTypes: ["int", "text", "int", "int"], keyIndices: [], arrivalAddSql: `INSERT INTO "rev_fill" ("dep_repo_id", "ref_text", "behind", "ahead") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "dep_repo_id", "ref_text", "behind", "ahead"`, arrivalDelSql: null, boundarySql: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' THEN json_extract("ref_text", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')) || ')' ELSE "ref_text" END AS "ref_text", "behind", "ahead", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_rev_fill" WHERE "_sign" IN (-1, 1) GROUP BY "dep_repo_id", "ref_text", "behind", "ahead", "_sign"` },
+  { rel: "rev_status", kind: "set", tableName: "rev_status", deltaTableName: "__delta_rev_status", frontierTableName: "__frontier_rev_status", nextFrontierTableName: "__next_frontier_rev_status", columns: ["dep_repo_id", "ref_text", "behind", "ahead"], columnTypes: ["int", "text", "int", "int"], keyIndices: [0, 1], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' THEN json_extract("ref_text", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')) || ')' ELSE "ref_text" END AS "ref_text", "behind", "ahead", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_rev_status" WHERE "_sign" IN (-1, 1) GROUP BY "dep_repo_id", "ref_text", "behind", "ahead", "_sign"` },
+  { rel: "stale_pin", kind: "set", tableName: "stale_pin", deltaTableName: "__delta_stale_pin", frontierTableName: "__frontier_stale_pin", nextFrontierTableName: "__next_frontier_stale_pin", columns: ["dep_repo_id", "ref_text"], columnTypes: ["int", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' THEN json_extract("ref_text", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')) || ')' ELSE "ref_text" END AS "ref_text", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_stale_pin" WHERE "_sign" IN (-1, 1) GROUP BY "dep_repo_id", "ref_text", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -309,6 +338,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 }
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validateArrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
     return runNaiveTick(seam, arrivals);
   }
@@ -328,6 +358,7 @@ export const program: IGenProgramWithBoot = {
   name: "rev_fill_not_behind_keeps_stale_pin_empty",
   ddl,
   relColumns,
+  relColumnTypes,
   arrivalTargets,
   boot,
   finalSelect,

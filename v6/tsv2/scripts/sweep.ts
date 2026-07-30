@@ -37,6 +37,7 @@ import { BootRunner } from "../runtime/2_boot.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import { TickLogEmitter } from "../runtime/ticklog.ts";
 import { TickFold } from "../runtime/tickLoop.ts";
+import { rowValueFromSql } from "../runtime/rows.ts";
 import type { IArrivalBatch, IBootStatement, IRowValue, ISqlSeam, IGenProgram } from "../runtime/types.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -121,8 +122,10 @@ function readOracleFinalLine(name: string): string | null {
  *  the same bytes wrapped in quotes. */
 function finalValueJson(value: unknown): string {
   if (typeof value === "bigint") return value.toString();
-  if (typeof value === "number" && Number.isInteger(value)) return `${value}`;
-  return TickLogEmitter.valueText(String(value) as IRowValue);
+  if (typeof value === "number" || typeof value === "boolean") {
+    return TickLogEmitter.valueText(value as IRowValue);
+  }
+  return TickLogEmitter.valueText(String(value));
 }
 
 function finalStateLine(rowsByRel: Record<string, readonly (readonly unknown[])[]>): string {
@@ -145,7 +148,11 @@ function readFinalState(seam: ISqlSeam, program: EmittedProgram): Observable<str
       seam.runner.execute(seam.db, program.finalSelect[rel]!).pipe(
         map((result) => ({
           rel,
-          rows: result.rows.map((row) => (program.relColumns[rel] ?? []).map((column) => row[column])),
+          rows: result.rows.map((row) =>
+            (program.relColumns[rel] ?? []).map((column, index) =>
+              rowValueFromSql(program.relColumnTypes?.[rel]?.[index], row[column]),
+            ),
+          ),
         })),
       ),
     ),

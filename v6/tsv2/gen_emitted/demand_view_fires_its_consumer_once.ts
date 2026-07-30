@@ -32,6 +32,7 @@ import type {
   IIncrementalRelationPlan,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -40,12 +41,12 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly (string | number)[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
   sql: string;
-  params: readonly (string | number)[];
+  params: readonly IRowValue[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
@@ -56,7 +57,27 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
+
+function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+  return arrivals.map((arrival): IArrivalRow => {
+    const types = relColumnTypes[arrival.rel];
+    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const row = arrival.row.map((value, index): IRowValue => {
+      const type = types[index];
+      if (type === "bool") {
+        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);
+        return value;
+      }
+      if (type === "float") {
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
+        return Object.is(value, -0) ? 0 : value;
+      }
+      return value;
+    });
+    return { ...arrival, row };
+  });
 }
 
 function triggerOccurrences(
@@ -109,6 +130,12 @@ const relColumns: Record<string, readonly string[]> = {
   stale: ["endpoint"],
 };
 
+const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  fetch_call: ["text"],
+  fetch_demand: ["text"],
+  stale: ["text"],
+};
+
 const arrivalTargets: readonly string[] = ["stale"];
 
 const boot: readonly IBootStatement[] = [
@@ -124,9 +151,9 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    fetch_call: selectRows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint" FROM "fetch_call"`, relColumns.fetch_call!),
-    fetch_demand: selectRows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint" FROM "fetch_demand"`, relColumns.fetch_demand!),
-    stale: selectRows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint" FROM "stale"`, relColumns.stale!),
+    fetch_call: selectRows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint" FROM "fetch_call"`, relColumns.fetch_call!, relColumnTypes.fetch_call!),
+    fetch_demand: selectRows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint" FROM "fetch_demand"`, relColumns.fetch_demand!, relColumnTypes.fetch_demand!),
+    stale: selectRows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint" FROM "stale"`, relColumns.stale!, relColumnTypes.stale!),
   });
 }
 
@@ -163,9 +190,9 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "fetch_call", kind: "log", tableName: "fetch_call", deltaTableName: "__delta_fetch_call", frontierTableName: "__frontier_fetch_call", nextFrontierTableName: "__next_frontier_fetch_call", columns: ["endpoint"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fetch_call" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "_sign"` },
-  { rel: "fetch_demand", kind: "set", tableName: "fetch_demand", deltaTableName: "__delta_fetch_demand", frontierTableName: "__frontier_fetch_demand", nextFrontierTableName: "__next_frontier_fetch_demand", columns: ["endpoint"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fetch_demand" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "_sign"` },
-  { rel: "stale", kind: "log", tableName: "stale", deltaTableName: "__delta_stale", frontierTableName: "__frontier_stale", nextFrontierTableName: "__next_frontier_stale", columns: ["endpoint"], keyIndices: [], arrivalAddSql: `INSERT INTO "stale" ("endpoint") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "endpoint"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_stale" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "_sign"` },
+  { rel: "fetch_call", kind: "log", tableName: "fetch_call", deltaTableName: "__delta_fetch_call", frontierTableName: "__frontier_fetch_call", nextFrontierTableName: "__next_frontier_fetch_call", columns: ["endpoint"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fetch_call" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "_sign"` },
+  { rel: "fetch_demand", kind: "set", tableName: "fetch_demand", deltaTableName: "__delta_fetch_demand", frontierTableName: "__frontier_fetch_demand", nextFrontierTableName: "__next_frontier_fetch_demand", columns: ["endpoint"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fetch_demand" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "_sign"` },
+  { rel: "stale", kind: "log", tableName: "stale", deltaTableName: "__delta_stale", frontierTableName: "__frontier_stale", nextFrontierTableName: "__next_frontier_stale", columns: ["endpoint"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT INTO "stale" ("endpoint") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "endpoint"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' THEN json_extract("endpoint", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')) || ')' ELSE "endpoint" END AS "endpoint", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_stale" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -254,6 +281,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 }
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validateArrivals(arrivals);
   // Derived edge triggers consume the P1 current/next frontier, including drain carry.
   return runIncrementalTick(seam, arrivals);
 }
@@ -271,6 +299,7 @@ export const program: IGenProgramWithBoot = {
   name: "demand_view_fires_its_consumer_once",
   ddl,
   relColumns,
+  relColumnTypes,
   arrivalTargets,
   boot,
   finalSelect,

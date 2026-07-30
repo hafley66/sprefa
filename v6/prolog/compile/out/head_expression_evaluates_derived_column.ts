@@ -32,6 +32,7 @@ import type {
   IIncrementalRelationPlan,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -40,12 +41,12 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly (string | number)[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
   sql: string;
-  params: readonly (string | number)[];
+  params: readonly IRowValue[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
@@ -56,7 +57,27 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
+
+function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+  return arrivals.map((arrival): IArrivalRow => {
+    const types = relColumnTypes[arrival.rel];
+    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const row = arrival.row.map((value, index): IRowValue => {
+      const type = types[index];
+      if (type === "bool") {
+        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);
+        return value;
+      }
+      if (type === "float") {
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
+        return Object.is(value, -0) ? 0 : value;
+      }
+      return value;
+    });
+    return { ...arrival, row };
+  });
 }
 
 const ddl: readonly string[] = [
@@ -90,6 +111,12 @@ const relColumns: Record<string, readonly string[]> = {
   union_size: ["left", "right", "col3"],
 };
 
+const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  callee_set_size: ["text", "int"],
+  shared_count: ["text", "text", "int"],
+  union_size: ["text", "text", "int"],
+};
+
 const arrivalTargets: readonly string[] = ["callee_set_size", "shared_count"];
 
 const boot: readonly IBootStatement[] = [
@@ -110,9 +137,9 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    callee_set_size: selectRows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' THEN json_extract("left", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("left", '$.args')) || ')' ELSE "left" END AS "left", "left_size" FROM "callee_set_size"`, relColumns.callee_set_size!),
-    shared_count: selectRows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' THEN json_extract("left", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("left", '$.args')) || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' THEN json_extract("right", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("right", '$.args')) || ')' ELSE "right" END AS "right", "shared" FROM "shared_count"`, relColumns.shared_count!),
-    union_size: selectRows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' THEN json_extract("left", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("left", '$.args')) || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' THEN json_extract("right", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("right", '$.args')) || ')' ELSE "right" END AS "right", "col3" FROM "union_size"`, relColumns.union_size!),
+    callee_set_size: selectRows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' THEN json_extract("left", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("left", '$.args')) || ')' ELSE "left" END AS "left", "left_size" FROM "callee_set_size"`, relColumns.callee_set_size!, relColumnTypes.callee_set_size!),
+    shared_count: selectRows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' THEN json_extract("left", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("left", '$.args')) || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' THEN json_extract("right", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("right", '$.args')) || ')' ELSE "right" END AS "right", "shared" FROM "shared_count"`, relColumns.shared_count!, relColumnTypes.shared_count!),
+    union_size: selectRows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' THEN json_extract("left", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("left", '$.args')) || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' THEN json_extract("right", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("right", '$.args')) || ')' ELSE "right" END AS "right", "col3" FROM "union_size"`, relColumns.union_size!, relColumnTypes.union_size!),
   });
 }
 
@@ -150,9 +177,9 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "callee_set_size", kind: "set", tableName: "callee_set_size", deltaTableName: "__delta_callee_set_size", frontierTableName: "__frontier_callee_set_size", nextFrontierTableName: "__next_frontier_callee_set_size", columns: ["left", "left_size"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "callee_set_size" ("left", "left_size") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "left", "left_size"`, arrivalDelSql: `DELETE FROM "callee_set_size" WHERE ("left", "left_size") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "left", "left_size"`, boundarySql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' THEN json_extract("left", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("left", '$.args')) || ')' ELSE "left" END AS "left", "left_size", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_callee_set_size" WHERE "_sign" IN (-1, 1) GROUP BY "left", "left_size", "_sign"` },
-  { rel: "shared_count", kind: "set", tableName: "shared_count", deltaTableName: "__delta_shared_count", frontierTableName: "__frontier_shared_count", nextFrontierTableName: "__next_frontier_shared_count", columns: ["left", "right", "shared"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "shared_count" ("left", "right", "shared") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "left", "right", "shared"`, arrivalDelSql: `DELETE FROM "shared_count" WHERE ("left", "right", "shared") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "left", "right", "shared"`, boundarySql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' THEN json_extract("left", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("left", '$.args')) || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' THEN json_extract("right", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("right", '$.args')) || ')' ELSE "right" END AS "right", "shared", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_shared_count" WHERE "_sign" IN (-1, 1) GROUP BY "left", "right", "shared", "_sign"` },
-  { rel: "union_size", kind: "set", tableName: "union_size", deltaTableName: "__delta_union_size", frontierTableName: "__frontier_union_size", nextFrontierTableName: "__next_frontier_union_size", columns: ["left", "right", "col3"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' THEN json_extract("left", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("left", '$.args')) || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' THEN json_extract("right", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("right", '$.args')) || ')' ELSE "right" END AS "right", "col3", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_union_size" WHERE "_sign" IN (-1, 1) GROUP BY "left", "right", "col3", "_sign"` },
+  { rel: "callee_set_size", kind: "set", tableName: "callee_set_size", deltaTableName: "__delta_callee_set_size", frontierTableName: "__frontier_callee_set_size", nextFrontierTableName: "__next_frontier_callee_set_size", columns: ["left", "left_size"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "callee_set_size" ("left", "left_size") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "left", "left_size"`, arrivalDelSql: `DELETE FROM "callee_set_size" WHERE ("left", "left_size") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "left", "left_size"`, boundarySql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' THEN json_extract("left", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("left", '$.args')) || ')' ELSE "left" END AS "left", "left_size", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_callee_set_size" WHERE "_sign" IN (-1, 1) GROUP BY "left", "left_size", "_sign"` },
+  { rel: "shared_count", kind: "set", tableName: "shared_count", deltaTableName: "__delta_shared_count", frontierTableName: "__frontier_shared_count", nextFrontierTableName: "__next_frontier_shared_count", columns: ["left", "right", "shared"], columnTypes: ["text", "text", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "shared_count" ("left", "right", "shared") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "left", "right", "shared"`, arrivalDelSql: `DELETE FROM "shared_count" WHERE ("left", "right", "shared") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "left", "right", "shared"`, boundarySql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' THEN json_extract("left", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("left", '$.args')) || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' THEN json_extract("right", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("right", '$.args')) || ')' ELSE "right" END AS "right", "shared", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_shared_count" WHERE "_sign" IN (-1, 1) GROUP BY "left", "right", "shared", "_sign"` },
+  { rel: "union_size", kind: "set", tableName: "union_size", deltaTableName: "__delta_union_size", frontierTableName: "__frontier_union_size", nextFrontierTableName: "__next_frontier_union_size", columns: ["left", "right", "col3"], columnTypes: ["text", "text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' THEN json_extract("left", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("left", '$.args')) || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' THEN json_extract("right", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("right", '$.args')) || ')' ELSE "right" END AS "right", "col3", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_union_size" WHERE "_sign" IN (-1, 1) GROUP BY "left", "right", "col3", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -210,6 +237,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 }
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validateArrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
     return runNaiveTick(seam, arrivals);
   }
@@ -229,6 +257,7 @@ export const program: IGenProgramWithBoot = {
   name: "head_expression_evaluates_derived_column",
   ddl,
   relColumns,
+  relColumnTypes,
   arrivalTargets,
   boot,
   finalSelect,

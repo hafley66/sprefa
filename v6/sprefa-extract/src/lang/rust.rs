@@ -33,9 +33,9 @@ use syn::{
 
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
-    CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind,
-    DfF, DfNodeKind, DfParam, ProjectEdge, SigSlot, TypeEdgeCandidate, TypeEdgeKind,
-    TypeEntityKind, TypeF, TypeSig,
+    CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
+    DfNodeKind, DfParam, ProjectEdge, SigSlot, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind,
+    TypeF, TypeSig,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
@@ -847,7 +847,8 @@ impl Resolve<CallF> for RustSource {
                 (Some(n), None) => (n, CallEdgeKind::NameResolve),
                 (None, None) => continue,
             };
-            edges.push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
+            edges
+                .push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
         }
         edges
     }
@@ -1205,10 +1206,7 @@ fn flow_fn_body(
                     DfNodeKind::Param,
                     Some(&pi.ident.to_string()),
                 );
-                sink.aux.params.push(DfParam {
-                    node,
-                    pos,
-                });
+                sink.aux.params.push(DfParam { node, pos });
                 scope.insert(pi.ident.to_string(), node);
             }
             pos += 1;

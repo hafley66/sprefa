@@ -108,7 +108,7 @@ dl6_grammar(Text) :-
     },
     "number": {
       "name": "constant.numeric.dl6",
-      "match": "-?\\\\b\\\\d+\\\\b"
+      "match": "-?(?:\\\\b\\\\d+\\\\.\\\\d*|\\\\B\\\\.\\\\d+|\\\\b\\\\d+)(?:[eE][+-]?\\\\d+)?\\\\b"
     },
     "rule-arrow": {
       "name": "keyword.operator.arrow.dl6",
@@ -124,7 +124,7 @@ dl6_grammar(Text) :-
     },
     "decl-words": {
       "name": "storage.type.declaration.dl6",
-      "match": "\\\\b(rel|sh|bind|log|keep|key|int|text|json|salt)\\\\b"
+      "match": "\\\\b(rel|sh|bind|log|keep|key|int|float|bool|text|json|salt)\\\\b"
     },
     "live-keywords": {
       "name": "keyword.control.dl6",

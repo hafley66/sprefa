@@ -32,6 +32,7 @@ import type {
   IIncrementalRelationPlan,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -40,12 +41,12 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly (string | number)[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
   sql: string;
-  params: readonly (string | number)[];
+  params: readonly IRowValue[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
@@ -56,7 +57,27 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
+
+function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+  return arrivals.map((arrival): IArrivalRow => {
+    const types = relColumnTypes[arrival.rel];
+    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const row = arrival.row.map((value, index): IRowValue => {
+      const type = types[index];
+      if (type === "bool") {
+        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);
+        return value;
+      }
+      if (type === "float") {
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
+        return Object.is(value, -0) ? 0 : value;
+      }
+      return value;
+    });
+    return { ...arrival, row };
+  });
 }
 
 const ddl: readonly string[] = [
@@ -90,6 +111,12 @@ const relColumns: Record<string, readonly string[]> = {
   seen: ["name", "base", "col3"],
 };
 
+const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  bump: ["text", "int"],
+  over_budget: ["text", "int"],
+  seen: ["text", "int", "text"],
+};
+
 const arrivalTargets: readonly string[] = ["bump", "seen"];
 
 const boot: readonly IBootStatement[] = [
@@ -109,9 +136,9 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    bump: selectRows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "extra" FROM "bump"`, relColumns.bump!),
-    over_budget: selectRows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "sum" FROM "over_budget"`, relColumns.over_budget!),
-    seen: selectRows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "base", CASE WHEN json_valid("col3") AND json_type("col3") = 'object' THEN json_extract("col3", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col3", '$.args')) || ')' ELSE "col3" END AS "col3" FROM "seen"`, relColumns.seen!),
+    bump: selectRows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "extra" FROM "bump"`, relColumns.bump!, relColumnTypes.bump!),
+    over_budget: selectRows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "sum" FROM "over_budget"`, relColumns.over_budget!, relColumnTypes.over_budget!),
+    seen: selectRows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "base", CASE WHEN json_valid("col3") AND json_type("col3") = 'object' THEN json_extract("col3", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col3", '$.args')) || ')' ELSE "col3" END AS "col3" FROM "seen"`, relColumns.seen!, relColumnTypes.seen!),
   });
 }
 
@@ -149,9 +176,9 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "bump", kind: "set", tableName: "bump", deltaTableName: "__delta_bump", frontierTableName: "__frontier_bump", nextFrontierTableName: "__next_frontier_bump", columns: ["name", "extra"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "bump" ("name", "extra") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "extra"`, arrivalDelSql: `DELETE FROM "bump" WHERE ("name", "extra") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "extra"`, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "extra", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_bump" WHERE "_sign" IN (-1, 1) GROUP BY "name", "extra", "_sign"` },
-  { rel: "over_budget", kind: "set", tableName: "over_budget", deltaTableName: "__delta_over_budget", frontierTableName: "__frontier_over_budget", nextFrontierTableName: "__next_frontier_over_budget", columns: ["name", "sum"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "sum", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_over_budget" WHERE "_sign" IN (-1, 1) GROUP BY "name", "sum", "_sign"` },
-  { rel: "seen", kind: "set", tableName: "seen", deltaTableName: "__delta_seen", frontierTableName: "__frontier_seen", nextFrontierTableName: "__next_frontier_seen", columns: ["name", "base", "col3"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "seen" ("name", "base", "col3") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "name", "base", "col3"`, arrivalDelSql: `DELETE FROM "seen" WHERE ("name", "base", "col3") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "name", "base", "col3"`, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "base", CASE WHEN json_valid("col3") AND json_type("col3") = 'object' THEN json_extract("col3", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col3", '$.args')) || ')' ELSE "col3" END AS "col3", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_seen" WHERE "_sign" IN (-1, 1) GROUP BY "name", "base", "col3", "_sign"` },
+  { rel: "bump", kind: "set", tableName: "bump", deltaTableName: "__delta_bump", frontierTableName: "__frontier_bump", nextFrontierTableName: "__next_frontier_bump", columns: ["name", "extra"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "bump" ("name", "extra") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "extra"`, arrivalDelSql: `DELETE FROM "bump" WHERE ("name", "extra") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "extra"`, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "extra", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_bump" WHERE "_sign" IN (-1, 1) GROUP BY "name", "extra", "_sign"` },
+  { rel: "over_budget", kind: "set", tableName: "over_budget", deltaTableName: "__delta_over_budget", frontierTableName: "__frontier_over_budget", nextFrontierTableName: "__next_frontier_over_budget", columns: ["name", "sum"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "sum", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_over_budget" WHERE "_sign" IN (-1, 1) GROUP BY "name", "sum", "_sign"` },
+  { rel: "seen", kind: "set", tableName: "seen", deltaTableName: "__delta_seen", frontierTableName: "__frontier_seen", nextFrontierTableName: "__next_frontier_seen", columns: ["name", "base", "col3"], columnTypes: ["text", "int", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "seen" ("name", "base", "col3") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "name", "base", "col3"`, arrivalDelSql: `DELETE FROM "seen" WHERE ("name", "base", "col3") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "name", "base", "col3"`, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "base", CASE WHEN json_valid("col3") AND json_type("col3") = 'object' THEN json_extract("col3", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col3", '$.args')) || ')' ELSE "col3" END AS "col3", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_seen" WHERE "_sign" IN (-1, 1) GROUP BY "name", "base", "col3", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -209,6 +236,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 }
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validateArrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
     return runNaiveTick(seam, arrivals);
   }
@@ -228,6 +256,7 @@ export const program: IGenProgramWithBoot = {
   name: "bind_computes_derived_value_then_comparison_filters",
   ddl,
   relColumns,
+  relColumnTypes,
   arrivalTargets,
   boot,
   finalSelect,

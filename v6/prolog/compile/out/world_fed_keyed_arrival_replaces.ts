@@ -32,6 +32,7 @@ import type {
   IIncrementalRelationPlan,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -40,12 +41,12 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly (string | number)[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
   sql: string;
-  params: readonly (string | number)[];
+  params: readonly IRowValue[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
@@ -56,7 +57,27 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
+
+function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+  return arrivals.map((arrival): IArrivalRow => {
+    const types = relColumnTypes[arrival.rel];
+    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const row = arrival.row.map((value, index): IRowValue => {
+      const type = types[index];
+      if (type === "bool") {
+        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);
+        return value;
+      }
+      if (type === "float") {
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
+        return Object.is(value, -0) ? 0 : value;
+      }
+      return value;
+    });
+    return { ...arrival, row };
+  });
 }
 
 const ddl: readonly string[] = [
@@ -73,6 +94,10 @@ const relColumns: Record<string, readonly string[]> = {
   world_mode: ["col1", "col2"],
 };
 
+const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  world_mode: ["int", "text"],
+};
+
 const arrivalTargets: readonly string[] = ["world_mode"];
 
 const boot: readonly IBootStatement[] = [
@@ -84,7 +109,7 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    world_mode: selectRows(seam, `SELECT "col1", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' THEN json_extract("col2", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col2", '$.args')) || ')' ELSE "col2" END AS "col2" FROM "world_mode"`, relColumns.world_mode!),
+    world_mode: selectRows(seam, `SELECT "col1", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' THEN json_extract("col2", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col2", '$.args')) || ')' ELSE "col2" END AS "col2" FROM "world_mode"`, relColumns.world_mode!, relColumnTypes.world_mode!),
   });
 }
 
@@ -119,7 +144,7 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "world_mode", kind: "set", tableName: "world_mode", deltaTableName: "__delta_world_mode", frontierTableName: "__frontier_world_mode", nextFrontierTableName: "__next_frontier_world_mode", columns: ["col1", "col2"], keyIndices: [0], arrivalAddSql: `INSERT INTO "world_mode" ("col1", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("col1") DO UPDATE SET "col2" = excluded."col2" RETURNING "col1", "col2"`, arrivalDelSql: `DELETE FROM "world_mode" WHERE ("col1", "col2") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "col1", "col2"`, boundarySql: `SELECT "col1", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' THEN json_extract("col2", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col2", '$.args')) || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_world_mode" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "col2", "_sign"` },
+  { rel: "world_mode", kind: "set", tableName: "world_mode", deltaTableName: "__delta_world_mode", frontierTableName: "__frontier_world_mode", nextFrontierTableName: "__next_frontier_world_mode", columns: ["col1", "col2"], columnTypes: ["int", "text"], keyIndices: [0], arrivalAddSql: `INSERT INTO "world_mode" ("col1", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("col1") DO UPDATE SET "col2" = excluded."col2" RETURNING "col1", "col2"`, arrivalDelSql: `DELETE FROM "world_mode" WHERE ("col1", "col2") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "col1", "col2"`, boundarySql: `SELECT "col1", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' THEN json_extract("col2", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col2", '$.args')) || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_world_mode" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "col2", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -172,6 +197,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 }
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validateArrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
     return runNaiveTick(seam, arrivals);
   }
@@ -191,6 +217,7 @@ export const program: IGenProgramWithBoot = {
   name: "world_fed_keyed_arrival_replaces",
   ddl,
   relColumns,
+  relColumnTypes,
   arrivalTargets,
   boot,
   finalSelect,

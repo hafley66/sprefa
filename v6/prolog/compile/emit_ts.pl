@@ -112,6 +112,7 @@ capitalize_atom(Atom, Capitalized) :-
     code_type(UpperFirst, to_upper(First)),
     atom_codes(Capitalized, [UpperFirst | Rest]).
 
+param_text(bool_lit(Boolean), Text) :- !, format(atom(Text), '~w', [Boolean]).
 param_text(Param, Text) :- number(Param), !, format(atom(Text), '~w', [Param]).
 param_text(Param, Text) :- js_string(Param, Text).
 
@@ -202,6 +203,7 @@ imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasOrderedProgram,
       [
       '  IRelDelta,',
       '  IRow,',
+      '  IRowColumnType,',
       '  IRowValue,',
       '  ISqlSeam,'
       ],
@@ -299,12 +301,12 @@ incremental_reference_normalize_lines(true,
 local_types_lines(
     [ 'interface IHostColumnPlan { readonly name: string; readonly type: string }',
       'interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }',
-      'interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly (string | number)[]; readonly execution: string }',
+      'interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }',
       'interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }',
       '',
       'interface IBootStatement {',
       '  sql: string;',
-      '  params: readonly (string | number)[];',
+      '  params: readonly IRowValue[];',
       '}',
       '',
       'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };'
@@ -469,7 +471,29 @@ host_column_json(col(Name, Type), Json) :-
 % narrow).
 bind_args_helper_lines(
     [ 'function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {',
-      '  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));',
+      '  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));',
+      '}'
+    ]).
+
+arrival_value_guard_lines(
+    [ 'function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {',
+      '  return arrivals.map((arrival): IArrivalRow => {',
+      '    const types = relColumnTypes[arrival.rel];',
+      '    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);',
+      '    const row = arrival.row.map((value, index): IRowValue => {',
+      '      const type = types[index];',
+      '      if (type === "bool") {',
+      '        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);',
+      '        return value;',
+      '      }',
+      '      if (type === "float") {',
+      '        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);',
+      '        return Object.is(value, -0) ? 0 : value;',
+      '      }',
+      '      return value;',
+      '    });',
+      '    return { ...arrival, row };',
+      '  });',
       '}'
     ]).
 
@@ -526,6 +550,20 @@ rel_columns_entry_line(relplan(Ref, _Kind, Columns, _Key, _ColumnTypes), Line) :
     quoted_string_array_text(Columns, ColumnsSql),
     format(atom(Line), '  ~w: ~w,', [Name, ColumnsSql]).
 
+rel_column_types_lines(RelPlans, Lines) :-
+    maplist(rel_column_types_entry_line, RelPlans, EntryLines),
+    append([ ['const relColumnTypes: Record<string, readonly IRowColumnType[]> = {'],
+             EntryLines, ['};'] ], Lines).
+
+rel_column_types_entry_line(relplan(Ref, _Kind, _Columns, _Key, ColumnTypes), Line) :-
+    ref_name(Ref, Name),
+    maplist(boundary_column_type, ColumnTypes, BoundaryTypes),
+    quoted_string_array_text(BoundaryTypes, TypesText),
+    format(atom(Line), '  ~w: ~w,', [Name, TypesText]).
+
+boundary_column_type(ref(_), ref) :- !.
+boundary_column_type(Type, Type).
+
 arrival_targets_lines(ArrivalTargets, Lines) :-
     maplist(ref_name, ArrivalTargets, Names),
     quoted_string_array_text(Names, Sql),
@@ -580,7 +618,8 @@ read_snapshot_fn_lines(DeltaStatements, Lines) :-
 snapshot_read_entry_line(deltastmt(Ref, SelectSql, _DeltaTable, _BoundarySql), Line) :-
     ref_name(Ref, Name),
     js_template(SelectSql, Template),
-    format(atom(Line), '    ~w: selectRows(seam, ~w, relColumns.~w!),', [Name, Template, Name]).
+    format(atom(Line), '    ~w: selectRows(seam, ~w, relColumns.~w!, relColumnTypes.~w!),',
+           [Name, Template, Name, Name]).
 
 % ═══ finalSelect (EXPRESSION + AGGREGATE LIFT arc, final-state grading leg) ══
 % The SAME per-rel "read every row" SQL readSnapshot uses (deltastmt's
@@ -662,8 +701,10 @@ incremental_relation_entry_line(RelPlans, ArrivalStatements, DepartureRefs,
         deltastmt(Ref, _SelectSql, DeltaTable, BoundarySql), Line) :-
     ref_name(Ref, Name),
     relplan_kind(RelPlans, Ref, Kind),
-    memberchk(relplan(Ref, _, Columns, KeyOrNone, _), RelPlans),
+    memberchk(relplan(Ref, _, Columns, KeyOrNone, ColumnTypes), RelPlans),
     quoted_string_array_text(Columns, ColumnsText),
+    maplist(boundary_column_type, ColumnTypes, BoundaryTypes),
+    quoted_string_array_text(BoundaryTypes, ColumnTypesText),
     ( KeyOrNone = key(KeyPositions)
     -> maplist(position_index, KeyPositions, KeyIndices)
     ;  KeyIndices = []
@@ -692,9 +733,9 @@ incremental_relation_entry_line(RelPlans, ArrivalStatements, DepartureRefs,
     ;   DepartureField = ''
     ),
     format(atom(Line),
-           '  { rel: "~w", kind: "~w", tableName: "~w", deltaTableName: "~w", frontierTableName: "~w", nextFrontierTableName: "~w", columns: ~w, keyIndices: [~w], arrivalAddSql: ~w, arrivalDelSql: ~w, boundarySql: ~w~w },',
+           '  { rel: "~w", kind: "~w", tableName: "~w", deltaTableName: "~w", frontierTableName: "~w", nextFrontierTableName: "~w", columns: ~w, columnTypes: ~w, keyIndices: [~w], arrivalAddSql: ~w, arrivalDelSql: ~w, boundarySql: ~w~w },',
            [Name, Kind, Name, DeltaTable, FrontierTable, NextFrontierTable,
-            ColumnsText, KeyIndicesText, ArrivalAddTemplate, ArrivalDelTemplate,
+            ColumnsText, ColumnTypesText, KeyIndicesText, ArrivalAddTemplate, ArrivalDelTemplate,
             BoundaryTemplate, DepartureField]).
 
 position_index(Position, Index) :- Index is Position - 1.
@@ -1716,17 +1757,20 @@ run_tick_dispatch_lines(DerivedEdgeCarryRequired, Lines) :-
 
 run_tick_dispatch_lines(_, HasStructTypes, true,
     [ Signature,
+      '  arrivals = validateArrivals(arrivals);',
       '  return runOrderedTick(seam, arrivals);',
       '}'
     ]) :- dispatch_signature(HasStructTypes, Signature), !.
 run_tick_dispatch_lines(true, HasStructTypes, false,
     [ Signature,
+      '  arrivals = validateArrivals(arrivals);',
       '  // Derived edge triggers consume the P1 current/next frontier, including drain carry.',
       '  return runIncrementalTick(seam, arrivals);',
       '}'
     ]) :- dispatch_signature(HasStructTypes, Signature).
 run_tick_dispatch_lines(false, HasStructTypes, false,
     [ Signature,
+      '  arrivals = validateArrivals(arrivals);',
       '  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {',
       '    return runNaiveTick(seam, arrivals);',
       '  }',
@@ -1794,6 +1838,7 @@ program_export_lines(Name,
       NameLine,
       '  ddl,',
       '  relColumns,',
+      '  relColumnTypes,',
       '  arrivalTargets,',
       '  boot,',
       '  finalSelect,',
@@ -1826,6 +1871,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     local_types_lines(LocalTypeLines),
     world_plan_lines(Plan, WorldPlanLines),
     bind_args_helper_lines(BindArgsHelperLines),
+    arrival_value_guard_lines(ArrivalValueGuardLines),
     ( EdgeStatements == [] -> TriggerOccurrencesHelperLines = [] ; trigger_occurrences_helper_lines(TriggerOccurrencesHelperLines) ),
     Plan = plan(_, prog(_, PlanRules), _, _, _, _),
     listened_departure_refs(PlanRules, DepartureRefs),
@@ -1839,6 +1885,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     departure_occurrences_helper_lines(EdgeStatements, DepartureOccurrencesHelperLines),
     ddl_lines(Ddl, DdlLines),
     rel_columns_lines(RelPlans, RelColumnsLines),
+    rel_column_types_lines(RelPlans, RelColumnTypesLines),
     arrival_targets_lines(ArrivalTargets, ArrivalTargetsLines),
     boot_lines(BootStatements, BootLines),
     snapshot_type_lines(RelPlans, SnapshotTypeLines),
@@ -1890,10 +1937,10 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     program_export_lines(Name, ProgramExportLines),
     Sections0 =
     [ HeaderLines, ImportLines, LocalTypeLines, WorldPlanLines,
-      BindArgsHelperLines, TriggerOccurrencesHelperLines,
+      BindArgsHelperLines, ArrivalValueGuardLines, TriggerOccurrencesHelperLines,
       DepartureOccurrencesHelperLines,
       StructPlaneLines,
-      DdlLines, RelColumnsLines, ArrivalTargetsLines,
+      DdlLines, RelColumnsLines, RelColumnTypesLines, ArrivalTargetsLines,
       BootLines, SnapshotTypeLines, ReadSnapshotFnLines, FinalSelectLines,
       ArrivalStatementsLines, ArrivalStatementFnLines,
       IncrementalRelationLines, IncrementalEdgeStatementLines,

@@ -32,6 +32,7 @@ import type {
   IIncrementalRelationPlan,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -40,12 +41,12 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly (string | number)[]; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
   sql: string;
-  params: readonly (string | number)[];
+  params: readonly IRowValue[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
@@ -56,7 +57,27 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
+
+function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+  return arrivals.map((arrival): IArrivalRow => {
+    const types = relColumnTypes[arrival.rel];
+    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const row = arrival.row.map((value, index): IRowValue => {
+      const type = types[index];
+      if (type === "bool") {
+        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);
+        return value;
+      }
+      if (type === "float") {
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
+        return Object.is(value, -0) ? 0 : value;
+      }
+      return value;
+    });
+    return { ...arrival, row };
+  });
 }
 
 const ddl: readonly string[] = [
@@ -99,6 +120,13 @@ const relColumns: Record<string, readonly string[]> = {
   unused: ["name"],
 };
 
+const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  call: ["text", "text"],
+  def: ["text", "text", "text"],
+  node_fact: ["text", "text", "text", "text"],
+  unused: ["text"],
+};
+
 const arrivalTargets: readonly string[] = ["call", "node_fact"];
 
 const boot: readonly IBootStatement[] = [
@@ -117,10 +145,10 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    call: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("callee") AND json_type("callee") = 'object' THEN json_extract("callee", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("callee", '$.args')) || ')' ELSE "callee" END AS "callee" FROM "call"`, relColumns.call!),
-    def: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind" FROM "def"`, relColumns.def!),
-    node_fact: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("record") AND json_type("record") = 'object' THEN json_extract("record", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("record", '$.args')) || ')' ELSE "record" END AS "record", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind", CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name" FROM "node_fact"`, relColumns.node_fact!),
-    unused: selectRows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name" FROM "unused"`, relColumns.unused!),
+    call: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("callee") AND json_type("callee") = 'object' THEN json_extract("callee", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("callee", '$.args')) || ')' ELSE "callee" END AS "callee" FROM "call"`, relColumns.call!, relColumnTypes.call!),
+    def: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind" FROM "def"`, relColumns.def!, relColumnTypes.def!),
+    node_fact: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("record") AND json_type("record") = 'object' THEN json_extract("record", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("record", '$.args')) || ')' ELSE "record" END AS "record", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind", CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name" FROM "node_fact"`, relColumns.node_fact!, relColumnTypes.node_fact!),
+    unused: selectRows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name" FROM "unused"`, relColumns.unused!, relColumnTypes.unused!),
   });
 }
 
@@ -159,10 +187,10 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "call", kind: "set", tableName: "call", deltaTableName: "__delta_call", frontierTableName: "__frontier_call", nextFrontierTableName: "__next_frontier_call", columns: ["path", "callee"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "call" ("path", "callee") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "callee"`, arrivalDelSql: `DELETE FROM "call" WHERE ("path", "callee") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "callee"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("callee") AND json_type("callee") = 'object' THEN json_extract("callee", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("callee", '$.args')) || ')' ELSE "callee" END AS "callee", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_call" WHERE "_sign" IN (-1, 1) GROUP BY "path", "callee", "_sign"` },
-  { rel: "def", kind: "set", tableName: "def", deltaTableName: "__delta_def", frontierTableName: "__frontier_def", nextFrontierTableName: "__next_frontier_def", columns: ["path", "name", "kind"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_def" WHERE "_sign" IN (-1, 1) GROUP BY "path", "name", "kind", "_sign"` },
-  { rel: "node_fact", kind: "set", tableName: "node_fact", deltaTableName: "__delta_node_fact", frontierTableName: "__frontier_node_fact", nextFrontierTableName: "__next_frontier_node_fact", columns: ["path", "record", "kind", "name"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "node_fact" ("path", "record", "kind", "name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "path", "record", "kind", "name"`, arrivalDelSql: `DELETE FROM "node_fact" WHERE ("path", "record", "kind", "name") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "path", "record", "kind", "name"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("record") AND json_type("record") = 'object' THEN json_extract("record", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("record", '$.args')) || ')' ELSE "record" END AS "record", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind", CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_node_fact" WHERE "_sign" IN (-1, 1) GROUP BY "path", "record", "kind", "name", "_sign"` },
-  { rel: "unused", kind: "set", tableName: "unused", deltaTableName: "__delta_unused", frontierTableName: "__frontier_unused", nextFrontierTableName: "__next_frontier_unused", columns: ["name"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_unused" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"` },
+  { rel: "call", kind: "set", tableName: "call", deltaTableName: "__delta_call", frontierTableName: "__frontier_call", nextFrontierTableName: "__next_frontier_call", columns: ["path", "callee"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "call" ("path", "callee") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "callee"`, arrivalDelSql: `DELETE FROM "call" WHERE ("path", "callee") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "callee"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("callee") AND json_type("callee") = 'object' THEN json_extract("callee", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("callee", '$.args')) || ')' ELSE "callee" END AS "callee", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_call" WHERE "_sign" IN (-1, 1) GROUP BY "path", "callee", "_sign"` },
+  { rel: "def", kind: "set", tableName: "def", deltaTableName: "__delta_def", frontierTableName: "__frontier_def", nextFrontierTableName: "__next_frontier_def", columns: ["path", "name", "kind"], columnTypes: ["text", "text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_def" WHERE "_sign" IN (-1, 1) GROUP BY "path", "name", "kind", "_sign"` },
+  { rel: "node_fact", kind: "set", tableName: "node_fact", deltaTableName: "__delta_node_fact", frontierTableName: "__frontier_node_fact", nextFrontierTableName: "__next_frontier_node_fact", columns: ["path", "record", "kind", "name"], columnTypes: ["text", "text", "text", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "node_fact" ("path", "record", "kind", "name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "path", "record", "kind", "name"`, arrivalDelSql: `DELETE FROM "node_fact" WHERE ("path", "record", "kind", "name") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "path", "record", "kind", "name"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' THEN json_extract("path", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("path", '$.args')) || ')' ELSE "path" END AS "path", CASE WHEN json_valid("record") AND json_type("record") = 'object' THEN json_extract("record", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("record", '$.args')) || ')' ELSE "record" END AS "record", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind", CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_node_fact" WHERE "_sign" IN (-1, 1) GROUP BY "path", "record", "kind", "name", "_sign"` },
+  { rel: "unused", kind: "set", tableName: "unused", deltaTableName: "__delta_unused", frontierTableName: "__frontier_unused", nextFrontierTableName: "__next_frontier_unused", columns: ["name"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_unused" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -223,6 +251,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 }
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validateArrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
     return runNaiveTick(seam, arrivals);
   }
@@ -242,6 +271,7 @@ export const program: IGenProgramWithBoot = {
   name: "callgraph_unused_inverts_with_the_call_set",
   ddl,
   relColumns,
+  relColumnTypes,
   arrivalTargets,
   boot,
   finalSelect,

@@ -137,7 +137,7 @@ export const WitnessCache: IWitnessCache = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function shellText(value: IRowValue): string {
-  return typeof value === "number" ? String(value) : value;
+  return String(value);
 }
 
 function fillTemplate(template: string, inputs: ReadonlyMap<string, IRowValue>): string {
@@ -197,11 +197,27 @@ export const HostExecutors: ReadonlyMap<string, HostExecutor> = new Map([
 // ─────────────────────────────────────────────────────────────────────────────
 
 function coerce(host: string, column: IHostColumnPlan, raw: unknown): IRowValue {
-  if (column.type === "int") {
+  if (column.type === "bool") {
+    if (raw === true || raw === "true") return true;
+    if (raw === false || raw === "false") return false;
+    throw new Error(
+      `sh host '${host}' produced a non-boolean value for bool column '${column.name}': ${JSON.stringify(raw)}`,
+    );
+  }
+  if (column.type === "float") {
     const value = typeof raw === "number" ? raw : Number(String(raw ?? "").trim());
     if (!Number.isFinite(value)) {
       throw new Error(
-        `sh host '${host}' produced a non-numeric value for int column '${column.name}': ${JSON.stringify(raw)}`,
+        `sh host '${host}' produced a non-finite value for float column '${column.name}': ${JSON.stringify(raw)}`,
+      );
+    }
+    return Object.is(value, -0) ? 0 : value;
+  }
+  if (column.type === "int") {
+    const value = typeof raw === "number" ? raw : Number(String(raw ?? "").trim());
+    if (!Number.isSafeInteger(value)) {
+      throw new Error(
+        `sh host '${host}' produced a non-integer value for int column '${column.name}': ${JSON.stringify(raw)}`,
       );
     }
     return value;

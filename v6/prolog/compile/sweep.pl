@@ -28,7 +28,9 @@
 :- use_module(lower, [ lower_program/2, boot_statements/5 ]).
 :- use_module(emit_ts, [ emit_program/5 ]).
 :- use_module('../conformance/body', [ rel_ref/2 ]).
-:- use_module('../0_type_plane', [ type_definitions/2, type_canonical_json/4 ]).
+:- use_module('../0_type_plane',
+              [ type_definitions/2, type_canonical_json/4,
+                canonical_json_text/2 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -186,6 +188,9 @@ arrival_value_json(_, _, Value, Json) :- row_value_json(Value, Json).
 % must not depend on load order with it -- the compile sweep and the oracle
 % dump run as two separate swipl processes, plans header "the grading loop").
 row_value_json(Value, Json) :- integer(Value), !, format(atom(Json), '~w', [Value]).
+row_value_json(bool_lit(Boolean), Json) :- !, format(atom(Json), '~w', [Boolean]).
+row_value_json(Value, Json) :- float(Value), !,
+    canonical_json_text(Value, Json).
 row_value_json(Value, Json) :- compound(Value), !, term_text(Value, Text), json_string(Text, Json).
 row_value_json(Value, Json) :- json_string(Value, Json).
 

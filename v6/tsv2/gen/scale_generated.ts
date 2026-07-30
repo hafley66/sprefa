@@ -40,13 +40,16 @@ import type {
 
 interface IBootStatement {
   sql: string;
-  params: readonly (string | number)[];
+  params: readonly IRowValue[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return value ? 1n : 0n;
+    return typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value;
+  });
 }
 
 function triggerOccurrences(

@@ -232,6 +232,51 @@ integer_lit(Value, S0, S) :-
 digits([C | Cs], [C | More], S) :- code_type(C, digit), !, digits(Cs, More, S).
 digits(S, [], S).
 
+% A float token contains a decimal point or exponent, so integer spelling
+% remains on integer_lit/3. Only finite IEEE-754 values enter the AST.
+float_lit(Value, S0, S) :-
+    phrase(float_codes(Codes), S0, S),
+    number_codes(Value, Codes),
+    float(Value),
+    float_class(Value, Class),
+    memberchk(Class, [normal, subnormal, zero]).
+
+float_codes(Codes) -->
+    optional_minus(Sign),
+    digits_codes(Int),
+    float_tail(Tail),
+    { append([Sign, Int, Tail], Codes) }.
+
+optional_minus([0'-]) --> `-`, !.
+optional_minus([]) --> [].
+
+digits_codes([Digit | Rest]) -->
+    [Digit], { code_type(Digit, digit) }, !,
+    digits_codes_rest(Rest).
+
+digits_codes_rest([Digit | Rest]) -->
+    [Digit], { code_type(Digit, digit) }, !,
+    digits_codes_rest(Rest).
+digits_codes_rest([]) --> [].
+
+float_tail(Codes) -->
+    `.`, digits_codes(Fraction), exponent_codes(Exponent),
+    { append([[0'.], Fraction, Exponent], Codes) }.
+float_tail(Codes) -->
+    exponent_codes_required(Codes).
+
+exponent_codes(Codes) --> exponent_codes_required(Codes), !.
+exponent_codes([]) --> [].
+
+exponent_codes_required([Marker | Codes]) -->
+    [Marker], { memberchk(Marker, [0'e, 0'E]) },
+    exponent_sign(Sign),
+    digits_codes(Digits),
+    { append(Sign, Digits, Codes) }.
+
+exponent_sign([Sign]) --> [Sign], { memberchk(Sign, [0'+, 0'-]) }, !.
+exponent_sign([]) --> [].
+
 % ═══ quoted atom 'text' and string "text" literals ══════════════════════════
 % Both support \' \" \\ \n \t escapes and the doubled-quote escape ('' inside
 % '...' is one literal quote, the plain Prolog convention).
@@ -358,6 +403,8 @@ decl_a_column(column(Name, Type), S0, S) :-
 typed_column_type(int, S0, S) :- word(`int`, S0, S), !.
 typed_column_type(text, S0, S) :- word(`text`, S0, S), !.
 typed_column_type(json, S0, S) :- word(`json`, S0, S), !.
+typed_column_type(bool, S0, S) :- word(`bool`, S0, S), !.
+typed_column_type(float, S0, S) :- word(`float`, S0, S), !.
 % STRUCT-AS-ROWS (ruling compound_storage): a bare identifier in type
 % position names a referenced relation value, and the column stores a ref to
 % that relation's dictionary. A name with no matching `rel` declaration is
@@ -576,6 +623,8 @@ declared_column_type_name(Decls, Name) :-
 scalar_column_type(int).
 scalar_column_type(text).
 scalar_column_type(json).
+scalar_column_type(bool).
+scalar_column_type(float).
 
 bind_decl_stmt(bind_decl(Name, Columns), S0, S) :-
     word(`bind`, S0, S1),
@@ -1175,6 +1224,8 @@ factor(E, Vars0, Vars, S0, S) :-
     ws0(S0, S1),
     ( lit_dcg(`(`, S1, S2)
     -> ws0(S2, S3), expr(E, Vars0, Vars, S3, S4), ws0(S4, S5), lit_dcg(`)`, S5, S)
+    ; bool_lit(E, S1, S) -> Vars = Vars0
+    ; float_lit(E, S1, S) -> Vars = Vars0
     ; integer_lit(E, S1, S) -> Vars = Vars0
     ; quoted_atom_lit(E, S1, S) -> Vars = Vars0
     ; string_lit(E, S1, S) -> Vars = Vars0
@@ -1183,6 +1234,9 @@ factor(E, Vars0, Vars, S0, S) :-
     ; wildcard_var(E, S1, S) -> Vars = Vars0
     ; compound_or_var(E, Vars0, Vars, S1, S)
     ).
+
+bool_lit(bool_lit(true), S0, S) :- word(`true`, S0, S), !.
+bool_lit(bool_lit(false), S0, S) :- word(`false`, S0, S).
 
 wildcard_var(Var, S0, S) :-
     lit_dcg(`_`, S0, S1),

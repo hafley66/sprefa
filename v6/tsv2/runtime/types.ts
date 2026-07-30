@@ -36,7 +36,11 @@ export type { QueryResult, SqliteDb, SqlStatement, TraceStatement };
  * header, item 9: atoms and compound-term text both serialize as JSON
  * strings.
  */
-export type IRowValue = string | number;
+export type IRowValue = string | number | boolean;
+
+/** Storage type emitted for each public relation column. Relation references
+ * still cross the boundary as their canonical text value. */
+export type IRowColumnType = "text" | "int" | "bool" | "float" | "ref";
 
 /** One relation row, columns in the rel's declared order (relColumns). */
 export type IRow = readonly IRowValue[];
@@ -119,6 +123,7 @@ export interface IIncrementalRelationPlan {
   readonly frontierTableName: string;
   readonly nextFrontierTableName: string;
   readonly columns: readonly string[];
+  readonly columnTypes?: readonly IRowColumnType[];
   readonly keyIndices?: readonly number[];
   readonly arrivalAddSql: string | null;
   readonly arrivalDelSql: string | null;
@@ -322,6 +327,7 @@ export interface IGenProgram {
   readonly name: string;
   readonly ddl: readonly string[];
   readonly relColumns: Readonly<Record<string, readonly string[]>>;
+  readonly relColumnTypes?: Readonly<Record<string, readonly IRowColumnType[]>>;
   readonly arrivalTargets: readonly string[];
   tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas>;
 }
@@ -342,7 +348,7 @@ export interface IGenProgram {
  */
 export interface IBootStatement {
   readonly sql: string;
-  readonly params: readonly (string | number)[];
+  readonly params: readonly IRowValue[];
 }
 
 export interface IBootRunner {

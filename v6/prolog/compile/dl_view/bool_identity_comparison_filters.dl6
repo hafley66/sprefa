@@ -1,0 +1,4 @@
+rel flag(name: text, enabled: bool).
+rel enabled_name(name: text).
+
+enabled_name(Name) <- flag(Name, Enabled), Enabled == true.

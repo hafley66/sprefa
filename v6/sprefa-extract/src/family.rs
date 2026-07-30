@@ -5,6 +5,5 @@
 pub use crate::types::{
     CallEdgeKind, CallF, CallFAux, CallKind, CallSite, ConstKind, ConstValue, CstEdgeKind, CstF,
     DfArg, DfEdgeKind, DfF, DfFAux, DfNodeKind, DfParam, Family, ProjectEdge, SigSlot, Specifier,
-    SpecifierKind,
-    TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeFAux, TypeSig,
+    SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeFAux, TypeSig,
 };

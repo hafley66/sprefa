@@ -545,12 +545,10 @@ impl Resolve<CallF> for PrologSource {
                 let caller = covering_def(call, site.span)?;
                 let callee = output.strings.lookup(site.callee);
                 let (blob, target) = Self::call_name_match(output, index, callee)?;
-                Some(ProjectEdge::new(
-                    caller,
-                    blob,
-                    target,
-                    CallEdgeKind::NameResolve,
-                ).with_call_site(site.span))
+                Some(
+                    ProjectEdge::new(caller, blob, target, CallEdgeKind::NameResolve)
+                        .with_call_site(site.span),
+                )
             })
             .collect()
     }

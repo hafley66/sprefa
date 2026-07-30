@@ -338,6 +338,64 @@ fold_order([phase5_bool_float,
 fold_blocker(scan_surface_composition_lab, indexed_surface_decision).
 fold_blocker(json_interop_lab, indexed_optional_module_policy).
 
+session_pause('2026-07-30', coordinator_handoff).
+pause_branch('codex/rel-ref-file-span-lab').
+pause_checkpoint_base(ce1ad851).
+pause_worktree_policy(commit_every_dirty_file).
+
+landing_ready(phase5_bool_float,
+              implemented(bool_integer_check_0_1,
+                          float_finite_sqlite_real_binary64,
+                          exact_float_comparison,
+                          shortest_roundtrip_boundary,
+                          grouped_float_avg,
+                          float_int_inference)).
+verification(phase5_bool_float,
+             passed(plunit(173,173),
+                    text_door(122,122),
+                    sweep(compiled(123), identical(121), wrong(0), known_run_errors(2)),
+                    conformance(all),
+                    typecheck,
+                    import_gate,
+                    focused_ts(3,3))).
+known_failure(phase5_bool_float,
+              full_ts,
+              'serveHost.test.ts retains removed type and RHS question-mark syntax').
+known_failure(phase5_bool_float,
+              roundtrip,
+              '18 relation-reference/type-removal fixtures remain outside the bool/float lane').
+
+paused_lane(clock_checker_full,
+            'compiler module, registry dependency roles, historical replay receipts, and compiler integration are present but unfinished').
+clock_checker_boundary(a2,
+                       not_provable,
+                       'two zero-ring triggers intentionally implement either-source fire plus sampling; current facts cannot infer author batch-invariance intent').
+clock_checker_boundary(a6,
+                       runtime_comparison_required,
+                       'requires comparison between inferred offset facts and observed runtime ticks').
+clock_checker_resume_order([
+    load_and_run_compile_test_3_clock_check,
+    finish_historical_a2_a4_a5_a6_a7_a8_a9_a11_receipts,
+    keep_a2_as_not_provable,
+    compare_a6_inferred_offsets_to_runtime_ticks,
+    run_full_plunit_conformance_sweep
+]).
+
+resume_order([
+    inspect_checkpoint_diff,
+    separate_or_accept_mixed_pause_commit,
+    finish_clock_checker_full,
+    grade_phase5_bool_float_against_current_tip,
+    update_arch_task_states,
+    continue_receipt_folding
+]).
+resume_context('v6/prolog/ARCH.pl').
+resume_context('plans/2026-07-29-v6-completion-drive.pl').
+resume_context('v6/prolog/compile/3_clock_check.pl').
+resume_context('v6/prolog/compile/test/3_clock_check.test.pl').
+resume_context('v6/prolog/compile/test/3_clock_history.pl').
+resume_context('v6/prolog/conformance/fixtures/5_value_plane.pl').
+
 host_executor(shell).
 host_executor(sprefa_extract).
 host_overuse(flagship_callgraph,
