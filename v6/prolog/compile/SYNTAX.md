@@ -113,6 +113,7 @@ Refusals: `coalesce_no_output`, `coalesce_multiple_outputs`,
 | `avg/1` | `aggregate` | `no_refs` | `head(lower)` | `live` |
 | `json_array/1` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
 | `json_object/2` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
+| `group_concat/1` | `aggregate` | `no_refs` | `head(refuse(not_implemented))` | `refused` |
 | `enum_decl/2` | `decl` | `no_refs` | `decl(enum_variants)` | `live` |
 | `;/2` | `decl` | `no_refs` | `decl(enum_variant_separator)` | `live` |
 | `col_type/3` | `decl` | `no_refs` | `decl(column_type)` | `live` |

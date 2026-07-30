@@ -1,0 +1,1 @@
+pair(Left, Right) <- zip(source_a(Left), source_b(Right)).

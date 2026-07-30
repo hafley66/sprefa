@@ -151,12 +151,21 @@ engine_check_order([ key_position_out_of_range,
                      % program the same way (0_program_check.pl states why).
                      relation_value_under_negation,
                      relation_value_in_edge_rule,
+                     % The slot analyze.pl gives the same class, so a program
+                     % violating this and one of the classes below reports the
+                     % same one at both doors. Before this entry every
+                     % reserved word was read as an ordinary relation atom by
+                     % solve/2's final clause and derived nothing, quietly.
+                     reserved_body_word,
                      keyed_level_head,
                      keyed_log_rel,
                      log_on_level_headed_rel,
                      missing_retention,
                      keep_on_non_log_rel,
                      aggregate_in_edge_head,
+                     % After the edge class, which is the more specific fact
+                     % about an edge program; this one is level rules only.
+                     aggregate_not_implemented,
                      finalize_in_level_rule,
                      latest_in_level_rule,
                      pre_in_level_rule ]).
@@ -176,6 +185,14 @@ engine_refusal(relation_pattern_not_a_relation_value,
                pattern(Ref, Column, TypeName, Value),
                relation_pattern_not_a_relation_value(Ref, Column, TypeName, Value)).
 engine_refusal(dynamic_relation_name, Ref, dynamic_relation_name(Ref)).
+% ONE name for all five reserved words, where the compiler splits the four
+% lifecycle wrappers out as lifecycle_arm/1. Deliberate, and the same kind of
+% split keyed_log_rel already has: this door's term answers "the language has
+% claimed this word and given it no meaning", which is one fact and reads the
+% same for `zip` as for `subscribe`. The compiler's split exists because its
+% four lifecycle rows share a refuse(lifecycle) LOWERING role that a future
+% arc lands together; the oracle has no lowering to group.
+engine_refusal(reserved_body_word, reserved(Ref, _), reserved_body_word(Ref)).
 engine_refusal(relation_value_under_negation,
                pattern(Ref, Column, TypeName, Value),
                relation_value_under_negation(Ref, Column, TypeName, Value)).
@@ -196,6 +213,9 @@ engine_refusal(missing_retention,       Ref,   missing_retention(Ref)).
 engine_refusal(keep_on_non_log_rel,     Ref,   keep_on_non_log_rel(Ref)).
 % The oracle names this one without a reference, and always has.
 engine_refusal(aggregate_in_edge_head,  _,     aggregate_in_edge_head).
+engine_refusal(aggregate_not_implemented,
+               unimplemented(Ref, Signature, Implemented),
+               aggregate_not_implemented(Ref, Signature, Implemented)).
 engine_refusal(finalize_in_level_rule,  Ref,   finalize_in_level_rule(Ref)).
 engine_refusal(latest_in_level_rule,    Ref,   latest_in_level_rule(Ref)).
 engine_refusal(pre_in_level_rule,       Ref,   pre_in_level_rule(Ref)).
@@ -226,11 +246,29 @@ log_stamps(Store, Ref, Stamps) :-
 % plans/2026-07-29-prolog-org-review.md); the classification stays here,
 % because it is NOT the registry's.
 %
-% The walk must NOT descend not/1 and must NOT splice next/1 or combine: a
-% negated atom is not a trigger, and next/1 or combine remain wrappers rather
-% than becoming live triggers on their spliced atoms.
+% The walk must NOT descend not/1: a negated atom is not a trigger.
+%
+% It MUST splice next/1 and combine, and this was the other half of the same
+% silence body.pl:solve/2's splice clause closes. The policy used to be
+% splice_bare(false) with the reason "next/1 or combine remain wrappers rather
+% than becoming live triggers on their spliced atoms", which made
+% `out(X, Y) <+ combine(a(X), b(Y))` a rule with NO trigger item at all --
+% statically dead, no refusal. Measured against the compiler for exactly that
+% program, both doors before the change:
+%
+%   oracle   edge combine: rows=[]              compiler: COMPILED CLEAN
+%   oracle   edge conj:    rows=[out(1,2)]      compiler: COMPILED CLEAN
+%
+% and the compiler's own trigger classification for the two bodies is the same
+% term, `unmarked_conjunction([a(_), b(_)])`, emitting the same two arrival
+% statements. A splice row is transparent on the occurrence plane as well as
+% the solving plane, or it is not a splice.
+%
+% Every body WITHOUT a splice row walks identically under either policy --
+% walk_children/7 branches on splice_bare only for a splice_bare surface row --
+% so this widens nothing else in the corpus.
 trigger_items(Body, Items) :-
-    walk_body(Body, walk_policy(descend_not(false), splice_bare(false)),
+    walk_body(Body, walk_policy(descend_not(false), splice_bare(true)),
               Events),
     trigger_items_(Events, Items).
 

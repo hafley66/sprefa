@@ -48,6 +48,7 @@ expected_absent(json_each/2,    'registry status `refused`').
 expected_absent(json_array/1,   'registry status `refused`').
 expected_absent(json_object/2,  'registry status `refused`').
 expected_absent(sg_pattern/3,   'registry status `refused`').
+expected_absent(group_concat/1, 'registry status `refused`').
 % The json value/pattern axis. LIVE, graded, and deliberately absent HERE:
 % see the golden's own header for the measurement. Not a status claim, so
 % status_agrees/3 takes the last branch.
@@ -63,8 +64,17 @@ expected_absent(unsubscribe/1,  'reserved lifecycle wrappers').
 expected_absent(complete/1,     'reserved lifecycle wrappers').
 expected_absent(error/1,        'reserved lifecycle wrappers').
 
-% Registry rows whose presence is checked against the SOURCE TEXT because the
-% parser splices them away (`splice_bare` in registry.pl).
+% Registry rows whose presence is checked against the SOURCE TEXT.
+%
+% `combine/variadic` needs the text path because the term walk keys on
+% Name/Arity and a variadic row has no arity to match.
+%
+% `next/1` no longer NEEDS it: parse_dl.pl used to desugar both splice rows
+% into a plain conjunction at parse time, which erased the spelling from the
+% term (and handed the two doors different terms for one source), and it
+% stopped. The text check is kept anyway because it is the stronger
+% assertion of the two -- it says the golden's own SOURCE spells the word,
+% which is what this file is for.
 text_detected(next/1,           'next(').
 text_detected(combine/variadic, 'combine(').
 

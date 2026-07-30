@@ -27,9 +27,15 @@
 :- use_module('../parse_dl', [ parse_dl/4 ]).
 :- use_module('../../0_body_walk', [ relation_atom_wrapper/1 ]).
 :- use_module('../print_dl', [ print_dl_program/3, print_term/5 ]).
-:- use_module('../registry', [ surface/5, expression/5, host_execution/3 ]).
+:- use_module('../registry',
+              [ surface/5, expression/5, host_execution/3,
+                % The reserved-body-word sweep reads which rows are BODY
+                % syntax off the same projection the walk reads it off,
+                % rather than restating the three lowering shapes.
+                body_surface_for_term/6 ]).
 :- use_module('../../1_host_expand',
-              [ prepare_program/5, compile_host_decl/2, compile_ts_query/2 ]).
+              [ prepare_program/5, compile_host_decl/2, compile_ts_query/2,
+                reserved_host_column/1 ]).
 :- use_module('../emit_ts',
               [ emit_program/5,
                 % The emitter-mode seam (rank R8): which statement family a
@@ -1603,6 +1609,61 @@ test(backslash_survives_print_and_reparse) :-
     parse_dl(PrintedCodes, Reparsed, _, []),
     Program =@= Reparsed.
 
+% The reserved-column list is STATED in 1_host_expand.pl and has to match the
+% columns that file's own generator emits, or the refusal protects the wrong
+% names. Rather than trusting the list, compile an ordinary host and read the
+% generated column names back off the two relations: every name the generator
+% adds beyond the author's own columns is a name no author may declare.
+%
+% This is the drift guard the reserved_host_column/1 comment promises. A
+% future runtime column (a retry counter, an answer timestamp) added to
+% generated_host_decls/7 without a matching reserved row turns this red
+% instead of shipping a fresh silent collision.
+%
+% SABOTAGE RECEIPT: commenting out reserved_host_column(identity_digest)
+% turns exactly this test red (`hosts_wiring:reserved_host_columns_are_
+% exactly_the_generated_ones: failed`) while every other test stays green,
+% including the refusal test below, which iterates the same list and so
+% cannot notice a name missing from it.
+test(reserved_host_columns_are_exactly_the_generated_ones) :-
+    Program = program(
+                [ sh_decl(plain, [col(path, text)], [col(line, text)],
+                          template("echo {path}")) ],
+                [ (found(Path, Line) <- probe(plain, [Path], [Line], [])) ],
+                []),
+    prepare_program(Program, prog(Decls, _), _, _, _),
+    findall(Column,
+            ( member(col_type(Ref, Column, _), Decls),
+              generated_host_relation(Ref),
+              \+ memberchk(Column, [path, line]) ),
+            Generated0),
+    sort(Generated0, Generated),
+    findall(Reserved, reserved_host_column(Reserved), Reserved0),
+    sort(Reserved0, ReservedSorted),
+    Generated == ReservedSorted.
+
+generated_host_relation(Name/_) :-
+    sub_atom(Name, 0, _, _, '__host_').
+
+% Each reserved name refuses on the side it collides on, naming the host, the
+% side, and the column. `identity_digest` sits on the demand relation only,
+% so an OUTPUT may not carry it either: outputs and inputs both flow into the
+% response relation and the refusal is stated once for the whole declaration.
+test(every_reserved_host_column_refuses_by_name) :-
+    forall(reserved_host_column(Column),
+           ( InputDecl = sh_decl(probe_host, [col(Column, text)],
+                                 [col(line, text)],
+                                 template("echo {path}")),
+             catch(compile_host_decl(InputDecl, _), InputThrown, true),
+             InputThrown ==
+                 host_column_shadows_runtime(probe_host, input, Column),
+             OutputDecl = sh_decl(probe_host, [col(path, text)],
+                                  [col(Column, text)],
+                                  template("echo {path}")),
+             catch(compile_host_decl(OutputDecl, _), OutputThrown, true),
+             OutputThrown ==
+                 host_column_shadows_runtime(probe_host, output, Column) )).
+
 :- end_tests(hosts_wiring).
 
 % ═══════════════════════════════════════════════════════════════════════════
@@ -1742,10 +1803,18 @@ walk_golden(not_mixed,
     host_body_goals-[not((not(a(1)),b(2)))]
   ]).
 
+% trigger_items USED to be [] on this case and on combine3 and mixed below,
+% while body_ref_uses on the same bodies already called the spliced atoms
+% `pos,trigger`. The golden was recording a disagreement between two
+% projections of one body: the analyzer saw triggers, the engine saw none, so
+% `out(X) <+ next(a(X))` was a rule with no trigger item at all -- statically
+% dead, no refusal, while the compiler emitted the same arrival statement it
+% emits for a bare atom. engine.pl:trigger_items/2 splices now and the two
+% projections agree; see that predicate's header for the measured receipt.
 walk_golden(next_wrapper,
   [ body_ref_uses-[use(a/1,[1],pos,trigger)],
     conjunction_goals-[a(1)],
-    trigger_items-[],
+    trigger_items-[arrival(a(1))],
     engine_finalize_refs-[],
     engine_latest_refs-[],
     engine_pre_refs-[],
@@ -1761,7 +1830,7 @@ walk_golden(next_wrapper,
 walk_golden(combine3,
   [ body_ref_uses-[use(a/1,[1],pos,trigger),use(b/1,[2],pos,trigger),use(c/1,[3],pos,trigger)],
     conjunction_goals-[a(1),b(2),c(3)],
-    trigger_items-[],
+    trigger_items-[arrival(a(1)),arrival(b(2)),arrival(c(3))],
     engine_finalize_refs-[],
     engine_latest_refs-[],
     engine_pre_refs-[],
@@ -1908,7 +1977,7 @@ walk_golden(true_word,
 walk_golden(mixed,
   [ body_ref_uses-[use(a/1,[1],pos,trigger),use(b/1,[2],neg,trigger),use(c/1,[3],neg,sampled),use(d/1,[4],pos,trigger),use(e/1,[5],pos,trigger),use(f/1,[6],pos,trigger),use(g/1,[10],pos,trigger),use(h/1,[11],pos,sampled)],
     conjunction_goals-[a(1),not((b(2),latest(c(3)))),d(4),e(5),f(6),zz:=7,8<9,finalize(g(10)),pre(h(11))],
-    trigger_items-[arrival(a(1)),departure(g(10))],
+    trigger_items-[arrival(a(1)),arrival(d(4)),arrival(e(5)),arrival(f(6)),departure(g(10))],
     engine_finalize_refs-[g/1],
     engine_latest_refs-[c/1],
     engine_pre_refs-[h/1],
@@ -2133,6 +2202,83 @@ test(keep_on_non_log_rel_both_doors) :-
     door_verdict(compiler, Prog, CompilerVerdict),
     OracleVerdict == keep_on_non_log_rel(state/1),
     CompilerVerdict == unsupported_construct(keep_on_non_log_rel(state/1)).
+
+% An aggregate spelling NEITHER door implements. Same term at both doors,
+% because there is nothing for the two vocabularies to disagree about: the
+% word is not evaluable anywhere. The payload lists the aggregates that do
+% lower, read off the registry, which is the only actionable thing a refusal
+% for a word the author reasonably expected can carry.
+%
+% Before the registry row, this program compiled clean at both doors and
+% stored one row per input holding the literal text `group_concat(ada)`.
+test(unimplemented_aggregate_refuses_at_both_doors) :-
+    Prog = prog([], [ (roster(group_concat(Name)) <- member_of(Name)) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    Expected = aggregate_not_implemented(roster/1, group_concat/1,
+                                         [avg, count, max, min, sum]),
+    OracleVerdict == Expected,
+    CompilerVerdict == unsupported_construct(Expected).
+
+% RESERVED body words. The compiler refused these before the trigger became
+% shared and the ORACLE had no clause for any of them, so the same program was
+% a named error at one door and zero silent rows at the other:
+%
+%   oracle   `out(X, Y) <- zip(a(X), b(Y))`  ->  rows=[]
+%   compiler same program                    ->  unsupported_construct(zip)
+%
+% Two payload shapes are pinned per door, because the compiler splits the four
+% lifecycle wrappers out on their shared refuse(lifecycle) lowering role and
+% the oracle, which has no lowering, does not. Both compiler terms are exactly
+% what its own local scan produced before the move, which is the property that
+% makes this a consolidation and not a rename.
+test(reserved_word_refusal_payloads) :-
+    ZipProg = prog([], [ (pair(Left, Right) <- zip(src_a(Left), src_b(Right))) ]),
+    door_verdict(oracle, ZipProg, ZipOracle),
+    door_verdict(compiler, ZipProg, ZipCompiler),
+    ZipOracle == reserved_body_word(zip/2),
+    ZipCompiler == unsupported_construct(zip),
+    LifecycleProg = prog([], [ (out(Item) <- subscribe(src(Item))) ]),
+    door_verdict(oracle, LifecycleProg, LifecycleOracle),
+    door_verdict(compiler, LifecycleProg, LifecycleCompiler),
+    LifecycleOracle == reserved_body_word(subscribe/1),
+    LifecycleCompiler == unsupported_construct(lifecycle_arm(subscribe)).
+
+% Every reserved BODY row refuses at both doors, read off the registry rather
+% than listed here: a sixth reserved word must not be able to ship with the
+% oracle silently treating it as a relation. The value-plane reserved rows
+% (tagged_brace/1) carry no body lowering role and are excluded by the same
+% registry projection the walk uses.
+test(every_reserved_body_word_refuses_at_both_doors) :-
+    findall(Functor/Arity,
+            ( surface(Functor/Arity, _, _, _, reserved),
+              integer(Arity),
+              functor(Probe, Functor, Arity),
+              body_surface_for_term(Probe, _, _, _, _, _) ),
+            Reserved),
+    Reserved \== [],
+    forall(member(Functor/Arity, Reserved),
+           ( functor(Goal, Functor, Arity),
+             reserved_probe_body(Goal, Body),
+             Prog = prog([], [ (out(_) <- Body) ]),
+             door_verdict(oracle, Prog, OracleVerdict),
+             door_verdict(compiler, Prog, CompilerVerdict),
+             OracleVerdict == reserved_body_word(Functor/Arity),
+             CompilerVerdict = unsupported_construct(_) )).
+
+% Fills every argument of the probe goal with a distinct relation atom, which
+% is the shape each reserved wrapper takes; the refusal fires on the FUNCTOR,
+% so the arguments only have to be well formed.
+reserved_probe_body(Goal, Goal) :-
+    Goal =.. [_ | Args],
+    reserved_probe_args(Args, 1).
+
+reserved_probe_args([], _).
+reserved_probe_args([Arg | Rest], Index) :-
+    atom_concat(reserved_probe_src_, Index, Name),
+    Arg =.. [Name, _],
+    Next is Index + 1,
+    reserved_probe_args(Rest, Next).
 
 test(latest_in_level_rule_both_doors) :-
     Prog = prog([], [ (out(Item) <- (src(Item), latest(cfg(Item)))) ]),
@@ -2691,11 +2837,37 @@ test(every_registry_aggregate_row_is_an_oracle_aggregate) :-
              AggregateRules =@= [Rule],
              PlainLevel == [] )).
 
-% The registry has to actually carry the seven, or the test above is vacuous.
-test(registry_carries_the_seven_aggregate_rows) :-
+% The registry has to actually carry them, or the test above is vacuous.
+% group_concat/1 joined the axis as a REFUSAL: SQLite has it, this language
+% does not, and without a row the head argument fell through to generic
+% compound rendering and stored one row of call text per input.
+test(registry_carries_the_eight_aggregate_rows) :-
     findall(Signature, surface(Signature, aggregate, _, _, _), Rows),
     msort(Rows, Sorted),
-    Sorted == [ avg/1, count/1, json_array/1, json_object/2, max/1, min/1, sum/1 ].
+    Sorted == [ avg/1, count/1, group_concat/1, json_array/1, json_object/2,
+                max/1, min/1, sum/1 ].
+
+% The aggregate axis carries THREE kinds of row and they are three different
+% statements, which is why they need three different lowering roles rather
+% than one `refused` status:
+%
+%   head(lower)                   both doors evaluate it
+%   head(refuse(aggregate))       oracle evaluates it, compiler refuses --
+%                                 the oracle is the wider language on purpose
+%   head(refuse(not_implemented)) NEITHER door evaluates it, so both refuse
+%                                 at load and no program can reach the value
+%
+% Collapsing the last two would either make group_concat silently computable
+% by the oracle (it has no agg_compute clause, so the rule would fail and
+% derive nothing) or make the json pair refuse on a door that implements it.
+test(aggregate_axis_carries_three_distinct_roles) :-
+    surface(count/1, aggregate, _, head(lower), live),
+    surface(json_array/1, aggregate, _, head(refuse(aggregate)), refused),
+    surface(group_concat/1, aggregate, _, head(refuse(not_implemented)),
+            refused).
+
+% The both-doors half of this row lives in the cross_plane_check_parity unit,
+% beside every other shared refusal, because door_verdict/3 is that unit's.
 
 % The oracle stays WIDER than the compiler. Both json rows are refused by the
 % compiler and both are still oracle aggregates.

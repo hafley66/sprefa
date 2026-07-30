@@ -11,7 +11,8 @@
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
 :- use_module('../0_body_walk', [walk_body/3]).
-:- use_module('../compile/registry', [expression/5, expression_for_term/5]).
+:- use_module('../compile/registry',
+              [expression/5, expression_for_term/5, surface_for_term/6]).
 
 :- op(700, xfx, :=).
 
@@ -230,6 +231,38 @@ solve(latest(Atom), Ctx) :- !, Ctx = ctx(Visible, _, _), member(Atom, Visible).
 solve(pre(Atom), Ctx) :- !, Ctx = ctx(_, PreState, _), member(Atom, PreState).
 solve(now(Tick), Ctx) :- !, Ctx = ctx(_, _, Tick).
 solve(finalize(_), _) :- !, fail.   % satisfiable only as a trigger (r4)
+% SPLICE ROWS (registry AnalyzeRole splice_bare): next/1 and variadic combine.
+% The wrapper is TRANSPARENT -- solving it is solving its arguments in order,
+% which is precisely a conjunction, and precisely what the compiler emits.
+%
+% FAIL-FIRST RECEIPT, oracle door, before this clause existed:
+%
+%   F1 combine:   rows=[]          F1 next: rows=[]
+%   control conj: rows=[out(1,2)]
+%
+% while the compiler's lowering for the same two programs was BYTE-IDENTICAL
+% to the plain conjunction and the plain atom:
+%
+%   combine  INSERT ... SELECT b0."col1", b1."col1" FROM "a" b0, "b" b1
+%   conj     INSERT ... SELECT b0."col1", b1."col1" FROM "a" b0, "b" b1
+%   next     INSERT ... SELECT b0."col1" FROM "a" b0
+%
+% So these were LIVE registry rows the reference engine could not execute:
+% solve/2's final clause read `combine(a(X), b(Y))` as an ordinary relation
+% atom named combine/2, nothing pushes such a row, and the rule derived
+% nothing. The stratifier had the splice semantics all along
+% (level_eval:goal_rel_refs/3 dispatches on the same role), which is what made
+% the gap invisible -- dependencies were computed for a join that never ran.
+%
+% Dispatched on the registry ROLE and not on the two functors by name, the way
+% eval_expr/2 dispatches text scalars on their FAMILY: a third splice row must
+% not be able to repeat this.
+solve(Term, Ctx) :-
+    nonvar(Term),
+    surface_for_term(Term, _, _, splice_bare, _, _),
+    !,
+    Term =.. [_ | Goals],
+    solve_spliced(Goals, Ctx).
 solve(Variable := Expr, _) :- !, eval_expr(Expr, Value), Variable = Value.
 solve(Variable is Expr, _)  :- !, eval_expr(Expr, Value), Variable = Value.
 solve(decode(Expr, Pattern), _) :- !,
@@ -238,6 +271,11 @@ solve(json_each(Expr, Element), _) :- !,
     eval_expr(Expr, List), is_list(List), member(Element, List).
 solve(Comparison, _) :- comparison_goal(Comparison), !, solve_comparison(Comparison).
 solve(Atom, Ctx) :- Ctx = ctx(Visible, _, _), member(Atom, Visible).
+
+% Left to right, backtracking across the whole list, which is what makes a
+% splice indistinguishable from writing the same goals separated by commas.
+solve_spliced([], _).
+solve_spliced([Goal | Rest], Ctx) :- solve(Goal, Ctx), solve_spliced(Rest, Ctx).
 
 % This predicate currently has no caller in the tree outside that test; rank R7
 % of the review owns deciding whether it survives at all.

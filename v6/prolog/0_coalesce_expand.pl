@@ -235,6 +235,11 @@ language_form(finalize/1).
 language_form(pre/1).
 language_form(now/1).
 language_form(next/1).
+% Variadic, so it is stated as one clause over the arity rather than a row per
+% width. It was missing entirely, which made `combine(...)` read as a plain
+% RELATION ATOM here -- harmless while parse_dl desugared every combine away
+% before this file ran, and a live hole the moment the term survives parsing.
+language_form(combine/_).
 language_form(coalesce/2).
 language_form(decode/2).
 language_form(json_each/2).

@@ -37,6 +37,18 @@
 #                                  log side; emission still owed).
 #   sg_pattern/3                   registry status `refused`
 #                                  (slot_sg_metavariable_semantics).
+#   group_concat/1                 registry status `refused`, role
+#                                  head(refuse(not_implemented)): SQLite has
+#                                  this aggregate and this language does not,
+#                                  so BOTH doors refuse it at load
+#                                  (aggregate_not_implemented). Distinct from
+#                                  the json_array/json_object row above, which
+#                                  the reference engine DOES compute and only
+#                                  the compiler refuses. Before it had a row it
+#                                  was not a construct at all: the head
+#                                  argument fell through to generic compound
+#                                  rendering and stored one row per input
+#                                  holding the literal text of the call.
 #   spread/1, $/1, **/0, {}/0      the json value/pattern axis. LIVE and graded
 #                                  -- seven fixtures in conformance/fixtures/
 #                                  json_arm.pl, sweep 140 compiled / 138

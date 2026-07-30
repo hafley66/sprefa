@@ -34,7 +34,11 @@
             compile_ts_query/2,
             % Exported as the characterization seam for the shared-walker
             % consolidation (rank R1): the plainest comma flatten in the tree.
-            body_goals/2
+            body_goals/2,
+            % Exported for the drift guard that pins this list against the
+            % columns generated_host_decls/7 emits, rather than being reached
+            % as a private qualified goal, which `just prolog-lint` refuses.
+            reserved_host_column/1
           ]).
 
 :- use_module(library(lists)).
@@ -119,6 +123,8 @@ compile_host_decl(
     column_names(Inputs, InputNames),
     column_names(Outputs, OutputNames),
     disjoint_columns(InputNames, OutputNames),
+    no_reserved_columns(Name, input, InputNames),
+    no_reserved_columns(Name, output, OutputNames),
     validate_host_executor(Name, Template, Inputs),
     host_input_roles(Name, Inputs, Roles),
     validate_template(Template, InputNames, OutputNames, Roles),
@@ -161,6 +167,64 @@ disjoint_columns(Inputs, Outputs) :-
     ( member(Name, Inputs), memberchk(Name, Outputs)
     -> throw(column_mismatch(input_output_overlap(Name)))
     ; true
+    ).
+
+% A host column that collides with one the RUNTIME puts on the same relation.
+% The sibling of disjoint_columns/2 above: same kind of collision, except the
+% other party is not another column the author wrote, it is this file's own
+% generated_host_decls/7.
+%
+% FAIL-FIRST RECEIPT. `sh look(path: text) -> (ordinal: int)` compiled clean
+% and produced a response relation of ARITY 4 carrying THREE column names:
+%
+%   col __host_response_look/4 . witness_digest : text
+%   col __host_response_look/4 . ordinal        : int
+%   col __host_response_look/4 . path           : text
+%                                                   <- the author's `ordinal`
+%
+% against the control, which carries four:
+%
+%   col __host_response_plain/4 . witness_digest, ordinal, path, line
+%
+% The author's column did not clash and lose, it VANISHED: two identical
+% col_type/3 terms were folded by dedupe_terms/2 while the arity kept the
+% slot, so one position of the relation had no declaration at all.
+%
+% Downstream the same name decides where a value goes. serve/1_hosts.ts
+% project() fills each response column BY LITERAL NAME, and the runtime names
+% are tested FIRST:
+%
+%   if (column === "witness_digest") return witnessDigest;
+%   if (column === "ordinal") return ordinal;
+%   const input = demand.inputs.get(column); ...
+%
+% so a host output called `ordinal` can never receive its own value -- it gets
+% the answer's row index -- and an input called `witness_digest` gets the
+% digest rather than what the rule bound. No error, no trace, a program that
+% derives the wrong thing or nothing.
+%
+% The three names are stated here rather than derived because they are stated
+% in two other places already (generated_host_decls/7 below builds the
+% columns, project() above fills them) and a fourth restatement that could
+% silently disagree is exactly what this refusal exists to prevent; the
+% host_reserved_column_inventory unit pins this list against the columns
+% generated_host_decls/7 actually emits.
+%
+% SCOPE, checked rather than assumed: the two lists here cover every column
+% that reaches either generated relation. A probe SALT also lands on the
+% demand relation, and it needs no separate check because a salt is not a new
+% name -- salts_match_columns/2 requires each salt to name a declared INPUT
+% column (the freshness-role partition of this same list), so a salt spelling
+% a reserved name is refused here, at the declaration, before any probe
+% mentions it.
+reserved_host_column(witness_digest).
+reserved_host_column(ordinal).
+reserved_host_column(identity_digest).
+
+no_reserved_columns(Host, Role, Names) :-
+    (   member(Name, Names), reserved_host_column(Name)
+    ->  throw(host_column_shadows_runtime(Host, Role, Name))
+    ;   true
     ).
 
 validate_template(Template, Inputs, Outputs, Roles) :-

@@ -46,12 +46,12 @@
 :- use_module(library(lists)).
 :- use_module('0_body_walk',
               [ body_wrapper_refs/4, walk_body/3, body_relation_atoms/4,
-                event_relation_atom/2 ]).
+                event_relation_atom/2, body_reserved_word/4 ]).
 :- use_module('0_type_plane',
               [ type_definitions/2, type_cycle_witness/2, declared_type_name/2,
                 type_definition/4, relation_columns_and_types/5,
                 relation_value_shape/3 ]).
-:- use_module('compile/registry', [surface_for_term/6]).
+:- use_module('compile/registry', [surface_for_term/6, surface/5]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -344,8 +344,7 @@ program_violation(relation_value_in_edge_rule, prog(Decls, Rules),
 % This is a REFUSAL and not a construct: nothing new is spellable, one silent
 % wrong answer becomes an error. Scope is exactly `call`; the wider class (any
 % reserved registry word silently deriving nothing on the ORACLE door, which
-% `zip/2` also does today) is a separate and larger question about whether the
-% reference engine gains a reserved-word gate at all.
+% `zip/2` also does today) is answered one class below, by reserved_body_word.
 program_violation(dynamic_relation_name, prog(Decls, Rules), call/Arity) :-
     member(Rule, Rules),
     rule_body_goal(Rule, Goal),
@@ -354,6 +353,53 @@ program_violation(dynamic_relation_name, prog(Decls, Rules), call/Arity) :-
     Arity >= 1,
     \+ declared_relation(Decls, call/Arity),
     \+ headed_relation(Rules, call/Arity),
+    !.
+
+% A RESERVED registry word used as a body goal. The compiler already refused
+% these by name (analyze.pl's own reserved_construct_in_body/2, now this
+% class's compiler-side adapter); the reference engine had no clause for any
+% of them, so `zip`, `subscribe`, `complete`, `unsubscribe` and `error` fell
+% through solve/2's final clause and were looked up as ORDINARY RELATION ATOMS
+% named `zip/2`, `subscribe/1` and so on. No such row is ever pushed, so the
+% rule derived nothing, silently, on the door that defines the language.
+%
+% Fail-first receipt, oracle door, before this class existed:
+%
+%   F2 zip: rows=[]            F2 subscribe: rows=[]
+%   F2 complete: rows=[]       F2 unsubscribe: rows=[]
+%   F2 error: rows=[]
+%
+% against the compiler, which already answered
+% `unsupported_construct(zip)` / `unsupported_construct(lifecycle_arm(...))`
+% for the same five programs.
+%
+% WHY THIS IS NARROW, and it has to be, because of the edb_definition ruling:
+% an UNDECLARED, UNHEADED relation atom is legal input, not a typo. So the
+% trigger is not "a functor solve/2 has no clause for" -- that set is every
+% EDB relation in every program. It is exactly the functors registry.pl marks
+% `reserved`: words the language has CLAIMED and assigned no meaning. A word
+% with no registry row at all stays a relation, which is what
+% edb_definition says it is.
+%
+% `refused` rows are deliberately NOT included. pre/1 and json_each/2 carry
+% that status because THIS COMPILER cannot emit them, and the reference engine
+% executes both on purpose -- the oracle is the wider language
+% (level_eval.pl's aggregate classification states the same asymmetry). A
+% status-blind gate here would refuse programs the oracle is meant to run.
+%
+% POLICY, stated because it is a boundary and not an oversight: the walk does
+% not descend not/1 and does not splice, which is the policy analyze.pl's
+% reserved scan already used and whose narrowness that file already names. A
+% reserved word nested inside not/1 or inside a splice is therefore still not
+% reached, on either door -- unchanged by this class, and unchanged in
+% behaviour too, since solve/2 reaches such a goal and looks it up as a
+% relation exactly as before.
+program_violation(reserved_body_word, prog(_, Rules), reserved(Ref, LowerRole)) :-
+    member(Rule, Rules),
+    rule_body(Rule, Body),
+    body_reserved_word(Body,
+                       walk_policy(descend_not(false), splice_bare(false)),
+                       Ref, LowerRole),
     !.
 
 % ── the two classes only the oracle used to check ────────────────────────────
@@ -373,6 +419,57 @@ program_violation(missing_retention, prog(Decls, _), Ref) :-
 program_violation(aggregate_in_edge_head, prog(_, Rules), Ref) :-
     member((Head <+ _), Rules),
     aggregate_head_ref(Head, Ref).
+
+% An aggregate spelling on the registry's aggregate axis that NEITHER door
+% implements. registry.pl marks it head(refuse(not_implemented)), which is a
+% different statement from json_array's head(refuse(aggregate)): that pair is
+% computed by the reference engine and refused only by the compiler, so the
+% oracle stays the wider language, while this class is a word both doors know
+% the name of and neither can evaluate.
+%
+% FAIL-FIRST RECEIPT, `roster(group_concat(Name)) <- member(Name)` with two
+% members, before the registry row and this class existed:
+%
+%   oracle    rows=[out(group_concat(1)), out(group_concat(2))]
+%   compiler  COMPILED CLEAN, emitting
+%             json_object('fn','group_concat','args',json_array(b0."col1"))
+%
+% One row per input holding the TEXT of the call, where the author asked for
+% one grouped row. It is the worst shape a refusal can replace: not an error,
+% not empty, a plausible-looking wrong answer.
+%
+% The payload carries the aggregates that DO work, read off the registry so it
+% cannot go stale, because that list is the only thing this refusal can tell a
+% cold author that they can act on -- the one-line message renderer has no
+% room for per-refusal prose and the refusal_messages unit holds it to a
+% single clause.
+%
+% LEVEL rules only. An aggregate in an EDGE head is already
+% aggregate_in_edge_head above, which is the more specific fact about that
+% program, and both doors already agree on it.
+program_violation(aggregate_not_implemented, prog(_, Rules),
+                  unimplemented(Ref, Signature, Implemented)) :-
+    member((Head <- _), Rules),
+    compound(Head),
+    Head =.. [_ | Args],
+    member(Arg, Args),
+    nonvar(Arg),
+    surface_for_term(Arg, Signature, aggregate, _,
+                     head(refuse(not_implemented)), _),
+    head_ref(Head, Ref),
+    implemented_aggregates(Implemented),
+    !.
+
+% The aggregate rows that lower, sorted: the registry's own answer to "what
+% can I write instead".
+implemented_aggregates(Names) :-
+    findall(Name,
+            surface_row_is_live_aggregate(Name),
+            Names0),
+    sort(Names0, Names).
+
+surface_row_is_live_aggregate(Name) :-
+    surface(Name/1, aggregate, _, head(lower), live).
 
 % ── helper for the value-plane classes ───────────────────────────────────────
 

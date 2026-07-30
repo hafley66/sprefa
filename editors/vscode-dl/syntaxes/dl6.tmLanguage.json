@@ -76,7 +76,7 @@
     },
     "reserved-keywords": {
       "name": "invalid.illegal.reserved.dl6",
-      "match": "\\b(complete|error|json_array|json_each|json_object|pre|set|sg_pattern|subscribe|unsubscribe|zip)\\b"
+      "match": "\\b(complete|error|group_concat|json_array|json_each|json_object|pre|set|sg_pattern|subscribe|unsubscribe|zip)\\b"
     },
     "relation-call": {
       "name": "entity.name.function.dl6",

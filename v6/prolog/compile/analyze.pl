@@ -49,7 +49,8 @@
 :- use_module('../1_expansion', [expand_program/3]).
 :- use_module('../0_body_walk',
               [ walk_body/3,
-                body_conjunction_goals/3, body_wrapper_refs/4 ]).
+                body_conjunction_goals/3, body_wrapper_refs/4,
+                body_reserved_word/4 ]).
 :- use_module('../0_program_check',
               [ first_violation/3, relation_kind/3, declared_key/3 ]).
 :- use_module('../0_type_plane',
@@ -1123,8 +1124,13 @@ check_supported_subset_expanded(Program) :-
                               % guards as the backstop for direct entry.
                               relation_value_under_negation,
                               relation_value_in_edge_rule ]),
-    forall(( member(Rule, Rules), rule_reserved_construct(Rule, Construct) ),
-           throw(unsupported_construct(Construct))),
+    % Was a local scan (rule_reserved_construct/2 plus two helpers). It is a
+    % shared trigger now because the ORACLE had no equivalent at all: the same
+    % five reserved words compiled to a named refusal here and derived zero
+    % rows there, without a word. 0_program_check.pl states the boundary; this
+    % door's terms are unchanged, which the reserved_word_refusal_payloads
+    % unit pins.
+    shared_refusal(Program, [ reserved_body_word ]),
     shared_refusal(Program, [ log_on_level_headed_rel,
                               % TICK PHASE ALIGNMENT target 2 closed a hole
                               % this list did not have to cover before: while
@@ -1154,7 +1160,14 @@ check_supported_subset_expanded(Program) :-
                               % already-refused program keeps its current
                               % diagnostic.
                               missing_retention,
-                              aggregate_in_edge_head ]),
+                              aggregate_in_edge_head,
+                              % Same slot engine.pl gives it, straight after
+                              % the edge class it defers to. Ahead of
+                              % check_level_rule_shape below, whose generic
+                              % head-expression refusals would otherwise
+                              % report a compound the author spelled
+                              % correctly instead of naming the aggregate.
+                              aggregate_not_implemented ]),
     forall(( member(Rule, Rules), rule_is_edge(Rule) ), check_edge_rule_shape(Rule)),
     forall(( member(Rule, Rules), rule_is_level(Rule) ), check_level_rule_shape(Rule)),
     check_no_edge_head_conflict_risk(Decls, Rules),
@@ -1172,6 +1185,12 @@ compiler_refusal(relation_pattern_not_a_relation_value,
                  pattern(Ref, Column, TypeName, Value),
                  relation_pattern_not_a_relation_value(Ref, Column, TypeName, Value)).
 compiler_refusal(dynamic_relation_name, Ref, dynamic_relation_name(Ref)).
+% The four lifecycle wrappers keep their own name, exactly as the local scan
+% this replaced produced it; every other reserved word reports as the bare
+% functor. Both terms are byte-for-byte what the compiler threw before the
+% trigger moved into 0_program_check.pl.
+compiler_refusal(reserved_body_word, reserved(Functor/_, LowerRole), Construct) :-
+    reserved_construct_name(LowerRole, Functor, Construct).
 compiler_refusal(relation_value_under_negation,
                  pattern(Ref, Column, TypeName, Value),
                  relation_value_under_negation(Ref, Column, TypeName, Value)).
@@ -1199,6 +1218,12 @@ compiler_refusal(missing_retention,       Ref, missing_retention(Ref)).
 % aggregate_in_edge_head names nothing. A compiler refusal has to say which
 % rule to edit; the oracle's term is the one fixtures already pin.
 compiler_refusal(aggregate_in_edge_head,  Ref, aggregate_in_edge_head(Ref)).
+% Same term at both doors. There is nothing for the two vocabularies to
+% disagree about here: neither door implements the word, and the payload is
+% the registry's own answer about what does work.
+compiler_refusal(aggregate_not_implemented,
+                 unimplemented(Ref, Signature, Implemented),
+                 aggregate_not_implemented(Ref, Signature, Implemented)).
 
 % Both are the shared walk (rank R1 of
 % plans/2026-07-29-prolog-org-review.md). The oracle's engine:body_latest_ref/2
@@ -1246,21 +1271,23 @@ check_edge_rule_shape((Head <+ Body)) :-
     -> throw(unsupported_construct(head_arithmetic(Head, ArithExpr)))
     ; true ).
 
-rule_reserved_construct(Rule, Construct) :-
-    rule_body(Rule, Body),
-    reserved_construct_in_body(Body, Construct).
-
 % Shared walk (rank R1), same policy as before: the conjunction spine only,
 % not/1 opaque and next/1 and combine unspliced. A reserved construct nested
 % inside either wrapper is therefore still not reached; the review recorded
 % that as drift against body_ref_uses/2, which does splice. Widening it would
 % start refusing programs that load today, so it is left as it stands and
 % named here rather than changed under cover of a refactor.
+%
+% The walk itself is 0_body_walk.pl:body_reserved_word/4 now, so the oracle's
+% gate and this one cannot answer differently about which words are reserved.
+% What stays here is the NAMING, which is this door's own vocabulary; the
+% body_walk_characterization golden pins this predicate, and
+% compiler_refusal/3 reaches the same reserved_construct_name/3 below, so one
+% rule names the refusal wherever it is raised.
 reserved_construct_in_body(Body, Construct) :-
-    walk_body(Body, walk_policy(descend_not(false), splice_bare(false)),
-              Events),
-    member(event(_, _, surface(Functor/_, _, _, LowerRole, reserved), _),
-           Events),
+    body_reserved_word(Body,
+                       walk_policy(descend_not(false), splice_bare(false)),
+                       Functor/_, LowerRole),
     reserved_construct_name(LowerRole, Functor, Construct).
 
 reserved_construct_name(wrapper(_, refuse(lifecycle)), Functor,
