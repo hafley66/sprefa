@@ -13,9 +13,11 @@
 //! GRADED, on the same corpus and against the same outside oracle as
 //! `--scip-deps` (`tools/1_madge_oracle.sh both` over v6/tsv2, 761 madge edges):
 //!
-//!            edges  agree  madge-only  own-only  recall  precision
-//!   scip       764    755           6         9   0.992      0.988
-//!   diet       761    761           0         0   1.000      1.000
+//! ```text
+//!          edges  agree  madge-only  own-only  recall  precision
+//! scip       764    755           6         9   0.992      0.988
+//! diet       761    761           0         0   1.000      1.000
+//! ```
 //!
 //! READ THAT SECOND ROW CAREFULLY. A perfect score against madge is agreement
 //! between two syntactic import scanners, not correctness. The 9 edges scip has
