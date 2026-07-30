@@ -122,15 +122,15 @@ EOF
 sh enumerate(glob: text) -> (path: text, digest: text) =
   `git -C "$DL_CRAWL_REPO" ls-files -- '{glob}' | while IFS= read -r entry; do printf '{"path":"%s","digest":"%s"}\n' "$entry" "$(git -C "$DL_CRAWL_REPO" hash-object -- "$entry")"; done`.
 
-sh extract(path: text) -> (done: text) =
+sh extract(path: text, digest: text) -> (done: text) =
   `"$DL_EXTRACT_BIN" --family cst,type,call,df "$DL_CRAWL_REPO/$path" >/dev/null && printf '%s\n' "$path"`.
 
 rel want(glob: text).
 rel file(path: text, digest: text).
-file(path, digest) <- want(glob), ? enumerate(glob, path, digest).
+file(path, digest) <- want(glob), enumerate(glob, path, digest).
 
 rel extracted(path: text).
-extracted(path) <- file(path, digest), ? extract(path, done) @ salt(digest: digest).
+extracted(path) <- file(path, digest), extract(path, digest, done).
 EOF
 }
 

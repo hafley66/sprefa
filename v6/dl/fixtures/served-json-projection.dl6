@@ -26,4 +26,4 @@ sh mixed(tag: text) -> (callee: text) =
   `printf '%s\n%s\n%s\n%s\n' '{"record":"node","kind":"function","name":"{tag}"}' '{"record":"site","callee":"{tag}_one","callee_path":null}' '{"record":"node","kind":"lambda","name":null}' '{"record":"site","callee":"{tag}_two","callee_path":null}'`.
 
 rel picked(tag: text, callee: text).
-picked(tag, callee) <- seed(tag), ? mixed(tag, callee).
+picked(tag, callee) <- seed(tag), mixed(tag, callee).

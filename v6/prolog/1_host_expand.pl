@@ -39,7 +39,12 @@
 
 :- use_module(library(lists)).
 :- use_module('0_body_walk', [body_conjunction_goals/3]).
-:- use_module('compile/registry', [bind_definition/2]).
+:- use_module('compile/registry',
+              [ bind_definition/2,
+                host_executor/2,
+                host_executor_contract/2,
+                host_input_roles/3
+              ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -105,7 +110,8 @@ body_from_list([First | Rest], (First, Body)) :-
 compile_host_decl(
     sh_decl(Name, Inputs, Outputs, template(Template)),
     host_plan(Name, Inputs, Outputs, template(Template),
-              demand_ref(DemandRef), response_ref(ResponseRef))) :-
+              demand_ref(DemandRef), response_ref(ResponseRef),
+              input_roles(Roles))) :-
     atom(Name),
     string(Template),
     validate_columns(Inputs, input),
@@ -113,11 +119,20 @@ compile_host_decl(
     column_names(Inputs, InputNames),
     column_names(Outputs, OutputNames),
     disjoint_columns(InputNames, OutputNames),
-    validate_template(Template, InputNames, OutputNames),
+    validate_host_executor(Name, Inputs),
+    host_input_roles(Name, Inputs, Roles),
+    validate_template(Template, InputNames, OutputNames, Roles),
     host_relation_refs(Name, DemandRef, ResponseRef),
     !.
 compile_host_decl(Decl, _) :-
     throw(refused_host_decl(Decl)).
+
+validate_host_executor(Name, Inputs) :-
+    host_executor(Name, Executor),
+    ( host_executor_contract(Executor, Inputs)
+    -> true
+    ; throw(host_executor_mismatch(Name, Executor, Inputs))
+    ).
 
 validate_columns(Columns, Role) :-
     is_list(Columns),
@@ -148,8 +163,9 @@ disjoint_columns(Inputs, Outputs) :-
     ; true
     ).
 
-validate_template(Template, Inputs, Outputs) :-
-    ( member(Name, Inputs), \+ template_mentions(Template, Name)
+validate_template(Template, Inputs, Outputs, Roles) :-
+    role_names(identity, Inputs, Roles, IdentityInputs),
+    ( member(Name, IdentityInputs), \+ template_mentions(Template, Name)
     -> throw(template_mismatch(unreferenced_input(Name)))
     ; member(Name, Outputs), template_mentions(Template, Name)
     -> throw(template_mismatch(output_used_as_input(Name)))
@@ -157,6 +173,14 @@ validate_template(Template, Inputs, Outputs) :-
     -> throw(template_mismatch(unknown_column(Name)))
     ; true
     ).
+
+role_names(_, [], [], []).
+role_names(Role, [Name | Inputs], [Here | Roles], Names) :-
+    ( Here == Role
+    -> Names = [Name | Rest]
+    ; Rest = Names
+    ),
+    role_names(Role, Inputs, Roles, Rest).
 
 template_mentions(Template, Name) :-
     template_reference(Template, Name),
@@ -353,15 +377,17 @@ expand_probe(Probe, HostPlans, RawDecls,
              DemandAtom, WitnessBind, ResponseAtom, Decls) :-
     Probe = probe(Name, InputValues, OutputValues, Salts),
     ( member(HostPlan, HostPlans),
-      HostPlan = host_plan(Name, Inputs, Outputs, _,
+      HostPlan = host_plan(Name, SurfaceInputs, Outputs, _,
                            demand_ref(DemandName),
-                           response_ref(ResponseName))
+                           response_ref(ResponseName),
+                           input_roles(Roles)),
+      partition_host_columns(SurfaceInputs, Roles, Inputs, FreshnessInputs)
     -> true
     ; throw(probe_mismatch(Probe))
     ),
     ( same_length(Inputs, InputValues),
       same_length(Outputs, OutputValues),
-      valid_salts(Salts)
+      salts_match_columns(FreshnessInputs, Salts)
     -> true
     ; throw(probe_mismatch(Probe))
     ),
@@ -389,6 +415,25 @@ input_digest_parts([], [], []).
 input_digest_parts([col(Name, Type) | Cols], [Value | Values],
                    ["|", Name, ":", Type, "=", Value | Parts]) :-
     input_digest_parts(Cols, Values, Parts).
+
+partition_host_columns([], [], [], []).
+partition_host_columns([Column | Columns], [Role | Roles],
+                       Identity, Freshness) :-
+    ( Role == identity
+    -> Identity = [Column | IdentityRest],
+       Freshness = FreshnessRest
+    ; Role == freshness
+    -> Freshness = [Column | FreshnessRest],
+       Identity = IdentityRest
+    ),
+    partition_host_columns(Columns, Roles, IdentityRest, FreshnessRest).
+
+salts_match_columns(Columns, Salts) :-
+    same_length(Columns, Salts),
+    maplist(salt_matches_column, Columns, Salts),
+    valid_salts(Salts).
+
+salt_matches_column(col(Name, _), salt(Name, _)).
 
 salt_digest_parts([], []).
 salt_digest_parts([salt(Name, Value) | Rest],

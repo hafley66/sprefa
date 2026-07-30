@@ -19,4 +19,4 @@ sh nap(tag: text) -> (value: text) =
   `printf '%s\n' "{tag}" >> "$TSV2_MARKS"; sleep "$TSV2_NAP"; printf '%s' "{tag}-woke"`.
 
 rel woke(tag: text, value: text).
-woke(tag, value) <- seed(tag), ? nap(tag, value).
+woke(tag, value) <- seed(tag), nap(tag, value).

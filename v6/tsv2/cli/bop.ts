@@ -42,15 +42,29 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 import { Command } from "commander";
 
+import { CLI_COMMANDS, HTTP_ROUTES } from "./0_inventory.ts";
 import { serveTsv2 } from "../serve/4_http.ts";
 import type { IRow, IServeEvent } from "../runtime/types.ts";
 
 const BOP_CHECK_PL = fileURLToPath(new URL("../../prolog/compile/scripts/bop_check.pl", import.meta.url));
 const DEFAULT_PORT = 17500;
+
+function commandSummary(verb: string): string {
+  const command = CLI_COMMANDS.find((entry) => entry.verb === verb);
+  if (!command) throw new Error(`generated CLI inventory has no '${verb}' command`);
+  return command.summary;
+}
+
+function routePath(method: string, template: string, values: Readonly<Record<string, string>> = {}): string {
+  const route = HTTP_ROUTES.find((entry) => entry.method === method && entry.path === template);
+  if (!route) throw new Error(`generated HTTP inventory has no '${method} ${template}' route`);
+  return Object.entries(values).reduce((path, [name, value]) => path.replace(`:${name}`, encodeURIComponent(value)), route.path);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared: classifying a compile-door failure's TEXT as a named refusal (exit
@@ -169,7 +183,7 @@ function run(file: string, options: { readonly ticks?: string; readonly port?: s
 
       if (event.kind === "listening" && !loadRequested) {
         loadRequested = true;
-        fetch(`http://127.0.0.1:${event.port}/program`, { method: "POST", body: source }).then(
+        fetch(`http://127.0.0.1:${event.port}${routePath("POST", "/program")}`, { method: "POST", body: source }).then(
           async (response) => {
             if (response.status !== 200) {
               const text = await response.text();
@@ -218,7 +232,7 @@ function run(file: string, options: { readonly ticks?: string; readonly port?: s
 function load(file: string, options: { readonly port: string }): void {
   const source = readFileSync(file, "utf8");
   const port = Number(options.port);
-  fetch(`http://127.0.0.1:${port}/program`, { method: "POST", body: source }).then(
+  fetch(`http://127.0.0.1:${port}${routePath("POST", "/program")}`, { method: "POST", body: source }).then(
     async (response) => {
       const text = await response.text();
       if (response.status === 200) {
@@ -246,7 +260,7 @@ function load(file: string, options: { readonly port: string }): void {
  *  one row per line, no header. `--json` prints the raw response body. */
 function query(rel: string, options: { readonly port: string; readonly json?: boolean }): void {
   const port = Number(options.port);
-  fetch(`http://127.0.0.1:${port}/idb/${rel}`).then(
+  fetch(`http://127.0.0.1:${port}${routePath("GET", "/idb/:rel", { rel })}`).then(
     async (response) => {
       const text = await response.text();
       if (response.status !== 200) {
@@ -269,6 +283,45 @@ function query(rel: string, options: { readonly port: string; readonly json?: bo
   );
 }
 
+function stats(options: { readonly port: string }): void {
+  const port = Number(options.port);
+  fetch(`http://127.0.0.1:${port}${routePath("GET", "/stats")}`).then(
+    async (response) => {
+      const text = await response.text();
+      if (response.status !== 200) {
+        writeErrorLine(text);
+        process.exitCode = 1;
+        return;
+      }
+      process.stdout.write(`${text}\n`);
+      process.exitCode = 0;
+    },
+    (failure: unknown) => {
+      writeErrorLine(`no server listening on port ${port}: ${String(failure)}`);
+      process.exitCode = 1;
+    },
+  );
+}
+
+function ticks(options: { readonly port: string }): void {
+  const port = Number(options.port);
+  fetch(`http://127.0.0.1:${port}${routePath("GET", "/ticks")}`).then(
+    async (response) => {
+      if (response.status !== 200 || response.body === null) {
+        writeErrorLine(await response.text());
+        process.exitCode = 1;
+        return;
+      }
+      for await (const chunk of Readable.fromWeb(response.body as never)) process.stdout.write(chunk);
+      process.exitCode = 0;
+    },
+    (failure: unknown) => {
+      writeErrorLine(`no server listening on port ${port}: ${String(failure)}`);
+      process.exitCode = 1;
+    },
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // wiring
 // ─────────────────────────────────────────────────────────────────────────────
@@ -280,7 +333,7 @@ program
 
 program
   .command("serve")
-  .description("boot the served tsv2 engine and keep it running")
+  .description(commandSummary("serve"))
   .option("--port <port>", "TCP port", String(DEFAULT_PORT))
   .option("--db <url>", "sqlite db url (default :memory:)", ":memory:")
   .action(serve);
@@ -288,7 +341,7 @@ program
 program
   .command("run")
   .argument("<file>", ".dl6 program")
-  .description("compile + load on an in-process ephemeral server, stream ticks to stdout, then shut down")
+  .description(commandSummary("run"))
   .option("--ticks <n>", "stop after this many ticks")
   .option("--port <port>", "TCP port (default: ephemeral)")
   .action(run);
@@ -296,22 +349,34 @@ program
 program
   .command("check")
   .argument("<file>", ".dl6 program")
-  .description("validate through the text door; no server boots (exit 0 clean / 2 findings / 1 broken)")
+  .description(commandSummary("check"))
   .action(check);
 
 program
   .command("load")
   .argument("<file>", ".dl6 program")
-  .description("POST a compiled program to an already-running bop serve")
+  .description(commandSummary("load"))
   .option("--port <port>", "TCP port", String(DEFAULT_PORT))
   .action(load);
 
 program
   .command("q")
   .argument("<rel>", "relation name")
-  .description("read one rel's current rows from a running bop serve")
+  .description(commandSummary("q"))
   .option("--port <port>", "TCP port", String(DEFAULT_PORT))
   .option("--json", "print raw JSON instead of a table")
   .action(query);
+
+program
+  .command("stats")
+  .description(commandSummary("stats"))
+  .option("--port <port>", "TCP port", String(DEFAULT_PORT))
+  .action(stats);
+
+program
+  .command("ticks")
+  .description(commandSummary("ticks"))
+  .option("--port <port>", "TCP port", String(DEFAULT_PORT))
+  .action(ticks);
 
 program.parse();

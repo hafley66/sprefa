@@ -49,9 +49,10 @@
                        departure_read_sql/3, struct_type_plans/2 ]).
 :- use_module(analyze,
               [ body_ref_uses/2, derived_refs/2, rule_head_ref/2,
-                program_uses_tick/2, listened_departure_refs/2 ]).
+                program_uses_tick/2, listened_departure_refs/2,
+                level_body_pre_ref/2 ]).
 :- use_module('../1_host_expand', [compile_host_decl/2]).
-:- use_module(registry, [bind_executor/2]).
+:- use_module(registry, [bind_executor/2, host_executor/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -161,12 +162,19 @@ header_lines(Name, Lines) :-
 % ═══ imports ═════════════════════════════════════════════════════════════════
 
 imports_lines(HasEdgeRules, HasRetention, Lines) :-
-    imports_lines(HasEdgeRules, HasRetention, false, Lines).
+    imports_lines(HasEdgeRules, HasRetention, false, false, Lines).
 
-imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, Lines) :-
+imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasOrderedProgram,
+              Lines) :-
     ( HasRetention == true
     -> RetentionImport = ['  IIncrementalRetentionStatement,']
     ; RetentionImport = []
+    ),
+    ( HasOrderedProgram == true
+    -> RuntimeImport =
+       'import { IncrementalRuntime, stageOrderedFrontiers } from "../runtime/1_incremental.ts";'
+    ;  RuntimeImport =
+       'import { IncrementalRuntime } from "../runtime/1_incremental.ts";'
     ),
     ( HasStructTypes == true
     -> StructImport = ['import { StructPlane } from "../runtime/structPlane.ts";'],
@@ -176,7 +184,7 @@ imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, Lines) :-
     append(
     [ [ 'import { concatMap, forkJoin, map, of, type Observable } from "rxjs";',
       '',
-      'import { IncrementalRuntime } from "../runtime/1_incremental.ts";',
+      RuntimeImport,
       'import { multisetDiff } from "../runtime/diff.ts";',
       'import { selectRows } from "../runtime/rows.ts";'
       ],
@@ -337,7 +345,7 @@ array_const_line(Prefix, Rows, Line) :-
 
 host_plan_json(
     host_plan(Name, Inputs, Outputs, template(Template),
-              demand_ref(DemandName), response_ref(ResponseName)),
+              demand_ref(DemandName), response_ref(ResponseName), _),
     Json) :-
     js_string(Name, NameJson),
     host_columns_json(Inputs, InputsJson),
@@ -345,10 +353,11 @@ host_plan_json(
     js_string(Template, TemplateJson),
     js_string(DemandName, DemandJson),
     js_string(ResponseName, ResponseJson),
+    host_executor(Name, Executor),
     format(atom(Json),
-           '{ name: ~w, inputs: ~w, outputs: ~w, template: ~w, demandRel: ~w, responseRel: ~w, execution: "live_sh" }',
+           '{ name: ~w, inputs: ~w, outputs: ~w, template: ~w, demandRel: ~w, responseRel: ~w, execution: "~w" }',
            [NameJson, InputsJson, OutputsJson, TemplateJson,
-            DemandJson, ResponseJson]).
+            DemandJson, ResponseJson, Executor]).
 
 bind_plan_json(bind_plan(Name, Columns, Literals), Json) :-
     js_string(Name, NameJson),
@@ -908,7 +917,7 @@ edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, Proje
     % not by typecheck -- tsgo has no way to know forkJoin([]) is
     % empty-completing rather than []-emitting).
     EmptyGuardLine = '  if (triggerRows.length === 0) return of([]);',
-    (   EdgeTriggerKind == departure
+    (   memberchk(EdgeTriggerKind, [departure, ordered_departure])
     ->  % The referee's cross-tick carry: the departure table is written at the
         % END of a naive tick from that tick's own multisetDiff `del` rows, and
         % READ here on the next one. It is the one piece of state the snapshot
@@ -959,6 +968,7 @@ edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, Proje
     ).
 
 departure_resolver_const_lines(arrival, _, _, _, _, []) :- !.
+departure_resolver_const_lines(ordered_arrival, _, _, _, _, []) :- !.
 departure_resolver_const_lines(departure, TriggerRef, TriggerColumns, Upper, Index,
                                [SqlLine, ColumnsLine]) :-
     departure_read_sql(TriggerRef, TriggerColumns, Sql),
@@ -969,11 +979,16 @@ departure_resolver_const_lines(departure, TriggerRef, TriggerColumns, Upper, Ind
     quoted_string_array_text(TriggerColumns, ColumnsArrayText),
     format(atom(ColumnsLine), 'const ~w: readonly string[] = ~w;',
            [ColumnsConst, ColumnsArrayText]).
+departure_resolver_const_lines(ordered_departure, TriggerRef, TriggerColumns,
+                               Upper, Index, Lines) :-
+    departure_resolver_const_lines(departure, TriggerRef, TriggerColumns,
+                                   Upper, Index, Lines).
 
 % Emitted once per program that has any departure arm; nothing else changes
 % for a program without one.
 departure_occurrences_helper_lines(EdgeStatements, Lines) :-
-    (   member(edgestmt(_, _, _, _, _, _, _, departure), EdgeStatements)
+    (   member(edgestmt(_, _, _, _, _, _, _, TriggerKind), EdgeStatements),
+        memberchk(TriggerKind, [departure, ordered_departure])
     ->  Lines =
         [ 'function departureOccurrences(seam: ISqlSeam, sql: string, columns: readonly string[]): Observable<readonly IRow[]> {',
           '  return seam.runner.execute(seam.db, sql).pipe(',
@@ -988,6 +1003,308 @@ key_indices(HeadColumns, KeyColumns, Indices) :-
     findall(Index0,
             ( member(Column, KeyColumns), nth0(Index0, HeadColumns, Column) ),
             Indices).
+
+% ═══ ordered pre occurrence loop ════════════════════════════════════════════
+
+ordered_edge_statement(edgestmt(_, _, _, _, _, _, _, ordered_arrival)).
+ordered_edge_statement(edgestmt(_, _, _, _, _, _, _, ordered_departure)).
+
+ordered_program(EdgeStatements) :-
+    member(Statement, EdgeStatements),
+    ordered_edge_statement(Statement),
+    !.
+
+plan_pre_refs(plan(_, prog(_, Rules), _, _, _, _), Refs) :-
+    findall(Ref,
+            ( member((_ <+ Body), Rules),
+              level_body_pre_ref(Body, Ref) ),
+            Refs0),
+    sort(Refs0, Refs).
+
+pre_snapshot_statement(RelPlans, Ref, Statements) :-
+    memberchk(relplan(Ref, _, Columns, _, _), RelPlans),
+    ref_name(Ref, Name),
+    maplist(quote_ident_local, Columns, QuotedColumns),
+    atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
+    format(atom(Delete), 'DELETE FROM "__pre_~w"', [Name]),
+    format(atom(Insert),
+           'INSERT INTO "__pre_~w" (~w) SELECT ~w FROM "~w"',
+           [Name, ColumnsSql, ColumnsSql, Name]),
+    Statements = [Delete, Insert].
+
+ordered_pre_lines(false, _, _, _, []) :- !.
+ordered_pre_lines(true, RelPlans, PreRefs, _EdgeStatements, Lines) :-
+    maplist(pre_snapshot_statement(RelPlans), PreRefs, SnapshotGroups),
+    append(SnapshotGroups, SnapshotStatements),
+    atomic_list_concat(SnapshotStatements, ';\\n', SnapshotSql),
+    js_template(SnapshotSql, SnapshotTemplate),
+    format(atom(SnapshotReturn),
+           '  return seam.runner.executeMultiple(seam.db, ~w);',
+           [SnapshotTemplate]),
+    Lines =
+      [ 'function snapshotOrderedPre(seam: ISqlSeam): Observable<void> {',
+        SnapshotReturn,
+        '}'
+      ].
+
+ordered_boundary_carry_line(level, Ref, Line) :-
+    ref_name(Ref, Name),
+    format(atom(Line),
+           '  for (const row of multisetDiff(mid["~w"], after["~w"]).add) { const rowText = JSON.stringify(row); const exact = JSON.stringify(["~w", row]); if (seen.has(exact) || !(boundaryAdds.get("~w")?.has(rowText) ?? false)) continue; seen.add(exact); additions.push({ rel: "~w", add: [row], del: [] }); }',
+           [Name, Name, Name, Name, Name]).
+
+ordered_carry_lines(false, _, _, []) :- !.
+ordered_carry_lines(true, _EdgeStatements, LevelHeadedRefs, Lines) :-
+    maplist(ordered_boundary_carry_line(level), LevelHeadedRefs, LevelLines),
+    append(
+      [ [ 'function orderedCarryAdditions(mid: Snapshot, after: Snapshot, boundary: ITickDeltas, written: readonly IOrderedWrite[]): readonly IRelDelta[] {',
+          '  const boundaryByRel = new Map(boundary.rels.map((delta) => [delta.rel, delta]));',
+          '  const boundaryAdds = new Map([...boundaryByRel].map(([rel, delta]) => [rel, new Set(delta.add.map((row) => JSON.stringify(row)))]));',
+          '  const additions: IRelDelta[] = [];',
+          '  const seen = new Set<string>();',
+          '  for (const { arm, row } of written) {',
+          '    const rowText = JSON.stringify(row);',
+          '    const exact = JSON.stringify([arm.headRel, row]);',
+          '    if (seen.has(exact) || !(boundaryAdds.get(arm.headRel)?.has(rowText) ?? false)) continue;',
+          '    seen.add(exact);',
+          '    additions.push({ rel: arm.headRel, add: [row], del: [] });',
+          '  }'
+        ],
+        LevelLines,
+        [ '  return additions.filter((delta) => delta.add.length > 0);',
+          '}'
+        ]
+      ],
+      Lines).
+
+ordered_trigger_kind(ordered_departure, departure) :- !.
+ordered_trigger_kind(departure, departure) :- !.
+ordered_trigger_kind(_, arrival).
+
+ordered_arm_entry_line(RelPlans, PreRefs,
+        edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql,
+                 WriteSql, _, EdgeTriggerKind), Line) :-
+    ref_name(HeadRef, HeadName),
+    ref_name(TriggerRef, TriggerName),
+    relplan_kind(RelPlans, HeadRef, HeadKind),
+    ordered_trigger_kind(EdgeTriggerKind, TriggerKind),
+    quoted_string_array_text(HeadColumns, HeadColumnsText),
+    key_indices(HeadColumns, KeyColumns, KeyIndices),
+    atomic_list_concat(KeyIndices, ', ', KeyIndicesText),
+    js_template(ProjectSql, ProjectTemplate),
+    js_template(WriteSql, WriteTemplate),
+    ( memberchk(HeadRef, PreRefs) -> EvolvesPre = true ; EvolvesPre = false ),
+    format(atom(Line),
+           '  { triggerRel: "~w", triggerKind: "~w", headRel: "~w", headKind: "~w", headColumns: ~w, keyIndices: [~w], projectSql: ~w, writeSql: ~w, evolvesPre: ~w },',
+           [TriggerName, TriggerKind, HeadName, HeadKind, HeadColumnsText,
+            KeyIndicesText, ProjectTemplate, WriteTemplate, EvolvesPre]).
+
+ordered_arrival_accept_line(RelPlans, TriggerRef, Line) :-
+    ref_name(TriggerRef, TriggerName),
+    relplan_kind(RelPlans, TriggerRef, TriggerKind),
+    format(atom(Line),
+           '  for (const arrival of triggerOccurrences("~w", "~w", before["~w"], arrivals)) accepted.add(arrival);',
+           [TriggerKind, TriggerName, TriggerName]).
+
+ordered_departure_read_entry(RelPlans, TriggerRef, Line) :-
+    ref_name(TriggerRef, TriggerName),
+    memberchk(relplan(TriggerRef, _, TriggerColumns, _, _), RelPlans),
+    departure_read_sql(TriggerRef, TriggerColumns, Sql),
+    js_template(Sql, SqlTemplate),
+    quoted_string_array_text(TriggerColumns, ColumnsText),
+    format(atom(Line),
+           '  { rel: "~w", sql: ~w, columns: ~w },',
+           [TriggerName, SqlTemplate, ColumnsText]).
+
+ordered_carry_read_entry(RelPlans, TriggerRef, Line) :-
+    ref_name(TriggerRef, TriggerName),
+    memberchk(relplan(TriggerRef, _, TriggerColumns, _, _), RelPlans),
+    maplist(quote_ident_local, TriggerColumns, QuotedColumns),
+    atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
+    format(atom(Sql),
+           'SELECT "_sequence" AS "__sequence", ~w FROM "__frontier_~w" ORDER BY "_phase", "_sequence"',
+           [ColumnsSql, TriggerName]),
+    js_template(Sql, SqlTemplate),
+    quoted_string_array_text(TriggerColumns, ColumnsText),
+    format(atom(Line),
+           '  { rel: "~w", sql: ~w, columns: ~w },',
+           [TriggerName, SqlTemplate, ColumnsText]).
+
+ordered_level_occurrence_line(LevelRef, Line) :-
+    ref_name(LevelRef, Name),
+    format(atom(Line),
+           '  for (const row of multisetDiff(before["~w"], mid["~w"]).add) occurrences.push({ rel: "~w", kind: "arrival", row });',
+           [Name, Name, Name]).
+
+ordered_occurrence_lines(false, _, _, _, _, []) :- !.
+ordered_occurrence_lines(true, EdgeStatements, RelPlans, PreRefs,
+                         LevelHeadedRefs, Lines) :-
+    maplist(ordered_arm_entry_line(RelPlans, PreRefs), EdgeStatements,
+            ArmLines),
+    findall(TriggerRef,
+            ( member(edgestmt(_, TriggerRef, _, _, _, _, _, TriggerKind),
+                     EdgeStatements),
+              ordered_trigger_kind(TriggerKind, arrival) ),
+            ArrivalRefs0),
+    sort(ArrivalRefs0, ArrivalRefs),
+    maplist(ordered_arrival_accept_line(RelPlans), ArrivalRefs, AcceptLines),
+    maplist(ordered_carry_read_entry(RelPlans), ArrivalRefs, CarryReadLines),
+    intersection(ArrivalRefs, LevelHeadedRefs, TriggerLevelRefs),
+    maplist(ordered_level_occurrence_line, TriggerLevelRefs,
+            LevelOccurrenceLines),
+    findall(TriggerRef,
+            ( member(edgestmt(_, TriggerRef, _, _, _, _, _, TriggerKind),
+                     EdgeStatements),
+              ordered_trigger_kind(TriggerKind, departure) ),
+            DepartureRefs0),
+    sort(DepartureRefs0, OrderedDepartureRefs),
+    maplist(ordered_departure_read_entry(RelPlans), OrderedDepartureRefs,
+            DepartureReadLines),
+    ( DepartureReadLines == []
+    -> ReadDepartureBody =
+       [ 'function readOrderedDepartures(seam: ISqlSeam): Observable<readonly IOrderedOccurrence[]> {',
+         '  void seam;',
+         '  return of([]);',
+         '}'
+       ]
+    ; ReadDepartureBody =
+       [ 'function readOrderedDepartures(seam: ISqlSeam): Observable<readonly IOrderedOccurrence[]> {',
+         '  return forkJoin(ORDERED_DEPARTURE_READS.map((read) => seam.runner.execute(seam.db, read.sql).pipe(',
+         '    map((result) => result.rows.map((row): IOrderedOccurrence => ({',
+         '      rel: read.rel,',
+         '      kind: "departure",',
+         '      row: read.columns.map((column) => row[column] as IRowValue) as IRow,',
+         '    }))),',
+         '  ))).pipe(map((groups) => groups.flat()));',
+         '}'
+       ]
+    ),
+    append(
+      [ [ 'interface IOrderedEdgeArm { readonly triggerRel: string; readonly triggerKind: "arrival" | "departure"; readonly headRel: string; readonly headKind: "log" | "set"; readonly headColumns: readonly string[]; readonly keyIndices: readonly number[]; readonly projectSql: string; readonly writeSql: string; readonly evolvesPre: boolean }',
+          'interface IOrderedOccurrence { readonly rel: string; readonly kind: "arrival" | "departure"; readonly row: IRow; readonly sequence?: number }',
+          'interface IOrderedWrite { readonly arm: IOrderedEdgeArm; readonly row: IRow }',
+          '',
+          'function quoteOrderedIdentifier(identifier: string): string {',
+          '  return \'"\' + identifier.replaceAll(\'"\', \'""\') + \'"\';',
+          '}',
+          '',
+          'function orderedPreWriteStatement(write: IOrderedWrite): SqlStatement | null {',
+          '  const { arm, row } = write;',
+          '  if (!arm.evolvesPre) return null;',
+          '  const table = quoteOrderedIdentifier("__pre_" + arm.headRel);',
+          '  const columns = arm.headColumns.map(quoteOrderedIdentifier);',
+          '  const placeholders = columns.map(() => "?").join(", ");',
+          '  if (arm.headKind === "log") {',
+          '    return { sql: "INSERT INTO " + table + " (" + columns.join(", ") + ") VALUES (" + placeholders + ")", args: bindArgs(row) };',
+          '  }',
+          '  const keyIndices = new Set(arm.keyIndices);',
+          '  const keyColumns = arm.keyIndices.map((index) => columns[index]!);',
+          '  const nonKeyColumns = columns.filter((_column, index) => !keyIndices.has(index));',
+          '  const conflict = nonKeyColumns.length === 0',
+          '    ? "ON CONFLICT(" + keyColumns.join(", ") + ") DO NOTHING"',
+          '    : "ON CONFLICT(" + keyColumns.join(", ") + ") DO UPDATE SET " + nonKeyColumns.map((column) => column + " = excluded." + column).join(", ");',
+          '  return { sql: "INSERT INTO " + table + " (" + columns.join(", ") + ") VALUES (" + placeholders + ") " + conflict, args: bindArgs(row) };',
+          '}',
+          '',
+          'const ORDERED_EDGE_ARMS: readonly IOrderedEdgeArm[] = ['
+        ],
+        ArmLines,
+        [ '];',
+          '',
+          'const ORDERED_DEPARTURE_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = ['
+        ],
+        DepartureReadLines,
+        [ '];',
+          '',
+          'const ORDERED_CARRY_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = ['
+        ],
+        CarryReadLines,
+        [ '];',
+          '',
+          'function orderedOutsideOccurrences(before: Snapshot, arrivals: IArrivalBatch): readonly IOrderedOccurrence[] {',
+          '  const accepted = new Set<IArrivalRow>();'
+        ],
+        AcceptLines,
+        [ '  return arrivals.filter((arrival) => accepted.has(arrival)).map((arrival): IOrderedOccurrence => ({ rel: arrival.rel, kind: "arrival", row: arrival.row }));',
+          '}',
+          ''
+        ],
+        ReadDepartureBody,
+        [ '',
+          'function readOrderedCarry(seam: ISqlSeam): Observable<readonly IOrderedOccurrence[]> {',
+          '  if (ORDERED_CARRY_READS.length === 0) return of([]);',
+          '  return forkJoin(ORDERED_CARRY_READS.map((read) => seam.runner.execute(seam.db, read.sql).pipe(',
+          '    map((result) => result.rows.map((row): IOrderedOccurrence => ({',
+          '      rel: read.rel,',
+          '      kind: "arrival",',
+          '      row: read.columns.map((column) => row[column] as IRowValue) as IRow,',
+          '      sequence: Number(row.__sequence),',
+          '    }))),',
+          '  ))).pipe(map((groups) => groups.flat().sort((left, right) => (left.sequence ?? 0) - (right.sequence ?? 0))));',
+          '}',
+          '',
+          'function orderedLevelOccurrences(before: Snapshot, mid: Snapshot): readonly IOrderedOccurrence[] {',
+          '  const occurrences: IOrderedOccurrence[] = [];'
+        ],
+        LevelOccurrenceLines,
+        [ '  return occurrences;',
+          '}',
+          '',
+          'function applyOrderedOccurrence(seam: ISqlSeam, occurrence: IOrderedOccurrence, written: IOrderedWrite[]): Observable<void> {',
+          '  const arms = ORDERED_EDGE_ARMS.filter((arm) => arm.triggerRel === occurrence.rel && arm.triggerKind === occurrence.kind);',
+          '  if (arms.length === 0) return of(undefined);',
+          '  return forkJoin(arms.map((arm) => seam.runner.execute(seam.db, { sql: arm.projectSql, args: bindArgs(occurrence.row) }).pipe(',
+          '    map((result) => ({ arm, rows: result.rows.map((row) => arm.headColumns.map((column) => row[column] as IRowValue) as IRow) })),',
+          '  ))).pipe(',
+          '    concatMap((groups) => {',
+          '      const writes: IOrderedWrite[] = [];',
+          '      const exact = new Set<string>();',
+          '      const keyed = new Map<string, IRow>();',
+          '      for (const group of groups) {',
+          '        for (const row of group.rows) {',
+          '          const exactKey = JSON.stringify([group.arm.headRel, row]);',
+          '          if (exact.has(exactKey)) continue;',
+          '          exact.add(exactKey);',
+          '          if (group.arm.headKind === "set") {',
+          '            const key = JSON.stringify([group.arm.headRel, group.arm.keyIndices.map((index) => row[index])]);',
+          '            const prior = keyed.get(key);',
+          '            if (prior !== undefined && JSON.stringify(prior) !== JSON.stringify(row)) {',
+          '              throw new Error(`keyed conflict in ordered occurrence for ${group.arm.headRel}: ${key}`);',
+          '            }',
+          '            keyed.set(key, row);',
+          '          }',
+          '          writes.push({ arm: group.arm, row });',
+          '        }',
+          '      }',
+          '      if (writes.length === 0) return of(undefined);',
+          '      const statements = writes.flatMap((write): readonly SqlStatement[] => {',
+          '        const base: SqlStatement = { sql: write.arm.writeSql, args: bindArgs(write.row) };',
+          '        const pre = orderedPreWriteStatement(write);',
+          '        return pre === null ? [base] : [base, pre];',
+          '      });',
+          '      return seam.runner.batch(seam.db, statements).pipe(map(() => {',
+          '        written.push(...writes);',
+          '        return undefined;',
+          '      }));',
+          '    }),',
+          '  );',
+          '}',
+          '',
+          'function processOrderedOccurrences(seam: ISqlSeam, before: Snapshot, mid: Snapshot, arrivals: IArrivalBatch): Observable<readonly IOrderedWrite[]> {',
+          '  return forkJoin([readOrderedCarry(seam), readOrderedDepartures(seam)]).pipe(',
+          '    concatMap(([carry, departures]) => {',
+          '      const written: IOrderedWrite[] = [];',
+          '      const occurrences = [...carry, ...departures, ...orderedOutsideOccurrences(before, arrivals), ...orderedLevelOccurrences(before, mid)];',
+          '      return occurrences.reduce(',
+          '        (work, occurrence) => work.pipe(concatMap(() => applyOrderedOccurrence(seam, occurrence, written))),',
+          '        of(undefined) as Observable<void>,',
+          '      ).pipe(map(() => written as readonly IOrderedWrite[]));',
+          '    }),',
+          '  );',
+          '}'
+        ]
+      ],
+      Lines).
 
 % ═══ level recompute ═════════════════════════════════════════════════════════
 % Statements joined with the literal two-character escape sequence `\n`
@@ -1181,6 +1498,40 @@ run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick,
       ]
     ], Lines).
 
+run_ordered_tick_fn_lines(false, _, _, _, _, []) :- !.
+run_ordered_tick_fn_lines(true, Name, HasRetention, UsesTick, DepartureRefs,
+                          Lines) :-
+    departure_stage_naive_lines(DepartureRefs, DepartureStageLines),
+    advance_tick_naive_line(UsesTick, AdvanceTickLines),
+    retention_tick_lines(HasRetention, RetentionLines),
+    format(atom(NameCommentLine),
+           '  // ~w: ordered process_occurrences with evolving pre snapshots.',
+           [Name]),
+    append(
+    [ [ 'function runOrderedTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
+        '  return readSnapshot(seam).pipe('
+      ],
+      AdvanceTickLines,
+      [ '    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),',
+        '    concatMap((before) => snapshotOrderedPre(seam).pipe(map(() => before))),',
+        '    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),',
+        '    concatMap((before) => readSnapshot(seam).pipe(map((mid) => ({ before, mid })))),',
+        '    concatMap(({ before, mid }) => processOrderedOccurrences(seam, before, mid, arrivals).pipe(map((written) => ({ before, mid, written })))),',
+        '    concatMap(({ before, mid, written }) => recomputeLevels(seam).pipe(map(() => ({ before, mid, written })))),'
+      ],
+      RetentionLines,
+      [ '    concatMap(({ before, mid, written }) => readSnapshot(seam).pipe(map((after) => ({ mid, after, written, deltas: buildDeltas(before, after) })))),',
+        '    concatMap(({ mid, after, written, deltas }) => stageOrderedFrontiers(seam, INCREMENTAL_RELATIONS, orderedCarryAdditions(mid, after, deltas, written)).pipe(',
+        '      map((postWriteCarry): ITickDeltas => ({ rels: deltas.rels, carryPending: deltas.carryPending || postWriteCarry })),',
+        '    )),'
+      ],
+      DepartureStageLines,
+      [ '  );',
+        NameCommentLine,
+        '}'
+      ]
+    ], Lines).
+
 retention_tick_lines(true,
     ['    concatMap((before) => applyNaiveRetention(seam).pipe(map(() => before))),']).
 retention_tick_lines(false, []).
@@ -1291,11 +1642,12 @@ pre_edge_level_reconcile_lines(EdgeStatements,
 run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
                               HasRetention, UsesTick, DepartureRefs, Lines) :-
     run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
-                                  HasRetention, UsesTick, DepartureRefs, false, Lines).
+                                  HasRetention, UsesTick, DepartureRefs, false,
+                                  false, Lines).
 
 run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
                               HasRetention, UsesTick, DepartureRefs,
-                              HasStructTypes, Lines) :-
+                              HasStructTypes, HasOrderedProgram, Lines) :-
     advance_tick_pipeline_line(UsesTick, AdvanceTickLines),
     departure_stage_incremental_lines(DepartureRefs, DepartureStageLines),
     pre_edge_level_reconcile_lines(EdgeStatements, PreEdgeReconcileLines, PipeSplitLines),
@@ -1306,7 +1658,8 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
        PostEdgeLevelLine = '    concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),'
     ),
     RecomputeLine = '    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK)),',
-    run_tick_dispatch_lines(DerivedEdgeCarryRequired, HasStructTypes, DispatchLines),
+    run_tick_dispatch_lines(DerivedEdgeCarryRequired, HasStructTypes,
+                            HasOrderedProgram, DispatchLines),
     ( HasRetention == true
     -> RetentionLines =
        ['    concatMap(() => IncrementalRuntime.applyRetention(seam, INCREMENTAL_RETENTION_STATEMENTS, INCREMENTAL_RELATIONS)),']
@@ -1344,19 +1697,24 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
     ], Lines).
 
 run_tick_dispatch_lines(DerivedEdgeCarryRequired, Lines) :-
-    run_tick_dispatch_lines(DerivedEdgeCarryRequired, false, Lines).
+    run_tick_dispatch_lines(DerivedEdgeCarryRequired, false, false, Lines).
 
 % STRUCT-AS-ROWS: when the program declares a type, the dispatch function is
 % renamed and StructPlane.intern/4 becomes the one runTick, so BOTH emitter
 % modes absorb the same rewritten batch. Without a type declaration the two
 % clauses below are byte-identical to what they were before this arc.
-run_tick_dispatch_lines(true, HasStructTypes,
+run_tick_dispatch_lines(_, HasStructTypes, true,
+    [ Signature,
+      '  return runOrderedTick(seam, arrivals);',
+      '}'
+    ]) :- dispatch_signature(HasStructTypes, Signature), !.
+run_tick_dispatch_lines(true, HasStructTypes, false,
     [ Signature,
       '  // Derived edge triggers consume the P1 current/next frontier, including drain carry.',
       '  return runIncrementalTick(seam, arrivals);',
       '}'
     ]) :- dispatch_signature(HasStructTypes, Signature).
-run_tick_dispatch_lines(false, HasStructTypes,
+run_tick_dispatch_lines(false, HasStructTypes, false,
     [ Signature,
       '  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {',
       '    return runNaiveTick(seam, arrivals);',
@@ -1451,13 +1809,24 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     Plan = plan(_, prog(PlanDecls, _), _, _, _, _),
     struct_type_plans(PlanDecls, StructPlans),
     struct_plane_lines(StructPlans, RelPlans, StructPlaneLines, HasStructTypes),
-    imports_lines(HasEdgeRules, HasRetention, HasStructTypes, ImportLines),
+    ( ordered_program(EdgeStatements) -> HasOrderedProgram = true
+    ; HasOrderedProgram = false
+    ),
+    imports_lines(HasEdgeRules, HasRetention, HasStructTypes,
+                  HasOrderedProgram, ImportLines),
     local_types_lines(LocalTypeLines),
     world_plan_lines(Plan, WorldPlanLines),
     bind_args_helper_lines(BindArgsHelperLines),
     ( EdgeStatements == [] -> TriggerOccurrencesHelperLines = [] ; trigger_occurrences_helper_lines(TriggerOccurrencesHelperLines) ),
     Plan = plan(_, prog(_, PlanRules), _, _, _, _),
     listened_departure_refs(PlanRules, DepartureRefs),
+    plan_pre_refs(Plan, PreRefs),
+    findall(LevelRef,
+            ( member((LevelHead <- _), PlanRules),
+              functor(LevelHead, LevelName, LevelArity),
+              LevelRef = LevelName/LevelArity ),
+            LevelRefs0),
+    sort(LevelRefs0, LevelHeadedRefs),
     departure_occurrences_helper_lines(EdgeStatements, DepartureOccurrencesHelperLines),
     ddl_lines(Ddl, DdlLines),
     rel_columns_lines(RelPlans, RelColumnsLines),
@@ -1477,6 +1846,13 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     -> EdgeConstLines = [], EdgeFnLines = []
     ; edge_resolver_blocks(EdgeStatements, RelPlans, EdgeConstLines, EdgeFnLines)
     ),
+    ordered_pre_lines(HasOrderedProgram, RelPlans, PreRefs, EdgeStatements,
+                      OrderedPreLines),
+    ordered_occurrence_lines(HasOrderedProgram, EdgeStatements, RelPlans,
+                             PreRefs, LevelHeadedRefs,
+                             OrderedOccurrenceLines),
+    ordered_carry_lines(HasOrderedProgram, EdgeStatements, LevelHeadedRefs,
+                        OrderedCarryLines),
     recompute_levels_fn_lines(RuleLevelStatements, RecomputeLevelsFnLines),
     naive_retention_fn_lines(RetentionStatements, NaiveRetentionFnLines),
     build_deltas_fn_lines(RelPlans, EdgeStatements, RetentionStatements,
@@ -1486,6 +1862,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     advance_tick_fn_lines(UsesTick, AdvanceTickFnLines),
     run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick,
                             DepartureRefs, RunNaiveTickFnLines),
+    run_ordered_tick_fn_lines(HasOrderedProgram, Name, HasRetention, UsesTick,
+                              DepartureRefs, RunOrderedTickFnLines),
     incremental_program_safe(Plan, EdgeStatements, RuleLevelStatements, IncrementalSafe),
     reconcile_every_tick(Plan, ReconcileEveryTick),
     derived_edge_carry_required(Plan, EdgeStatements, DerivedEdgeCarryRequired),
@@ -1494,7 +1872,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
                            IncrementalModeLines),
     run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
                                   HasRetention, UsesTick, DepartureRefs,
-                                  HasStructTypes, RunIncrementalTickFnLines),
+                                  HasStructTypes, HasOrderedProgram,
+                                  RunIncrementalTickFnLines),
     struct_tick_wrapper_lines(HasStructTypes, Name, StructTickWrapperLines),
     incremental_plan_export_lines(RetractionGuard, HasRetention,
                                   IncrementalPlanExportLines),
@@ -1510,8 +1889,9 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
       IncrementalRelationLines, IncrementalEdgeStatementLines,
       IncrementalLevelStatementLines, IncrementalRetentionStatementLines,
       EdgeConstLines, EdgeFnLines,
+      OrderedPreLines, OrderedOccurrenceLines, OrderedCarryLines,
       RecomputeLevelsFnLines, NaiveRetentionFnLines, BuildDeltasFnLines,
-      AdvanceTickFnLines, RunNaiveTickFnLines,
+      AdvanceTickFnLines, RunNaiveTickFnLines, RunOrderedTickFnLines,
       IncrementalModeLines, RunIncrementalTickFnLines,
       StructTickWrapperLines, IncrementalPlanExportLines,
       ProgramExportLines

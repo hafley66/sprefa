@@ -196,6 +196,17 @@ verification(grafana_scale_gate,
                        sqlite_bytes(1069056), statements_per_tick(54.03)),
                     unusable_repos(139),
                     cap_excluded_repos(242))).
+verification(host_contract_cleanup,
+             passed(plunit(167),
+                    conformance(all),
+                    extraction_ticks(3),
+                    ghcacher_ticks(5),
+                    served_host(2))).
+verification(ordered_pre,
+             passed(runtime(2),
+                    formerly_refused_fixtures(13),
+                    syntax_changes(0),
+                    type_changes(0))).
 host_overuse(grafana_v6_crawl,
              'green correctness gate exposes 40.26 files per second under the per-witness extraction subprocess boundary; batching or the V7 direct Rust link remains required').
 

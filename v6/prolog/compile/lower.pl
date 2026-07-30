@@ -173,6 +173,9 @@ frontier_table_name(Name/_Arity, FrontierTable) :-
 next_frontier_table_name(Name/_Arity, NextFrontierTable) :-
     format(atom(NextFrontierTable), '__next_frontier_~w', [Name]).
 
+pre_table_name(Name/_Arity, PreTable) :-
+    format(atom(PreTable), '__pre_~w', [Name]).
+
 % Last tick's net -delta rows of a rel some rule binds with finalize/1
 % (engine.pl tick/7's DepartureCarry). Emitted ONLY for those rels
 % (analyze:listened_departure_refs/2), which is what keeps a program with no
@@ -305,8 +308,8 @@ compile_positive_uses(RelPlans, Uses, Bound0, Bound, FromParts, WhereTexts) :-
     maplist(where_text, WhereParts, WhereTexts).
 
 compile_positive_uses(_, [], _, Bound, Bound, [], []).
-compile_positive_uses(RelPlans, [use(Ref, Args, pos, _) | Rest], Index, Bound0, Bound, [From | MoreFrom], WhereParts) :-
-    table_name(Ref, Table), quote_ident(Table, QuotedTable),
+compile_positive_uses(RelPlans, [use(Ref, Args, pos, Source) | Rest], Index, Bound0, Bound, [From | MoreFrom], WhereParts) :-
+    positive_use_table(Source, Ref, Table), quote_ident(Table, QuotedTable),
     format(atom(Alias), 'b~w', [Index]),
     format(atom(From), '~w ~w', [QuotedTable, Alias]),
     relplan_columns(RelPlans, Ref, Columns),
@@ -317,6 +320,9 @@ compile_positive_uses(RelPlans, [use(Ref, Args, pos, _) | Rest], Index, Bound0, 
     NextIndex is Index + 1,
     compile_positive_uses(RelPlans, Rest, NextIndex, Bound1, Bound, MoreFrom, MoreWhere),
     append(HereWhere, MoreWhere, WhereParts).
+
+positive_use_table(pre, Ref, Table) :- !, pre_table_name(Ref, Table).
+positive_use_table(_, Ref, Table) :- table_name(Ref, Table).
 
 % A public relation that appears as another relation's column domain has a
 % hidden dense __id. Bind the complete body atom to that endpoint while its
@@ -1081,9 +1087,11 @@ placeholders(N, ['?' | Rest]) :- N > 0, N1 is N - 1, placeholders(N1, Rest).
 % unmarked_conjunction(Atoms) (N >= 1 plain positive atoms, no only/1
 % anywhere -- engine.pl's unmarked fallback wraps EVERY one as its own
 % independent trigger, body.pl:96-110/153-155), or
-% sampled_conjunction(TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals), where
+% sampled_conjunction(TriggerAtoms, SampleAtoms, PreAtoms, NegAtoms,
+% GuardGoals), where
 % latest/1 removes the SampleAtoms from the trigger set while retaining them
-% as current-state base-table reads, not/1 contributes a NOT EXISTS over the
+% as current-state base-table reads, pre/1 reads the tick-local __pre table,
+% not/1 contributes a NOT EXISTS over the
 % negated rel's current table, and the comparison/bind goals become WHERE
 % conditions and SELECT-expression bindings (the same three compilers a level
 % body uses: compile_positive_uses/6, compile_guard_goals/4,
@@ -1109,19 +1117,23 @@ edge_statements_for_rule(RelPlans, (Head <+ Body), EdgeStatements) :-
     -> rel_ref(TriggerAtom, TriggerRef),
        ( relplan_kind(RelPlans, TriggerRef, log) -> true
        ; throw(unsupported_construct(edge_trigger_not_log(TriggerRef))) ),
-       edge_statement_single(RelPlans, Head, TriggerAtom, [], [], [], EdgeStmt),
+       edge_statement_single(RelPlans, Head, TriggerAtom, [], [], [], [],
+                             EdgeStmt),
        EdgeStatements = [EdgeStmt]
     ; Shape = unmarked_conjunction(Atoms)
     -> findall(EdgeStmt,
                ( select(TriggerAtom, Atoms, OtherAtoms),
-                 edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, [], [], EdgeStmt) ),
+                 edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms,
+                                       [], [], [], EdgeStmt) ),
                EdgeStatements)
-    ; Shape = sampled_conjunction(TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals)
+    ; Shape = sampled_conjunction(TriggerAtoms, SampleAtoms, PreAtoms,
+                                  NegAtoms, GuardGoals)
     -> findall(EdgeStmt,
                ( select(TriggerAtom, TriggerAtoms, OtherTriggerAtoms),
                  append(OtherTriggerAtoms, SampleAtoms, OtherAtoms),
                  edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms,
-                                       NegAtoms, GuardGoals, EdgeStmt) ),
+                                       PreAtoms, NegAtoms, GuardGoals,
+                                       EdgeStmt) ),
                EdgeStatements)
     % ONE arm, from the finalize'd rel's departure frontier. The other
     % positive atoms are joins, never arms: an arrival occurrence on one of
@@ -1130,10 +1142,13 @@ edge_statements_for_rule(RelPlans, (Head <+ Body), EdgeStatements) :-
     % emitting it would be emitting a statement that can only ever return
     % zero rows.
     ; Shape = departure_trigger(FinalizeAtom, OtherPositiveAtoms, SampleAtoms,
-                                NegAtoms, GuardGoals)
+                                PreAtoms, NegAtoms, GuardGoals)
     -> append(OtherPositiveAtoms, SampleAtoms, OtherAtoms),
-       edge_statement_single(RelPlans, Head, FinalizeAtom, OtherAtoms, NegAtoms,
-                             GuardGoals, departure, EdgeStmt),
+       ( PreAtoms == [] -> DepartureKind = departure
+       ; DepartureKind = ordered_departure
+       ),
+       edge_statement_single(RelPlans, Head, FinalizeAtom, OtherAtoms, PreAtoms,
+                             NegAtoms, GuardGoals, DepartureKind, EdgeStmt),
        EdgeStatements = [EdgeStmt]
     ).
 
@@ -1151,13 +1166,16 @@ edge_statements_for_rule(RelPlans, (Head <+ Body), EdgeStatements) :-
 % too, since a Log head's resolver must NOT collapse multiple derived rows
 % into one Map entry the way a Set head's last-write-wins fold does (every
 % key would otherwise be the same empty `[]`).
-edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms, GuardGoals,
-                      EdgeStmt) :-
-    edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms,
-                          GuardGoals, arrival, EdgeStmt).
+edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
+                      NegAtoms, GuardGoals, EdgeStmt) :-
+    ( PreAtoms == [] -> TriggerKind = arrival
+    ; TriggerKind = ordered_arrival
+    ),
+    edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
+                          NegAtoms, GuardGoals, TriggerKind, EdgeStmt).
 
-edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms, GuardGoals,
-                      TriggerKind,
+edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
+                      NegAtoms, GuardGoals, TriggerKind,
                       edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns,
                                ProjectSql, WriteSql, DeltaProjectSql,
                                TriggerKind)) :-
@@ -1183,7 +1201,9 @@ edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms, GuardGo
     % bug shipped in an earlier draft and unmarked_edge_replays_backlog
     % is the fixture that caught it).
     maplist(other_atom_use, IdentityOtherAtoms, OtherUses),
-    compile_positive_uses(RelPlans, OtherUses, TriggerBound, PositiveBound,
+    maplist(pre_atom_use, PreAtoms, PreUses),
+    append(OtherUses, PreUses, PositiveUses),
+    compile_positive_uses(RelPlans, PositiveUses, TriggerBound, PositiveBound,
                           FromParts, PositiveWhereTexts),
     compile_guard_goals(GuardGoals, PositiveBound, Bound, GuardWhereTexts),
     maplist(negated_atom_use, NegAtoms, NegUses),
@@ -1213,8 +1233,9 @@ edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms, GuardGo
     -> format(atom(ProjectSql), 'SELECT ~w FROM ~w', [SelectSql, FromSql])
     ; format(atom(ProjectSql), 'SELECT ~w FROM ~w WHERE ~w', [SelectSql, FromSql, WhereSql])
     ),
-    edge_delta_project_sql(RelPlans, Head, TriggerAtom, IdentityOtherAtoms, NegAtoms,
-                           GuardGoals, HeadColumns, TriggerKind, DeltaProjectSql),
+    edge_delta_project_sql(RelPlans, Head, TriggerAtom, IdentityOtherAtoms,
+                           PreAtoms, NegAtoms, GuardGoals, HeadColumns,
+                           TriggerKind, DeltaProjectSql),
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
@@ -1256,6 +1277,11 @@ reference_trigger_samples(RelPlans, arrival, TriggerAtom,
     \+ member_same_term(TriggerAtom, OtherAtoms),
     !,
     IdentityOtherAtoms = [TriggerAtom | OtherAtoms].
+reference_trigger_samples(RelPlans, ordered_arrival, TriggerAtom,
+                          OtherAtoms, IdentityOtherAtoms) :-
+    reference_trigger_samples(RelPlans, arrival, TriggerAtom, OtherAtoms,
+                              IdentityOtherAtoms),
+    !.
 reference_trigger_samples(_, _, _, OtherAtoms, OtherAtoms).
 
 reference_target_ref(RelPlans, Name/_Arity) :-
@@ -1265,11 +1291,12 @@ reference_target_ref(RelPlans, Name/_Arity) :-
 member_same_term(Term, [Candidate | _]) :- Term == Candidate, !.
 member_same_term(Term, [_ | Rest]) :- member_same_term(Term, Rest).
 
-edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms, GuardGoals,
-                       HeadColumns, TriggerKind, DeltaProjectSql) :-
+edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
+                       NegAtoms, GuardGoals, HeadColumns, TriggerKind,
+                       DeltaProjectSql) :-
     rel_ref(TriggerAtom, TriggerRef),
     TriggerAtom =.. [_ | TriggerArgs],
-    (   TriggerKind == departure
+    (   memberchk(TriggerKind, [departure, ordered_departure])
     ->  departure_frontier_table_name(TriggerRef, FrontierTable)
     ;   frontier_table_name(TriggerRef, FrontierTable)
     ),
@@ -1281,7 +1308,9 @@ edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms, GuardG
                       TriggerBound, TriggerWhereParts),
     maplist(where_text, TriggerWhereParts, TriggerWhereTexts),
     maplist(other_atom_use, OtherAtoms, OtherUses),
-    compile_positive_uses(RelPlans, OtherUses, TriggerBound, PositiveBound,
+    maplist(pre_atom_use, PreAtoms, PreUses),
+    append(OtherUses, PreUses, PositiveUses),
+    compile_positive_uses(RelPlans, PositiveUses, TriggerBound, PositiveBound,
                           OtherFromParts, OtherWhereTexts),
     compile_guard_goals(GuardGoals, PositiveBound, Bound, GuardWhereTexts),
     maplist(negated_atom_use, NegAtoms, NegUses),
@@ -1301,6 +1330,9 @@ edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, NegAtoms, GuardG
 excluded_assignment(QuotedColumn, Text) :- format(atom(Text), '~w = excluded.~w', [QuotedColumn, QuotedColumn]).
 
 other_atom_use(Atom, use(Ref, Args, pos, unmarked)) :- rel_ref(Atom, Ref), Atom =.. [_ | Args].
+pre_atom_use(Atom, use(Ref, Args, pos, pre)) :-
+    rel_ref(Atom, Ref),
+    Atom =.. [_ | Args].
 
 negated_atom_use(Atom, use(Ref, Args, neg, unmarked)) :- rel_ref(Atom, Ref), Atom =.. [_ | Args].
 
@@ -2027,6 +2059,24 @@ departure_frontier_ddl(Ref, Columns, ColumnTypes, [TableDdl, IndexDdl]) :-
     format(atom(IndexDdl), 'CREATE INDEX ~w ON ~w ("_phase")',
            [QuotedIndexName, QuotedDepartureTable]).
 
+pre_ddl(RelPlans, Ref, Ddl) :-
+    memberchk(relplan(Ref, _, Columns, KeyOrNone, ColumnTypes), RelPlans),
+    pre_table_name(Ref, PreTable),
+    quote_ident(PreTable, QuotedPreTable),
+    maplist(quote_ident, Columns, QuotedColumns),
+    maplist(column_def, QuotedColumns, ColumnTypes, ColumnDefs),
+    atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
+    ( KeyOrNone = key(KeyPositions)
+    -> nth1_list(KeyPositions, Columns, KeyColumns),
+       maplist(quote_ident, KeyColumns, QuotedKeyColumns),
+       atomic_list_concat(QuotedKeyColumns, ', ', KeyColumnsSql),
+       format(atom(Ddl),
+              'CREATE TEMP TABLE ~w (~w, PRIMARY KEY (~w)) WITHOUT ROWID',
+              [QuotedPreTable, ColumnsSql, KeyColumnsSql])
+    ;  format(atom(Ddl), 'CREATE TEMP TABLE ~w (~w)',
+              [QuotedPreTable, ColumnsSql])
+    ).
+
 delta_ddl(relplan(Ref, _Kind, Columns, _, ColumnTypes),
           [TableDdl, IndexDdl, FrontierDdl, FrontierIndexDdl,
            NextFrontierDdl, NextFrontierIndexDdl]) :-
@@ -2245,12 +2295,19 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     maplist(aggregate_scope_ddl, RuleLevelStatements, AggregateScopeDdlGroups),
     append(SupportDdlGroups, SupportDdl),
     append(AggregateScopeDdlGroups, AggregateScopeDdl),
+    findall(PreRef,
+            ( member((_ <+ EdgeBody), Rules),
+              level_body_pre_ref(EdgeBody, PreRef) ),
+            PreRefs0),
+    sort(PreRefs0, PreRefs),
+    maplist(pre_ddl(RelPlans), PreRefs, PreDdl),
     program_uses_tick(prog(Decls, Rules), UsesTick),
     ( UsesTick == true -> tick_table_ddl(TickDdl) ; TickDdl = [] ),
     % STRUCT-AS-ROWS: the dictionaries come FIRST in the DDL list, in
     % topological order, so a program's storage plane exists before any table
     % whose columns point into it.
-    append([RelationDdl, DeltaDdl, SupportDdl, AggregateScopeDdl, TickDdl], Ddl),
+    append([RelationDdl, DeltaDdl, SupportDdl, AggregateScopeDdl, PreDdl,
+            TickDdl], Ddl),
     maplist(delta_statement, RelPlans, DeltaStatements).
 
 arrival_target_relplan(ArrivalTargets, relplan(Ref, _, _, _, _)) :- memberchk(Ref, ArrivalTargets).

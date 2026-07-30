@@ -109,3 +109,18 @@ test("load: a program that hits a named compiler refusal over http exits 2, not 
     await served.stop();
   }
 });
+
+test("stats: bop reads the existing GET /stats route after load", async () => {
+  const served = await startServed(17584);
+  try {
+    const loaded = await runBop(["load", DOOR_DL6, "--port", "17584"]);
+    assert.equal(loaded.status, 0, loaded.stderr);
+    const outcome = await runBop(["stats", "--port", "17584"]);
+    assert.equal(outcome.status, 0, outcome.stderr);
+    const body = JSON.parse(outcome.stdout) as { readonly memory: unknown; readonly sqlite: unknown };
+    assert.ok(body.memory);
+    assert.ok(body.sqlite);
+  } finally {
+    await served.stop();
+  }
+});

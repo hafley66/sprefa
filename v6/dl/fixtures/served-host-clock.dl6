@@ -11,9 +11,9 @@
 #
 # The host is hermetic: `printf` only, no network, no filesystem, and its output
 # does not depend on the bucket -- so the only non-determinism in `answered` is
-# the bucket column it inherits from the bind. The bucket enters the probe as a
-# SALT, not an input, so a new bucket mints a new witness (the effect refires
-# per cadence tick) while the shell line stays constant.
+# the bucket column it inherits from the bind. The bucket is a host input that
+# the command template ignores, so a new bucket mints a new witness while the
+# shell line stays constant.
 
 # `seed` stays EDB and arrives over http rather than as a bare fact: a
 # top-level `seed("alpha").` is refused by the compiler
@@ -23,11 +23,11 @@ rel seed(name: text).
 
 bind interval(period: int, bucket: int).
 
-sh answer(name: text) -> (value: text) = `printf '%s' "{name}-answered"`.
+sh answer(name: text, bucket: int) -> (value: text) = `printf '%s' "{name}-answered"`.
 
 rel poll(name: text, bucket: int).
 poll(name, bucket) <- seed(name), interval(1, bucket).
 
 rel answered(name: text, bucket: int, value: text).
 answered(name, bucket, value) <-
-  poll(name, bucket), ? answer(name, value) @ salt(bucket: bucket).
+  poll(name, bucket), answer(name, bucket, value).

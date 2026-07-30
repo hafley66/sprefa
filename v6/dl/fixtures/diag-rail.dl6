@@ -57,10 +57,10 @@
 bind watch(glob: text, path: text, digest: text).
 
 # ── the world pull: two hosts, one record shape each (flagship's split) ─────
-sh call_node(path: text) -> (record: text, kind: text, name: text) =
+sh call_node(path: text, digest: text) -> (record: text, kind: text, name: text) =
   `"$DL_EXTRACT_BIN" --family call {path}`.
 
-sh call_ref(path: text) -> (callee: text) =
+sh call_ref(path: text, digest: text) -> (callee: text) =
   `"$DL_EXTRACT_BIN" --family call {path}`.
 
 # ── the program's own file set ──────────────────────────────────────────────
@@ -70,7 +70,7 @@ file(path, digest) <- watch('**/*.ts', path, digest).
 # ── node lines (defs + import/export specifiers, undiscriminated) ──────────
 rel node_fact(path: text, record: text, kind: text, name: text).
 node_fact(path, record, kind, name) <-
-  file(path, digest), ? call_node(path, record, kind, name) @ salt(digest: digest).
+  file(path, digest), call_node(path, digest, record, kind, name).
 
 # ── v5's `def`: every named callable declaration ────────────────────────────
 # The constant match in argument position is the record filter (flagship's
@@ -81,7 +81,7 @@ def(path, name) <- node_fact(path, 'node', _, name).
 # ── call sites, content-addressed on the digest (extraction-live's shape) ──
 rel call_site(path: text, digest: text, callee: text).
 call_site(path, digest, callee) <-
-  file(path, digest), ? call_ref(path, callee) @ salt(digest: digest).
+  file(path, digest), call_ref(path, digest, callee).
 
 rel call(path: text, callee: text).
 call(path, callee) <- call_site(path, _, callee).

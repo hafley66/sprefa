@@ -420,9 +420,9 @@ export interface IHostColumnPlan {
 }
 
 /**
- * One `sh_decl` as emitted data. `execution` names the executor the served
- * runtime dispatches on ("live_sh" since the runtime-bridge arc); a plan whose
- * executor this runtime does not know is refused BY NAME rather than skipped.
+ * One `sh_decl` as emitted data. `execution` is a target-neutral executor key.
+ * `shell` preserves template execution; `sprefa_extract` selects the existing
+ * extractor contract and subprocess behavior. Unknown keys are named.
  */
 export interface IHostPlan {
   readonly name: string;
@@ -534,9 +534,9 @@ export interface IHostEffectDone {
   readonly outcome: "done" | "cache_hit" | "error";
 }
 
-export interface IShHostRunner {
-  /** Cold. Boot-replays every live demand row, then follows the tick stream's
-   *  demand deltas; each unanswered witness spawns its template once and its
+export interface IHostRunner {
+  /** Cold. Boot-replays every host demand row, then follows the tick stream's
+   *  demand deltas; each unanswered witness runs its executor once and its
    *  decoded rows land as an EDB arrival on the response rel. */
   readonly effects$: Observable<IHostEffectDone>;
 }

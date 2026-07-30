@@ -72,7 +72,7 @@ import type {
   ITickOutcome,
 } from "../runtime/types.ts";
 import { ProgramCompiler } from "./0_compile.ts";
-import { ShHostRunner } from "./1_hosts.ts";
+import { HostRunner } from "./1_hosts.ts";
 import { IntervalBindRunner, NodeWatchSource, WatchBindRunner, bindPlansFor } from "./2_binds.ts";
 import { LiveEngine, bootServedProgram } from "./3_engine.ts";
 
@@ -162,7 +162,7 @@ function runProgram$(state: ServerState, config: IServeConfig, load: ProgramLoad
       concatMap(() =>
         merge(
           engine.ticks$.pipe(map((outcome): IServeEvent => ({ kind: "tick", outcome }))),
-          new ShHostRunner(engine, seam, load.program.hostPlans).effects$.pipe(
+          new HostRunner(engine, seam, load.program.hostPlans).effects$.pipe(
             map((done): IServeEvent => ({ kind: "effect", done })),
           ),
           new IntervalBindRunner(engine, bindPlansFor(load.program.bindPlans, "live_interval"), scheduler).firings$.pipe(

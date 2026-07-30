@@ -135,6 +135,45 @@ function stageEvents(
   return seam.runner.batch(seam.db, statements).pipe(map(() => undefined));
 }
 
+/**
+ * Replace the carry-in frontiers used by emitted ordered-occurrence programs
+ * with this tick's boundary-visible additions. Intermediate keyed fold rows
+ * never reach this function: the emitter supplies only its start/end diff.
+ */
+export function stageOrderedFrontiers(
+  seam: ISqlSeam,
+  relations: readonly IIncrementalRelationPlan[],
+  additions: readonly IRelDelta[],
+): Observable<boolean> {
+  const eventsByRel = new Map<string, DeltaEvent[]>();
+  let sequence = 0;
+  for (const delta of additions) {
+    for (const row of delta.add) {
+      const event: DeltaEvent = { rel: delta.rel, sign: 1, sequence, row };
+      sequence += 1;
+      const grouped = eventsByRel.get(delta.rel);
+      if (grouped === undefined) eventsByRel.set(delta.rel, [event]);
+      else grouped.push(event);
+    }
+  }
+  const statements: SqlStatement[] = [];
+  let carryPending = false;
+  for (const relation of relations) {
+    statements.push(
+      { sql: `DELETE FROM ${quoteIdentifier(relation.frontierTableName)}`, args: [] },
+      { sql: `DELETE FROM ${quoteIdentifier(relation.nextFrontierTableName)}`, args: [] },
+    );
+    const events = eventsByRel.get(relation.rel) ?? [];
+    if (events.length === 0) continue;
+    carryPending = true;
+    statements.push(
+      frontierStageStatement(relation, relation.frontierTableName, 0, events),
+    );
+  }
+  if (statements.length === 0) return of(carryPending);
+  return seam.runner.batch(seam.db, statements).pipe(map(() => carryPending));
+}
+
 function keyedRowsSql(
   statement: IIncrementalEdgeStatement,
   rowCount: number,

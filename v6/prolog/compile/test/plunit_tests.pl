@@ -249,6 +249,41 @@ test(switch_as_keyed_replace_frontier_ddl) :-
     memberchk('CREATE INDEX "__frontier_route_change_phase" ON "__frontier_route_change" ("_phase")', Ddl),
     memberchk('CREATE TEMP TABLE "__next_frontier_open_scope" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "target" TEXT NOT NULL)', Ddl).
 
+% FAIL-FIRST RECEIPT: pre/1 in an edge body needs a tick-local snapshot read
+% plus ordered occurrence execution. Before pre_occurrence_loop this fixture
+% stopped in analyze.pl with edge_body_needs_pre/1 and produced no lowered
+% statement or snapshot table.
+test(pre_edge_lowers_to_ordered_snapshot_read) :-
+    lowered_for('merge_family.pl', batched_increments_both_count, Lowered),
+    Lowered = lowered(_, Ddl, _, EdgeStatements, _, _, _, _),
+    memberchk(
+        'CREATE TEMP TABLE "__pre_counter" ("name" TEXT NOT NULL, "next" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID',
+        Ddl),
+    EdgeStatements =
+        [edgestmt(counter/2, increment/2, [name, next], [name],
+                  ProjectSql, _, _, ordered_arrival)],
+    once(sub_atom(ProjectSql, _, _, _, 'FROM "__pre_counter" b0')).
+
+% COUNT receipt for the formerly whole-state-per-occurrence refresh path.
+% The relation snapshot appears once in the generated tick setup. Reducer
+% writes thereafter mirror their one keyed row into __pre_counter.
+test(ordered_pre_snapshots_once_then_mirrors_each_write) :-
+    fixture_file('merge_family.pl', File),
+    read_fixture_term(File, batched_increments_both_count, Term, Bindings),
+    program_plan(Term-Bindings, Plan),
+    lower_program(Plan, Lowered),
+    Term = fixture(_, _, Initial, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    boot_statements(Decls, RelPlans, Initial, LevelStatements, Boot),
+    emit_program(batched_increments_both_count, Plan, Lowered, Boot, Text),
+    findall(At,
+            sub_atom(Text, At, _, _, 'DELETE FROM "__pre_counter"'),
+            SnapshotDeletes),
+    length(SnapshotDeletes, 1),
+    once(sub_atom(Text, _, _, _, 'function orderedPreWriteStatement')),
+    \+ sub_atom(Text, _, _, _, 'refreshOrderedPre').
+
 ddl_for_table(Table, Ddl) :-
     format(atom(Needle), 'CREATE TABLE "~w" (', [Table]),
     sub_atom(Ddl, 0, _, _, Needle).
@@ -565,6 +600,15 @@ test(accepts_comparison_and_bind_in_edge_body) :-
                  kind(loud/2, log), keep(loud/2, all)],
                 [ (loud(Name, Doubled) <+ hit(Name, Score), Score > 10,
                                           Doubled := Score * 2) ]),
+    check_supported_subset(Prog).
+
+test(accepts_plain_pre_atom_in_edge_body) :-
+    Prog = prog(
+        [kind(increment/1, log), keep(increment/1, all),
+         keyed(counter/2, [1])],
+        [ (counter(Name, Next) <+
+              increment(Name), pre(counter(Name, Total)),
+              Next := Total + 1) ]),
     check_supported_subset(Prog).
 
 % FAIL-FIRST RECEIPT: now/1 in an edge body.
@@ -1092,18 +1136,77 @@ test(retention_count_is_one_set_based_delete_statement) :-
 
 test(selected_surface_round_trips) :-
     string_codes(
-      "sh fetch(ep: text) -> (status: int) = `run {ep}`.\nresult(Status) <- input(Ep), ? fetch(Ep, Status) @ salt(bucket: 3).\n? result(Status).\n",
+      "sh fetch(ep: text, prev: text, bucket: int) -> (status: int) = `run {ep} $prev`.\nresult(Status) <- input(Ep, Prev, Bucket), fetch(Ep, Prev, Bucket, Status).\n? result(Status).\n",
       Codes),
     parse_dl(Codes, Program, Bindings, []),
     Program = program(
-                [sh_decl(fetch, [col(ep, text)], [col(status, int)],
-                         template("run {ep}"))],
-                [(_ <- (_, probe(fetch, [_], [_], [salt(bucket, 3)])))],
+                [sh_decl(fetch,
+                         [col(ep, text), col(prev, text), col(bucket, int)],
+                         [col(status, int)],
+                         template("run {ep} $prev"))],
+                [(_ <- (_, probe(fetch, [_, _], [_], [salt(bucket, _)])))],
                 [query(result(_))]),
     print_dl_program(Program, Bindings, Printed),
+    assertion(sub_atom(Printed, _, _, _,
+                       "fetch(Ep, Prev, Bucket, Status)")),
+    assertion(\+ sub_atom(Printed, _, _, _, "@ salt")),
+    assertion(\+ sub_atom(Printed, _, _, _, "? fetch")),
+    assertion(sub_atom(Printed, _, _, _, "? result(Status).")),
     atom_codes(Printed, PrintedCodes),
     parse_dl(PrintedCodes, Reparsed, _, []),
     Program =@= Reparsed.
+
+test(rhs_probe_marker_is_rejected,
+     [throws(dl_parse_error(statement, _))]) :-
+    string_codes(
+      "sh fetch(ep: text) -> (status: int) = `run {ep}`.\nresult(Status) <- ? fetch('repo', Status).\n",
+      Codes),
+    parse_dl(Codes, _, _, _).
+
+test(rhs_postfix_probe_marker_is_rejected,
+     [throws(dl_parse_error(statement, _))]) :-
+    string_codes(
+      "sh fetch(ep: text) -> (status: int) = `run {ep}`.\nresult(Status) <- fetch?('repo', Status).\n",
+      Codes),
+    parse_dl(Codes, _, _, _).
+
+test(plain_host_resolution_is_declaration_order_independent) :-
+    string_codes(
+      "result(Status) <- fetch('repo', '', 3, Status).\nsh fetch(ep: text, prev: text, bucket: int) -> (status: int) = `run {ep} $prev`.\n",
+      Codes),
+    parse_dl(
+      Codes,
+      program(
+        [sh_decl(fetch,
+                 [col(ep, text), col(prev, text), col(bucket, int)],
+                 [col(status, int)],
+                 template("run {ep} $prev"))],
+        [(result(Status) <-
+            probe(fetch, [repo, ''], [Status], [salt(bucket, 3)]))],
+        []),
+      _,
+      []).
+
+test(removed_salt_surface_is_rejected,
+     [throws(dl_parse_error(statement, _))]) :-
+    string_codes(
+      "result(Value) <- source(Value) @ salt(bucket: 3).\n",
+      Codes),
+    parse_dl(Codes, _, _, _).
+
+test(plain_non_host_rhs_remains_relation_atom) :-
+    string_codes(
+      "result(Value) <- source(Value).\n",
+      Codes),
+    parse_dl(Codes, prog([], [(result(Value) <- source(Value))]), _, []).
+
+test(plain_host_arity_mismatch_reaches_existing_named_refusal,
+     [throws(probe_mismatch(probe(fetch, [repo], [], [])))]) :-
+    string_codes(
+      "sh fetch(ep: text) -> (status: int) = `run {ep}`.\nresult('missing') <- fetch('repo').\n",
+      Codes),
+    parse_dl(Codes, Program, _, []),
+    prepare_program(Program, _, _, _, _).
 
 test(removed_type_keyword_is_rejected,
      [throws(dl_parse_error(statement, _))]) :-
@@ -1144,11 +1247,29 @@ test(named_partial_head_is_refused) :-
 test(host_unreferenced_input_refusal,
      [throws(template_mismatch(unreferenced_input(prev)))]) :-
     compile_host_decl(
-      sh_decl(fetch,
+      sh_decl(local_fetch,
               [col(ep, text), col(prev, text)],
               [col(status, int)],
               template("{ep}")),
       _).
+
+test(host_freshness_input_may_be_absent_from_template) :-
+    compile_host_decl(
+      sh_decl(fetch,
+              [col(ep, text), col(prev, text), col(bucket, int)],
+              [col(status, int)],
+              template("{ep} $prev")),
+      host_plan(fetch, _, _, _, _, _,
+                input_roles([identity, identity, freshness]))).
+
+test(host_contract_matches_name_columns_and_types_not_name_alone) :-
+    compile_host_decl(
+      sh_decl(fetch,
+              [col(ep, text), col(prev, text)],
+              [col(status, int)],
+              template("{ep} $prev")),
+      host_plan(fetch, _, _, _, _, _,
+                input_roles([identity, identity]))).
 
 test(host_output_reference_refusal,
      [throws(template_mismatch(output_used_as_input(status)))]) :-
@@ -1174,6 +1295,25 @@ test(host_shell_local_dollar_name_is_not_a_column) :-
               [col(ep, text), col(prev, text)],
               [col(status, int)],
               template("R={ep}; P=$prev; printf '%s' \"$R\"")),
+      _).
+
+test(extract_host_uses_compiler_known_executor) :-
+    compile_host_decl(
+      sh_decl(extract,
+              [col(path, text), col(digest, text)],
+              [col(callee, text)],
+              template("\"$DL_EXTRACT_BIN\" --family call {path}")),
+      host_plan(extract, _, _, _, _, _,
+                input_roles([identity, freshness]))),
+    !.
+
+test(extract_host_refuses_non_path_input,
+     [throws(host_executor_mismatch(extract, sprefa_extract, [col(file, text)]))]) :-
+    compile_host_decl(
+      sh_decl(extract,
+              [col(file, text)],
+              [col(callee, text)],
+              template("\"$DL_EXTRACT_BIN\" --family call {file}")),
       _).
 
 test(host_overlap_refusal,
@@ -1202,7 +1342,7 @@ test(host_duplicate_column_refusal,
 % response-column lowering, and emitted host plan together.
 test(host_declared_struct_output_parses_and_lowers_as_ref) :-
     string_codes(
-      "rel span(end: int, start: int).\nrel source_path(path: text).\nrel host_span(path: text, at: span).\nsh scan_span(path: text) -> (at: span) = `scan {path}`.\nhost_span(Path, At) <- source_path(Path), ? scan_span(Path, At).\n",
+      "rel span(end: int, start: int).\nrel source_path(path: text).\nrel host_span(path: text, at: span).\nsh scan_span(path: text) -> (at: span) = `scan {path}`.\nhost_span(Path, At) <- source_path(Path), scan_span(Path, At).\n",
       Codes),
     parse_dl(Codes, Program, Bindings, []),
     program_plan(
@@ -1235,7 +1375,7 @@ test(host_declared_struct_output_parses_and_lowers_as_ref) :-
 test(host_unknown_struct_output_refuses_by_type_name,
      [throws(unsupported_construct(column_type_unknown(spann)))]) :-
     string_codes(
-      "rel span(end: int, start: int).\nrel source_path(path: text).\nrel host_span(path: text, at: span).\nsh scan_span(path: text) -> (at: spann) = `scan {path}`.\nhost_span(Path, At) <- source_path(Path), ? scan_span(Path, At).\n",
+      "rel span(end: int, start: int).\nrel source_path(path: text).\nrel host_span(path: text, at: span).\nsh scan_span(path: text) -> (at: spann) = `scan {path}`.\nhost_span(Path, At) <- source_path(Path), scan_span(Path, At).\n",
       Codes),
     parse_dl(Codes, Program, Bindings, []),
     program_plan(
@@ -1293,7 +1433,7 @@ test(emitter_carries_world_plans_and_demand_sql) :-
     % `literals` list is EMPTY for this fixture on purpose -- it declares
     % `bind interval(...)` and seeds an `interval(300, 1)` Initial row, but no
     % RULE reads a literal period, so no timer is owed.
-    once(sub_atom(Text, _, _, _, 'execution: "live_sh"')),
+    once(sub_atom(Text, _, _, _, 'execution: "shell"')),
     once(sub_atom(Text, _, _, _, 'literals: [], execution: "live_interval"')),
     once(sub_atom(Text, _, _, _,
                   'export const unsupportedExecution: readonly string[] = [];')),
@@ -2132,6 +2272,7 @@ expected_row('>'/2,    ordered_comparison,  0, infix('>'),            both_int).
 expected_row('>='/2,   ordered_comparison,  0, infix('>='),           both_int).
 expected_row('=='/2,   identity_comparison, 0, infix('='),            same_type).
 expected_row('\\=='/2, identity_comparison, 0, infix('<>'),           same_type).
+expected_row(norm/1,    text_scalar,         3, ascii_alnum_lower,    text_only).
 
 test(inventory_is_exactly_the_expected_rows) :-
     findall(Signature-Family-Precedence-Sql-Type,

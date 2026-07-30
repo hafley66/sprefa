@@ -18,58 +18,58 @@ rel span(start: int, end: int).
 sh enumerate_at(rev: text, glob: text) -> (path: text, digest: text) =
   `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
 
-sh df_node_at(path: text) -> (record: text, family: text, span: span, kind: text) =
+sh df_node_at(path: text, digest: text) -> (record: text, family: text, span: span, kind: text) =
   `"$DL_EXTRACT_BIN" --family df {path}`.
-sh df_edge_at(path: text) -> (record: text, family: text, kind: text, from: span, to: span) =
+sh df_edge_at(path: text, digest: text) -> (record: text, family: text, kind: text, from: span, to: span) =
   `"$DL_EXTRACT_BIN" --family df {path}`.
-sh df_param_at(path: text) -> (record: text, family: text, span: span, pos: int) =
+sh df_param_at(path: text, digest: text) -> (record: text, family: text, span: span, pos: int) =
   `"$DL_EXTRACT_BIN" --family df {path}`.
-sh df_arg_at(path: text) -> (record: text, family: text, call: span, pos: int, arg: span) =
+sh df_arg_at(path: text, digest: text) -> (record: text, family: text, call: span, pos: int, arg: span) =
   `"$DL_EXTRACT_BIN" --family df {path}`.
-sh call_node_at(path: text) -> (record: text, family: text, span: span, kind: text, name: text) =
+sh call_node_at(path: text, digest: text) -> (record: text, family: text, span: span, kind: text, name: text) =
   `"$DL_EXTRACT_BIN" --family call {path}`.
-sh type_node_at(path: text) -> (record: text, family: text, span: span, kind: text, name: text) =
+sh type_node_at(path: text, digest: text) -> (record: text, family: text, span: span, kind: text, name: text) =
   `"$DL_EXTRACT_BIN" --family type {path}`.
-sh sig_at(path: text) -> (record: text, family: text, owner_start: int, owner_end: int, slot: text, pos: int, ty: text) =
+sh sig_at(path: text, digest: text) -> (record: text, family: text, owner_start: int, owner_end: int, slot: text, pos: int, ty: text) =
   `"$DL_EXTRACT_BIN" --family type {path}`.
 sh resolve_at(rev: text, glob: text) -> (caller_path: text, caller_name: text, callee_path: text, callee_name: text, caller_site_start: int, caller_site_end: int, kind: text) =
   `git ls-files --with-tree='{rev}' -- '{glob}' | xargs "$DL_EXTRACT_BIN" --resolve`.
 
 rel want_at(rev: text, glob: text).
 rel file(path: text, digest: text).
-file(path, digest) <- want_at(rev, glob), ? enumerate_at(rev, glob, path, digest).
+file(path, digest) <- want_at(rev, glob), enumerate_at(rev, glob, path, digest).
 
 rel df_node(path: text, at: span, kind: text).
 df_node(path, at, kind) <-
-  file(path, digest), ? df_node_at(path, 'node', 'df', at, kind) @ salt(digest: digest).
+  file(path, digest), df_node_at(path, digest, 'node', 'df', at, kind).
 
 rel df_edge(path: text, from: span, to: span).
 df_edge(path, from, to) <-
-  file(path, digest), ? df_edge_at(path, 'edge', 'df', 'direct', from, to) @ salt(digest: digest).
+  file(path, digest), df_edge_at(path, digest, 'edge', 'df', 'direct', from, to).
 
 rel df_param(path: text, at: span, pos: int).
 df_param(path, at, pos) <-
-  file(path, digest), ? df_param_at(path, 'param', 'df', at, pos) @ salt(digest: digest).
+  file(path, digest), df_param_at(path, digest, 'param', 'df', at, pos).
 
 rel df_arg(path: text, call: span, pos: int, arg: span).
 df_arg(path, call, pos, arg) <-
-  file(path, digest), ? df_arg_at(path, 'arg', 'df', call, pos, arg) @ salt(digest: digest).
+  file(path, digest), df_arg_at(path, digest, 'arg', 'df', call, pos, arg).
 
 rel call_callable(path: text, at: span, name: text).
 call_callable(path, at, name) <-
-  file(path, digest), ? call_node_at(path, 'node', 'call', at, _, name) @ salt(digest: digest).
+  file(path, digest), call_node_at(path, digest, 'node', 'call', at, _, name).
 
 rel type_callable(path: text, at: span, name: text).
 type_callable(path, at, name) <-
-  file(path, digest), ? type_node_at(path, 'node', 'type', at, _, name) @ salt(digest: digest).
+  file(path, digest), type_node_at(path, digest, 'node', 'type', at, _, name).
 
 rel sig(path: text, owner_start: int, owner_end: int, slot: text, pos: int, ty: text).
 sig(path, owner_start, owner_end, slot, pos, ty) <-
-  file(path, digest), ? sig_at(path, 'sig', 'type', owner_start, owner_end, slot, pos, ty) @ salt(digest: digest).
+  file(path, digest), sig_at(path, digest, 'sig', 'type', owner_start, owner_end, slot, pos, ty).
 
 rel resolved_call_edge(caller_path: text, caller_name: text, callee_path: text, callee_name: text, caller_site_start: int, caller_site_end: int, kind: text).
 resolved_call_edge(caller_path, caller_name, callee_path, callee_name, caller_site_start, caller_site_end, kind) <-
-  want_at(rev, glob), ? resolve_at(rev, glob, caller_path, caller_name, callee_path, callee_name, caller_site_start, caller_site_end, kind).
+  want_at(rev, glob), resolve_at(rev, glob, caller_path, caller_name, callee_path, callee_name, caller_site_start, caller_site_end, kind).
 
 rel df_value(path: text, start: int, end: int, kind: text).
 df_value(path, start, end, kind) <- df_node(path, at, kind), decode(at, {start: start, end: end}).

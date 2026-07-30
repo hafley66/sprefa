@@ -64,5 +64,5 @@ rel want(glob: text).
 rel want_at(rev: text, glob: text).
 
 rel file(path: text, digest: text).
-file(path, digest) <- want(glob), ? enumerate(glob, path, digest).
-file(path, digest) <- want_at(rev, glob), ? enumerate_at(rev, glob, path, digest).
+file(path, digest) <- want(glob), enumerate(glob, path, digest).
+file(path, digest) <- want_at(rev, glob), enumerate_at(rev, glob, path, digest).

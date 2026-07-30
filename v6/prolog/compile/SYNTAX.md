@@ -150,7 +150,7 @@ construct inventory.
 | `keyed(Ref, Positions)` | `key(P, P, ...)` | declaration modifier |
 | `(Head <- Body)` | `Head <- Body.` | level rule |
 | `(Head <+ Body)` | `Head <+ Body.` | edge rule |
-| `match(Source, ((Head <- Guards) ; (Head <+ Guards)))` | `match Source (...)` with `;`-separated arms | retained sugar; one ordinary rule per arm |
+| `match(Source, ((Head <- Guards) ; (Head <+ Guards)))` | `match Source ( ; Guards \|-> Head ; Guards \|+> Head )` | retained sugar; optional first `;`; left-to-right arms become one ordinary rule each |
 | bare fact | `Head.` | body becomes registered `true/0` |
 | bare positive relation | `name(args)` | trigger relation |
 | comparison alias `<=` | input only | maps to registered `=</2` |
@@ -169,7 +169,7 @@ construct inventory.
 | body named args with omitted columns | `rel(first: Value)` | omitted declared columns become fresh anonymous variables; RX relation projection |
 | partial named head | `head(first: Value) <- ...` | `unsupported_surface(partial_head(Name/Arity))` |
 | shell host declaration | `sh name(in: type, ...) -> (out: type, ...) = \`template\`.` | `sh_decl(Name, Inputs, Outputs, template(Text))`; RX-H1 |
-| probe | `? name(inputs..., outputs...) @ salt(column: Value)` | `probe(Name, Inputs, Outputs, [salt(Column, Value)])`; RX-H2; zero or more salt riders |
+| host call | `name(inputs..., outputs...)` when `name` resolves to an `sh` signature | `probe(Name, IdentityInputs, Outputs, FreshnessSalts)`; RX-H2; registered positional metadata selects freshness inputs; an unresolved name remains an ordinary relation atom |
 | bind declaration | `bind name(column: type, ...).` | `bind_decl(Name, Columns)`; RX-B1 |
 | query | `? name(args).` | `query(RelAtom)`; RX-Q1 |
 | mutation | `rel!(args)` | `unsupported_surface(mutation(Name/Arity))` |
@@ -191,15 +191,17 @@ the compiler does not treat the resulting declaration as writable surface.
 
 | term | rx lowering | phase-1 compiler result |
 |---|---|---|
-| `sh_decl(Name, Inputs, Outputs, template(Text))` | RX-H1: request rows group by witness, take one request, decode declared outputs, then commit an EDB arrival | emitted as a `hostPlans` data row carrying `execution: "live_sh"`; the served runtime (`v6/tsv2/serve/1_hosts.ts`) spawns the template and commits the decoded response as an EDB arrival |
-| `probe(Name, Inputs, Outputs, Salts)` | RX-H2: mint identity from host plus inputs, mint witness from identity plus salts, deduplicate by witness, then demand the host | lowers to `__host_demand_Name` SQL and a join with keyed EDB relation `__host_response_Name` |
+| `sh_decl(Name, Inputs, Outputs, template(Text))` | RX-H1: request rows group by witness, take one request, decode declared outputs, then commit an EDB arrival | emitted as a `hostPlans` data row carrying executor key `execution: "shell"`, or `"sprefa_extract"` for the established `extract(path, digest)` contract; the served runtime (`v6/tsv2/serve/1_hosts.ts`) runs the declaration template and commits the decoded response as an EDB arrival |
+| `probe(Name, Inputs, Outputs, Salts)` | RX-H2: mint identity from host plus identity inputs, mint witness from identity plus compiler-registered freshness inputs, deduplicate by witness, then demand the host | lowers to `__host_demand_Name` SQL and a join with keyed EDB relation `__host_response_Name`; `Salts` is internal IR with no DL6 spelling |
 | `bind_decl(interval, Columns)` | RX-B1: subscribe to the registered interval source while the program is active and commit each row as EDB | emitted as a `bindPlans` data row carrying `periods` (the integer literals the program's own rules read in the bind atom's first column) and `execution: "live_interval"`; schedule arrivals still grade phase 1, and the served runtime (`v6/tsv2/serve/2_binds.ts`) spins one rx `interval` per declared period |
 | `query(RelAtom)` | RX-Q1: scan the current SQLite query plan and stream its rows | emitted as a `queryPlans` data row |
 | `ts_query(Patterns)` | RX-TS1: group file demand by content and query identity, run the compiled tree-sitter query, then commit EDB rows | value compiles to query text; phase-2 host execution is named `unsupported_host_execution_phase_2(tree_sitter_query)` |
 | `sg_pattern(language(Language), source(Text), captures(Names))` | RX-SG1: group file demand by content and pattern identity, run ast-grep, then commit EDB rows | retained as a separate pattern family; current compiler refusal is `unmapped_feature(slot_sg_metavariable_semantics, Term)` |
 
-The chosen salt spelling is `@ salt(column: Value)`. Printing and reparsing
-preserve the spelling exactly.
+Host declarations and calls contain one ordinary positional input list. Exact
+compiler registry rows can mark selected positions as witness freshness inputs;
+local shell declarations default every position to identity. The printer
+reconstructs the ordinary input order from the same metadata.
 
 File and content hosts use the current worktree when no revision is present.
 A pinned revision is written as a marked argument or a sibling host. There is

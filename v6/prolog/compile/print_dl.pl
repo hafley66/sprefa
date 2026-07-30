@@ -33,7 +33,8 @@
 :- use_module(registry,
               [ body_surface_for_term/6,
                 wrapper_lower_role/3,
-                expression/5
+                expression/5,
+                host_input_contract/3
               ]).
 
 :- op(1150, xfx, <-).
@@ -377,16 +378,11 @@ print_body(Item, Bindings, Text) :-
 print_body_item(Term, Bindings, Text) :-
     Term = probe(Name, Inputs, Outputs, Salts),
     !,
-    append(Inputs, Outputs, Values),
+    probe_surface_inputs(Name, Inputs, Salts, SurfaceInputs),
+    append(SurfaceInputs, Outputs, Values),
     maplist(print_arg(Bindings), Values, ValueTexts),
     atomic_list_concat(ValueTexts, ', ', ValuesText),
-    maplist(print_salt(Bindings), Salts, SaltTexts),
-    ( SaltTexts == []
-    -> SaltText = ""
-    ; atomic_list_concat(SaltTexts, ' ', JoinedSalts),
-      format(atom(SaltText), " ~w", [JoinedSalts])
-    ),
-    format(atom(Text), "? ~w(~w)~w", [Name, ValuesText, SaltText]).
+    format(atom(Text), "~w(~w)", [Name, ValuesText]).
 print_body_item(Term, Bindings, Text) :-
     body_surface_for_term(Term, _, _, _, LowerRole, _), !,
     print_surface_body_item(LowerRole, Term, Bindings, Text).
@@ -412,9 +408,35 @@ print_surface_wrapper_args(body_item, [Inner], Bindings, [InnerText]) :- !,
 print_surface_wrapper_args(_, Args, Bindings, ArgTexts) :-
     maplist(print_arg(Bindings), Args, ArgTexts).
 
-print_salt(Bindings, salt(Name, Value), Text) :-
-    print_arg(Bindings, Value, ValueText),
-    format(atom(Text), "@ salt(~w: ~w)", [Name, ValueText]).
+probe_surface_inputs(Name, IdentityValues, Salts, SurfaceValues) :-
+    ( host_input_contract(Name, Columns, Roles),
+      contract_value_counts(Roles, IdentityValues, Salts)
+    -> interleave_host_inputs(Columns, Roles, IdentityValues, Salts,
+                              SurfaceValues, [], [])
+    ; Salts == []
+    -> SurfaceValues = IdentityValues
+    ; throw(probe_mismatch(probe(Name, IdentityValues, _, Salts)))
+    ).
+
+contract_value_counts(Roles, IdentityValues, Salts) :-
+    include(==(identity), Roles, IdentityRoles),
+    include(==(freshness), Roles, FreshnessRoles),
+    same_length(IdentityRoles, IdentityValues),
+    same_length(FreshnessRoles, Salts).
+
+interleave_host_inputs([], [], Identity, Salts, [], Identity, Salts).
+interleave_host_inputs([col(Name, _) | Columns], [Role | Roles],
+                       Identity0, Salts0, [Value | Values],
+                       Identity, Salts) :-
+    ( Role == identity,
+      Identity0 = [Value | Identity1],
+      Salts1 = Salts0
+    ; Role == freshness,
+      Salts0 = [salt(Name, Value) | Salts1],
+      Identity1 = Identity0
+    ),
+    interleave_host_inputs(Columns, Roles, Identity1, Salts1, Values,
+                           Identity, Salts).
 
 % ═══ general term printer : var (via Bindings) | int | atom (single-quoted)
 % | string (double-quoted) | '{}'(Pairs) braces | list | arithmetic (infix,

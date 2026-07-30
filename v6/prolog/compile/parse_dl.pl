@@ -22,7 +22,7 @@
 %       decls.
 %   (b) the existing v6/dl surface (v6/dl/grammar/dl.langium), read here so
 %       v6/dl/fixtures/ghcacher.dl6 and conformance.dl6 keep parsing: `rel
-%       Name(col: type, ...).` decls, `?`/`!` postfix probe/mutation atoms,
+%       Name(col: type, ...).` decls, `!` postfix mutation atoms,
 %       `!rel(args)` prefix negation, named args `col: val`, comparisons
 %       spelled `=`/`!=`/`<=` (accepted as aliases of ==/\==/=<).
 %
@@ -43,8 +43,8 @@
 % declared column order (threaded via a dynamic rel_column_order table built
 % while scanning decls) -- this is surface sugar the term form can already
 % hold positionally, not a term-form gap, so it is resolved silently rather
-% than filed as a finding. Constructs the term form truly cannot hold (probe
-% `?(...)`, mutation `!(...)`, `sh` host decls, `?` query lines, retention
+% than filed as a finding. Constructs the term form truly cannot hold (mutation
+% `!(...)` and retention
 % markers `rel(N)`) become unsupported_surface(...) findings, collected and
 % returned, never silently dropped.
 
@@ -54,7 +54,9 @@
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
-:- use_module(registry, [ surface/5, wrapper_lower_role/3 ]).
+:- use_module(registry,
+              [ surface/5, body_surface_for_term/6,
+                wrapper_lower_role/3, host_input_roles/3 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -83,9 +85,10 @@ parse_dl(Codes, Prog, Bindings, Findings) :-
     retractall(finding_fact(_)),
     retractall(rel_column_order_fact(_, _)),
     retractall(host_signature_fact(_, _, _)),
-    statements(Codes, Left, [], VarsFinal, ParsedDecls, Rules, Queries),
+    statements(Codes, Left, [], VarsFinal, ParsedDecls, ParsedRules, Queries),
     ( Left == [] -> true ; throw(dl_parse_error(trailing_input(Left))) ),
     normalize_relation_value_decls(ParsedDecls, Decls),
+    normalize_host_calls(Decls, ParsedRules, Rules),
     maplist(swap_pair, VarsFinal, BindingsRev),
     reverse(BindingsRev, Bindings),
     findall(F, finding_fact(F), Findings),
@@ -97,6 +100,56 @@ parse_dl(Codes, Prog, Bindings, Findings) :-
     ).
 
 swap_pair(Name-Var, Name=Var).
+
+% Plain RHS calls resolve against the completed declaration set, so declaration
+% order does not change whether a call is a host probe or an ordinary relation.
+
+normalize_host_calls(_, [], []).
+normalize_host_calls(Decls, [Rule | Rest], [Normalized | More]) :-
+    normalize_host_rule(Decls, Rule, Normalized),
+    normalize_host_calls(Decls, Rest, More).
+
+normalize_host_rule(Decls, (Head <- Body), (Head <- Normalized)) :-
+    !,
+    normalize_host_body(Decls, Body, Normalized).
+normalize_host_rule(Decls, (Head <+ Body), (Head <+ Normalized)) :-
+    !,
+    normalize_host_body(Decls, Body, Normalized).
+normalize_host_rule(Decls, match(Source, Arms), match(Source, Normalized)) :-
+    !,
+    normalize_host_arms(Decls, Arms, Normalized).
+normalize_host_rule(_, Rule, Rule).
+
+normalize_host_arms(Decls, (Left ; Right), (LeftNormalized ; RightNormalized)) :-
+    !,
+    normalize_host_arms(Decls, Left, LeftNormalized),
+    normalize_host_arms(Decls, Right, RightNormalized).
+normalize_host_arms(Decls, Arm, Normalized) :-
+    normalize_host_rule(Decls, Arm, Normalized).
+
+normalize_host_body(Decls, (Left, Right), (LeftNormalized, RightNormalized)) :-
+    !,
+    normalize_host_body(Decls, Left, LeftNormalized),
+    normalize_host_body(Decls, Right, RightNormalized).
+normalize_host_body(_, Probe, Probe) :-
+    Probe = probe(_, _, _, _),
+    !.
+normalize_host_body(_, Item, Item) :-
+    body_surface_for_term(Item, _, _, _, _, _),
+    !.
+normalize_host_body(Decls, Atom,
+                    probe(Name, InputValues, OutputValues, Salts)) :-
+    compound(Atom),
+    functor(Atom, Name, _),
+    member(sh_decl(Name, Inputs, _, _), Decls),
+    !,
+    Atom =.. [_ | Values],
+    length(Inputs, InputCount),
+    split_probe_values(InputCount, Values, SurfaceInputValues, OutputValues),
+    host_input_roles(Name, Inputs, Roles),
+    partition_host_input_values(Inputs, SurfaceInputValues, Roles,
+                                InputValues, Salts).
+normalize_host_body(_, Item, Item).
 
 % ═══ top-level statement loop : one Vars accumulator threads across every
 % decl and rule in the file (the whole-clause variable scope compile.pl's
@@ -844,7 +897,7 @@ body(Body, Vars0, Vars, S0, S) :-
 % ═══ one body item ═══════════════════════════════════════════════════════════
 % Order: keyword-shaped calls first (latest/departed/pre/now/decode/json_each/
 % not), then bare `true`, then bind (:=/is), then comparison, then dialect-B
-% prefix negation (!rel(args)), then a plain/probe/mutation relation atom.
+% prefix negation (!rel(args)), then a plain host/relation or mutation atom.
 
 body_item(Item, Vars0, Vars, S0, S) :-
     surface(Name/Arity, _, AnalyzeRole, LowerRole, Status),
@@ -866,9 +919,6 @@ body_item(not(Atom), Vars0, Vars, S0, S) :-
     lit_dcg(`!`, S0, S1), ident(Name, S1, S2), ws0(S2, S3), lit_dcg(`(`, S3, S4),
     args_positional(Args, Vars0, Vars, S4, S5), ws0(S5, S6), lit_dcg(`)`, S6, S), !,
     Atom =.. [Name | Args].
-body_item(Probe, Vars0, Vars, S0, S) :-
-    probe_item(Probe, Vars0, Vars, S0, S),
-    !.
 body_item(Item, Vars0, Vars, S0, S) :-
     relatom_item(Item, Vars0, Vars, S0, S).
 
@@ -1004,69 +1054,64 @@ operator_codes(Codes, S0, S) :-
     ; lit_dcg(Codes, S0, S)
     ).
 
-% ═══ plain / probe / mutation relation atom ═════════════════════════════════
+% ═══ plain host / relation / mutation atom ══════════════════════════════════
+%
+% One RHS spelling:
+%
+%   fetch(Ep, Status)
+%
+% If `fetch` resolves to an sh declaration, it becomes the existing
+% internal probe/4 term. Otherwise it remains an ordinary relation atom.
+% Top-level `? result(...)` is still query_stmt/5.
 
-probe_item(Probe, Vars0, Vars, S0, S) :-
-    lit_dcg(`?`, S0, S1),
-    ws0(S1, S2),
-    ident(Name, S2, S3),
-    ws0(S3, S4),
-    lit_dcg(`(`, S4, S5),
-    head_args(Args, Vars0, Vars1, S5, S6),
-    ws0(S6, S7),
-    lit_dcg(`)`, S7, S8),
-    probe_salts(Salts, Vars1, Vars, S8, S),
-    resolve_named_args(body, Name, Args, Values),
-    probe_from_values(Name, Values, Salts, Probe).
+split_probe_values(InputCount, Values, InputValues, OutputValues) :-
+    length(Values, ValueCount),
+    ( ValueCount >= InputCount
+    -> length(InputValues, InputCount),
+       append(InputValues, OutputValues, Values)
+    ; InputValues = Values,
+      OutputValues = []
+    ).
 
-probe_salts([Salt | Rest], Vars0, Vars, S0, S) :-
-    ws0(S0, S1),
-    lit_dcg(`@`, S1, S2),
-    ws0(S2, S3),
-    word(`salt`, S3, S4),
-    ws0(S4, S5),
-    lit_dcg(`(`, S5, S6),
-    ws0(S6, S7),
-    ident(Name, S7, S8),
-    ws0(S8, S9),
-    lit_dcg(`:`, S9, S10),
-    ws0(S10, S11),
-    expr(Value, Vars0, Vars1, S11, S12),
-    ws0(S12, S13),
-    lit_dcg(`)`, S13, S14),
-    Salt = salt(Name, Value),
-    probe_salts(Rest, Vars1, Vars, S14, S).
-probe_salts([], Vars, Vars, S, S).
+partition_host_input_values(Columns, Values, Roles, IdentityValues, Salts) :-
+    ( same_length(Columns, Values)
+    -> partition_host_input_values_(Columns, Values, Roles,
+                                    IdentityValues, Salts)
+    ; IdentityValues = Values,
+      Salts = []
+    ).
 
-probe_from_values(Name, Values, Salts,
-                  probe(Name, InputValues, OutputValues, Salts)) :-
-    host_signature_fact(Name, Inputs, Outputs),
-    length(Inputs, InputCount),
-    length(InputValues, InputCount),
-    append(InputValues, OutputValues, Values),
-    same_length(Outputs, OutputValues),
-    !.
-probe_from_values(Name, Values, _, _) :-
-    length(Values, Arity),
-    record_finding(unsupported_surface(probe_signature_unresolved(Name/Arity))),
-    fail.
+partition_host_input_values_([], [], [], [], []).
+partition_host_input_values_([col(Name, _) | Columns], [Value | Values],
+                             [Role | Roles], IdentityValues, Salts) :-
+    ( Role == identity
+    -> IdentityValues = [Value | IdentityRest],
+       Salts = SaltRest
+    ; Role == freshness
+    -> Salts = [salt(Name, Value) | SaltRest],
+       IdentityValues = IdentityRest
+    ),
+    partition_host_input_values_(Columns, Values, Roles,
+                                 IdentityRest, SaltRest).
 
 relatom_item(Item, Vars0, Vars, S0, S) :-
     ident(Name, S0, S1), ws0(S1, S2),
-    ( peek(0'?, S2, S2)
-    -> lit_dcg(`?`, S2, S2a), ws0(S2a, S3), lit_dcg(`(`, S3, S4),
-       head_args(Args, Vars0, Vars, S4, S5), ws0(S5, S6), lit_dcg(`)`, S6, S),
-       resolve_named_args(body, Name, Args, Positional),
-       probe_from_values(Name, Positional, [], Item)
-    ; peek(0'!, S2, S2)
+    ( peek(0'!, S2, S2)
     -> lit_dcg(`!`, S2, S2a), ws0(S2a, S3), lit_dcg(`(`, S3, S4),
        head_args(Args, Vars0, Vars, S4, S5), ws0(S5, S6), lit_dcg(`)`, S6, S),
        length(Args, Arity), record_finding(unsupported_surface(mutation(Name/Arity))),
        resolve_named_args(body, Name, Args, Positional), Item =.. [Name | Positional]
     ; lit_dcg(`(`, S2, S3),
-      head_args(Args, Vars0, Vars, S3, S4), ws0(S4, S5), lit_dcg(`)`, S5, S),
-      resolve_named_args(body, Name, Args, Positional), Item =.. [Name | Positional]
+      head_args(Args, Vars0, Vars1, S3, S4), ws0(S4, S5),
+      lit_dcg(`)`, S5, S6),
+      resolve_named_args(body, Name, Args, Positional),
+      host_or_relation_item(Name, Positional, Item, Vars1, Vars, S6, S)
     ).
+
+host_or_relation_item(Name, Values, Item, Vars0, Vars, S0, S) :-
+    Vars = Vars0,
+    S = S0,
+    Item =.. [Name | Values].
 
 % ═══ expressions : add/sub over mul/div/mod over parenthesized/atomic
 % factors. Arithmetic (+,-,*,/,mod) is entirely EXT -- dl.langium's ArgTerm

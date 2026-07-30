@@ -22,6 +22,11 @@
             wrapper_lower_role/3,
             bind_definition/2,
             bind_executor/2,
+            host_executor/2,
+            host_executor_contract/2,
+            host_input_contract/3,
+            host_input_roles/3,
+            http_route/3,
             expression/5,
             expression_for_term/5,
             cli_command/3
@@ -182,6 +187,68 @@ bind_definition(watch,    [col(glob, text), col(path, text), col(digest, text)])
 bind_executor(interval, live_interval).
 bind_executor(watch,    live_watch).
 
+% `sh` remains the only host declaration surface. The emitted plan holds this
+% target-neutral key. `extract` is the existing extraction declaration name;
+% its input is fixed, while its output stays the declaration's JSONL projection.
+host_executor(extract, sprefa_extract) :- !.
+host_executor(_,       shell).
+
+host_executor_contract(sprefa_extract,
+                       [col(path, text), col(digest, text)]).
+host_executor_contract(shell, _).
+
+% Ordinary `sh` inputs can serve two existing internal host roles. Identity
+% inputs participate in both demand identity and witness digests and return on
+% response rows. Freshness inputs retain the former salt behavior: they extend
+% only the witness digest and stay on demand rows. The surface has one input
+% list; these exact, positional contracts are compiler metadata.
+host_input_contract(extract,
+                    [col(path, text), col(digest, text)],
+                    [identity, freshness]).
+host_input_contract(call_node,
+                    [col(path, text), col(digest, text)],
+                    [identity, freshness]).
+host_input_contract(call_ref,
+                    [col(path, text), col(digest, text)],
+                    [identity, freshness]).
+host_input_contract(df_node_at,
+                    [col(path, text), col(digest, text)],
+                    [identity, freshness]).
+host_input_contract(df_edge_at,
+                    [col(path, text), col(digest, text)],
+                    [identity, freshness]).
+host_input_contract(df_param_at,
+                    [col(path, text), col(digest, text)],
+                    [identity, freshness]).
+host_input_contract(df_arg_at,
+                    [col(path, text), col(digest, text)],
+                    [identity, freshness]).
+host_input_contract(call_node_at,
+                    [col(path, text), col(digest, text)],
+                    [identity, freshness]).
+host_input_contract(type_node_at,
+                    [col(path, text), col(digest, text)],
+                    [identity, freshness]).
+host_input_contract(sig_at,
+                    [col(path, text), col(digest, text)],
+                    [identity, freshness]).
+host_input_contract(answer,
+                    [col(name, text), col(bucket, int)],
+                    [identity, freshness]).
+host_input_contract(fetch,
+                    [col(ep, text), col(prev, text), col(bucket, int)],
+                    [identity, identity, freshness]).
+
+host_input_roles(Name, Inputs, Roles) :-
+    ( host_input_contract(Name, Inputs, ContractRoles)
+    -> Roles = ContractRoles
+    ; identity_roles(Inputs, Roles)
+    ).
+
+identity_roles([], []).
+identity_roles([_ | Inputs], [identity | Roles]) :-
+    identity_roles(Inputs, Roles).
+
 surface_for_term(Term, Functor/Arity, Axis, AnalyzeRole, LowerRole, Status) :-
     nonvar(Term),
     functor(Term, Functor, Arity),
@@ -230,3 +297,16 @@ cli_command(load,  '<file.dl6> [--port <port>]',
             'POST a compiled program to an already-running bop serve; exit 1 if nothing is listening.').
 cli_command(q,     '<rel> [--port <port>] [--json]',
             'read one rel''s current rows from a running bop serve.').
+cli_command(stats, '[--port <port>]',
+            'read process and SQLite storage statistics from a running bop serve.').
+cli_command(ticks, '[--port <port>]',
+            'stream served tick events from a running bop serve until interrupted.').
+
+% http_route(Method, Path, Summary). These are the server's public HTTP
+% inventory. The TS route handlers remain explicit; generated metadata feeds
+% CLI clients and detects inventory drift.
+http_route('POST', '/program', 'compile and load a DL6 program.').
+http_route('POST', '/arrivals', 'submit signed EDB arrivals.').
+http_route('GET',  '/idb/:rel', 'read one relation snapshot.').
+http_route('GET',  '/ticks', 'stream tick events as SSE.').
+http_route('GET',  '/stats', 'read process memory and SQLite storage statistics.').

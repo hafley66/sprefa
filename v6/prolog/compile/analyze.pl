@@ -727,7 +727,8 @@ column_source_args(_Rules, _Initial, Schedule, Ref, Args) :-
 %     body.pl:96-110). A single atom (N=1) is the degenerate case: no other
 %     atom to join, so lowering it is unchanged from marked_single except
 %     the trigger no longer needs the only/1 wrapper.
-%   sampled_conjunction(TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals) --
+%   sampled_conjunction(TriggerAtoms, SampleAtoms, PreAtoms, NegAtoms,
+%     GuardGoals) --
 %     the same positive conjunction plus any mix of latest(Atom) samples,
 %     not(Atom) negations, and comparison/bind guards. TriggerAtoms remain
 %     the only occurrence sources. Everything past them is read against the
@@ -739,8 +740,9 @@ column_source_args(_Rules, _Initial, Schedule, Ref, Args) :-
 % Everything else names the SPECIFIC blocking construct instead of a
 % blanket edge_body_shape reason, so the scoreboard's per-construct tally
 % stays precise as this widens further.
-%   departure_trigger(FinalizeAtom, OtherAtoms, SampleAtoms, NegAtoms,
-%     GuardGoals) -- the body binds exactly one rel atom with finalize/1.
+%   departure_trigger(FinalizeAtom, OtherAtoms, SampleAtoms, PreAtoms,
+%     NegAtoms, GuardGoals) -- the body binds exactly one rel atom with
+%     finalize/1.
 %     THAT is the only occurrence source, and it fires the tick AFTER the row
 %     left (engine.pl tick/7's DepartureCarry; update-arm verdict "departure =
 %     next-tick occurrence"). Every OTHER positive atom is a plain join
@@ -756,10 +758,10 @@ edge_trigger_shape(Body, unsupported(Reason)) :-
     edge_registered_refusal(Body, Goals, Reason), !.
 edge_trigger_shape(Body,
                    departure_trigger(FinalizeAtom, OtherAtoms, SampleAtoms,
-                                     NegAtoms, GuardGoals)) :-
+                                     PreAtoms, NegAtoms, GuardGoals)) :-
     conjunction_goals(Body, Goals),
     edge_departure_goals(Goals, FinalizeAtoms, OtherAtoms, SampleAtoms,
-                         NegAtoms, GuardGoals),
+                         PreAtoms, NegAtoms, GuardGoals),
     FinalizeAtoms \== [],
     !,
     ( FinalizeAtoms = [FinalizeAtom] -> true
@@ -769,12 +771,14 @@ edge_trigger_shape(Body, unmarked_conjunction(Atoms)) :-
     maplist(plain_positive_atom, Goals),
     !, Atoms = Goals.
 edge_trigger_shape(Body,
-                   sampled_conjunction(TriggerAtoms, SampleAtoms, NegAtoms,
-                                       GuardGoals)) :-
+                   sampled_conjunction(TriggerAtoms, SampleAtoms, PreAtoms,
+                                       NegAtoms, GuardGoals)) :-
     conjunction_goals(Body, Goals),
-    edge_sampled_goals(Goals, TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals),
+    edge_sampled_goals(Goals, TriggerAtoms, SampleAtoms, PreAtoms,
+                       NegAtoms, GuardGoals),
     TriggerAtoms \== [],
-    ( SampleAtoms \== [] ; NegAtoms \== [] ; GuardGoals \== [] ),
+    ( SampleAtoms \== [] ; PreAtoms \== [] ; NegAtoms \== []
+    ; GuardGoals \== [] ),
     !.
 edge_trigger_shape(Body, unsupported(edge_body_shape(Body))).
 
@@ -782,42 +786,53 @@ edge_trigger_shape(Body, unsupported(edge_body_shape(Body))).
 % is exactly "no registry row", and latest/1, not/1 and every comparison or
 % bind operator each carry one. The cuts say so; without them a failure
 % deeper in the list would backtrack into a classification that cannot hold.
-edge_sampled_goals([], [], [], [], []).
+edge_sampled_goals([], [], [], [], [], []).
 edge_sampled_goals([latest(Atom) | Rest], TriggerAtoms, [Atom | SampleAtoms],
-                   NegAtoms, GuardGoals) :-
+                   PreAtoms, NegAtoms, GuardGoals) :-
     plain_positive_rel_atom(Atom), !,
-    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals).
+    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, PreAtoms,
+                       NegAtoms, GuardGoals).
+edge_sampled_goals([pre(Atom) | Rest], TriggerAtoms, SampleAtoms,
+                   [Atom | PreAtoms], NegAtoms, GuardGoals) :-
+    plain_positive_rel_atom(Atom), !,
+    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, PreAtoms,
+                       NegAtoms, GuardGoals).
 edge_sampled_goals([not(Atom) | Rest], TriggerAtoms, SampleAtoms,
-                   [Atom | NegAtoms], GuardGoals) :-
+                   PreAtoms, [Atom | NegAtoms], GuardGoals) :-
     plain_positive_rel_atom(Atom), !,
-    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals).
-edge_sampled_goals([Goal | Rest], TriggerAtoms, SampleAtoms, NegAtoms,
-                   [Goal | GuardGoals]) :-
+    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, PreAtoms,
+                       NegAtoms, GuardGoals).
+edge_sampled_goals([Goal | Rest], TriggerAtoms, SampleAtoms, PreAtoms,
+                   NegAtoms, [Goal | GuardGoals]) :-
     ( guard_or_bind_goal(Goal) ; tick_goal(Goal, _) ), !,
-    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals).
-edge_sampled_goals([Atom | Rest], [Atom | TriggerAtoms], SampleAtoms, NegAtoms,
-                   GuardGoals) :-
+    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, PreAtoms,
+                       NegAtoms, GuardGoals).
+edge_sampled_goals([Atom | Rest], [Atom | TriggerAtoms], SampleAtoms, PreAtoms,
+                   NegAtoms, GuardGoals) :-
     plain_positive_atom(Atom),
-    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, NegAtoms, GuardGoals).
+    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, PreAtoms,
+                       NegAtoms, GuardGoals).
 
 % The same split with a fourth bucket in front: finalize/1 around a plain rel
 % atom. Disjoint by construction for the same reason edge_sampled_goals/5 is,
 % and it delegates the other three buckets to that predicate rather than
 % restating them.
-edge_departure_goals([], [], [], [], [], []).
+edge_departure_goals([], [], [], [], [], [], []).
 edge_departure_goals([finalize(Atom) | Rest], [Atom | FinalizeAtoms], OtherAtoms,
-                     SampleAtoms, NegAtoms, GuardGoals) :-
+                     SampleAtoms, PreAtoms, NegAtoms, GuardGoals) :-
     plain_positive_rel_atom(Atom), !,
-    edge_departure_goals(Rest, FinalizeAtoms, OtherAtoms, SampleAtoms, NegAtoms,
-                         GuardGoals).
+    edge_departure_goals(Rest, FinalizeAtoms, OtherAtoms, SampleAtoms,
+                         PreAtoms, NegAtoms, GuardGoals).
 edge_departure_goals([Goal | Rest], FinalizeAtoms, OtherAtoms, SampleAtoms,
-                     NegAtoms, GuardGoals) :-
-    edge_sampled_goals([Goal], GoalTriggers, GoalSamples, GoalNegs, GoalGuards),
+                     PreAtoms, NegAtoms, GuardGoals) :-
+    edge_sampled_goals([Goal], GoalTriggers, GoalSamples, GoalPres,
+                       GoalNegs, GoalGuards),
     !,
-    edge_departure_goals(Rest, FinalizeAtoms, RestOthers, RestSamples, RestNegs,
-                         RestGuards),
+    edge_departure_goals(Rest, FinalizeAtoms, RestOthers, RestSamples,
+                         RestPres, RestNegs, RestGuards),
     append(GoalTriggers, RestOthers, OtherAtoms),
     append(GoalSamples, RestSamples, SampleAtoms),
+    append(GoalPres, RestPres, PreAtoms),
     append(GoalNegs, RestNegs, NegAtoms),
     append(GoalGuards, RestGuards, GuardGoals).
 
@@ -840,8 +855,7 @@ edge_goal_refusal(latest(Atom), Body, 1, edge_body_with_latest(Body)) :-
 % finalize argument, and there is no row shape for those.
 edge_goal_refusal(finalize(Atom), Body, 2, edge_body_with_finalize(Body)) :-
     \+ plain_positive_rel_atom(Atom).
-% pre/1 is NOT a wider arm, which is why the edge-body arc widened everything
-% around it and left this one standing. engine.pl fires occurrences ONE AT A
+% pre/1 is an ordered arm. engine.pl fires occurrences ONE AT A
 % TIME and pre(Atom) reads the store as the writes so far THIS TICK left it
 % (engine.pl step 4), so two arrivals for one key fold 0 -> 1 -> 2. A sampled
 % base-table read -- the shape latest/1 got -- projects (clicks,1) twice and
@@ -849,10 +863,8 @@ edge_goal_refusal(finalize(Atom), Body, 2, edge_body_with_finalize(Body)) :-
 % "edge_body_needs_pre" section, run against
 % merge_family.pl:batched_increments_both_count). The fold is also CROSS-ARM,
 % so no per-arm recursive CTE expresses it either. It needs an ordered
-% occurrence loop in the runtime; refused by name until that exists.
-edge_goal_refusal(Goal, Body, 3, edge_body_needs_pre(Body)) :-
-    body_surface_for_term(Goal, _, sample, refs_of_arg(_, pos, sampled),
-                          wrapper(rel_atom, refuse(goal)), refused).
+% occurrence loop in the runtime. edge_sampled_goals/6 keeps pre atoms in a
+% distinct bucket so lower.pl can read the tick-local __pre relation.
 % now/1 is lowered around a plain variable; `now(7)` or `now(f(X))` would be a
 % MATCH against the tick, which engine.pl's solve(now(Tick), ctx(_,_,Tick))
 % permits by unification and this lowering has no shape for.
@@ -915,13 +927,13 @@ plain_positive_rel_atom(Goal) :-
 shape_trigger_refs(marked_single(Atom), [Ref]) :- rel_ref(Atom, Ref).
 shape_trigger_refs(unmarked_conjunction(Atoms), Refs) :-
     findall(Ref, ( member(Atom, Atoms), rel_ref(Atom, Ref) ), Refs0), sort(Refs0, Refs).
-shape_trigger_refs(sampled_conjunction(TriggerAtoms, _, _, _), Refs) :-
+shape_trigger_refs(sampled_conjunction(TriggerAtoms, _, _, _, _), Refs) :-
     findall(Ref, ( member(Atom, TriggerAtoms), rel_ref(Atom, Ref) ), Refs0),
     sort(Refs0, Refs).
 % One source, the finalize'd rel: the joined atoms are read, never fired from
 % (see the shape's own note -- an arrival occurrence on one of them leaves
 % finalize standing and body.pl's solve/2 fails it).
-shape_trigger_refs(departure_trigger(FinalizeAtom, _, _, _, _), [Ref]) :-
+shape_trigger_refs(departure_trigger(FinalizeAtom, _, _, _, _, _), [Ref]) :-
     rel_ref(FinalizeAtom, Ref).
 
 % ═══ edge head column-type consistency (PHASE C2 RULING 1 x RULING 2) ═══════
@@ -953,13 +965,14 @@ check_edge_head_column_types_for_rule(RelPlans, (Head <+ Body)) :-
     % NegAtoms deliberately excluded: compile_negative_atom_args/6 runs in
     % `check` mode and never binds a head variable, so a negated atom's
     % column types cannot be the source of a head column's value.
-    ; Shape = sampled_conjunction(TriggerAtoms, SampleAtoms, _, _)
-      -> append(TriggerAtoms, SampleAtoms, BodyAtoms)
+    ; Shape = sampled_conjunction(TriggerAtoms, SampleAtoms, PreAtoms, _, _)
+      -> append([TriggerAtoms, SampleAtoms, PreAtoms], BodyAtoms)
     % The departed row's own columns feed the head exactly as a trigger row's
     % do (the departure frontier carries the rel's declared columns), so the
     % finalize'd atom belongs in this list beside the joins and samples.
-    ; Shape = departure_trigger(FinalizeAtom, OtherAtoms, SampleAtoms, _, _)
-      -> append([[FinalizeAtom], OtherAtoms, SampleAtoms], BodyAtoms)
+    ; Shape = departure_trigger(FinalizeAtom, OtherAtoms, SampleAtoms,
+                                PreAtoms, _, _)
+      -> append([[FinalizeAtom], OtherAtoms, SampleAtoms, PreAtoms], BodyAtoms)
     ; BodyAtoms = []
     ),
     rel_ref(Head, HeadRef),
@@ -1180,6 +1193,13 @@ reserved_construct_name(_, Functor, Functor).
 % silently miscompile. key_last_write_wins and its siblings stay clean: each
 % rule there is triggered by a DIFFERENT ref (from_poll vs from_push), so no
 % single occurrence can ever satisfy both.
+check_no_edge_head_conflict_risk(_Decls, Rules) :-
+    member((_ <+ OrderedBody), Rules),
+    level_body_pre_ref(OrderedBody, _),
+    !,
+    % The emitted ordered occurrence loop validates keyed conflicts across
+    % every arm before applying that occurrence's writes.
+    true.
 check_no_edge_head_conflict_risk(Decls, Rules) :-
     include(rule_is_edge, Rules, EdgeRules),
     findall(HeadRef-TriggerRefs,

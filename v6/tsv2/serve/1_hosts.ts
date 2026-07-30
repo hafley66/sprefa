@@ -61,7 +61,7 @@ import type {
   ILiveEngine,
   IRow,
   IRowValue,
-  IShHostRunner,
+  IHostRunner,
   ISqlSeam,
   IWitnessCache,
 } from "../runtime/types.ts";
@@ -175,6 +175,19 @@ function runShellLine(host: string, commandLine: string, env: Record<string, str
     return () => child.kill();
   });
 }
+
+type HostExecutor = (host: string, commandLine: string, env: Record<string, string>) => Observable<string>;
+
+function runSprefaExtract(host: string, commandLine: string, env: Record<string, string>): Observable<string> {
+  return runShellLine(host, commandLine, env);
+}
+
+/** Executor registry. `sprefa_extract` retains the declaration's current
+ * subprocess command while isolating the V6.2 process boundary from DL6. */
+export const HostExecutors: ReadonlyMap<string, HostExecutor> = new Map([
+  ["shell", runShellLine],
+  ["sprefa_extract", runSprefaExtract],
+]);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Output decode. Three shapes, tried in order: a JSON array of objects, JSON
@@ -294,7 +307,7 @@ function decodeOutput(host: string, stdout: string, outputs: readonly IHostColum
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ShHostRunner.
+// HostRunner.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** One demand row, already split into the parts the run needs. */
@@ -304,7 +317,7 @@ type HostDemand = {
   readonly inputs: ReadonlyMap<string, IRowValue>;
 };
 
-export class ShHostRunner implements IShHostRunner {
+export class HostRunner implements IHostRunner {
   readonly effects$: Observable<IHostEffectDone>;
 
   private readonly claimed = new Set<string>();
@@ -314,20 +327,20 @@ export class ShHostRunner implements IShHostRunner {
     private readonly seam: ISqlSeam,
     plans: readonly IHostPlan[],
   ) {
-    const live = plans.filter((plan) => plan.execution === "live_sh");
-    const refused = plans.filter((plan) => plan.execution !== "live_sh");
+    const executable = plans.filter((plan) => HostExecutors.has(plan.execution));
+    const refused = plans.filter((plan) => !HostExecutors.has(plan.execution));
     this.effects$ =
-      live.length === 0 && refused.length === 0
+      executable.length === 0 && refused.length === 0
         ? EMPTY
         : merge(
             // An executor this runtime does not know is named, once, rather
             // than skipped in silence.
             from(refused).pipe(
               map((plan): IHostEffectDone => {
-                throw new Error(`unknown host executor '${plan.execution}' for sh host '${plan.name}'`);
+                throw new Error(`unknown host executor '${plan.execution}' for host '${plan.name}'`);
               }),
             ),
-            merge(this.bootDemand$(live), this.liveDemand$(live)).pipe(
+            merge(this.bootDemand$(executable), this.liveDemand$(executable)).pipe(
               filter((demand) => this.claimOnce(demand)),
               concatMap((demand) => this.runOnce(demand)),
             ),
@@ -399,9 +412,11 @@ export class ShHostRunner implements IShHostRunner {
     const startedAt = performance.now();
     const responseColumns = this.engine.program.relColumns[plan.responseRel] ?? [];
     return WitnessCache.claim(this.seam, plan.name, witnessDigest).pipe(
-      concatMap(() =>
-        runShellLine(plan.name, fillTemplate(plan.template, demand.inputs), envForInputs(demand.inputs)),
-      ),
+      concatMap(() => {
+        const executor = HostExecutors.get(plan.execution);
+        if (!executor) throw new Error(`unknown host executor '${plan.execution}' for host '${plan.name}'`);
+        return executor(plan.name, fillTemplate(plan.template, demand.inputs), envForInputs(demand.inputs));
+      }),
       concatMap((stdout) => {
         const outputRows = decodeOutput(plan.name, stdout, plan.outputs);
         // `ordinal` is the answer's own row index (1_host_expand.pl keys the

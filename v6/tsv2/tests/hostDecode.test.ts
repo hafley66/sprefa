@@ -23,7 +23,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { firstValueFrom } from "rxjs";
 
+import { HostExecutors } from "../serve/1_hosts.ts";
 import { logOfTicks, oracleLog, postArrivals, postProgram, request, scheduleFromTicks, startServed, tickEvents } from "./serveHelpers.ts";
 
 const JSON_PROJECTION_DL6 = fileURLToPath(new URL("../../dl/fixtures/served-json-projection.dl6", import.meta.url));
@@ -68,4 +70,12 @@ test("sh host: a JSON object stream projects by NAME, and a record missing a dec
   } finally {
     await served.stop();
   }
+});
+
+test("compiler-known extract host uses the registered process executor", async () => {
+  const executor = HostExecutors.get("sprefa_extract");
+  assert.ok(executor);
+  const stdout = await firstValueFrom(executor("extract", "printf '%s' extractor-row", {}));
+  assert.equal(stdout, "extractor-row");
+  assert.ok(HostExecutors.has("shell"));
 });

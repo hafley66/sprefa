@@ -1,0 +1,25 @@
+# extraction-clock-golden.dl6 -- deterministic served-clock receipt for the
+# released extractor. `watch` supplies the file digest; the digest input makes
+# each source version one extract witness; the host's JSONL site records become
+# ordinary rows before the rail derives findings.
+
+bind watch(glob: text, path: text, digest: text).
+
+sh extract(path: text, digest: text) -> (callee: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+
+rel file(path: text, digest: text).
+file(path, digest) <- watch('**/*.ts', path, digest).
+
+rel call_site(path: text, digest: text, callee: text).
+call_site(path, digest, callee) <-
+  file(path, digest), extract(path, digest, callee).
+
+# `finding` retains every extracted callee. The two-call source used by the
+# lab therefore proves that one host answer is a multi-row EDB batch, rather
+# than a single selected row from the extractor's JSONL stream.
+rel finding(path: text, callee: text).
+finding(path, callee) <- call_site(path, digest, callee).
+
+rel banned_call(path: text, callee: text).
+banned_call(path, callee) <- finding(path, callee), callee == 'eval'.

@@ -7,7 +7,7 @@
 #
 #   watch(glob, path, digest)          the world pushes a changed file
 #     -> file(path, digest)            the program's own file set
-#     -> ? extract(...) @ salt(digest) demand, content-addressed on the digest
+#     -> extract(path, digest, ...) demand, content-addressed on the digest
 #     -> call_site(...)                the extractor's rows, as ordinary EDB
 #     -> banned_call(...)              the rail's finding
 #
@@ -48,7 +48,7 @@ bind watch(glob: text, path: text, digest: text).
 # interleaves `record=node` lines (kind/name, no callee) with `record=site`
 # lines (callee), and a line that does not carry every declared column
 # contributes no row. One host declaration is one record shape.
-sh extract(path: text) -> (callee: text) =
+sh extract(path: text, digest: text) -> (callee: text) =
   `"$DL_EXTRACT_BIN" --family call {path}`.
 
 # ── the program's own file set ──────────────────────────────────────────────
@@ -56,14 +56,12 @@ rel file(path: text, digest: text).
 file(path, digest) <- watch('**/*.ts', path, digest).
 
 # ── extraction demand, content-addressed ────────────────────────────────────
-# The digest is a SALT, not an input: it never reaches the command line (the
-# extractor reads the file itself), but it IS the cache identity, so a new
-# content digest mints a fresh witness and re-runs, while an unchanged digest
-# is served from `__host_witness` forever. That is ruling salt_minting =
-# content_addressed, spelled.
+# The digest is a host input that the command template ignores. It participates
+# in the cache identity, so new content mints a fresh witness while unchanged
+# content is served from `__host_witness`.
 rel call_site(path: text, digest: text, callee: text).
 call_site(path, digest, callee) <-
-  file(path, digest), ? extract(path, callee) @ salt(digest: digest).
+  file(path, digest), extract(path, digest, callee).
 
 # ── the rail ────────────────────────────────────────────────────────────────
 rel banned_call(path: text, callee: text).

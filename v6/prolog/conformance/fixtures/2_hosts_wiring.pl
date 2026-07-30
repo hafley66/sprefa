@@ -38,7 +38,7 @@ fixture(ghcacher_host_program_term,
       col_type(etag/2, tag, text),
       bind_decl(interval, [col(period, int), col(bucket, int)]),
       sh_decl(fetch,
-              [col(ep, text), col(prev, text)],
+              [col(ep, text), col(prev, text), col(bucket, int)],
               [col(status, int), col(tag, text), col(body, json)],
               template("fetch {ep} with $prev"))
     ],

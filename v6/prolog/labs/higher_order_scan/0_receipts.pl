@@ -273,7 +273,7 @@ current_surface_receipt :-
     prepare_program(HostProgram, ExpandedHostProgram, HostPlans, _, _),
     ExpandedHostProgram = prog(ExpandedDecls, _),
     member(host_plan(fetch, _, _, _, demand_ref('__host_demand_fetch'),
-                     response_ref('__host_response_fetch')), HostPlans),
+                     response_ref('__host_response_fetch'), _), HostPlans),
     member(keyed('__host_response_fetch'/_, _), ExpandedDecls),
     string_codes("rel f(a: int) -> (b: int).", FunctionRelCodes),
     catch(parse_dl(FunctionRelCodes, _, _, _), dl_parse_error(_, _), Refused = true),
