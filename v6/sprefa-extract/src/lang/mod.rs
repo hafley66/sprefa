@@ -14,7 +14,10 @@ pub mod prolog;
 pub mod rust;
 pub mod ts;
 
-pub use astgrep::{AstGrepParser, AstgrepSource, CstProjector, SgRoot};
+pub use astgrep::{
+    query_patterns, AstCaptureFact, AstGrepParser, AstPatternQuery, AstgrepSource, CstProjector,
+    SgRoot,
+};
 pub use go::GoSource;
 pub use kotlin::KotlinSource;
 pub use prolog::PrologSource;

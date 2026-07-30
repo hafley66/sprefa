@@ -1,0 +1,9 @@
+{"record":"capture","query":"create","capture":"BUILDER","text":"builder","start":320,"end":327,"match_start":271,"match_end":475}
+{"record":"capture","query":"generic","capture":"ENDPOINT","text":"getUser","start":339,"end":346,"match_start":339,"match_end":410}
+{"record":"capture","query":"generic","capture":"KIND","text":"query","start":356,"end":361,"match_start":339,"match_end":410}
+{"record":"capture","query":"generic","capture":"ENDPOINT","text":"createOrder","start":560,"end":571,"match_start":560,"match_end":633}
+{"record":"capture","query":"generic","capture":"KIND","text":"mutation","start":581,"end":589,"match_start":560,"match_end":633}
+{"record":"capture","query":"inject","capture":"API","text":"api","start":505,"end":508,"match_start":505,"match_end":643}
+{"record":"capture","query":"inject","capture":"BUILDER","text":"builder","start":541,"end":548,"match_start":505,"match_end":643}
+{"record":"capture","query":"plain","capture":"ENDPOINT","text":"health","start":416,"end":422,"match_start":416,"match_end":465}
+{"record":"capture","query":"plain","capture":"KIND","text":"query","start":432,"end":437,"match_start":416,"match_end":465}

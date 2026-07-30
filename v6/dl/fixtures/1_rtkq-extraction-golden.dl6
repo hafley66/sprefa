@@ -1,0 +1,88 @@
+# RTK Query extraction golden. The extractor parses TypeScript once and runs
+# four generic ast-grep patterns in that process:
+#
+#   create   nested createApi endpoint-arrow context with variadic object fields
+#   inject   member-call injectEndpoints context with variadic object fields
+#   generic  contextual object-pair selector for builder calls with type args
+#   plain    contextual object-pair selector for builder calls without type args
+#
+# Every extractor answer is one flat capture row. Query identity, capture text,
+# capture span, and whole-match span are top-level columns. Framework meaning
+# starts below as ordinary relations: two scope rules form a union, two endpoint
+# shape rules form a union, and containment joins endpoint properties to API
+# scopes. No parser or RTKQ special case exists in the DL compiler/runtime.
+
+bind watch(glob: text, path: text, digest: text).
+
+sh extract(
+  path: text,
+  digest: text
+) -> (
+  record: text,
+  query: text,
+  capture: text,
+  text: text,
+  start: int,
+  end: int,
+  match_start: int,
+  match_end: int
+) =
+  `"$DL_EXTRACT_BIN" --ast-pattern 'create=createApi({ $$$BEFORE, endpoints: ($BUILDER) => ($BODY), $$$AFTER })' --ast-capture create=BUILDER --ast-pattern 'inject=$API.injectEndpoints({ $$$BEFORE, endpoints: ($BUILDER) => ($BODY), $$$AFTER })' --ast-capture inject=API --ast-capture inject=BUILDER --ast-pattern 'generic=const endpoints = { $ENDPOINT: $BUILDER.$KIND<$RESULT, $ARG>($CONFIG) }' --ast-selector generic=pair --ast-capture generic=ENDPOINT --ast-capture generic=KIND --ast-pattern 'plain=const endpoints = { $ENDPOINT: $BUILDER.$KIND($CONFIG) }' --ast-selector plain=pair --ast-capture plain=ENDPOINT --ast-capture plain=KIND {path}`.
+
+rel file(path: text, digest: text).
+file(path, digest) <- watch('**/*.ts', path, digest).
+
+rel ast_capture(
+  path: text,
+  query: text,
+  capture: text,
+  text: text,
+  start: int,
+  end: int,
+  match_start: int,
+  match_end: int
+).
+ast_capture(path, query, capture, text, start, end, match_start, match_end) <-
+  file(path, digest),
+  extract(path, digest, 'capture', query, capture, text, start, end, match_start, match_end).
+
+# createApi and injectEndpoints are separate syntax shapes whose results share
+# one relation. Only their whole-match spans are retained.
+rel api_scope(path: text, start: int, end: int).
+api_scope(path, start, end) <-
+  ast_capture(path, 'create', 'BUILDER', _, _, _, start, end).
+api_scope(path, start, end) <-
+  ast_capture(path, 'inject', 'BUILDER', _, _, _, start, end).
+
+# Generic and plain endpoint declarations are separate ast-grep patterns whose
+# captures join by the exact whole-match span.
+rel endpoint_shape(
+  path: text,
+  name: text,
+  kind: text,
+  start: int,
+  end: int,
+  match_start: int,
+  match_end: int
+).
+endpoint_shape(path, name, kind, start, end, match_start, match_end) <-
+  ast_capture(path, 'generic', 'ENDPOINT', name, start, end, match_start, match_end),
+  ast_capture(path, 'generic', 'KIND', kind, _, _, match_start, match_end).
+endpoint_shape(path, name, kind, start, end, match_start, match_end) <-
+  ast_capture(path, 'plain', 'ENDPOINT', name, start, end, match_start, match_end),
+  ast_capture(path, 'plain', 'KIND', kind, _, _, match_start, match_end).
+
+rel api_endpoint(
+  path: text,
+  scope_start: int,
+  scope_end: int,
+  name: text,
+  kind: text,
+  start: int,
+  end: int
+).
+api_endpoint(path, scope_start, scope_end, name, kind, start, end) <-
+  api_scope(path, scope_start, scope_end),
+  endpoint_shape(path, name, kind, start, end, match_start, match_end),
+  match_start >= scope_start,
+  match_end =< scope_end.

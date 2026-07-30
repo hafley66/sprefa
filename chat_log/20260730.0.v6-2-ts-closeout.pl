@@ -242,6 +242,20 @@ verification(extraction_host_batching_lab,
                     flow(current_per_path(7), batched_per_path(1)),
                     syntax_changes(0),
                     type_models_added(0))).
+verification(rtkq_extraction_golden,
+             passed(rust_focused(2),
+                    patterns_per_parse(4),
+                    ticks(5),
+                    demand_add(2),
+                    demand_del(2),
+                    extractor_processes(2),
+                    response_rows_initial(9),
+                    response_rows_edit(6),
+                    endpoints_initial(3),
+                    endpoints_edit(2),
+                    final_relations_empty(4))).
+extractor_addition(ast_pattern_query,
+                   'typed Rust AstPatternQuery and flat AstCaptureFact rows; CLI pattern/selector/capture inputs; no TypeScript parsing or DL type/syntax addition').
 host_overuse(grafana_v6_crawl,
              'green correctness gate exposes 40.26 files per second under the per-witness extraction subprocess boundary; batching or the V7 direct Rust link remains required').
 

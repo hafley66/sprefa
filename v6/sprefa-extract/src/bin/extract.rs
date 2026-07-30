@@ -11,9 +11,10 @@ use std::time::Instant;
 use clap::Parser;
 
 use sprefa_extract::{
-    build_def_index, dispatch, flatten, source_for, BlobHash, CallF, ExtractOutput, FileSet,
-    FlatFact, IndexBag, ManifestMap, ProjectCx, ProjectDigest, ProjectEdge, Resolve, RustSource,
-    Source, TsSource, GoSource, KotlinSource, PrologSource, FamilyMask,
+    build_def_index, dispatch, flatten, query_patterns, source_for, AstPatternQuery, BlobHash,
+    CallF, ExtractOutput, FamilyMask, FileSet, FlatFact, GoSource, IndexBag, KotlinSource,
+    ManifestMap, ProjectCx, ProjectDigest, ProjectEdge, PrologSource, Resolve, RustSource, Source,
+    TsSource,
 };
 
 /// Self-describing enough that `extract --help` + `extract --schema` are a
@@ -26,6 +27,14 @@ PROJECT MODE
   `--resolve PATH...` extracts every supplied file, builds one definition index,
   then emits resolved caller-to-callee edges as JSONL. It requires two or more
   source paths when resolving across files.
+
+PATTERN MODE
+  Repeat `--ast-pattern ID=PATTERN` to run several ast-grep patterns over one
+  parsed source root. `--ast-selector ID=KIND` makes one pattern contextual and
+  selects that syntax-node kind from its context. Repeat `--ast-capture ID=NAME`
+  for each single-node metavariable to emit. Output rows are flat and carry
+  capture + whole-match half-open byte spans. Pattern text is a CLI contract
+  input, never DL syntax.
 
 OUTPUT
   Each line is one fact tagged by `record` (run `extract --schema` for every
@@ -82,8 +91,40 @@ struct Cli {
     bench: bool,
 
     /// Resolve caller-to-callee edges across all supplied paths.
-    #[arg(long, conflicts_with = "bench")]
+    #[arg(
+        long,
+        conflicts_with_all = ["bench", "ast_pattern", "ast_selector", "ast_capture"]
+    )]
     resolve: bool,
+
+    /// Ast-grep pattern in ID=PATTERN form. Repeat to batch patterns over one parse.
+    #[arg(
+        long = "ast-pattern",
+        value_name = "ID=PATTERN",
+        action = clap::ArgAction::Append,
+        conflicts_with_all = ["family", "bench", "resolve"]
+    )]
+    ast_pattern: Vec<String>,
+
+    /// Contextual pattern selector in ID=KIND form. Repeat at most once per query.
+    #[arg(
+        long = "ast-selector",
+        value_name = "ID=KIND",
+        action = clap::ArgAction::Append,
+        requires = "ast_pattern",
+        conflicts_with_all = ["family", "bench", "resolve"]
+    )]
+    ast_selector: Vec<String>,
+
+    /// Single-node metavariable to emit in ID=NAME form. Repeat per query.
+    #[arg(
+        long = "ast-capture",
+        value_name = "ID=NAME",
+        action = clap::ArgAction::Append,
+        requires = "ast_pattern",
+        conflicts_with_all = ["family", "bench", "resolve"]
+    )]
+    ast_capture: Vec<String>,
 
     /// Print the JSONL output contract to stdout and exit (no extraction).
     #[arg(long)]
@@ -110,6 +151,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = &cli.paths[0];
     let content = std::fs::read(path)?;
     let path_str = path.to_string_lossy();
+    if !cli.ast_pattern.is_empty() {
+        let queries = parse_ast_queries(&cli.ast_pattern, &cli.ast_selector, &cli.ast_capture)?;
+        stream_ast_queries(&path_str, &content, &queries)?;
+        return Ok(());
+    }
     let mask = cli
         .family
         .as_deref()
@@ -119,6 +165,81 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         bench(&path_str, &content, mask)?;
     } else {
         stream(&path_str, &content, mask)?;
+    }
+    Ok(())
+}
+
+fn split_assignment<'a>(flag: &str, value: &'a str) -> Result<(&'a str, &'a str), String> {
+    let Some((id, body)) = value.split_once('=') else {
+        return Err(format!("{flag} expects ID=VALUE, got '{value}'"));
+    };
+    if id.is_empty() || body.is_empty() {
+        return Err(format!(
+            "{flag} expects non-empty ID and VALUE, got '{value}'"
+        ));
+    }
+    Ok((id, body))
+}
+
+fn parse_ast_queries(
+    patterns: &[String],
+    selectors: &[String],
+    captures: &[String],
+) -> Result<Vec<AstPatternQuery>, String> {
+    let mut queries = Vec::with_capacity(patterns.len());
+    for spec in patterns {
+        let (id, pattern) = split_assignment("--ast-pattern", spec)?;
+        if queries.iter().any(|query: &AstPatternQuery| query.id == id) {
+            return Err(format!("duplicate --ast-pattern id '{id}'"));
+        }
+        queries.push(AstPatternQuery {
+            id: id.to_string(),
+            pattern: pattern.to_string(),
+            selector: None,
+            captures: Vec::new(),
+        });
+    }
+    for spec in selectors {
+        let (id, selector) = split_assignment("--ast-selector", spec)?;
+        let Some(query) = queries.iter_mut().find(|query| query.id == id) else {
+            return Err(format!(
+                "--ast-selector id '{id}' has no matching --ast-pattern"
+            ));
+        };
+        if query.selector.is_some() {
+            return Err(format!("duplicate --ast-selector id '{id}'"));
+        }
+        query.selector = Some(selector.to_string());
+    }
+    for spec in captures {
+        let (id, capture) = split_assignment("--ast-capture", spec)?;
+        let Some(query) = queries.iter_mut().find(|query| query.id == id) else {
+            return Err(format!(
+                "--ast-capture id '{id}' has no matching --ast-pattern"
+            ));
+        };
+        if !query.captures.iter().any(|existing| existing == capture) {
+            query.captures.push(capture.to_string());
+        }
+    }
+    for query in &queries {
+        if query.captures.is_empty() {
+            return Err(format!(
+                "--ast-pattern id '{}' has no --ast-capture",
+                query.id
+            ));
+        }
+    }
+    Ok(queries)
+}
+
+fn stream_ast_queries(
+    path: &str,
+    content: &[u8],
+    queries: &[AstPatternQuery],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for fact in query_patterns(path, content, queries)? {
+        println!("{}", serde_json::to_string(&fact)?);
     }
     Ok(())
 }
@@ -164,7 +285,9 @@ fn resolve_project(paths: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> 
     let mut lines = Vec::new();
     for input in &inputs {
         for edge in resolve_call_edges(&input.path, &input.output, &cx) {
-            let Some(callee) = inputs.iter().find(|candidate| candidate.blob == edge.dst_blob)
+            let Some(callee) = inputs
+                .iter()
+                .find(|candidate| candidate.blob == edge.dst_blob)
             else {
                 continue;
             };
@@ -276,6 +399,7 @@ RECORD SHAPES
   record=arg    family=df                  call={start,end}   pos=<i64>  arg={start,end}
   record=site   family=call                span={start,end}   callee=<name>  callee_path=<string|null>
   record=const  family=type                owner={start,end}  field=<string|null>  text=<string>  kind=<lit|template>
+  record=capture  query=<id>  capture=<name>  text=<string>  start=<u32>  end=<u32>  match_start=<u32>  match_end=<u32>
   record=resolved_edge  caller_path=<string>  caller_name=<string|null>  callee_path=<string>  callee_name=<string|null>  caller_site_start=<u32>  caller_site_end=<u32>  kind=<slug>
 
 FIELDS
@@ -294,6 +418,10 @@ FIELDS
   callee_path  the full qualified path when >1 segment (filled by resolution; else null).
   field        dotted path into an object const, or an enum member (else null).
   text         the resolved string value of a const.
+  query        caller-supplied identity for one batched ast-grep pattern.
+  capture      one requested single-node ast-grep metavariable.
+  start/end    capture's half-open byte span in pattern mode.
+  match_start/match_end  whole pattern match's half-open byte span.
   caller_site_start  start byte of the call site that produced a resolved edge.
   caller_site_end    end byte of the call site that produced a resolved edge.
 

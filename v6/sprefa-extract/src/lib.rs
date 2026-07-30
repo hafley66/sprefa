@@ -30,12 +30,12 @@ pub mod wire;
 pub use dispatch::dispatch;
 pub use family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfArg, DfEdgeKind, DfF, DfFAux,
-    DfNodeKind, DfParam,
-    Family, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind,
-    TypeEntityKind, TypeF, TypeFAux, TypeSig,
+    DfNodeKind, DfParam, Family, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate,
+    TypeEdgeKind, TypeEntityKind, TypeF, TypeFAux, TypeSig,
 };
 pub use lang::{
-    source_for, sources, AstgrepSource, GoSource, KotlinSource, PrologSource, RustSource, TsSource,
+    query_patterns, source_for, sources, AstCaptureFact, AstPatternQuery, AstgrepSource, GoSource,
+    KotlinSource, PrologSource, RustSource, TsSource,
 };
 pub use rows::{Edge, FamilyBundle, Node};
 pub use scip::{
