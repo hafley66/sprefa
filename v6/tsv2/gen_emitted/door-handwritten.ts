@@ -32,6 +32,7 @@ import type {
   IIncrementalRelationPlan,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -56,9 +57,26 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => {
-    if (typeof value === "boolean") return value ? 1n : 0n;
-    return typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value;
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+}
+
+function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+  return arrivals.map((arrival): IArrivalRow => {
+    const types = relColumnTypes[arrival.rel];
+    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const row = arrival.row.map((value, index): IRowValue => {
+      const type = types[index];
+      if (type === "bool") {
+        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);
+        return value;
+      }
+      if (type === "float") {
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
+        return Object.is(value, -0) ? 0 : value;
+      }
+      return value;
+    });
+    return { ...arrival, row };
   });
 }
 
@@ -110,6 +128,14 @@ const relColumns: Record<string, readonly string[]> = {
   result_tag: ["id", "tag"],
 };
 
+const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  current: ["int", "text"],
+  event: ["int", "text"],
+  result_error: ["int", "text"],
+  result_ok: ["int", "text"],
+  result_tag: ["int", "text"],
+};
+
 const arrivalTargets: readonly string[] = ["event", "result_error", "result_ok"];
 
 const boot: readonly IBootStatement[] = [
@@ -130,11 +156,11 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    current: selectRows(seam, `SELECT "id", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind" FROM "current"`, relColumns.current!),
-    event: selectRows(seam, `SELECT "id", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind" FROM "event"`, relColumns.event!),
-    result_error: selectRows(seam, `SELECT "id", CASE WHEN json_valid("message") AND json_type("message") = 'object' THEN json_extract("message", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("message", '$.args')) || ')' ELSE "message" END AS "message" FROM "result_error"`, relColumns.result_error!),
-    result_ok: selectRows(seam, `SELECT "id", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value" FROM "result_ok"`, relColumns.result_ok!),
-    result_tag: selectRows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag" FROM "result_tag"`, relColumns.result_tag!),
+    current: selectRows(seam, `SELECT "id", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind" FROM "current"`, relColumns.current!, relColumnTypes.current!),
+    event: selectRows(seam, `SELECT "id", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind" FROM "event"`, relColumns.event!, relColumnTypes.event!),
+    result_error: selectRows(seam, `SELECT "id", CASE WHEN json_valid("message") AND json_type("message") = 'object' THEN json_extract("message", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("message", '$.args')) || ')' ELSE "message" END AS "message" FROM "result_error"`, relColumns.result_error!, relColumnTypes.result_error!),
+    result_ok: selectRows(seam, `SELECT "id", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value" FROM "result_ok"`, relColumns.result_ok!, relColumnTypes.result_ok!),
+    result_tag: selectRows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag" FROM "result_tag"`, relColumns.result_tag!, relColumnTypes.result_tag!),
   });
 }
 
@@ -148,8 +174,8 @@ const finalSelect: Record<string, string> = {
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   event: { kind: "log", addSql: `INSERT INTO "event" ("id", "kind") VALUES (?, ?)`, delSql: null },
-  result_error: { kind: "set", addSql: `INSERT OR REPLACE INTO "result_error" ("id", "message") VALUES (?, ?)`, delSql: `DELETE FROM "result_error" WHERE "id" = ? AND "message" = ?` },
-  result_ok: { kind: "set", addSql: `INSERT OR REPLACE INTO "result_ok" ("id", "value") VALUES (?, ?)`, delSql: `DELETE FROM "result_ok" WHERE "id" = ? AND "value" = ?` },
+  result_error: { kind: "set", addSql: `INSERT INTO "result_error" ("id", "message") VALUES (?, ?) ON CONFLICT ("message") DO UPDATE SET "id" = excluded."id"`, delSql: `DELETE FROM "result_error" WHERE "id" = ? AND "message" = ?` },
+  result_ok: { kind: "set", addSql: `INSERT INTO "result_ok" ("id", "value") VALUES (?, ?) ON CONFLICT ("value") DO UPDATE SET "id" = excluded."id"`, delSql: `DELETE FROM "result_ok" WHERE "id" = ? AND "value" = ?` },
 };
 
 function arrivalStatement(arrival: IArrivalRow): SqlStatement {
@@ -175,23 +201,30 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "current", kind: "set", tableName: "current", deltaTableName: "__delta_current", frontierTableName: "__frontier_current", nextFrontierTableName: "__next_frontier_current", columns: ["id", "kind"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "id", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_current" WHERE "_sign" IN (-1, 1) GROUP BY "id", "kind", "_sign"` },
-  { rel: "event", kind: "log", tableName: "event", deltaTableName: "__delta_event", frontierTableName: "__frontier_event", nextFrontierTableName: "__next_frontier_event", columns: ["id", "kind"], keyIndices: [], arrivalAddSql: `INSERT INTO "event" ("id", "kind") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "kind"`, arrivalDelSql: null, boundarySql: `SELECT "id", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_event" WHERE "_sign" IN (-1, 1) GROUP BY "id", "kind", "_sign"` },
-  { rel: "result_error", kind: "set", tableName: "result_error", deltaTableName: "__delta_result_error", frontierTableName: "__frontier_result_error", nextFrontierTableName: "__next_frontier_result_error", columns: ["id", "message"], keyIndices: [1], arrivalAddSql: `INSERT OR REPLACE INTO "result_error" ("id", "message") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "message"`, arrivalDelSql: `DELETE FROM "result_error" WHERE ("id", "message") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "message"`, boundarySql: `SELECT "id", CASE WHEN json_valid("message") AND json_type("message") = 'object' THEN json_extract("message", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("message", '$.args')) || ')' ELSE "message" END AS "message", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_result_error" WHERE "_sign" IN (-1, 1) GROUP BY "id", "message", "_sign"` },
-  { rel: "result_ok", kind: "set", tableName: "result_ok", deltaTableName: "__delta_result_ok", frontierTableName: "__frontier_result_ok", nextFrontierTableName: "__next_frontier_result_ok", columns: ["id", "value"], keyIndices: [1], arrivalAddSql: `INSERT OR REPLACE INTO "result_ok" ("id", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "value"`, arrivalDelSql: `DELETE FROM "result_ok" WHERE ("id", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "value"`, boundarySql: `SELECT "id", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_result_ok" WHERE "_sign" IN (-1, 1) GROUP BY "id", "value", "_sign"` },
-  { rel: "result_tag", kind: "set", tableName: "result_tag", deltaTableName: "__delta_result_tag", frontierTableName: "__frontier_result_tag", nextFrontierTableName: "__next_frontier_result_tag", columns: ["id", "tag"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_result_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"` },
+  { rel: "current", kind: "set", tableName: "current", deltaTableName: "__delta_current", frontierTableName: "__frontier_current", nextFrontierTableName: "__next_frontier_current", columns: ["id", "kind"], columnTypes: ["int", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "id", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_current" WHERE "_sign" IN (-1, 1) GROUP BY "id", "kind", "_sign"` },
+  { rel: "event", kind: "log", tableName: "event", deltaTableName: "__delta_event", frontierTableName: "__frontier_event", nextFrontierTableName: "__next_frontier_event", columns: ["id", "kind"], columnTypes: ["int", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "event" ("id", "kind") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "kind"`, arrivalDelSql: null, boundarySql: `SELECT "id", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' THEN json_extract("kind", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("kind", '$.args')) || ')' ELSE "kind" END AS "kind", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_event" WHERE "_sign" IN (-1, 1) GROUP BY "id", "kind", "_sign"` },
+  { rel: "result_error", kind: "set", tableName: "result_error", deltaTableName: "__delta_result_error", frontierTableName: "__frontier_result_error", nextFrontierTableName: "__next_frontier_result_error", columns: ["id", "message"], columnTypes: ["int", "text"], keyIndices: [1], arrivalAddSql: `INSERT INTO "result_error" ("id", "message") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("message") DO UPDATE SET "id" = excluded."id" RETURNING "id", "message"`, arrivalDelSql: `DELETE FROM "result_error" WHERE ("id", "message") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "message"`, boundarySql: `SELECT "id", CASE WHEN json_valid("message") AND json_type("message") = 'object' THEN json_extract("message", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("message", '$.args')) || ')' ELSE "message" END AS "message", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_result_error" WHERE "_sign" IN (-1, 1) GROUP BY "id", "message", "_sign"` },
+  { rel: "result_ok", kind: "set", tableName: "result_ok", deltaTableName: "__delta_result_ok", frontierTableName: "__frontier_result_ok", nextFrontierTableName: "__next_frontier_result_ok", columns: ["id", "value"], columnTypes: ["int", "text"], keyIndices: [1], arrivalAddSql: `INSERT INTO "result_ok" ("id", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("value") DO UPDATE SET "id" = excluded."id" RETURNING "id", "value"`, arrivalDelSql: `DELETE FROM "result_ok" WHERE ("id", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "value"`, boundarySql: `SELECT "id", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_result_ok" WHERE "_sign" IN (-1, 1) GROUP BY "id", "value", "_sign"` },
+  { rel: "result_tag", kind: "set", tableName: "result_tag", deltaTableName: "__delta_result_tag", frontierTableName: "__frontier_result_tag", nextFrontierTableName: "__next_frontier_result_tag", columns: ["id", "tag"], columnTypes: ["int", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_result_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "current", headDeltaTableName: "__delta_current", headColumns: ["id", "kind"], insertSql: `INSERT OR IGNORE INTO "current" ("id", "kind") SELECT DISTINCT d0."id", d0."kind" FROM "__frontier_event" d0 WHERE d0."_phase" >= 0 RETURNING "id", "kind"`, selectSql: `SELECT "id", "kind" FROM "current"`, recomputeSql: `DELETE FROM "current";\nINSERT OR IGNORE INTO "current" ("id", "kind") SELECT b0."id", b0."kind" FROM "event" b0`, supportSql: [`DELETE FROM "__support_next_current"`, `INSERT INTO "__support_next_current" ("id", "kind", "__support_count") SELECT "id", "kind", sum("__support_count") FROM (SELECT b0."id" AS "id", b0."kind" AS "kind", count(*) AS "__support_count" FROM "event" b0 GROUP BY b0."id", b0."kind") GROUP BY "id", "kind"`, `UPDATE "current" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_current" n WHERE n."id" = h."id" AND n."kind" = h."kind"), 0))`, `DELETE FROM "current" WHERE "__support_count" <= 0 RETURNING "id", "kind"`, `INSERT INTO "current" ("id", "kind", "__support_count") SELECT "id", "kind", n."__support_count" FROM "__support_next_current" n WHERE NOT EXISTS (SELECT 1 FROM "current" h WHERE n."id" = h."id" AND n."kind" = h."kind") RETURNING "id", "kind"`], aggregateSql: null },
-  { headRel: "result_tag", headDeltaTableName: "__delta_result_tag", headColumns: ["id", "tag"], insertSql: `INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT DISTINCT d0."id", 'ok' FROM "__frontier_result_ok" d0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT d0."id", 'error' FROM "__frontier_result_error" d0 WHERE d0."_phase" >= 0 RETURNING "id", "tag"`, selectSql: `SELECT "id", "tag" FROM "result_tag"`, recomputeSql: `DELETE FROM "result_tag";\nINSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'ok' FROM "result_ok" b0;\nINSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'error' FROM "result_error" b0`, supportSql: [`DELETE FROM "__support_next_result_tag"`, `INSERT INTO "__support_next_result_tag" ("id", "tag", "__support_count") SELECT "id", "tag", sum("__support_count") FROM (SELECT b0."id" AS "id", 'ok' AS "tag", count(*) AS "__support_count" FROM "result_ok" b0 GROUP BY b0."id", 'ok' UNION ALL SELECT b0."id" AS "id", 'error' AS "tag", count(*) AS "__support_count" FROM "result_error" b0 GROUP BY b0."id", 'error') GROUP BY "id", "tag"`, `UPDATE "result_tag" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_result_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0))`, `DELETE FROM "result_tag" WHERE "__support_count" <= 0 RETURNING "id", "tag"`, `INSERT INTO "result_tag" ("id", "tag", "__support_count") SELECT "id", "tag", n."__support_count" FROM "__support_next_result_tag" n WHERE NOT EXISTS (SELECT 1 FROM "result_tag" h WHERE n."id" = h."id" AND n."tag" = h."tag") RETURNING "id", "tag"`], aggregateSql: null },
+  { headRel: "current", headDeltaTableName: "__delta_current", headColumns: ["id", "kind"], insertSql: `INSERT OR IGNORE INTO "current" ("id", "kind") SELECT DISTINCT d0."id", d0."kind" FROM "__frontier_event" d0 WHERE d0."_phase" >= 0 RETURNING "id", "kind"`, selectSql: `SELECT "id", "kind" FROM "current"`, recomputeSql: `DELETE FROM "current";
+INSERT OR IGNORE INTO "current" ("id", "kind") SELECT b0."id", b0."kind" FROM "event" b0`, supportSql: [`DELETE FROM "__support_next_current"`, `INSERT INTO "__support_next_current" ("id", "kind", "__support_count") SELECT "id", "kind", sum("__support_count") FROM (SELECT b0."id" AS "id", b0."kind" AS "kind", count(*) AS "__support_count" FROM "event" b0 GROUP BY b0."id", b0."kind") GROUP BY "id", "kind"`, `UPDATE "current" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_current" n WHERE n."id" = h."id" AND n."kind" = h."kind"), 0))`, `DELETE FROM "current" WHERE "__support_count" <= 0 RETURNING "id", "kind"`, `INSERT INTO "current" ("id", "kind", "__support_count") SELECT "id", "kind", n."__support_count" FROM "__support_next_current" n WHERE NOT EXISTS (SELECT 1 FROM "current" h WHERE n."id" = h."id" AND n."kind" = h."kind") RETURNING "id", "kind"`], aggregateSql: null },
+  { headRel: "result_tag", headDeltaTableName: "__delta_result_tag", headColumns: ["id", "tag"], insertSql: `INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT DISTINCT d0."id", 'ok' FROM "__frontier_result_ok" d0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT d0."id", 'error' FROM "__frontier_result_error" d0 WHERE d0."_phase" >= 0 RETURNING "id", "tag"`, selectSql: `SELECT "id", "tag" FROM "result_tag"`, recomputeSql: `DELETE FROM "result_tag";
+INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'ok' FROM "result_ok" b0;
+INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'error' FROM "result_error" b0`, supportSql: [`DELETE FROM "__support_next_result_tag"`, `INSERT INTO "__support_next_result_tag" ("id", "tag", "__support_count") SELECT "id", "tag", sum("__support_count") FROM (SELECT b0."id" AS "id", 'ok' AS "tag", count(*) AS "__support_count" FROM "result_ok" b0 GROUP BY b0."id", 'ok' UNION ALL SELECT b0."id" AS "id", 'error' AS "tag", count(*) AS "__support_count" FROM "result_error" b0 GROUP BY b0."id", 'error') GROUP BY "id", "tag"`, `UPDATE "result_tag" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_result_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0))`, `DELETE FROM "result_tag" WHERE "__support_count" <= 0 RETURNING "id", "tag"`, `INSERT INTO "result_tag" ("id", "tag", "__support_count") SELECT "id", "tag", n."__support_count" FROM "__support_next_result_tag" n WHERE NOT EXISTS (SELECT 1 FROM "result_tag" h WHERE n."id" = h."id" AND n."tag" = h."tag") RETURNING "id", "tag"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "current";\nINSERT OR IGNORE INTO "current" ("id", "kind") SELECT b0."id", b0."kind" FROM "event" b0;\nDELETE FROM "result_tag";\nINSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'ok' FROM "result_ok" b0;\nINSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'error' FROM "result_error" b0`;
+  const sql = `DELETE FROM "current";
+INSERT OR IGNORE INTO "current" ("id", "kind") SELECT b0."id", b0."kind" FROM "event" b0;
+DELETE FROM "result_tag";
+INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'ok' FROM "result_ok" b0;
+INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'error' FROM "result_error" b0`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
@@ -242,6 +275,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 }
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validateArrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
     return runNaiveTick(seam, arrivals);
   }
@@ -261,6 +295,7 @@ export const program: IGenProgramWithBoot = {
   name: "door-handwritten",
   ddl,
   relColumns,
+  relColumnTypes,
   arrivalTargets,
   boot,
   finalSelect,
