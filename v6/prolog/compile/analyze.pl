@@ -604,6 +604,10 @@ aggregate_arg_contribution(_, Arg, int) :-
     nonvar(Arg), surface_for_term(Arg, count/1, aggregate, _, _, _), !.
 aggregate_arg_contribution(_, Arg, float) :-
     nonvar(Arg), surface_for_term(Arg, avg/1, aggregate, _, _, _), !.
+aggregate_arg_contribution(_, Arg, json) :-
+    nonvar(Arg), surface_for_term(Arg, json_group_array/_, aggregate, _, head(_), live), !.
+aggregate_arg_contribution(_, Arg, text) :-
+    nonvar(Arg), surface_for_term(Arg, group_concat/_, aggregate, _, head(_), live), !.
 aggregate_arg_contribution(Environment, Arg, Type) :-
     nonvar(Arg),
     surface_for_term(Arg, Kind/1, aggregate, _, _, _),
@@ -790,6 +794,9 @@ merge_contribution(Contribution, open(Existing), open(Merged)) :-
 merge_type(ref(Type), none, ref(Type)) :- !.
 merge_type(none, ref(Type), ref(Type)) :- !.
 merge_type(ref(Type), ref(Type), ref(Type)) :- !.
+merge_type(json, none, json) :- !.
+merge_type(none, json, json) :- !.
+merge_type(json, json, json) :- !.
 merge_type(Left, Right, _) :-
     ( Left = ref(_) ; Right = ref(_) ), !,
     throw(unsupported_construct(column_ref_type_conflict(Left, Right))).
@@ -1222,6 +1229,7 @@ check_supported_subset_expanded(Program) :-
                               % head-expression refusals would otherwise
                               % report a compound the author spelled
                               % correctly instead of naming the aggregate.
+                              aggregate_head_shape,
                               aggregate_not_implemented ]),
     forall(( member(Rule, Rules), rule_is_edge(Rule) ), check_edge_rule_shape(Rule)),
     forall(( member(Rule, Rules), rule_is_level(Rule) ), check_level_rule_shape(Rule)),
@@ -1273,6 +1281,7 @@ compiler_refusal(missing_retention,       Ref, missing_retention(Ref)).
 % aggregate_in_edge_head names nothing. A compiler refusal has to say which
 % rule to edit; the oracle's term is the one fixtures already pin.
 compiler_refusal(aggregate_in_edge_head,  Ref, aggregate_in_edge_head(Ref)).
+compiler_refusal(aggregate_head_shape,     Shape, aggregate_head_shape(Shape)).
 % Same term at both doors. There is nothing for the two vocabularies to
 % disagree about here: neither door implements the word, and the payload is
 % the registry's own answer about what does work.
@@ -1460,6 +1469,22 @@ aggregate_head_template(Head, Template) :-
 
 classify_head_arg(Arg, agg(json_object, KeyExpr-ValueExpr)) :-
     nonvar(Arg), Arg = json_object(KeyExpr, ValueExpr), !.
+classify_head_arg(Arg, agg(json_group_array, ValueExpr)) :-
+    nonvar(Arg),
+    surface_for_term(Arg, json_group_array/1, aggregate, no_refs, head(_), live),
+    arg(1, Arg, ValueExpr), !.
+classify_head_arg(Arg, agg(json_group_array_ordered, ValueExpr-OrdinalExpr)) :-
+    nonvar(Arg),
+    surface_for_term(Arg, json_group_array/2, aggregate, no_refs, head(_), live),
+    arg(1, Arg, ValueExpr), arg(2, Arg, OrdinalExpr), !.
+classify_head_arg(Arg, agg(group_concat(Sep), ValueExpr)) :-
+    nonvar(Arg),
+    surface_for_term(Arg, group_concat/2, aggregate, no_refs, head(_), live),
+    arg(1, Arg, ValueExpr), arg(2, Arg, Sep), !.
+classify_head_arg(Arg, agg(group_concat_ordered(Sep), ValueExpr-OrdinalExpr)) :-
+    nonvar(Arg),
+    surface_for_term(Arg, group_concat/3, aggregate, no_refs, head(_), live),
+    arg(1, Arg, ValueExpr), arg(2, Arg, Sep), arg(3, Arg, OrdinalExpr), !.
 classify_head_arg(Arg, agg(Kind, Expr)) :-
     nonvar(Arg),
     surface_for_term(Arg, Kind/1, aggregate, no_refs, head(_), _), !,

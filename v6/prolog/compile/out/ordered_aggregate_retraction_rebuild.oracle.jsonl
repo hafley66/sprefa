@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"item":{"add":[],"del":[["north",1,"pear"]]},"ordered_values":{"add":[["north",["orange","apple"]]],"del":[["north",["pear","orange","apple"]]]}}}
+{"tick":2,"deltas":{"item":{"add":[],"del":[["north",2,"orange"],["north",3,"apple"]]},"ordered_values":{"add":[],"del":[["north",["orange","apple"]]]}}}
+{"tick":3,"deltas":{"item":{"add":[["north",4,"peach"]],"del":[]},"ordered_values":{"add":[["north",["peach"]]],"del":[]}}}

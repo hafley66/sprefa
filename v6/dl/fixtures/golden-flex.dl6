@@ -289,6 +289,31 @@ pick_stats(TreeId, count(Sugar), sum(Sugar), min(Sugar), max(Sugar)) <-
 rel mean_kilos(tree_id: int, kilos: float).
 mean_kilos(TreeId, avg(Kilos)) <- pick_event(TreeId, _Picker, Kilos, _Sugar).
 
+# ═══ ordered aggregates: both axes, array and text ═════════════════════════
+# json_group_array/1 sorts by the VALUE itself (v5 parity, digest-stable);
+# json_group_array/2 orders by the int ordinal (tree ids are unique per
+# picker, so the order is tie-free); group_concat/2 joins text sorted by
+# value (equal values are indistinguishable, so value-axis ties are
+# harmless); group_concat/3 joins in ordinal order. Empty group = absent
+# head row on all four. An aggregate whose group key is NOT bound by the
+# delta-carrying atom is the named refusal aggregate_group_not_delta_local
+# (a joined-body group_concat/3 hit it while this section was written).
+rel picker_roster(picker: text, tree_ids: json).
+picker_roster(Picker, json_group_array(TreeId)) <-
+  pick_event(TreeId, Picker, _Kilos, _Sugar).
+
+rel sugar_ladder(picker: text, sugars: json).
+sugar_ladder(Picker, json_group_array(Sugar, TreeId)) <-
+  pick_event(TreeId, Picker, _Kilos, Sugar).
+
+rel lane_manifest(lane: int, species_list: text).
+lane_manifest(Lane, group_concat(Species, ', ')) <-
+  pickable(_TreeId, Species, Lane).
+
+rel pick_story(story: text).
+pick_story(group_concat(Picker, ' > ', TreeId)) <-
+  pick_event(TreeId, Picker, _Kilos, _Sugar).
+
 # ═══ edge rules (<+) ═══════════════════════════════════════════════════════
 
 # A bare positive atom in an edge body is the TRIGGER (an occurrence, not a

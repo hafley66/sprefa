@@ -1,0 +1,3 @@
+rel item(group: text, ordinal: int, value: text).
+
+ordered_values(Group, json_group_array(Value, Ordinal)) <- item(Group, Ordinal, Value).

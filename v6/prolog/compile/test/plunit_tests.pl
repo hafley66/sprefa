@@ -557,6 +557,30 @@ test(accepts_count_aggregate_head) :-
     Prog = prog([], [ (total(count(X)) <- item(X)) ]),
     check_supported_subset(Prog).
 
+test(rejects_ordered_aggregate_variable_separator,
+     [throws(unsupported_construct(aggregate_separator_not_constant(_)))]) :-
+    Prog = prog([], [ (joined(group_concat(Value, Separator)) <-
+                      item(Value, Separator)) ]),
+    Term = fixture(ordered_aggregate_variable_separator, Prog,
+                   [ item(pear, " > ") ], [], []),
+    program_plan(Term-[], Plan),
+    lower_program(Plan, _).
+
+test(rejects_ordered_aggregate_non_int_ordinal,
+     [throws(unsupported_construct(aggregate_ordinal_not_int(_, text)))]) :-
+    Prog = prog([], [ (joined(json_group_array(Value, Ordinal)) <-
+                      item(Ordinal, Value)) ]),
+    Term = fixture(ordered_aggregate_non_int_ordinal, Prog,
+                   [ item(first, pear) ], [], []),
+    program_plan(Term-[], Plan),
+    lower_program(Plan, _).
+
+test(rejects_ordered_aggregate_wrong_arity,
+     [throws(unsupported_construct(aggregate_head_shape(json_group_array/3)))]) :-
+    Prog = prog([], [ (joined(json_group_array(Value, Ordinal, Extra)) <-
+                      item(Value, Ordinal, Extra)) ]),
+    check_supported_subset(Prog).
+
 % json_array/json_object stay refused, and the reason is NOT "not implemented
 % yet": a Prolog list value renders through the shared tick-log encoder
 % (ticklog.pl term_text/2) as right-nested cons text -- [|](4,[|](4,[|](9,[])))
@@ -2217,7 +2241,8 @@ test(unimplemented_aggregate_refuses_at_both_doors) :-
     door_verdict(oracle, Prog, OracleVerdict),
     door_verdict(compiler, Prog, CompilerVerdict),
     Expected = aggregate_not_implemented(roster/1, group_concat/1,
-                                         [avg, count, max, min, sum]),
+                                         [avg, count, group_concat, json_group_array,
+                                          max, min, sum]),
     OracleVerdict == Expected,
     CompilerVerdict == unsupported_construct(Expected).
 
@@ -2842,11 +2867,12 @@ test(every_registry_aggregate_row_is_an_oracle_aggregate) :-
 % group_concat/1 joined the axis as a REFUSAL: SQLite has it, this language
 % does not, and without a row the head argument fell through to generic
 % compound rendering and stored one row of call text per input.
-test(registry_carries_the_eight_aggregate_rows) :-
+test(registry_carries_the_ordered_aggregate_rows) :-
     findall(Signature, surface(Signature, aggregate, _, _, _), Rows),
     msort(Rows, Sorted),
-    Sorted == [ avg/1, count/1, group_concat/1, json_array/1, json_object/2,
-                max/1, min/1, sum/1 ].
+    Sorted == [ avg/1, count/1, group_concat/1, group_concat/2, group_concat/3,
+                json_array/1, json_group_array/1, json_group_array/2,
+                json_object/2, max/1, min/1, sum/1 ].
 
 % The aggregate axis carries THREE kinds of row and they are three different
 % statements, which is why they need three different lowering roles rather

@@ -2525,8 +2525,49 @@ aggregate_select_expr(agg(min, Expr), Bound, Sql) :- !,
 aggregate_select_expr(agg(max, Expr), Bound, Sql) :- !,
     compile_aggregate_number_operand(max, Expr, Bound, InnerSql, _),
     format(atom(Sql), 'max(~w)', [InnerSql]).
+aggregate_select_expr(agg(json_group_array, Expr), Bound, Sql) :- !,
+    compile_expr(Expr, Bound, ValueSql, ValueType),
+    json_group_array_value_sql(ValueType, ValueSql, AggregateValueSql),
+    format(atom(Sql), 'json_group_array(~w ORDER BY ~w)',
+           [AggregateValueSql, ValueSql]).
+aggregate_select_expr(agg(json_group_array_ordered, ValueExpr-OrdinalExpr),
+                      Bound, Sql) :- !,
+    compile_expr(ValueExpr, Bound, ValueSql, ValueType),
+    compile_aggregate_ordinal_operand(OrdinalExpr, Bound, OrdinalSql),
+    json_group_array_value_sql(ValueType, ValueSql, AggregateValueSql),
+    format(atom(Sql), 'json_group_array(~w ORDER BY ~w)',
+           [AggregateValueSql, OrdinalSql]).
+aggregate_select_expr(agg(group_concat(Sep), Expr), Bound, Sql) :- !,
+    compile_expr(Expr, Bound, ValueSql, _),
+    compile_aggregate_text_separator(Sep, SeparatorSql),
+    format(atom(Sql), 'group_concat(~w, ~w ORDER BY ~w)',
+           [ValueSql, SeparatorSql, ValueSql]).
+aggregate_select_expr(agg(group_concat_ordered(Sep), ValueExpr-OrdinalExpr),
+                      Bound, Sql) :- !,
+    compile_expr(ValueExpr, Bound, ValueSql, _),
+    compile_aggregate_text_separator(Sep, SeparatorSql),
+    compile_aggregate_ordinal_operand(OrdinalExpr, Bound, OrdinalSql),
+    format(atom(Sql), 'group_concat(~w, ~w ORDER BY ~w)',
+           [ValueSql, SeparatorSql, OrdinalSql]).
 aggregate_select_expr(agg(Kind, _), _, _) :-
     throw(unsupported_construct(aggregate_kind_not_lowered(Kind))).
+
+json_group_array_value_sql(json, ValueSql, AggregateValueSql) :- !,
+    format(atom(AggregateValueSql), 'json(~w)', [ValueSql]).
+json_group_array_value_sql(_, ValueSql, ValueSql).
+
+compile_aggregate_ordinal_operand(Expr, Bound, Sql) :-
+    compile_expr(Expr, Bound, Sql, Type),
+    ( Type == int
+    -> true
+    ;  throw(unsupported_construct(aggregate_ordinal_not_int(Expr, Type)))
+    ).
+
+compile_aggregate_text_separator(Sep, Sql) :-
+    ( nonvar(Sep), atomic(Sep), \+ number(Sep)
+    -> sql_literal(Sep, Sql)
+    ;  throw(unsupported_construct(aggregate_separator_not_constant(Sep)))
+    ).
 
 compile_aggregate_number_operand(Kind, Expr, Bound, Sql, Type) :-
     compile_expr(Expr, Bound, Sql, Type),
