@@ -53,6 +53,7 @@
 | [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 243 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
 | [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 115 | TICK MODEL: the semiring/grading semantics behind the clock checker |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
+| [prolog/labs/ghcacher_tick_golden/README.md](prolog/labs/ghcacher_tick_golden/README.md) | 46 | Ghcacher clock golden |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-extract/AGENTS.md](sprefa-extract/AGENTS.md) | 66 | sprefa-extract — Agent Guidance |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
@@ -781,6 +782,11 @@
 61:## Expectations
 69:## Re-grading discipline (AGGREGATE.md 5c)
 79:## Out of scope for fixtures
+```
+
+### prolog/labs/ghcacher_tick_golden/README.md
+```
+1:# Ghcacher clock golden
 ```
 
 ### skills/mermaid-living-map.md

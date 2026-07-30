@@ -16,6 +16,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use sprefa_v5::db;
 use sprefa_v5::engine::{async_effect_arity, Engine, ShellEffectExec};
@@ -161,7 +162,10 @@ fn call_count(dir: &Path, ep: &str) -> usize {
 /// every endpoint. Every scenario below asserts this is exactly 0 — a
 /// nonzero count means an unanticipated poll happened and names it.
 fn miss_count(dir: &Path) -> usize {
-    call_log_lines(dir).iter().filter(|line| line.starts_with("MISS\t")).count()
+    call_log_lines(dir)
+        .iter()
+        .filter(|line| line.starts_with("MISS\t"))
+        .count()
 }
 
 /// Build the real gh-cache.dl program, transformed ONLY at the `fetch` shell
@@ -172,15 +176,18 @@ fn miss_count(dir: &Path) -> usize {
 /// the fixture path is present. This is the ONLY divergence from the shipped
 /// file anywhere in this test module.
 fn build_prog(extra_watch: &[&str], call_log: &Path) -> String {
+    build_prog_with_fixtures(extra_watch, call_log, &fixture_dir())
+}
+
+fn build_prog_with_fixtures(extra_watch: &[&str], call_log: &Path, fixtures: &Path) -> String {
     assert!(
         PROG.contains(REAL_FETCH_BLOCK),
         "examples/gh-cache.dl's `fetch` sh block no longer matches the copy in \
          tests/it/gh_cache.rs::REAL_FETCH_BLOCK — the shipped file's shell body \
          changed shape; update the constant before trusting this suite again"
     );
-    let dir = fixture_dir();
     let script = FIXTURE_FETCH_TEMPLATE
-        .replace("__FIXTURE_DIR__", dir.to_str().unwrap())
+        .replace("__FIXTURE_DIR__", fixtures.to_str().unwrap())
         .replace("__CALL_LOG__", call_log.to_str().unwrap());
     let mut prog = PROG.replacen(REAL_FETCH_BLOCK, &script, 1);
     // Check for the exact `sh fetch` block (not a bare "gh api {ep}" substring
@@ -192,7 +199,7 @@ fn build_prog(extra_watch: &[&str], call_log: &Path) -> String {
          transformation did not apply, the test would silently hit the network"
     );
     assert!(
-        prog.contains(dir.to_str().unwrap()),
+        prog.contains(fixtures.to_str().unwrap()),
         "fetch override did not install the fixture-reading script"
     );
     for ep in extra_watch {
@@ -284,7 +291,9 @@ fn assert_steady_state(
 /// and the etag carries forward via the REAL `@next` chain (:103-104).
 #[test]
 fn cold_fetch_lands_entities_and_carries_etag() {
-    let _guard = CLOCK_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = CLOCK_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let d = sandbox("cold");
     let dbp = d.join("db");
     let call_log = call_log_path(&d);
@@ -308,7 +317,10 @@ fn cold_fetch_lands_entities_and_carries_etag() {
     // (head_rel, kind, {ep, prev}) never changes again — no further bucket
     // boundary re-fires it, however many buckets pass. Total across the
     // whole 8-bucket settle is exactly 2, never climbing further.
-    assert_eq!(totals[7], 2, "settled total must stay at cold+one-steady-304, no drift: {totals:?}");
+    assert_eq!(
+        totals[7], 2,
+        "settled total must stay at cold+one-steady-304, no drift: {totals:?}"
+    );
     assert_eq!(
         call_count(&d, "repos/cli/cli"),
         2,
@@ -316,20 +328,36 @@ fn cold_fetch_lands_entities_and_carries_etag() {
          endpoint across all 8 settled buckets: the cold 200 plus the one \
          confirming 304 — never a re-fetch per bucket"
     );
-    assert_eq!(miss_count(&d), 0, "no unanticipated (ep, prev) poll should ever miss a fixture");
+    assert_eq!(
+        miss_count(&d),
+        0,
+        "no unanticipated (ep, prev) poll should ever miss a fixture"
+    );
 
     assert_eq!(
-        rows(&dbp, "rel_stars_txt", "SELECT n FROM rel_stars_txt WHERE ep = 'repos/cli/cli'"),
+        rows(
+            &dbp,
+            "rel_stars_txt",
+            "SELECT n FROM rel_stars_txt WHERE ep = 'repos/cli/cli'"
+        ),
         vec![vec!["42".to_string()]],
         "cold 200's body normalizes into stars via the real jsonp rule"
     );
     assert_eq!(
-        rows(&dbp, "rel_full_name_txt", "SELECT name FROM rel_full_name_txt WHERE ep = 'repos/cli/cli'"),
+        rows(
+            &dbp,
+            "rel_full_name_txt",
+            "SELECT name FROM rel_full_name_txt WHERE ep = 'repos/cli/cli'"
+        ),
         vec![vec!["cli/cli".to_string()]],
         "cold 200's body normalizes into full_name via the real jsonp rule"
     );
     assert_eq!(
-        rows(&dbp, "rel_etag_txt", "SELECT tag FROM rel_etag_txt WHERE ep = 'repos/cli/cli'"),
+        rows(
+            &dbp,
+            "rel_etag_txt",
+            "SELECT tag FROM rel_etag_txt WHERE ep = 'repos/cli/cli'"
+        ),
         vec![vec!["etagA".to_string()]],
         "the fresh etag carried into `etag` via the real @next chain"
     );
@@ -349,7 +377,9 @@ fn cold_fetch_lands_entities_and_carries_etag() {
 /// repeated revalidates — no duplicate accumulates.
 #[test]
 fn warm_revalidate_is_a_free_cache_hit_with_no_duplicate_rows() {
-    let _guard = CLOCK_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = CLOCK_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let d = sandbox("warm");
     let dbp = d.join("db");
     let call_log = call_log_path(&d);
@@ -368,11 +398,28 @@ fn warm_revalidate_is_a_free_cache_hit_with_no_duplicate_rows() {
     // with the new prev — never at bucket 1, and never a THIRD fetch at any
     // later bucket once the 304 confirms steady state.
     assert_eq!(totals[0], 1, "bucket 0: exactly 1 cold fetch: {totals:?}");
-    assert_eq!(totals[1], 1, "bucket 1: the etag carry has not materialized yet, zero new fetches: {totals:?}");
-    assert_eq!(totals[2], 2, "bucket 2: exactly 1 more fetch (the revalidate), not 2, not 0: {totals:?}");
-    assert_eq!(totals[7], 2, "no further bucket re-fires an already-resolved (ep, prev) pair: {totals:?}");
-    assert_eq!(call_count(&d, "repos/cli/cli"), 2, "exactly 2 total invocations: cold + one revalidate");
-    assert_eq!(miss_count(&d), 0, "no unanticipated (ep, prev) poll should ever miss a fixture");
+    assert_eq!(
+        totals[1], 1,
+        "bucket 1: the etag carry has not materialized yet, zero new fetches: {totals:?}"
+    );
+    assert_eq!(
+        totals[2], 2,
+        "bucket 2: exactly 1 more fetch (the revalidate), not 2, not 0: {totals:?}"
+    );
+    assert_eq!(
+        totals[7], 2,
+        "no further bucket re-fires an already-resolved (ep, prev) pair: {totals:?}"
+    );
+    assert_eq!(
+        call_count(&d, "repos/cli/cli"),
+        2,
+        "exactly 2 total invocations: cold + one revalidate"
+    );
+    assert_eq!(
+        miss_count(&d),
+        0,
+        "no unanticipated (ep, prev) poll should ever miss a fixture"
+    );
 
     // A revalidate actually happened: the executor served both the cold 200
     // and a later 304 across the settle cycles (proves the fixture-driven
@@ -391,12 +438,20 @@ fn warm_revalidate_is_a_free_cache_hit_with_no_duplicate_rows() {
     );
 
     assert_eq!(
-        rows(&dbp, "rel_stars_txt", "SELECT n FROM rel_stars_txt WHERE ep = 'repos/cli/cli'"),
+        rows(
+            &dbp,
+            "rel_stars_txt",
+            "SELECT n FROM rel_stars_txt WHERE ep = 'repos/cli/cli'"
+        ),
         vec![vec!["42".to_string()]],
         "304s must not duplicate or blank out stars"
     );
     assert_eq!(
-        rows(&dbp, "rel_full_name_txt", "SELECT name FROM rel_full_name_txt WHERE ep = 'repos/cli/cli'"),
+        rows(
+            &dbp,
+            "rel_full_name_txt",
+            "SELECT name FROM rel_full_name_txt WHERE ep = 'repos/cli/cli'"
+        ),
         vec![vec!["cli/cli".to_string()]],
         "304s must not duplicate or blank out full_name"
     );
@@ -426,7 +481,9 @@ fn warm_revalidate_is_a_free_cache_hit_with_no_duplicate_rows() {
 /// (`stars`, over `resp_current`) reflects only the newest body.
 #[test]
 fn body_change_appends_to_change_log_and_keeps_old_value() {
-    let _guard = CLOCK_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = CLOCK_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let ep = "repos/octocat/helloworld";
     let d = sandbox("bodychange");
     let dbp = d.join("db");
@@ -446,10 +503,22 @@ fn body_change_appends_to_change_log_and_keeps_old_value() {
     // THIRD request, the 304 that confirms steady state on the new etag
     // (delta 1, cli/cli has nothing left to fetch — its 304 already resolved
     // at bucket 2). No bucket after 4 adds anything.
-    assert_eq!(totals[0], 2, "bucket 0: both endpoints cold, exactly 2: {totals:?}");
-    assert_eq!(totals[2], 4, "bucket 2: both endpoints' first revalidate, exactly 2 more: {totals:?}");
-    assert_eq!(totals[4], 5, "bucket 4: octocat's steady-state 304 confirmation, exactly 1 more: {totals:?}");
-    assert_eq!(totals[7], 5, "settled total holds at 5, no further drift: {totals:?}");
+    assert_eq!(
+        totals[0], 2,
+        "bucket 0: both endpoints cold, exactly 2: {totals:?}"
+    );
+    assert_eq!(
+        totals[2], 4,
+        "bucket 2: both endpoints' first revalidate, exactly 2 more: {totals:?}"
+    );
+    assert_eq!(
+        totals[4], 5,
+        "bucket 4: octocat's steady-state 304 confirmation, exactly 1 more: {totals:?}"
+    );
+    assert_eq!(
+        totals[7], 5,
+        "settled total holds at 5, no further drift: {totals:?}"
+    );
     assert_eq!(
         call_count(&d, ep),
         3,
@@ -461,7 +530,11 @@ fn body_change_appends_to_change_log_and_keeps_old_value() {
         2,
         "exactly 2 invocations for the UNCHANGED base-fact endpoint: cold + one steady 304"
     );
-    assert_eq!(miss_count(&d), 0, "no unanticipated (ep, prev) poll should ever miss a fixture");
+    assert_eq!(
+        miss_count(&d),
+        0,
+        "no unanticipated (ep, prev) poll should ever miss a fixture"
+    );
 
     let mut stars_log: Vec<String> = rows(
         &dbp,
@@ -479,7 +552,11 @@ fn body_change_appends_to_change_log_and_keeps_old_value() {
     );
 
     assert_eq!(
-        rows(&dbp, "rel_stars_txt", &format!("SELECT n FROM rel_stars_txt WHERE ep = '{ep}'")),
+        rows(
+            &dbp,
+            "rel_stars_txt",
+            &format!("SELECT n FROM rel_stars_txt WHERE ep = '{ep}'")
+        ),
         vec![vec!["20".to_string()]],
         "the live view reflects only the NEWEST body (latest-wins over resp_current)"
     );
@@ -495,7 +572,9 @@ fn body_change_appends_to_change_log_and_keeps_old_value() {
 /// hand-fed `resp` fact standing in for a fetch.
 #[test]
 fn list_endpoint_normalizes_pull_requests_via_the_real_fetch() {
-    let _guard = CLOCK_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = CLOCK_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let ep = "repos/cli/cli/pulls";
     let d = sandbox("list");
     let dbp = d.join("db");
@@ -519,8 +598,14 @@ fn list_endpoint_normalizes_pull_requests_via_the_real_fetch() {
     // test below reproduces on purpose), this scenario's fixture chain would
     // also 404-MISS immediately (there is no per-row fixture file), so
     // miss_count catches that shape too, independent of the exact-count check.
-    assert_eq!(totals[0], 2, "bucket 0: exactly 2 fetches (one per endpoint, not one per PR row): {totals:?}");
-    assert_eq!(totals[2], 4, "bucket 2: exactly 2 more (steady-state 304 confirms, one per endpoint): {totals:?}");
+    assert_eq!(
+        totals[0], 2,
+        "bucket 0: exactly 2 fetches (one per endpoint, not one per PR row): {totals:?}"
+    );
+    assert_eq!(
+        totals[2], 4,
+        "bucket 2: exactly 2 more (steady-state 304 confirms, one per endpoint): {totals:?}"
+    );
     assert_eq!(totals[7], 4, "no further drift: {totals:?}");
     assert_eq!(
         call_count(&d, ep),
@@ -529,7 +614,11 @@ fn list_endpoint_normalizes_pull_requests_via_the_real_fetch() {
          (cold + one steady 304) — NEVER one per pull_request row (2 rows landed, \
          not 2 extra fetches)"
     );
-    assert_eq!(miss_count(&d), 0, "no unanticipated (ep, prev) poll should ever miss a fixture");
+    assert_eq!(
+        miss_count(&d),
+        0,
+        "no unanticipated (ep, prev) poll should ever miss a fixture"
+    );
 
     let mut got = rows(
         &dbp,
@@ -540,8 +629,18 @@ fn list_endpoint_normalizes_pull_requests_via_the_real_fetch() {
     assert_eq!(
         got,
         vec![
-            vec!["1".to_string(), "fix bug".to_string(), "open".to_string(), "alice".to_string()],
-            vec!["2".to_string(), "add feat".to_string(), "closed".to_string(), "bob".to_string()],
+            vec![
+                "1".to_string(),
+                "fix bug".to_string(),
+                "open".to_string(),
+                "alice".to_string()
+            ],
+            vec![
+                "2".to_string(),
+                "add feat".to_string(),
+                "closed".to_string(),
+                "bob".to_string()
+            ],
         ],
         "the array fixture normalizes into one pull_request row per element, via the real fetch"
     );
@@ -558,7 +657,9 @@ fn list_endpoint_normalizes_pull_requests_via_the_real_fetch() {
 /// reduction, :101-102) collapses to exactly ONE row — the newer.
 #[test]
 fn resp_current_picks_the_newer_of_two_200s_across_clock_buckets() {
-    let _guard = CLOCK_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = CLOCK_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let ep = "repos/example/latestwins";
     let d = sandbox("latest");
     let dbp = d.join("db");
@@ -579,8 +680,14 @@ fn resp_current_picks_the_newer_of_two_200s_across_clock_buckets() {
     // this ep's 304 confirming etagB is steady (delta 1). Total 5, same
     // arithmetic as body_change_appends_to_change_log_and_keeps_old_value.
     assert_eq!(totals[0], 2, "bucket 0: both endpoints cold: {totals:?}");
-    assert_eq!(totals[2], 4, "bucket 2: both endpoints' first revalidate: {totals:?}");
-    assert_eq!(totals[4], 5, "bucket 4: this ep's steady-state 304 confirmation: {totals:?}");
+    assert_eq!(
+        totals[2], 4,
+        "bucket 2: both endpoints' first revalidate: {totals:?}"
+    );
+    assert_eq!(
+        totals[4], 5,
+        "bucket 4: this ep's steady-state 304 confirmation: {totals:?}"
+    );
     assert_eq!(totals[7], 5, "no further drift: {totals:?}");
     assert_eq!(
         call_count(&d, ep),
@@ -591,8 +698,16 @@ fn resp_current_picks_the_newer_of_two_200s_across_clock_buckets() {
          accumulates BOTH 200 versions' claim is about LANDED ROWS (2), not \
          total invocations (3)"
     );
-    assert_eq!(call_count(&d, "repos/cli/cli"), 2, "unchanged base-fact endpoint: cold + one steady 304");
-    assert_eq!(miss_count(&d), 0, "no unanticipated (ep, prev) poll should ever miss a fixture");
+    assert_eq!(
+        call_count(&d, "repos/cli/cli"),
+        2,
+        "unchanged base-fact endpoint: cold + one steady 304"
+    );
+    assert_eq!(
+        miss_count(&d),
+        0,
+        "no unanticipated (ep, prev) poll should ever miss a fixture"
+    );
 
     let mut tags: Vec<String> = rows(
         &dbp,
@@ -610,12 +725,20 @@ fn resp_current_picks_the_newer_of_two_200s_across_clock_buckets() {
     );
 
     assert_eq!(
-        rows(&dbp, "rel_resp_current_txt", &format!("SELECT tag FROM rel_resp_current_txt WHERE ep = '{ep}'")),
+        rows(
+            &dbp,
+            "rel_resp_current_txt",
+            &format!("SELECT tag FROM rel_resp_current_txt WHERE ep = '{ep}'")
+        ),
         vec![vec!["etagB".to_string()]],
         "resp_current collapses to exactly one row: the newer version"
     );
     assert_eq!(
-        rows(&dbp, "rel_stars_txt", &format!("SELECT n FROM rel_stars_txt WHERE ep = '{ep}'")),
+        rows(
+            &dbp,
+            "rel_stars_txt",
+            &format!("SELECT n FROM rel_stars_txt WHERE ep = '{ep}'")
+        ),
         vec![vec!["200".to_string()]],
         "stars reflects only the latest-wins body"
     );
@@ -642,7 +765,9 @@ fn resp_current_picks_the_newer_of_two_200s_across_clock_buckets() {
 /// artifact.
 #[test]
 fn embedded_newline_in_body_is_silently_joined_a_known_gap() {
-    let _guard = CLOCK_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = CLOCK_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let ep = "repos/weird/multiline";
     let d = sandbox("newline");
     let dbp = d.join("db");
@@ -655,9 +780,17 @@ fn embedded_newline_in_body_is_silently_joined_a_known_gap() {
 
     settle(&mut eng, &prog, &exec, 7_000_000, &call_log);
 
-    assert_eq!(miss_count(&d), 0, "the fixture exists, this must be a hit not a miss");
     assert_eq!(
-        rows(&dbp, "rel_full_name_txt", &format!("SELECT name FROM rel_full_name_txt WHERE ep = '{ep}'")),
+        miss_count(&d),
+        0,
+        "the fixture exists, this must be a hit not a miss"
+    );
+    assert_eq!(
+        rows(
+            &dbp,
+            "rel_full_name_txt",
+            &format!("SELECT name FROM rel_full_name_txt WHERE ep = '{ep}'")
+        ),
         vec![vec!["weird/multilinename".to_string()]],
         "KNOWN GAP: the fixture's real newline in `full_name` (\"weird/multiline\\nname\") \
          is silently deleted and the two halves joined with no separator, not rejected \
@@ -702,7 +835,9 @@ fn fetch_never_requests_pagination_a_known_gap() {
 /// fixture chain PRs [1,2,3] (cold) -> PRs [1,3] (etagA, #2 dropped).
 #[test]
 fn pull_request_retracts_removed_rows_when_the_list_shrinks() {
-    let _guard = CLOCK_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = CLOCK_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let ep = "repos/cli/cli/shrinklist";
     let d = sandbox("shrink");
     let dbp = d.join("db");
@@ -715,7 +850,11 @@ fn pull_request_retracts_removed_rows_when_the_list_shrinks() {
 
     settle(&mut eng, &prog, &exec, 8_000_000, &call_log);
 
-    assert_eq!(miss_count(&d), 0, "both fixtures in the chain exist, this must never miss");
+    assert_eq!(
+        miss_count(&d),
+        0,
+        "both fixtures in the chain exist, this must never miss"
+    );
 
     let mut nums: Vec<String> = rows(
         &dbp,
@@ -755,7 +894,9 @@ fn pull_request_retracts_removed_rows_when_the_list_shrinks() {
 /// exercises.
 #[test]
 fn cadence_survives_many_buckets_past_steady_state_with_bounded_change_log() {
-    let _guard = CLOCK_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = CLOCK_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let d = sandbox("cadence");
     let dbp = d.join("db");
     let call_log = call_log_path(&d);
@@ -766,13 +907,25 @@ fn cadence_survives_many_buckets_past_steady_state_with_bounded_change_log() {
     let exec = shell_exec(&prog);
 
     settle(&mut eng, &prog, &exec, 9_000_000, &call_log);
-    assert_eq!(call_count(&d, "repos/cli/cli"), 2, "settled at cold + one steady 304, as in cold_fetch");
+    assert_eq!(
+        call_count(&d, "repos/cli/cli"),
+        2,
+        "settled at cold + one steady 304, as in cold_fetch"
+    );
     assert_eq!(miss_count(&d), 0);
 
     let change_log_row_count = || {
-        rows(&dbp, "rel_change_log_txt", "SELECT COUNT(*) FROM rel_change_log_txt WHERE ep = 'repos/cli/cli'")
+        rows(
+            &dbp,
+            "rel_change_log_txt",
+            "SELECT COUNT(*) FROM rel_change_log_txt WHERE ep = 'repos/cli/cli'",
+        )
     };
-    assert_eq!(change_log_row_count(), vec![vec!["2".to_string()]], "one row per kind (stars, full_name) after settle");
+    assert_eq!(
+        change_log_row_count(),
+        vec![vec!["2".to_string()]],
+        "one row per kind (stars, full_name) after settle"
+    );
 
     for bucket in 0..20i64 {
         set_now(9_100_000 + bucket * 300);
@@ -818,7 +971,9 @@ fn cadence_survives_many_buckets_past_steady_state_with_bounded_change_log() {
 /// ```
 #[test]
 fn stress_25_endpoints_fetch_linearly_not_quadratically() {
-    let _guard = CLOCK_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = CLOCK_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     const N: usize = 25;
     let d = sandbox("stress25");
     let dbp = d.join("db");
@@ -847,16 +1002,23 @@ fn stress_25_endpoints_fetch_linearly_not_quadratically() {
     // field, so that distinction doesn't collapse into the endpoint count by
     // accident here).
     assert_eq!(
-        totals[0], total_endpoints,
+        totals[0],
+        total_endpoints,
         "bucket 0: exactly {total_endpoints} fetches (one per watched endpoint), \
-         not {} (endpoints^2): {totals:?}", total_endpoints * total_endpoints
+         not {} (endpoints^2): {totals:?}",
+        total_endpoints * total_endpoints
     );
     assert_eq!(
-        totals[2], total_endpoints * 2,
+        totals[2],
+        total_endpoints * 2,
         "bucket 2: exactly {total_endpoints} MORE (one steady-304 confirm per \
          endpoint): {totals:?}"
     );
-    assert_eq!(totals[7], total_endpoints * 2, "no drift once every endpoint is steady: {totals:?}");
+    assert_eq!(
+        totals[7],
+        total_endpoints * 2,
+        "no drift once every endpoint is steady: {totals:?}"
+    );
     // total fetches across the whole settle == total_endpoints * 2 (cold +
     // one steady confirm per endpoint) — NOT total_endpoints * buckets (8):
     // gh-cache.dl's actual request digest is (head_rel, kind, {ep, prev})
@@ -865,12 +1027,27 @@ fn stress_25_endpoints_fetch_linearly_not_quadratically() {
     // it never re-fires regardless of how many MORE buckets pass — proven at
     // scale by `cadence_survives_many_buckets_past_steady_state...` and by
     // this test's own steady-state check below.
-    assert_eq!(call_log_lines(&d).len(), total_endpoints * 2, "grand total across the settle");
+    assert_eq!(
+        call_log_lines(&d).len(),
+        total_endpoints * 2,
+        "grand total across the settle"
+    );
 
-    for ep in endpoints.iter().chain(std::iter::once(&"repos/cli/cli".to_string())) {
-        assert_eq!(call_count(&d, ep), 2, "endpoint {ep}: exactly 2 invocations (cold + one steady 304)");
+    for ep in endpoints
+        .iter()
+        .chain(std::iter::once(&"repos/cli/cli".to_string()))
+    {
+        assert_eq!(
+            call_count(&d, ep),
+            2,
+            "endpoint {ep}: exactly 2 invocations (cold + one steady 304)"
+        );
     }
-    assert_eq!(miss_count(&d), 0, "no unanticipated (ep, prev) poll across {total_endpoints} endpoints");
+    assert_eq!(
+        miss_count(&d),
+        0,
+        "no unanticipated (ep, prev) poll across {total_endpoints} endpoints"
+    );
 
     // The per-tick write count does not scale with rows the way an N+1
     // would. Uses the existing write-ledger mechanism (_write_ledger, same
@@ -888,7 +1065,10 @@ fn stress_25_endpoints_fetch_linearly_not_quadratically() {
     let ledger_pending_effect = eng
         .query_sql("SELECT tick, rows FROM _write_ledger WHERE rel = 'pending_effect' AND rows > 0 ORDER BY tick", &[])
         .unwrap();
-    assert!(!ledger_pending_effect.is_empty(), "expected at least one write-ledger entry for `pending_effect`");
+    assert!(
+        !ledger_pending_effect.is_empty(),
+        "expected at least one write-ledger entry for `pending_effect`"
+    );
     for row in &ledger_pending_effect {
         let rows_written = row[1].as_i64().unwrap();
         assert!(
@@ -904,6 +1084,96 @@ fn stress_25_endpoints_fetch_linearly_not_quadratically() {
     // new fetches.
     assert_steady_state(&mut eng, &prog, &exec, &call_log, "stress_25");
 
+    clear_now();
+}
+
+/// Operator-run deterministic scale benchmark. The shell harness builds this
+/// test once, invokes the test binary directly, and adds process wall/RSS.
+#[test]
+#[ignore = "run through bench/0_gh_cache_scale.sh"]
+fn benchmark_cache_scale() {
+    let _guard = CLOCK_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let total_endpoints: usize = std::env::var("SPREFA_GH_CACHE_ENDPOINTS")
+        .unwrap_or_else(|_| "100".to_string())
+        .parse()
+        .expect("SPREFA_GH_CACHE_ENDPOINTS must be a positive integer");
+    assert!(total_endpoints > 0);
+
+    let d = sandbox(&format!("bench_{total_endpoints}"));
+    let dbp = d.join("db");
+    let fixtures = d.join("fixtures");
+    let call_log = call_log_path(&d);
+    fs::create_dir_all(&fixtures).unwrap();
+
+    let mut endpoints = Vec::with_capacity(total_endpoints);
+    endpoints.push("repos/cli/cli".to_string());
+    for index in 1..total_endpoints {
+        endpoints.push(format!("repos/bench/ep{index:06}"));
+    }
+    for (index, endpoint) in endpoints.iter().enumerate() {
+        let safe = endpoint.replace('/', "_");
+        let tag = format!("tag{index:06}");
+        fs::write(
+            fixtures.join(format!("{safe}.cold.resp")),
+            format!(
+                "200\n{tag}\n{{\"stargazers_count\":{index},\"full_name\":\"bench/ep{index:06}\"}}"
+            ),
+        )
+        .unwrap();
+        fs::write(fixtures.join(format!("{safe}.{tag}.resp")), "304\n\n").unwrap();
+    }
+
+    let extra: Vec<&str> = endpoints.iter().skip(1).map(String::as_str).collect();
+    fs::write(
+        d.join("p.dl"),
+        build_prog_with_fixtures(&extra, &call_log, &fixtures),
+    )
+    .unwrap();
+    let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    let exec = shell_exec(&prog);
+
+    let started = Instant::now();
+    let totals = settle(&mut eng, &prog, &exec, 20_000_000, &call_log);
+    assert_steady_state(&mut eng, &prog, &exec, &call_log, "benchmark_cache_scale");
+    let engine_seconds = started.elapsed().as_secs_f64();
+    let calls = call_log_lines(&d).len();
+    let misses = miss_count(&d);
+    assert_eq!(calls, total_endpoints * 2);
+    assert_eq!(misses, 0);
+
+    let ledger = eng
+        .query_sql(
+            "SELECT COALESCE(SUM(rows), 0), COUNT(DISTINCT tick) \
+             FROM _write_ledger WHERE rows > 0",
+            &[],
+        )
+        .unwrap();
+    let write_rows: i64 = ledger[0][0].as_i64().unwrap();
+    let measured_ticks: i64 = ledger[0][1].as_i64().unwrap();
+    let write_rows_per_tick = if measured_ticks == 0 {
+        0.0
+    } else {
+        write_rows as f64 / measured_ticks as f64
+    };
+    let page = eng
+        .query_sql(
+            "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()",
+            &[],
+        )
+        .unwrap();
+    let db_bytes = page[0][0].as_i64().unwrap();
+
+    println!(
+        "GH_CACHE_SCALE_JSON {{\"endpoints\":{total_endpoints},\"engine_seconds\":{engine_seconds:.6},\
+         \"calls\":{calls},\"misses\":{misses},\"db_bytes\":{db_bytes},\"write_rows\":{write_rows},\
+         \"measured_ticks\":{measured_ticks},\"write_rows_per_tick\":{write_rows_per_tick:.6},\
+         \"bucket_totals\":{:?}}}",
+        totals
+    );
     clear_now();
 }
 
@@ -932,7 +1202,9 @@ fn stress_25_endpoints_fetch_linearly_not_quadratically() {
 #[test]
 #[ignore = "run by hand to prove counting catches an N+1 fan-out — see doc comment"]
 fn mutation_n1_fan_out_per_row_is_caught() {
-    let _guard = CLOCK_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = CLOCK_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let d = sandbox("mutation");
     let dbp = d.join("db");
     let call_log = call_log_path(&d);
@@ -953,7 +1225,10 @@ fn mutation_n1_fan_out_per_row_is_caught() {
         "fetch(shard_ep, prev) -> (status, tag, body).",
     );
     let mutated_prog = base_prog.replacen(ORIGINAL_RESP_RULE, MUTATED_RESP_RULE, 1);
-    assert!(!mutated_prog.contains(ORIGINAL_RESP_RULE), "mutation did not apply");
+    assert!(
+        !mutated_prog.contains(ORIGINAL_RESP_RULE),
+        "mutation did not apply"
+    );
 
     fs::write(d.join("p.dl"), mutated_prog).unwrap();
     let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
@@ -973,7 +1248,8 @@ fn mutation_n1_fan_out_per_row_is_caught() {
         totals[0], 1,
         "N+1 CAUGHT: bucket 0 fetched {} times for ONE watched endpoint with a \
          per-row-fanned resp rule, not the 1 a correct per-endpoint fetch would \
-         produce: {totals:?}", totals[0]
+         produce: {totals:?}",
+        totals[0]
     );
     clear_now();
 }
@@ -988,7 +1264,9 @@ fn mutation_n1_fan_out_per_row_is_caught() {
 #[ignore]
 fn gh_cache_live_against_github() {
     use sprefa_v5::engine::{async_effect_arity, ShellEffectExec};
-    let _g = CLOCK_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _g = CLOCK_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let d = sandbox("live");
     let dbp = d.join("db");
     // Newline-separated outputs (status\netag\nbody) — `run` splits stdout by line,
@@ -1033,24 +1311,62 @@ fn gh_cache_live_against_github() {
         eng.tick(&prog, true).unwrap();
         let exec = {
             let mut templates = std::collections::HashMap::new();
-            for row in eng.query_sql("SELECT kind, template FROM rel_effect_cmd_txt", &[]).unwrap() {
-                templates.insert(row[0].as_str().unwrap().to_string(), row[1].as_str().unwrap().to_string());
+            for row in eng
+                .query_sql("SELECT kind, template FROM rel_effect_cmd_txt", &[])
+                .unwrap()
+            {
+                templates.insert(
+                    row[0].as_str().unwrap().to_string(),
+                    row[1].as_str().unwrap().to_string(),
+                );
             }
-            ShellEffectExec { templates, n_out: async_effect_arity(&prog), cwd: eng.root() }
+            ShellEffectExec {
+                templates,
+                n_out: async_effect_arity(&prog),
+                cwd: eng.root(),
+            }
         };
         let n = eng.drain_effects(&prog, &exec).unwrap();
-        eprintln!("cycle {i}: drained {n} | resp={:?} | etag={:?}",
-            rows(&dbp, "rel_resp_txt", "SELECT status, substr(tag,1,12) FROM rel_resp_txt"),
-            rows(&dbp, "rel_etag_txt", "SELECT substr(tag,1,12) FROM rel_etag_txt"));
+        eprintln!(
+            "cycle {i}: drained {n} | resp={:?} | etag={:?}",
+            rows(
+                &dbp,
+                "rel_resp_txt",
+                "SELECT status, substr(tag,1,12) FROM rel_resp_txt"
+            ),
+            rows(
+                &dbp,
+                "rel_etag_txt",
+                "SELECT substr(tag,1,12) FROM rel_etag_txt"
+            )
+        );
     }
     eng.tick(&prog, true).unwrap();
-    eprintln!("stars={:?} full_name={:?}",
+    eprintln!(
+        "stars={:?} full_name={:?}",
         rows(&dbp, "rel_stars_txt", "SELECT n FROM rel_stars_txt"),
-        rows(&dbp, "rel_full_name_txt", "SELECT name FROM rel_full_name_txt"));
+        rows(
+            &dbp,
+            "rel_full_name_txt",
+            "SELECT name FROM rel_full_name_txt"
+        )
+    );
 
-    assert!(!rows(&dbp, "rel_stars", "SELECT n FROM rel_stars").is_empty(), "live body normalized into stars");
-    let statuses: Vec<String> = rows(&dbp, "rel_resp_txt", "SELECT status FROM rel_resp_txt").into_iter().flatten().collect();
-    assert!(statuses.contains(&"200".to_string()), "first poll was a live 200: {statuses:?}");
-    assert!(statuses.contains(&"304".to_string()), "carried-etag re-poll got a live 304: {statuses:?}");
+    assert!(
+        !rows(&dbp, "rel_stars", "SELECT n FROM rel_stars").is_empty(),
+        "live body normalized into stars"
+    );
+    let statuses: Vec<String> = rows(&dbp, "rel_resp_txt", "SELECT status FROM rel_resp_txt")
+        .into_iter()
+        .flatten()
+        .collect();
+    assert!(
+        statuses.contains(&"200".to_string()),
+        "first poll was a live 200: {statuses:?}"
+    );
+    assert!(
+        statuses.contains(&"304".to_string()),
+        "carried-etag re-poll got a live 304: {statuses:?}"
+    );
     clear_now();
 }
