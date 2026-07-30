@@ -180,6 +180,13 @@ verification(norm_runtime_parity,
                     host_changes(0),
                     parser_changes(0),
                     syntax_changes(0))).
+verification(json_interop_lab,
+             passed(plan_cards(5),
+                    receipts(12),
+                    decisions(0),
+                    repeated_json_bytes(921600),
+                    relational_ref_bytes(98304),
+                    ratio(9.38))).
 
 host_executor(shell).
 host_executor(sprefa_extract).
