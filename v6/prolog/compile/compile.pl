@@ -92,6 +92,33 @@ find_fixture(Stream, Name, Term, Bindings) :-
 %              program order for each occurrence; with at most one edge rule
 %              per target fixture this is a formality kept for generality).
 
+% 1_host_expand.pl is SHARED with the reference engine, so its refusals are
+% thrown in the oracle's vocabulary: a bare term. This door wraps them, the
+% same way analyze.pl wraps every trigger it takes from 0_program_check.pl,
+% because "every compiler refusal is unsupported_construct/1" is what the
+% refusal-message umbrella and the sweep's supported/unsupported split both
+% read -- scripts/text_door_receipt.pl:classify_term_door_error/3 treats
+% anything else as a HARNESS failure, which is how the first host-refusal
+% fixtures in the corpus surfaced this. Six host refusals predate them
+% (refused_host_decl, column_mismatch, probe_mismatch, bind_mismatch,
+% host_executor_mismatch, query_mismatch) and none had a fixture, so nothing
+% had ever put one through this door.
+%
+% Wrapping HERE rather than inside the pre-pass keeps the pre-pass shared and
+% keeps the ORACLE's terms bare, which is the same per-door split every
+% trigger in 0_program_check.pl already has. Callers reaching
+% compile_host_decl/2 directly still see the bare term; only whole-program
+% compilation wraps.
+prepare_program_for_compiler(SugaredProg, HostProg) :-
+    catch(prepare_program(SugaredProg, HostProg, _, _, _), Refusal,
+          throw_as_compiler_refusal(Refusal)).
+
+throw_as_compiler_refusal(unsupported_construct(Reason)) :-
+    !,
+    throw(unsupported_construct(Reason)).
+throw_as_compiler_refusal(Refusal) :-
+    throw(unsupported_construct(Refusal)).
+
 materialize_reference_target_rels(prog(Decls0, Rules), prog(Decls, Rules)) :-
     findall(col_type(Name/Arity, Column, Type),
             ( member(type_decl(Name, Specs), Decls0),
@@ -102,7 +129,7 @@ materialize_reference_target_rels(prog(Decls0, Rules), prog(Decls, Rules)) :-
     append(Decls0, MissingColumns, Decls).
 
 program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindings, Plan) :-
-    prepare_program(SugaredProg, HostProg, _, _, _),
+    prepare_program_for_compiler(SugaredProg, HostProg),
     % Host preparation stays a PRE-PASS (see engine.pl); the sugar phases run
     % in the order 1_expansion.pl declares.
     expand_program(HostProg, ExpandedProg, _),

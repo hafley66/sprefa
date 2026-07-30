@@ -34,7 +34,8 @@
                 % rather than restating the three lowering shapes.
                 body_surface_for_term/6 ]).
 :- use_module('../../1_host_expand',
-              [ prepare_program/5, compile_host_decl/2, compile_ts_query/2 ]).
+              [ prepare_program/5, compile_host_decl/2, compile_ts_query/2,
+                reserved_host_column/1 ]).
 :- use_module('../emit_ts',
               [ emit_program/5,
                 % The emitter-mode seam (rank R8): which statement family a
@@ -1607,6 +1608,61 @@ test(backslash_survives_print_and_reparse) :-
     atom_codes(Printed, PrintedCodes),
     parse_dl(PrintedCodes, Reparsed, _, []),
     Program =@= Reparsed.
+
+% The reserved-column list is STATED in 1_host_expand.pl and has to match the
+% columns that file's own generator emits, or the refusal protects the wrong
+% names. Rather than trusting the list, compile an ordinary host and read the
+% generated column names back off the two relations: every name the generator
+% adds beyond the author's own columns is a name no author may declare.
+%
+% This is the drift guard the reserved_host_column/1 comment promises. A
+% future runtime column (a retry counter, an answer timestamp) added to
+% generated_host_decls/7 without a matching reserved row turns this red
+% instead of shipping a fresh silent collision.
+%
+% SABOTAGE RECEIPT: commenting out reserved_host_column(identity_digest)
+% turns exactly this test red (`hosts_wiring:reserved_host_columns_are_
+% exactly_the_generated_ones: failed`) while every other test stays green,
+% including the refusal test below, which iterates the same list and so
+% cannot notice a name missing from it.
+test(reserved_host_columns_are_exactly_the_generated_ones) :-
+    Program = program(
+                [ sh_decl(plain, [col(path, text)], [col(line, text)],
+                          template("echo {path}")) ],
+                [ (found(Path, Line) <- probe(plain, [Path], [Line], [])) ],
+                []),
+    prepare_program(Program, prog(Decls, _), _, _, _),
+    findall(Column,
+            ( member(col_type(Ref, Column, _), Decls),
+              generated_host_relation(Ref),
+              \+ memberchk(Column, [path, line]) ),
+            Generated0),
+    sort(Generated0, Generated),
+    findall(Reserved, reserved_host_column(Reserved), Reserved0),
+    sort(Reserved0, ReservedSorted),
+    Generated == ReservedSorted.
+
+generated_host_relation(Name/_) :-
+    sub_atom(Name, 0, _, _, '__host_').
+
+% Each reserved name refuses on the side it collides on, naming the host, the
+% side, and the column. `identity_digest` sits on the demand relation only,
+% so an OUTPUT may not carry it either: outputs and inputs both flow into the
+% response relation and the refusal is stated once for the whole declaration.
+test(every_reserved_host_column_refuses_by_name) :-
+    forall(reserved_host_column(Column),
+           ( InputDecl = sh_decl(probe_host, [col(Column, text)],
+                                 [col(line, text)],
+                                 template("echo {path}")),
+             catch(compile_host_decl(InputDecl, _), InputThrown, true),
+             InputThrown ==
+                 host_column_shadows_runtime(probe_host, input, Column),
+             OutputDecl = sh_decl(probe_host, [col(path, text)],
+                                  [col(Column, text)],
+                                  template("echo {path}")),
+             catch(compile_host_decl(OutputDecl, _), OutputThrown, true),
+             OutputThrown ==
+                 host_column_shadows_runtime(probe_host, output, Column) )).
 
 :- end_tests(hosts_wiring).
 
