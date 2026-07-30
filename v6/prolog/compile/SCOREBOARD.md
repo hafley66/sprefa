@@ -14,30 +14,45 @@ excerpt per compiled fixture).
 
 ## Totals (current)
 
-Refreshed by the COALESCE lane (2026-07-30), which wired ruling `null_design =
-get_else_use_site_never_storage` into both doors as `coalesce/2`, the use-site
-total read. The counts before it were 201 / 60 / 141 / 139. Arcs before that,
-most recent first: JSON-WIRING (which took 155 / 61 / 94 / 92 to those
-numbers), STRUCT-AS-ROWS, FLAGSHIP CALLGRAPH, TICK PHASE ALIGNMENT. The prose
-sections below this one are historical and were written against the
-110-fixture corpus; the numbers here and in the two tables that follow come
-from `out/manifest.json` + `out/run-results.json`.
+Refreshed by the JSON-FLEX lane (2026-07-30,
+`plans/2026-07-30-json-flex-verdict.md`), which added 12 json state-machine
+fixtures and fixed four encoder/lowering defects none of the prior corpus could
+see. The counts before it were 209 / 64 / 145 / 143. Arcs before that, most
+recent first: COALESCE (201 / 60 / 141 / 139 -> those numbers), JSON-WIRING
+(from 155 / 61 / 94 / 92), STRUCT-AS-ROWS, FLAGSHIP CALLGRAPH, TICK PHASE
+ALIGNMENT. The prose sections below this one are historical and were written
+against the 110-fixture corpus; the numbers here and in the two tables that
+follow come from `out/manifest.json` + `out/run-results.json`.
 
 | bucket | count |
 |---|---|
-| fixtures swept | 209 |
+| fixtures swept | 221 |
 | UNSUPPORTED (compiler refuses, named construct) | 64 |
-| compiled (lowering + emission succeeded) | 145 |
-| — of which IDENTICAL (tick log byte-identical to oracle) | 143 |
+| compiled (lowering + emission succeeded) | 157 |
+| — of which IDENTICAL (tick log byte-identical to oracle) | 155 |
 | — of which WRONG (diff vs oracle) | 0 |
 | — of which run_error / no_oracle_log (rejection-path fixtures) | 2 |
 
-IDENTICAL + run_error/no_oracle + UNSUPPORTED = 143 + 2 + 64 = 209.
+IDENTICAL + run_error/no_oracle + UNSUPPORTED = 155 + 2 + 64 = 221.
 
 Both emitter modes agree row for row: the incremental default and
-`SPREFA_TSV2_EMITTER_MODE=naive` produce the same 143/0/2. The final-state
-grading leg agrees too: `final_identical=143`, `final_wrong=2` (the same two
+`SPREFA_TSV2_EMITTER_MODE=naive` produce the same 155/0/2. The final-state
+grading leg agrees too: `final_identical=155`, `final_wrong=2` (the same two
 rejection-path fixtures).
+
+### What the json-flex lane moved
+
++12 fixtures (`conformance/fixtures/8_json_flex.pl`), ALL TWELVE compiling
+IDENTICAL in both modes. Zero movement in any prior bucket. Three of the twelve
+were fail-first against real sweep failures, and the defects they caught were
+all BELOW the semantics: the oracle's tick log emitted invalid `\uXX` escapes
+for every control character (three separate copies of the same broken escape,
+one of them in this sweep's own schedule writer), a text column holding a json
+object read back as SQL NULL through `canonical_column_expr/3`'s
+object-shaped-means-tagged-term guard, and the tick-log encoder decided
+structure by sniffing a value's first character instead of reading its declared
+column type. `json` is now its own `IRowColumnType` member rather than
+collapsing to `text` at the driver seam.
 
 ### What the coalesce lane moved
 

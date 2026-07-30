@@ -49,7 +49,7 @@
 | [plans/2026-07-25-sql-builder-build-vs-buy.md](plans/2026-07-25-sql-builder-build-vs-buy.md) | 322 | SQL query-builder / templating: build-vs-buy for `lowerSql.ts` |
 | [prolog/LANG.md](prolog/LANG.md) | 95 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
 | [prolog/compile/PIPELINE.md](prolog/compile/PIPELINE.md) | 153 | The tsv2 compiler pipeline, stage by stage |
-| [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 437 | TSV2 Phase C scoreboard |
+| [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 452 | TSV2 Phase C scoreboard |
 | [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 311 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
 | [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 115 | TICK MODEL: the semiring/grading semantics behind the clock checker |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
@@ -737,18 +737,19 @@
 ```
 1:# TSV2 Phase C scoreboard
 15:## Totals (current)
-42:### What the coalesce lane moved
-68:### What the json-wiring lane moved
-97:### What the struct-as-rows arc moved
-120:### Named gap found by the flagship arc, unowned
-134:### The UNSUPPORTED bucket, by named reason (61)
-155:### The three fixtures this arc moved
-169:### the mid-tick level freeze (`edge_body_joins_arrival_fed_level`, removed)
-192:### the departure frontier (`edge_body_needs_finalize`, removed)
-216:### `edge_body_needs_pre`: why it is not a widening
-245:### The final-state leg (new, and it changes how to read this table)
-309:## Per-fixture table: compiled (85)
-402:## Per-construct blocked tally (UNSUPPORTED, ranked)
+43:### What the json-flex lane moved
+57:### What the coalesce lane moved
+83:### What the json-wiring lane moved
+112:### What the struct-as-rows arc moved
+135:### Named gap found by the flagship arc, unowned
+149:### The UNSUPPORTED bucket, by named reason (61)
+170:### The three fixtures this arc moved
+184:### the mid-tick level freeze (`edge_body_joins_arrival_fed_level`, removed)
+207:### the departure frontier (`edge_body_needs_finalize`, removed)
+231:### `edge_body_needs_pre`: why it is not a widening
+260:### The final-state leg (new, and it changes how to read this table)
+324:## Per-fixture table: compiled (85)
+417:## Per-construct blocked tally (UNSUPPORTED, ranked)
 ```
 
 ### prolog/compile/SYNTAX.md
