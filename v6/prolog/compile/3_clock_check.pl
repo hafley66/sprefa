@@ -11,6 +11,7 @@
             clock_fact/5,
             clock_scc/3,
             clock_violation/2,
+            clock_boundary/2,
             clock_refusal_reason/1,
             check_clock_program/1
           ]).
@@ -312,6 +313,29 @@ clock_violation(Program, clock_path_conflict(Origin, Ref, Left, Right)) :-
     !.
 clock_violation(Program, unconstructive_clock_cycle(Component, Reason)) :-
     clock_scc(Program, Component, invalid(Reason)).
+
+% Multiple grade-zero trigger sources in one edge arm are intentional
+% either-source firing: the firing source is read from Z and every other
+% plain atom is sampled from current state. The dependency facts describe
+% that execution shape, but cannot establish whether the author requires
+% equivalent results under different outside-arrival batchings. Keep that
+% limit queryable and non-refusing.
+clock_boundary(Program,
+               not_provable(
+                 multi_trigger_batch_invariance(RuleId, TriggerRefs))) :-
+    clock_dependencies(Program, Dependencies),
+    findall(Candidate,
+            member(dependency(Candidate, _, _, z, _, positive, 0, trigger),
+                   Dependencies),
+            RuleIds0),
+    sort(RuleIds0, RuleIds),
+    member(RuleId, RuleIds),
+    findall(Ref,
+            member(dependency(RuleId, Ref, _, z, _, positive, 0, trigger),
+                   Dependencies),
+            TriggerRefs0),
+    sort(TriggerRefs0, TriggerRefs),
+    TriggerRefs = [_, _ | _].
 
 clock_refusal_reason(clock_path_conflict(_, _, _, _)).
 clock_refusal_reason(unconstructive_clock_cycle(_, _)).

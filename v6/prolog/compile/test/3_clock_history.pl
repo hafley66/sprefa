@@ -2,7 +2,8 @@
 
 :- module(clock_history,
           [ historical_bug_class/5,
-            historical_bug_program/2
+            historical_bug_program/2,
+            historical_clock_receipt/3
           ]).
 
 :- op(1150, xfx, <-).
@@ -88,3 +89,48 @@ historical_bug_program(
 historical_bug_program(
     a11,
     prog([], [ (total(count(N)) <- item(N)) ])).
+
+% historical_clock_receipt(Id, Status, Evidence).
+%
+% These are the exact claims the clock checker owns. A status of
+% not_provable is a ruled boundary, not an unchecked test. The replay tests
+% still pass each recorded program through the checker and pin its complete
+% dependency projection. A6 remains a runtime crosscheck because its
+% recorded program contains only grade-zero causal edges. The focused suite's
+% pipe receipt separately pairs nonzero inferred grades with runtime ticks.
+historical_clock_receipt(
+    a2,
+    not_provable,
+    multi_trigger_batch_invariance(
+      rule(1, edge, answer/2),
+      [left/1, right/1])).
+historical_clock_receipt(
+    a4,
+    not_provable,
+    keyed_boundary_replacement_requires_runtime_deltas).
+historical_clock_receipt(
+    a5,
+    not_provable,
+    emitted_identifier_uniqueness_requires_target_validation).
+historical_clock_receipt(
+    a6,
+    runtime_clock_crosscheck,
+    grade_zero_offsets_match_observed_ticks(
+      source/1,
+      [seen/1-0, source/1-0, visible/1-0])).
+historical_clock_receipt(
+    a7,
+    not_provable,
+    occurrence_history_versus_membership_requires_relation_intent).
+historical_clock_receipt(
+    a8,
+    not_provable,
+    retention_partition_requires_policy_key).
+historical_clock_receipt(
+    a9,
+    not_provable,
+    operational_transition_rows_require_boundary_observation).
+historical_clock_receipt(
+    a11,
+    not_provable,
+    empty_group_policy_requires_aggregate_semantics).
