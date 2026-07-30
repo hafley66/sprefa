@@ -1,0 +1,383 @@
+# v5-parity.dl6 -- THE PARITY TABLE, SEEDED BY A PROGRAM INSTEAD OF BY AN AGENT.
+#
+# The question this answers: what is in v5's language surface, how much is it
+# actually used, and does v6 have it. The answer is not written down here -- it
+# is DERIVED, every tick, from v5's own source and v5's own self-describing
+# catalog relations, joined against v6's own registry and its own shipped
+# programs. Nothing in this file is a remembered fact about either engine.
+#
+# ── THE FIVE MECHANICAL LEGS ────────────────────────────────────────────────
+#
+#   L1  v5 ORACLE.  v5 is SELF-DESCRIBING: `op_catalog`, `fn_catalog` and
+#       `rel_catalog` are built-in relations the engine fills from `op_docs()`,
+#       `fn_docs()` and `all_builtin_decls()` (src/rels/catalog.rs:44). So the
+#       authoritative inventory is obtained by ASKING V5, in v5's own query
+#       language, through an `sh` host. This is the leg everything else is
+#       graded against.
+#
+#   L2  v5 SOURCE, by line regex.  The same inventory read out of the rust
+#       source: the `op_docs()` / `fn_docs()` tables and every single-line
+#       `RelDecl { name: "..."` construction. This is the leg the brief asked
+#       for, and its DISAGREEMENTS WITH L1 ARE THE POINT -- see the three
+#       `_gap` rels below, which are findings, not failures.
+#
+#   L3  v5 GENERATED DOCS, by line regex.  `docs/reference/{syntax,functions,
+#       relations}.md` carry "Generated from the engine's <rel>_catalog by
+#       examples/gen-reference.dl. Do not hand-edit." A generated doc is a
+#       THIRD projection of L1 and must agree with it. Where it does not, the
+#       generator has not been re-run and the doc is lying to its readers.
+#
+#   L4  v5 USAGE.  Every call-shaped token in `examples/*.dl` and `.dl/*.dl`,
+#       joined against the L1 inventory. This turns "v5 has an op" into "v5 has
+#       an op that 105 example programs depend on", which is the number that
+#       decides what porting it is worth.
+#
+#   L5  v6 SURFACE.  Four catalogs, all read from v6's own committed files:
+#       registry.pl's `surface/5` rows with their live/refused/reserved status,
+#       every `sh`/`bind` declaration in the shipped `.dl6` fixtures, every
+#       `rel` declaration in them, and SYNTAX.md's core-grammar table.
+#
+# ── WHAT IS STATED RATHER THAN DERIVED, STATED PLAINLY ──────────────────────
+# One thing cannot be computed: that v5's `scan` and v6's `enumerate` are the
+# same idea. That is a judgment, and judgments are DATA HERE, not code. They
+# live as `# @parity <family> <v5_thing> -> <v6_target>` marker comments in
+# this file's own text, and this program EXTRACTS ITS OWN MARKERS with the same
+# line-regex host it uses on v5 (the comment-marker technique). The status word
+# is never in the marker: a marker only says "this v5 thing corresponds to that
+# v6 name", and covered/partial/absent is then DERIVED from which v6 catalog
+# the name resolves in and what status the registry gives it. So a construct
+# that gets refused in v6 tomorrow flips this table by itself.
+#
+# A marker naming a v6 target that exists in none of the four catalogs is a
+# typo, and `v5-parity.sh` fails on it rather than letting the row silently
+# score `absent`. That gate lives in the receipt rather than here; the reason
+# is a compile-cost measurement and it is written out at the gate's own site
+# further down.
+#
+# ── ZERO NEW CONSTRUCTS ─────────────────────────────────────────────────────
+# `sh` hosts + probes (hosts wiring phase 1), `not/1` and comparison guards in
+# level bodies, `count/1` aggregate heads, colon-typed decls, single-quoted
+# atom constants. Every one has a graded fixture already.
+#
+# ── THE RX LOWERING (the "every snippet carries its lowering" law) ──────────
+#
+#   go$.pipe(                                      // RX-H2, the demand mint
+#     map(mintIdentityAndWitness),
+#     distinct(row => row.witnessDigest),
+#     mergeMap(runShell),                          // RX-H1
+#     mergeMap(commitEdbArrival))                  // -> v5_op / src_op / ...
+#
+#   combineLatest([v5Op$, srcOp$]).pipe(...)       // the ordinary delta join
+#                                                  // the incremental emitter
+#                                                  // already writes; the `_gap`
+#                                                  // rels are its NOT EXISTS arm
+#
+# ── NO BACKSLASH APPEARS IN ANY REGEX BELOW, AND THAT IS NOT A STYLE CHOICE ─
+# A backslash in a `.dl6` string constant does not survive to the host. Two
+# lossy passes eat it: `parse_dl.pl:301`'s catch-all `escape_code(C, C)` drops
+# the backslash of any unknown escape at PARSE time, and `lower.pl` then
+# splices the constant into an emitted TypeScript TEMPLATE LITERAL without
+# escaping backslashes, so JavaScript's own escape processing eats a second
+# one at module load. Measured, `"\\s"` -- the correct SWI spelling of one
+# backslash -- reaches the host as bare `s`, silently. (`${` and the backtick
+# ARE escaped by the emitter, so this is a partial escape, not an absent one.)
+# Every pattern here is therefore written with character classes: `[(]` for
+# `\(`, `[0-9]` for `\d`, `[ ]` for `\s`, and a `(?<!...)` lookbehind for `\b`.
+# See plans/2026-07-30-v5-parity-spelunk.md for the full measurement table.
+
+# ── L1: the v5 oracle, three hosts asking v5 about itself ───────────────────
+# Each host writes its OWN query file and opens its OWN scratch db: the three
+# run concurrently inside one tick and a shared path would race. `DL_STATE_DIR`
+# points into the same scratch directory, so the real daemon state home under
+# ~/.local/state is neither read nor written.
+sh v5_ops(query: text) -> (op: text, kind: text, syntax: text) =
+  `printf '%s\n' '{query}' > "$PARITY_TMP/ops.dl" && DL_STATE_DIR="$PARITY_TMP/state" "$PARITY_DL" "$PARITY_TMP/ops.dl" --db "$PARITY_TMP/ops.sqlite" --format json 2>/dev/null`.
+
+sh v5_fns(query: text) -> (name: text, arity: int, group: text) =
+  `printf '%s\n' '{query}' > "$PARITY_TMP/fns.dl" && DL_STATE_DIR="$PARITY_TMP/state" "$PARITY_DL" "$PARITY_TMP/fns.dl" --db "$PARITY_TMP/fns.sqlite" --format json 2>/dev/null`.
+
+sh v5_rels(query: text) -> (name: text, group: text, cols: text) =
+  `printf '%s\n' '{query}' > "$PARITY_TMP/rels.dl" && DL_STATE_DIR="$PARITY_TMP/state" "$PARITY_DL" "$PARITY_TMP/rels.dl" --db "$PARITY_TMP/rels.sqlite" --format json 2>/dev/null`.
+
+# ── L2/L3/L4/L5: one generic line-regex host over git-tracked files ─────────
+# `rev` is `WORK` here throughout (this program grades the working tree). The
+# rev column exists because the git-diags rail shares this host and needs a
+# per-commit witness; see v5-git-diags.dl6.
+sh grep_at(rev: text, glob: text, pattern: text) -> (path: text, line: int, g1: text, g2: text, g3: text) =
+  `"$PARITY_GREP" '{rev}' '{glob}' '{pattern}'`.
+
+# ── the start row, the only thing the receipt posts ─────────────────────────
+# Every query text and every regex stays in THIS FILE. The receipt posts one
+# row and reads the answer; it does not carry program content.
+rel go(token: text).
+
+# ═══ L1: what v5 says about itself ═════════════════════════════════════════
+rel v5_op(op: text, kind: text, syntax: text).
+v5_op(op, kind, syntax) <- go(_), v5_ops('? op_catalog(op, kind, syntax, doc).', op, kind, syntax).
+
+rel v5_fn(name: text, arity: int, group: text).
+v5_fn(name, arity, group) <- go(_), v5_fns('? fn_catalog(name, arity, group, doc).', name, arity, group).
+
+rel v5_rel(name: text, group: text, cols: text).
+v5_rel(name, group, cols) <- go(_), v5_rels('? rel_catalog(name, group, cols, doc).', name, group, cols).
+
+# ═══ L2: the same inventory, by line regex over the rust source ════════════
+# `op_docs()` rows: ("scan", "source", "syntax", "semantics").
+rel src_op(op: text, kind: text).
+src_op(op, kind) <-
+  go(_), grep_at('WORK', 'src/engine/decls.rs',
+                 "^[ ]*[(]""([a-z_0-9]+)"", ""(source|body|sink)"",", _, _, op, kind, _).
+
+# `fn_docs()` rows: ("split", 3, "string", "semantics").
+rel src_fn(name: text, arity: text).
+src_fn(name, arity) <-
+  go(_), grep_at('WORK', 'src/engine/decls.rs',
+                 "^[ ]*[(]""([a-z_0-9]+)"", ([0-9]+), ""([a-z]+)"",", _, _, name, arity, _).
+
+# The parse dispatch ladder in `fn body_item` -- the site an op is actually
+# WIRED at, as opposed to documented at. It covers the source ops plus the
+# three graph-body ops and nothing else, so it is a subset check, not a total.
+rel src_op_parsed(op: text).
+src_op_parsed(op) <-
+  go(_), grep_at('WORK', 'src/parse/mod.rs',
+                 "^[ ]*if s == ""([a-z_0-9]+)"" [{]", _, _, op, _, _).
+
+# Single-line `RelDecl { name: "x"` constructions. This one is KNOWN to
+# undercount and the undercount is the receipt; see `rel_regex_gap`.
+rel src_rel(name: text).
+src_rel(name) <-
+  go(_), grep_at('WORK', 'src/*.rs', "RelDecl [{] name: ""([a-z_0-9]+)""", _, _, name, _, _).
+
+# ═══ L3: the generated reference docs, a third projection of L1 ════════════
+rel doc_op(op: text, kind: text).
+doc_op(op, kind) <-
+  go(_), grep_at('WORK', 'docs/reference/syntax.md',
+                 "^[|] `([a-z_0-9]+)` [|] (source|body|sink) [|]", _, _, op, kind, _).
+
+rel doc_fn(name: text, arity: text).
+doc_fn(name, arity) <-
+  go(_), grep_at('WORK', 'docs/reference/functions.md',
+                 "^[|] `([a-z_0-9]+)` [|] ([0-9]+) [|] ([a-z]+) [|]", _, _, name, arity, _).
+
+# `cols` here is the parenthesised column LIST as text. It is not an arity and
+# cannot become one inside this program: turning "(a, b, c)" into 3 needs a
+# string split, and v6 has no string functions at all (the sqlite-udf-graft
+# verdict: @libsql exposes no UDF registration API). NAMED INEXPRESSIBLE.
+rel doc_rel(name: text, group: text, cols: text).
+doc_rel(name, group, cols) <-
+  go(_), grep_at('WORK', 'docs/reference/relations.md',
+                 "^[|] `([a-z_0-9]+)` [|] ([a-z_0-9]+) [|] `[(]([^)]*)[)]`", _, _, name, group, cols).
+
+# ═══ the three-way grade: where the legs disagree ══════════════════════════
+# Each `_gap` rel is "L1 has it, the other leg does not". An empty gap means
+# the leg is a faithful projection; a non-empty gap names every row that got
+# lost and WHICH leg lost it.
+rel op_regex_gap(op: text).
+op_regex_gap(op) <- v5_op(op, _, _), not(src_op(op, _)).
+
+rel op_doc_gap(op: text).
+op_doc_gap(op) <- v5_op(op, _, _), not(doc_op(op, _)).
+
+rel op_parse_gap(op: text).
+op_parse_gap(op) <- v5_op(op, 'source', _), not(src_op_parsed(op)).
+
+rel fn_regex_gap(name: text).
+fn_regex_gap(name) <- v5_fn(name, _, _), not(src_fn(name, _)).
+
+rel fn_doc_gap(name: text).
+fn_doc_gap(name) <- v5_fn(name, _, _), not(doc_fn(name, _)).
+
+rel rel_regex_gap(name: text).
+rel_regex_gap(name) <- v5_rel(name, _, _), not(src_rel(name)).
+
+rel rel_doc_gap(name: text).
+rel_doc_gap(name) <- v5_rel(name, _, _), not(doc_rel(name, _, _)).
+
+# ═══ L4: usage over the real .dl corpus ════════════════════════════════════
+# TWO GLOB SPELLINGS ON PURPOSE. git pathspec `*` CROSSES `/`, so
+# 'examples/*.dl' selects 132 files including three in subdirectories;
+# `:(glob)` magic makes `*` stop at `/`, so ':(glob)examples/*.dl' selects the
+# 129 top-level files a shell glob would. The v5-utility review's "scan() used
+# in 105/129 examples" is the second spelling. Both are computed here and the
+# receipt reconciles them, because a parity number whose file set is ambiguous
+# is not a number.
+rel dl_token(path: text, token: text).
+dl_token(path, token) <-
+  go(_), grep_at('WORK', ':(glob)examples/*.dl',
+                 "(?<![a-z_0-9])([a-z_][a-z_0-9]*)[ ]*[(]", path, _, token, _, _).
+
+rel dl_token_recursive(path: text, token: text).
+dl_token_recursive(path, token) <-
+  go(_), grep_at('WORK', 'examples/*.dl',
+                 "(?<![a-z_0-9])([a-z_][a-z_0-9]*)[ ]*[(]", path, _, token, _, _).
+
+rel rail_token(path: text, token: text).
+rail_token(path, token) <-
+  go(_), grep_at('WORK', '.dl/*.dl',
+                 "(?<![a-z_0-9])([a-z_][a-z_0-9]*)[ ]*[(]", path, _, token, _, _).
+
+# A token is only "usage" if the inventory claims it. The join is what filters;
+# the regex deliberately knows nothing about the op list.
+#
+# ONE aggregate over ONE union rel, not three. Three clauses each carrying
+# `count/1` on the same head is a shape with no fixture, and the union is
+# free -- `thing_use` is a set of (thing, path) pairs, so `count(path)` per
+# thing is a DISTINCT FILE count with no distinct keyword anywhere.
+rel thing_use(thing: text, path: text).
+thing_use(op, path)   <- v5_op(op, _, _),   dl_token(path, op).
+thing_use(name, path) <- v5_fn(name, _, _), dl_token(path, name).
+thing_use(name, path) <- v5_rel(name, _, _), dl_token(path, name).
+
+rel usage_count(thing: text, files: int).
+usage_count(thing, count(path)) <- thing_use(thing, path).
+
+# The recursive-pathspec twin, ops only: it exists to make the glob-semantics
+# reconciliation a fact the PROGRAM states rather than a note in the receipt.
+rel op_use_recursive(op: text, path: text).
+op_use_recursive(op, path) <- v5_op(op, _, _), dl_token_recursive(path, op).
+
+rel usage_count_recursive(op: text, files: int).
+usage_count_recursive(op, count(path)) <- op_use_recursive(op, path).
+
+# The `.dl/` rails corpus, a separate count because a construct the shipped
+# rails depend on is a different porting risk from one only examples use.
+rel rail_use(thing: text, path: text).
+rail_use(op, path)   <- v5_op(op, _, _),   rail_token(path, op).
+rail_use(name, path) <- v5_rel(name, _, _), rail_token(path, name).
+
+rel rail_usage_count(thing: text, files: int).
+rail_usage_count(thing, count(path)) <- rail_use(thing, path).
+
+# ═══ L5: v6's own surface, four catalogs ═══════════════════════════════════
+# THE SIGNATURE IS CAPTURED WHOLE (`sh_decl/4`, `'=='/2`) rather than split
+# into name and arity, and that is forced: registry.pl spells operator functors
+# as QUOTED atoms, and a single quote cannot appear in a `.dl6` string constant
+# at all -- `unsupported_construct(quote_in_literal(...))`, a named refusal, so
+# no pattern can name the quote it needs to strip. Capturing the field whole
+# costs nothing here (the markers below name the same signature text) and the
+# refusal is honest rather than silent. NAMED in the receipt.
+rel v6_surface(signature: text, axis: text, status: text).
+v6_surface(signature, axis, status) <-
+  go(_), grep_at('WORK', 'v6/prolog/compile/registry.pl',
+                 "^surface[(]([^,]+)[ ]*,[ ]*([a-z_]+)[ ]*,.*,[ ]*([a-z]+)[)][.][ ]*$",
+                 _, _, signature, axis, status).
+
+rel v6_world(kind: text, name: text).
+v6_world(kind, name) <-
+  go(_), grep_at('WORK', 'v6/dl/fixtures/*.dl6',
+                 "^(sh|bind) ([a-z_][a-z_0-9]*)[(]", _, _, kind, name, _).
+
+rel v6_program_rel(name: text).
+v6_program_rel(name) <-
+  go(_), grep_at('WORK', 'v6/dl/fixtures/*.dl6', "^rel ([a-z_][a-z_0-9]*)[(]", _, _, name, _, _).
+
+# SYNTAX.md's tables, first column. The core-grammar half names constructs the
+# registry has no row for because they are the base grammar rather than a
+# registered construct -- "bare positive relation" is the one this file's
+# markers reach for.
+rel v6_grammar(phrase: text).
+v6_grammar(phrase) <-
+  go(_), grep_at('WORK', 'v6/prolog/compile/SYNTAX.md',
+                 "^[|] ([a-z][^|]*) [|] [^|]+ [|] [^|]+ [|]$", _, _, phrase, _, _).
+
+# ═══ THE BRIDGE: this file reading its own marker comments ═════════════════
+# The markers. Format: `# @parity <family> <v5 thing> -> <v6 target>`.
+# Read the extraction rule below them first; then each line is a claim you can
+# check by hand in one step.
+#
+# --- source ops -------------------------------------------------------------
+# @parity op scan -> enumerate
+# @parity op match_line -> sh_decl/4
+# @parity op match -> sh_decl/4
+# @parity op ast -> ts_query/1
+# @parity op match_ast -> sg_pattern/3
+# @parity op sg -> sg_pattern/3
+# @parity op json -> decode/2
+# @parity op jsonp -> decode/2
+# @parity op cmd -> sh_decl/4
+# --- body constructs --------------------------------------------------------
+# @parity op atom -> bare positive relation
+# @parity op negation -> not/1
+# @parity op comparison -> '=='/2
+# @parity op arith -> is/2
+# @parity op aggregation -> count/1
+# --- sinks ------------------------------------------------------------------
+# @parity op query -> query/1
+# @parity op diag -> diag_v5
+# --- functions --------------------------------------------------------------
+# @parity fn json_array -> json_array/1
+# @parity fn json_object -> json_object/2
+#
+# Deliberately UNBRIDGED, so the table scores them `absent` and the receipt
+# reports them as the porting backlog: ast_yaml, comment, glob, regex, strfn,
+# closure, scc, node2vec, gen, graph_node, graph_edge, hover_note, and thirteen
+# of the sixteen scalar functions.
+rel bridge(family: text, thing: text, target: text).
+bridge(family, thing, target) <-
+  go(_), grep_at('WORK', 'v6/dl/fixtures/v5-parity.dl6',
+                 "^# @parity ([a-z]+) ([^ ]+) -> (.+)$", _, _, family, thing, target).
+
+# THE RESOLUTION GATE LIVES IN THE RECEIPT, NOT HERE, and that is a compile-
+# time decision stated rather than hidden: a `bridge_via` rel resolving each
+# target against all four catalogs is four more clauses plus two more rels, and
+# this compiler's cost is steeply superlinear in statement count (7.9s at 60
+# statements, 232s at 117 -- measured table in the receipt doc). The gate is
+# plumbing, not a finding, so `v5-parity.sh` asserts it in ten lines of python
+# against the same four catalogs and the program keeps its budget for the
+# joins that ARE the answer.
+
+# ═══ STATUS, DERIVED ═══════════════════════════════════════════════════════
+# covered  the bridged v6 name is a LIVE registry construct, or a shipped host,
+#          or a rel a shipped program declares, or core grammar
+# partial  the bridged v6 name exists but the registry refuses or reserves it
+# absent   no marker claims a v6 counterpart at all
+#
+# The `rel` family needs NO markers: a v5 built-in relation is covered exactly
+# when a shipped v6 program declares a rel of the same name. That is a pure
+# name intersection, so it is derived directly. Note what "covered" means for
+# that family -- v6 has ZERO built-in relations by the spine_residency ruling,
+# so a covered rel is covered BY A PROGRAM, never by the engine.
+# FAMILY TRAVELS WITH THE STATUS, because `json` is BOTH a source op and a
+# scalar function in v5's catalogs and the two have different v6 answers (the
+# op corresponds to `decode/2`, live; the function is an unrelated
+# validate-and-minify with no v6 counterpart at all). Keying status on the name
+# alone would silently give the function the op's verdict.
+rel v6_status(thing: text, family: text, status: text).
+v6_status(thing, family, 'covered') <- bridge(family, thing, target), v6_surface(target, _, 'live').
+v6_status(thing, family, 'covered') <- bridge(family, thing, target), v6_world(_, target).
+v6_status(thing, family, 'covered') <- bridge(family, thing, target), v6_program_rel(target).
+v6_status(thing, family, 'covered') <- bridge(family, thing, target), v6_grammar(target).
+v6_status(thing, family, 'partial') <- bridge(family, thing, target), v6_surface(target, _, 'refused').
+v6_status(thing, family, 'partial') <- bridge(family, thing, target), v6_surface(target, _, 'reserved').
+v6_status(name, 'rel', 'covered')   <- v5_rel(name, _, _), v6_program_rel(name).
+
+rel v5_thing(thing: text, family: text).
+v5_thing(op, 'op') <- v5_op(op, _, _).
+v5_thing(name, 'fn') <- v5_fn(name, _, _).
+v5_thing(name, 'rel') <- v5_rel(name, _, _).
+
+rel has_status(thing: text, family: text).
+has_status(thing, family) <- v6_status(thing, family, _).
+
+rel used(thing: text).
+used(thing) <- usage_count(thing, _).
+
+# ═══ parity_row: the seeded table ══════════════════════════════════════════
+# Four clauses because two columns each need a zero/absent floor and datalog
+# has no outer join: a thing with no usage row and a thing with no status row
+# both have to be reintroduced through their own negated clause.
+rel parity_row(thing: text, family: text, files: int, status: text).
+parity_row(thing, family, files, status) <-
+  v5_thing(thing, family), usage_count(thing, files), v6_status(thing, family, status).
+parity_row(thing, family, 0, status) <-
+  v5_thing(thing, family), not(used(thing)), v6_status(thing, family, status).
+parity_row(thing, family, files, 'absent') <-
+  v5_thing(thing, family), usage_count(thing, files), not(has_status(thing, family)).
+parity_row(thing, family, 0, 'absent') <-
+  v5_thing(thing, family), not(used(thing)), not(has_status(thing, family)).
+
+rel parity_total(status: text, things: int).
+parity_total(status, count(thing)) <- parity_row(thing, _, _, status).
+
+? parity_row(thing, family, files, status).
+? parity_total(status, things).

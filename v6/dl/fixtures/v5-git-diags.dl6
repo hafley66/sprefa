@@ -1,0 +1,200 @@
+# v5-git-diags.dl6 -- THE GIT-FACT DIAGNOSTICS RAIL, the v5 rails class run on
+# v6 with zero new syntax.
+#
+# What it proves: that "which files are NEW since a base revision" is an
+# ORDINARY JOIN in this language, and that a diagnostic keyed on that join
+# appears and retracts on real commit boundaries. Three finding classes over
+# one file-set difference:
+#
+#   (a) BANNED PATTERN IN A NEW FILE   a new file containing `eval(`
+#   (b) MISSING REQUIRED PATTERN       a new file with no `Owner:` header
+#   (c) RATCHET                        whole-tree hit count above a committed
+#                                      baseline row -- the no-new-eprintln class
+#
+# ── THE SHAPE THE BRIEF ASKED FOR, AND WHY IT IS SPELLED IN TWO STEPS ───────
+# The brief writes it as
+#
+#     new_file(path) <- enumerate(...), not(enumerate_at('BASE_REV', ...)).
+#
+# and that exact line is REFUSED, correctly. `not/1` in a level body is live
+# around ONE PLAIN RELATION ATOM (it lowers to NOT EXISTS over a table), and a
+# host call is not one: a probe expands to a demand atom plus a keyed response
+# atom, so `not(probe(...))` has no single table to be NOT EXISTS over. Routing
+# each side through its own rel first is the whole fix, and it costs two rels:
+#
+#     head_file(path, digest) <- want_at(rev, glob), enumerate_at(...).
+#     base_file(path, digest) <- base_at(rev, glob), enumerate_at(...).
+#     new_file(path)          <- head_file(path, _), not(base_file(path, _)).
+#
+# ── WHY BOTH SIDES ARE REV-PINNED AND NEITHER READS THE WORKTREE ───────────
+# `enumerate(glob)` (the unmarked worktree host) takes its witness from the
+# glob ALONE, so it answers once and caches for the life of the db -- its own
+# declaration in enumerate-hosts.dl6 says so, and freshness there is the
+# watcher's job. A rail that must show a diagnostic APPEAR and then RETRACT
+# across commits therefore cannot ask a worktree host twice: it would get the
+# same cached answer both times and the retraction would be invisible. So the
+# CURRENT side is pinned too, and advancing it is what a commit does. Each
+# commit is a new witness by construction, every answer is immutable, and the
+# cache is exactly right rather than being worked around.
+#
+# The same reasoning applies to the CONTENT legs, which is why `grep_at` takes
+# a rev and reads blobs out of the object database rather than files off disk.
+#
+# ── LINE NUMBERS ARE REAL HERE ─────────────────────────────────────────────
+# flagship-callgraph.dl6 and diag-rail.dl6 both had to write `line = 0` because
+# `sprefa-extract` emits byte spans as a NESTED json object and the host decode
+# is a projection over TOP-LEVEL keys. A line-regex host has no such problem:
+# the line number is a top-level int column, so class (a) below carries a real
+# line. The 1-based-to-0-based conversion v5's `diag` schema needs is the `:=`
+# bind in the open, not a hidden adjustment inside the extractor.
+#
+# ── ZERO NEW CONSTRUCTS ────────────────────────────────────────────────────
+# `sh` hosts + probes, `not/1` over plain relation atoms, a `>` guard, a `:=`
+# bind, a `count/1` aggregate head, colon-typed decls. `enumerate_at` is copied
+# verbatim from fixtures/enumerate-hosts.dl6 and `diag_v5` is v5's own 9-column
+# LSP schema, copied verbatim from fixtures/diag-rail.dl6 so the same
+# `dl --lsp --diag-db` bridge reads it with nothing changed on the v5 side.
+#
+# ── THE RX LOWERING ────────────────────────────────────────────────────────
+#
+#   combineLatest([headFile$, baseFile$]).pipe(          // new_file
+#     map(([head, base]) => head.filter(row => !base.has(row.path))))
+#
+#   merge(                                                // diag_v5, one arm
+#     newFile$.pipe(withLatestFrom(bannedHit$), ...),     // per finding class
+#     newFile$.pipe(filter(row => !ownerMarked.has(row.path)), ...),
+#     ratchetCount$.pipe(withLatestFrom(baseline$),
+#                        filter(([hits, ceiling]) => hits > ceiling), ...))
+#     .pipe(mergeMap(commitEdbArrival))
+#
+# NO BACKSLASH APPEARS IN ANY REGEX BELOW. A backslash in a `.dl6` string
+# constant is eaten twice on the way to a host (parse_dl.pl's catch-all
+# `escape_code(C, C)`, then JavaScript template-literal escape processing on
+# the emitted module), silently. Character classes throughout; the measurement
+# is in plans/2026-07-30-v5-parity-spelunk.md.
+
+# ── the file set at a revision ──────────────────────────────────────────────
+# `--with-tree` unions the tree with the index, so a path staged but absent at
+# that rev has no blob: `rev-parse` fails, the guard drops it, and it is no row
+# (absence is row absence, never an empty digest).
+#
+# ── THIS HOST EMITS JSON, AND enumerate-hosts.dl6's TWIN EMITS WHITESPACE ───
+# The shipped `enumerate_at` (fixtures/enumerate-hosts.dl6) ends its loop with
+# `printf '%s %s\n'`, i.e. whitespace-separated columns. THAT SPELLING IS
+# SILENTLY WRONG FOR SOME ANSWERS, and this rail found it the hard way:
+#
+#   serve/1_hosts.ts `parseWhitespace` reads N lines as ONE ROW OF N COLUMNS
+#   whenever the line count happens to equal the declared output-column count.
+#
+# The heuristic is deliberate and documented (ghcacher's `printf '%s\n%s\n%s'`
+# templates emit one row as one value per line), but it is DATA-DEPENDENT: a
+# two-column host answering with exactly two rows is indistinguishable from a
+# two-column host answering with one row, and the decoder picks the second
+# reading. So `enumerate_at` over a corpus of exactly two files returns one
+# garbage row whose `path` is the first whole line and whose `digest` is the
+# second whole line. No refusal, no diagnostic, and every downstream join
+# quietly derives nothing.
+#
+# The shipped `enumerate.sh` receipt cannot see this: it runs against this
+# repository, where the glob matches hundreds of files, and 2 == 2 never holds.
+#
+# The fix in program text is to emit a named JSON projection, which
+# `decodeObjectItems` reads by column NAME and which no row count can confuse.
+# That is what this declaration does. The whitespace twin is kept immediately
+# below, unused by the rail, purely so the receipt can prove the defect rather
+# than assert it. NAMED in plans/2026-07-30-v5-parity-spelunk.md; not patched,
+# because the runtime is not this lane's to edit.
+sh enumerate_at(rev: text, glob: text) -> (path: text, digest: text) =
+  `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '{"path":"%s","digest":"%s"}\n' "$entry" "$oid"; done`.
+
+# The shipped whitespace spelling, verbatim from fixtures/enumerate-hosts.dl6.
+# It exists ONLY as the defect's witness; `ws_file` below is read by the
+# receipt and by nothing else in the rail.
+sh enumerate_at_ws(rev: text, glob: text) -> (path: text, digest: text) =
+  `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
+
+# ── file CONTENT at a revision, the shared line-regex host ──────────────────
+sh grep_at(rev: text, glob: text, pattern: text) -> (path: text, line: int, g1: text, g2: text, g3: text) =
+  `"$PARITY_GREP" '{rev}' '{glob}' '{pattern}'`.
+
+# ── the three world inputs, posted as ordinary EDB arrivals ────────────────
+# `want_at` advances on every commit; `base_at` is the comparison point and
+# advancing IT is how a rail says "everything up to here is accepted now".
+# `baseline` is the ratchet's committed ceiling, one row per code.
+rel want_at(rev: text, glob: text).
+rel base_at(rev: text, glob: text).
+rel baseline(code: text, ceiling: int).
+
+# ── the two file sets and their difference ─────────────────────────────────
+rel head_file(path: text, digest: text).
+head_file(path, digest) <- want_at(rev, glob), enumerate_at(rev, glob, path, digest).
+
+rel base_file(path: text, digest: text).
+base_file(path, digest) <- base_at(rev, glob), enumerate_at(rev, glob, path, digest).
+
+rel new_file(path: text).
+new_file(path) <- head_file(path, _), not(base_file(path, _)).
+
+# The defect's witness. Same rev, same glob, same declared columns as
+# `base_file` above -- only the host template's output encoding differs. At a
+# revision holding exactly two matching files these two rels MUST agree and do
+# not; at any other count they agree. The receipt asserts both halves.
+rel ws_file(path: text, digest: text).
+ws_file(path, digest) <- base_at(rev, glob), enumerate_at_ws(rev, glob, path, digest).
+
+# ── the content facts, read at the SAME rev the file set came from ─────────
+# One probe, two consumers: class (a) intersects it with `new_file`, class (c)
+# counts it across the whole tree. Same inputs means one witness and one
+# subprocess; the two readings are ordinary joins over the one response rel.
+rel banned_hit(path: text, line: int).
+banned_hit(path, line) <-
+  want_at(rev, glob), grep_at(rev, glob, "(?<![a-z_0-9])eval[ ]*[(]", path, line, _, _, _).
+
+rel owner_marked(path: text).
+owner_marked(path) <-
+  want_at(rev, glob), grep_at(rev, glob, "^[/# ]*Owner:[ ]+([^ ]+)", path, _, _, _, _).
+
+# ── the ratchet count ──────────────────────────────────────────────────────
+# A WHOLE-REL count with no grouping column, and that shape is forced, not
+# preferred. The natural spelling scopes the count to the code its ceiling
+# belongs to:
+#
+#     ratchet_count(code, count(line)) <- baseline(code, _), banned_hit(path, line).
+#
+# and it is REFUSED, `aggregate_group_not_delta_local(ratchet_count(_, count(_)))`:
+# the grouping key comes from a rel OTHER than the one being aggregated, so the
+# group a delta belongs to is not decidable from the delta. The refusal is
+# right. The cost is that "count, scoped by a config row" becomes two steps --
+# count everything, then join the ceiling in at the reading rule below. NAMED,
+# in plans/2026-07-30-v5-parity-spelunk.md.
+rel ratchet_total(hits: int).
+ratchet_total(count(line)) <- banned_hit(path, line).
+
+# ── v5's diag schema, verbatim: 9 columns, 0-based positions ───────────────
+rel diag_v5(path: text, line: int, col: int, end_line: int, end_col: int,
+            severity: text, code: text, msg: text, hint: text).
+
+# (a) BANNED PATTERN IN A NEW FILE. `zero_line := line - 1` is the 1-based
+#     (regex) to 0-based (v5 diag) conversion, written where it can be read.
+diag_v5(path, zero_line, 0, zero_line, 0, 'error', 'new-file-banned-eval',
+        'new file introduces eval(); the banned-pattern rail refuses it', '') <-
+  new_file(path), banned_hit(path, line), zero_line := line - 1.
+
+# (b) MISSING REQUIRED PATTERN. Whole-file, so the honest line is 0 -- there is
+#     no position for the absence of a header.
+diag_v5(path, 0, 0, 0, 0, 'warn', 'new-file-missing-owner',
+        'new file has no Owner: header line', '') <-
+  new_file(path), not(owner_marked(path)).
+
+# (c) RATCHET. `(ratchet)` is a synthetic origin, which v5's diag schema
+#     explicitly supports -- its `path` is TEXT rather than the checked `file`
+#     type precisely so a non-file origin is not row-dropped (decls.rs's own
+#     comment on diag_rel_decls).
+#     The code column comes from the baseline ROW rather than a literal, so the
+#     ratchet is data-driven: a second ceiling row is a second ratchet.
+diag_v5('(ratchet)', 0, 0, 0, 0, 'error', code,
+        'whole-tree eval( hit count rose above the committed baseline', '') <-
+  ratchet_total(hits), baseline(code, ceiling), hits > ceiling.
+
+? new_file(path).
+? diag_v5(path, line, col, end_line, end_col, severity, code, msg, hint).
