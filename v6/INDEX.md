@@ -49,18 +49,21 @@
 | [plans/2026-07-25-sql-builder-build-vs-buy.md](plans/2026-07-25-sql-builder-build-vs-buy.md) | 322 | SQL query-builder / templating: build-vs-buy for `lowerSql.ts` |
 | [prolog/LANG.md](prolog/LANG.md) | 95 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
 | [prolog/compile/PIPELINE.md](prolog/compile/PIPELINE.md) | 153 | The tsv2 compiler pipeline, stage by stage |
-| [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 380 | TSV2 Phase C scoreboard |
-| [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 245 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
+| [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 413 | TSV2 Phase C scoreboard |
+| [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 292 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
 | [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 115 | TICK MODEL: the semiring/grading semantics behind the clock checker |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
-| [prolog/labs/ghcacher_tick_golden/README.md](prolog/labs/ghcacher_tick_golden/README.md) | 46 | Ghcacher clock golden |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-extract/AGENTS.md](sprefa-extract/AGENTS.md) | 66 | sprefa-extract — Agent Guidance |
+| [sprefa-extract/tests/fixtures/deps/README.md](sprefa-extract/tests/fixtures/deps/README.md) | 16 |  |
+| [sprefa-extract/tests/fixtures/scip_rel/README.md](sprefa-extract/tests/fixtures/scip_rel/README.md) | 12 |  |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 167 | v6 store — retraction perf & completeness report |
 | [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
 | [tsv2/CRAWL-BENCH.md](tsv2/CRAWL-BENCH.md) | 122 | Grafana crawl bench |
 | [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
+| [tsv2/goldens/ghcacher_tick_golden/README.md](tsv2/goldens/ghcacher_tick_golden/README.md) | 46 | Ghcacher clock golden |
+| [tsv2/rxoracle/README.md](tsv2/rxoracle/README.md) | 171 | rxoracle -- grading sprefa's event sequence against literal rxjs |
 
 ## Full header index
 
@@ -735,16 +738,17 @@
 ```
 1:# TSV2 Phase C scoreboard
 15:## Totals (current)
-40:### What the struct-as-rows arc moved
-63:### Named gap found by the flagship arc, unowned
-77:### The UNSUPPORTED bucket, by named reason (61)
-98:### The three fixtures this arc moved
-112:### the mid-tick level freeze (`edge_body_joins_arrival_fed_level`, removed)
-135:### the departure frontier (`edge_body_needs_finalize`, removed)
-159:### `edge_body_needs_pre`: why it is not a widening
-188:### The final-state leg (new, and it changes how to read this table)
-252:## Per-fixture table: compiled (85)
-345:## Per-construct blocked tally (UNSUPPORTED, ranked)
+44:### What the json-wiring lane moved
+73:### What the struct-as-rows arc moved
+96:### Named gap found by the flagship arc, unowned
+110:### The UNSUPPORTED bucket, by named reason (61)
+131:### The three fixtures this arc moved
+145:### the mid-tick level freeze (`edge_body_joins_arrival_fed_level`, removed)
+168:### the departure frontier (`edge_body_needs_finalize`, removed)
+192:### `edge_body_needs_pre`: why it is not a widening
+221:### The final-state leg (new, and it changes how to read this table)
+285:## Per-fixture table: compiled (85)
+378:## Per-construct blocked tally (UNSUPPORTED, ranked)
 ```
 
 ### prolog/compile/SYNTAX.md
@@ -753,14 +757,15 @@
 7:## Ruling that reframes this whole document (relayed mid-flight)
 21:## The central superseding decision: bare identifier = variable, always
 45:## Construct table
-104:## CLI ("the bop")
-127:### Context status
-137:### Core grammar and input aliases
-179:### Legacy surface: parsed, then refused
-190:### World term lowering rows
-210:## Round-trip design note (why decl lines are exact, not fallback-merged)
-225:## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
-236:## What `dl_view/*.dl6` is
+111:## CLI ("the bop")
+136:### Context status
+146:### Core grammar and input aliases
+188:### The json plane
+226:### Legacy surface: parsed, then refused
+237:### World term lowering rows
+257:## Round-trip design note (why decl lines are exact, not fallback-merged)
+272:## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
+283:## What `dl_view/*.dl6` is
 ```
 
 ### prolog/compile/TICK-MODEL.md
@@ -784,11 +789,6 @@
 79:## Out of scope for fixtures
 ```
 
-### prolog/labs/ghcacher_tick_golden/README.md
-```
-1:# Ghcacher clock golden
-```
-
 ### skills/mermaid-living-map.md
 ```
 1:# Skill: the living-map technique (Mermaid graph as governing doc)
@@ -805,6 +805,14 @@
 19:## Analysis family map (program vs facet vs rabbit hole)
 48:## Inter-procedural rule (permanent)
 57:## Pointers
+```
+
+### sprefa-extract/tests/fixtures/deps/README.md
+```
+```
+
+### sprefa-extract/tests/fixtures/scip_rel/README.md
+```
 ```
 
 ### sprefa-store/FINDINGS-AND-GAPS.md
@@ -856,5 +864,25 @@
 ### tsv2/SCALE.md
 ```
 1:# tsv2 and v1 generated-program scale data
+```
+
+### tsv2/goldens/ghcacher_tick_golden/README.md
+```
+1:# Ghcacher clock golden
+```
+
+### tsv2/rxoracle/README.md
+```
+1:# rxoracle -- grading sprefa's event sequence against literal rxjs
+22:## 1. The line format
+39:## 2. The shared clock: the STEP, not the tick and not the wall
+68:## 3. Normalizations
+75:### N1 STEP-FOLD (always on)
+88:### N2 INTRA-STEP-SORT (always on)
+99:### N3 SIGN-PROJECTION (opt in, `"dropDel": true`)
+111:### N4 INTERNAL-REL-HIDE (on by default, `"showInternal": [...]` opts rels back in)
+131:## 3b. The receipts block
+147:## 4. Case layout
+164:## 5. What the harness does not claim
 ```
 

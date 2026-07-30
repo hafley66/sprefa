@@ -14,28 +14,61 @@ excerpt per compiled fixture).
 
 ## Totals (current)
 
-Refreshed by the STRUCT-AS-ROWS arc (2026-07-29, ruling `compound_storage =
-struct_as_rows`), which added the declared value plane: `type` declarations,
-per-type storage-plane dictionaries, intern-at-arrival, boundary render joins
-and decode/2 as a dictionary join. The counts before it were 139 / 87 / 85.
-The arc before that was FLAGSHIP CALLGRAPH; before that TICK PHASE ALIGNMENT.
-The prose sections below this one are historical and were written against the
-110-fixture corpus; the numbers here and in the two tables that follow come
-from `out/manifest.json` + `out/run-results.json`.
+Refreshed by the JSON-WIRING lane (2026-07-30), which wired the ruled json
+surface into the production doors: brace literals and patterns, `$` key holes,
+`**` descent, array spread, `list(text)`, and `json` as its own storage kind
+(it had been an alias for `text`, which erased the bit the lowering dispatch
+reads). The counts before it were 155 / 61 / 94 / 92. Arcs before that, most
+recent first: STRUCT-AS-ROWS (which took 139 / 87 / 85 to those numbers),
+FLAGSHIP CALLGRAPH, TICK PHASE ALIGNMENT. The prose sections below this one
+are historical and were written against the 110-fixture corpus; the numbers
+here and in the two tables that follow come from `out/manifest.json` +
+`out/run-results.json`.
 
 | bucket | count |
 |---|---|
-| fixtures swept | 155 |
-| UNSUPPORTED (compiler refuses, named construct) | 61 |
-| compiled (lowering + emission succeeded) | 94 |
-| — of which IDENTICAL (tick log byte-identical to oracle) | 92 |
+| fixtures swept | 201 |
+| UNSUPPORTED (compiler refuses, named construct) | 60 |
+| compiled (lowering + emission succeeded) | 141 |
+| — of which IDENTICAL (tick log byte-identical to oracle) | 139 |
 | — of which WRONG (diff vs oracle) | 0 |
 | — of which run_error / no_oracle_log (rejection-path fixtures) | 2 |
 
-IDENTICAL + run_error/no_oracle + UNSUPPORTED = 92 + 2 + 61 = 155.
+IDENTICAL + run_error/no_oracle + UNSUPPORTED = 139 + 2 + 60 = 201.
 
 Both emitter modes agree row for row: the incremental default and
-`SPREFA_TSV2_EMITTER_MODE=naive` produce the same 92/0/2.
+`SPREFA_TSV2_EMITTER_MODE=naive` produce the same 139/0/2. The final-state
+grading leg agrees too: `final_identical=139`, `final_wrong=2` (the same two
+rejection-path fixtures).
+
+### What the json-wiring lane moved
+
++8 fixtures (`conformance/fixtures/json_arm.pl`), all compiling IDENTICAL in
+both modes: array spread (fan-out and skip-non-matching), key capture (bind
+and nested fan-out), `**` descent (any depth, silent on scalars), the empty
+object pattern, and `list(text)` fanning out through spread. Exact keys cost
+0 joins (the path accumulates into one `->>` chain); spread and key capture
+cost 1 `json_each`; `**` costs 1 `json_tree`. The incremental delta arm reads
+`json_each` off the frontier row, so there are zero delta-side scans. Guards
+are emitted FIRST in the WHERE list because SQL states no evaluation order
+for AND — unguarded, malformed JSON is a runtime error rather than zero rows.
+
+Two constructs stayed refused ON PURPOSE, each with a measurement rather than
+a guess:
+
+- `json_array` / `json_object` heads are an ARC, not a registry flip.
+  `json_group_object` follows ROW order where the oracle requires sorted keys,
+  and `aggregate_select_statement` builds a flat SELECT/GROUP BY with nowhere
+  to hang the inner `ORDER BY`. `json_object_dup_key_rejected` additionally
+  expects a THROW that SQLite has no equivalent for.
+- `edge_body_needs_json_destructure` (the 15-fixture bucket) is blocked at a
+  located line, not a missing capability: the SQL side works with a bound
+  parameter, and `compile_trigger_bound/3` already carries the column type,
+  but the refusal fires in `analyze.pl:edge_goal_refusal/4` during
+  `check_supported_subset_expanded(Prog)`, which receives only `Prog` — no
+  relplans — so it cannot tell a json source from a struct source and must
+  refuse both. Lifting it means moving that refusal to lowering time or
+  threading column types into analyze.
 
 ### What the struct-as-rows arc moved
 
