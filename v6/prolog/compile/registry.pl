@@ -109,6 +109,26 @@ surface(json_each/2,    guard,     no_refs,                      wrapper(expr_pa
 %   spread/1      [... p]      the flagship's array fan-out
 %   '$'/1         $name        json_key_hole_marker = dollar
 %   '**'/0        **           descent_depth_cap = uncapped
+%
+% THE TYPED CAPTURE `{stars: Stars: int}` is a production of `'{}'/1` above
+% and deliberately has NO row of its own. Its term is `:`/2 -- the colon is
+% already this language's type marker (ruling decl_column_spelling =
+% colon_typed_ordered_columns) and `:` is 600 xfy in SWI, so
+% `stars: Stars: int` reads as `:(stars, :(Stars, int))` with no term-door
+% work. `:`/2 is ALSO the ordinary key/value separator inside every braces
+% literal, which is exactly why a row would be wrong: the coverage gate reads
+% a row's signature out of the parsed term, and `:`/2 occurs in every brace
+% pair the golden already writes, so the signature can neither be satisfied
+% by a typed capture nor honestly excused. The pair separator itself has no
+% row for the same reason.
+%
+% Live capture types are `int` / `float` / `text`, one per json1 `json_type`
+% answer, checked identically at both doors (body.pl json_capture_type/2,
+% lower.pl json_capture_json_type/2). Anything else, `bool` included, is the
+% named refusal json_capture_type_unknown -- `bool` because json_flex card C4
+% measured a top-level json `true` degrading to the integer 1 through the real
+% emitted arrival statement, so its storage is an open card rather than a
+% settled type.
 surface('{}'/1,         json,      no_refs,                      value(json_object_shape),               live).
 surface('{}'/0,         json,      no_refs,                      value(json_empty_object),               live).
 surface(spread/1,       json,      no_refs,                      value(json_array_spread),               live).

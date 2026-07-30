@@ -222,7 +222,37 @@ declared struct becomes a dictionary join, a `json` column becomes json1 SQL.
 | `'**'` as a KEY | `**` | descent at any depth, root included | `descent_depth_cap = uncapped` |
 | quoted key | `{'name': v}` / `{"name": v}` | literal label, never a hole | `string_quote = both_parse` |
 | `list(T)` | `tags: list(text)` | typed view over the json array carrier | `list_spelling = list_of_type` |
+| `Var : Type` as a VALUE | `{stars: Stars: int}` | typed capture: bind AND require the json type | `decl_column_spelling`, one level down |
 | tagged brace | `Tag{...}` / `_{...}` | `unsupported_construct(tagged_brace_reserved(Tag))` | reserved |
+
+A TYPED CAPTURE is the value-plane counterpart of a column's colon type, and
+it exists because an untyped hole has no type to give: `json_extract` carries
+no declared column type, so `lower.pl` types a bare hole `text` and a json
+number cannot reach an `int` column through an undeclared intermediate rel
+(`unsupported_construct(edge_head_column_type_mismatch(total/2,2,text,int))`).
+`:` is 600 xfy in SWI, so `stars: Stars: int` already reads as
+`:(stars, :(Stars, int))` and the term door needs no new shape.
+
+The type is a MATCHER, not a cast, and it is checked on both doors --
+`json_type(<path>) = 'integer'` in the emitted WHERE, `integer/1` in
+`body.pl:json_capture_type/2`. A value of the wrong json type contributes no
+row, exactly as an absent key does; SQL cannot raise a named refusal from a
+WHERE clause, so a throwing oracle would disagree with a filtering emitter on
+every such document. The program-level mistake -- a `text` capture feeding an
+`int` column -- stays loud at compile time through
+`edge_head_column_type_mismatch`.
+
+Live capture types: `int`, `float`, `text`, one per json1 `json_type` answer.
+Anything else, `bool` included, is `json_capture_type_unknown(Type)`. `bool` is
+refused rather than defined because a top-level json `true` DOCUMENT was
+measured degrading to the integer `1` through the real emitted arrival
+statement (json_flex card C4), so its storage is an open card.
+
+A json column's ARRIVAL is its document TEXT, on every door
+(`serve/4_http.ts`: "a json document arrives as its text"). The schedule entry
+for `rel event(payload: json)` is the JSON STRING `"{\"repo\":\"cli\"}"`, not a
+raw JSON object; `compile/scripts/dl6_oracle.pl` parses that text into the
+oracle's own json terms so the two doors read one spelling.
 
 Bareness is the literal marker on the KEY plane and quoting is the literal
 marker on the VALUE plane, and that is forced rather than chosen: JSON5 permits

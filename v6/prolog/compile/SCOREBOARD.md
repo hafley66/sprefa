@@ -14,31 +14,87 @@ excerpt per compiled fixture).
 
 ## Totals (current)
 
-Refreshed by the JSON-FLEX lane (2026-07-30,
-`plans/2026-07-30-json-flex-verdict.md`), which added 12 json state-machine
-fixtures and fixed four encoder/lowering defects none of the prior corpus could
-see. The counts before it were 209 / 64 / 145 / 143. Arcs before that, most
-recent first: COALESCE (201 / 60 / 141 / 139 -> those numbers), JSON-WIRING
-(from 155 / 61 / 94 / 92), STRUCT-AS-ROWS, FLAGSHIP CALLGRAPH, TICK PHASE
-ALIGNMENT. The prose sections below this one are historical and were written
-against the 110-fixture corpus; the numbers here and in the two tables that
-follow come from `out/manifest.json` + `out/run-results.json`.
+Refreshed by the JSON-POTHOLE lane (2026-07-30), which added typed json
+captures and five fixtures. Its own baseline, MEASURED in-worktree rather than
+read off this file, was 226 / 64 / 162 / 160 -- this table had been left at
+221 / 64 / 157 / 155 by the JSON-FLEX lane and one wave has landed since
+without refreshing it. Arcs before that, most recent first: JSON-FLEX (from
+209 / 64 / 145 / 143), COALESCE (201 / 60 / 141 / 139), JSON-WIRING (from
+155 / 61 / 94 / 92), STRUCT-AS-ROWS, FLAGSHIP CALLGRAPH, TICK PHASE ALIGNMENT.
+The prose sections below this one are historical and were written against the
+110-fixture corpus; the numbers here and in the two tables that follow come
+from `out/manifest.json` + `out/run-results.json`.
 
 | bucket | count |
 |---|---|
-| fixtures swept | 221 |
-| UNSUPPORTED (compiler refuses, named construct) | 64 |
-| compiled (lowering + emission succeeded) | 157 |
-| — of which IDENTICAL (tick log byte-identical to oracle) | 155 |
+| fixtures swept | 231 |
+| UNSUPPORTED (compiler refuses, named construct) | 66 |
+| compiled (lowering + emission succeeded) | 165 |
+| — of which IDENTICAL (tick log byte-identical to oracle) | 163 |
 | — of which WRONG (diff vs oracle) | 0 |
 | — of which run_error / no_oracle_log (rejection-path fixtures) | 2 |
 
-IDENTICAL + run_error/no_oracle + UNSUPPORTED = 155 + 2 + 64 = 221.
+IDENTICAL + run_error/no_oracle + UNSUPPORTED = 163 + 2 + 66 = 231.
 
 Both emitter modes agree row for row: the incremental default and
-`SPREFA_TSV2_EMITTER_MODE=naive` produce the same 155/0/2. The final-state
-grading leg agrees too: `final_identical=155`, `final_wrong=2` (the same two
+`SPREFA_TSV2_EMITTER_MODE=naive` produce the same 163/0/2. The final-state
+grading leg agrees too: `final_identical=163`, `final_wrong=2` (the same two
 rejection-path fixtures).
+
+### What the json-pothole lane moved
+
++5 fixtures (`conformance/fixtures/8_json_flex.pl`), 3 compiling IDENTICAL in
+both modes and 2 landing in UNSUPPORTED as the named refusal
+`json_capture_type_unknown`. Zero movement in any prior bucket (the
+UNSUPPORTED list diffs to exactly those two new rows plus variable-numbering
+noise).
+
+TYPED CAPTURES, `{stars: Stars: int}`. The fail-first receipt is a cold
+author's program that would not compile at all:
+
+```
+rel event(payload: json) log keep(all).
+rel total(repo: text, sum: int) key(1).
+star_event(Repo, Stars) <- event(Payload), decode(Payload, {repo: Repo, stars: Stars}).
+match star_event(Repo, Stars) (
+  ; not(total(Repo, _Prev))                       |+> total(Repo, Stars)
+  ; pre(total(Repo, Prev)), Next := Prev + Stars  |+> total(Repo, Next)
+).
+-> unsupported_construct(edge_head_column_type_mismatch(total/2,2,text,int))
+```
+
+`lower.pl:json_pattern_sql/8` types an untyped hole `text` (json_extract
+carries no declared column type), so the undeclared intermediate rel's column
+took C2's zero-witness default and the `int` edge head refused. The extract
+expression was always right -- json1 hands back a real SQL INTEGER for a json
+number -- so the fix is a way to TELL the type pass, never a widening.
+
+The declared type is enforced, not assumed: `json_type(<path>) = 'integer'`
+lands in the WHERE ahead of the extract, mirroring `body.pl`'s own
+`json_capture_type/2`. Measured against system sqlite3 3.43.2, writing into
+`"stars" INTEGER NOT NULL` from `{"repo":"web","stars":"many"}`:
+
+```
+... AND json_extract(b0."payload",'$."stars"') IS NOT NULL   -> web|many|TEXT
+... AND json_type(b0."payload",'$."stars"') = 'integer'      -> (no row)
+```
+
+That is also the answer to "why not just declare the intermediate rel": a
+declared `rel star_event(repo: text, stars: int)` DOES make the flagship
+compile, and it emits the unguarded WHERE above. It buys the type and not the
+guard.
+
+`bool` is a named refusal rather than a fourth capture type: json_flex card C4
+measured a top-level json `true` DOCUMENT degrading to the integer 1 through
+the real emitted arrival statement, so its storage is an open card.
+
+The same lane fixed `compile/scripts/dl6_oracle.pl`, which is not swept and so
+moves no count here: a `json` column's schedule value is now PARSED as the
+json document text it is (the shape `serve/4_http.ts:columnProblem` and
+`sweep.pl:arrival_value_json/4` both already fixed), instead of falling to
+`term_to_atom/2` and becoming an atom no pattern can match. Before the fix,
+the flagship above derived NOTHING through that door under either arrival
+spelling while its term-door twin derived every row.
 
 ### What the json-flex lane moved
 

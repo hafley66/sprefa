@@ -144,7 +144,10 @@
             % emitter can render the intern plan and the plunit units can pin
             % the exact SQL text.
             dictionary_table_name/2, dictionary_render_expr/3,
-            struct_type_plans/2 ]).
+            struct_type_plans/2,
+            % The compiler half of the json capture-type table, exported for
+            % the unit that pins it equal to body.pl:json_capture_type/2.
+            json_capture_json_type/2 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -2301,6 +2304,37 @@ json_pattern_sql(Pattern, Position, Index, Index, Bound0, Bound, [], WhereTexts)
         format(atom(NotNull), '~w IS NOT NULL', [ValueSql]),
         WhereTexts = [NotNull]
     ).
+% A TYPED CAPTURE `{stars: Stars: int}` is the same hole with its column type
+% stated, and it exists because the clause above cannot state one. json1 hands
+% back a real SQL INTEGER for a json number, so the extract expression was
+% always right; what was missing was a way to tell the TYPE PASS so, and
+% without it `star_event(Repo, Stars) <- event(Payload), decode(Payload,
+% {repo: Repo, stars: Stars})` typed Stars `text` and an `int` head column
+% refused the rule by name (edge_head_column_type_mismatch(total/2,2,text,int)
+% -- the fail-first receipt for this clause).
+%
+% The declared type is ENFORCED here, never assumed: the guard is
+% `json_type(<path>) = 'integer'`, the exact twin of body.pl's
+% json_capture_type/2. Without it a document whose `stars` is the STRING
+% "many" would extract as TEXT into an INTEGER column and SQLite's affinity
+% rules would store the text -- the TEXT-collapse class this project has
+% already paid for twice. The guard is emitted BEFORE the extract for the
+% same reason every other guard here is: SQL states no evaluation order for
+% AND, and the left-to-right text is what makes the guard protect its
+% neighbour.
+json_pattern_sql(Typed, Position, Index, Index, Bound0, Bound, [], WhereTexts) :-
+    nonvar(Typed), Typed = (Hole : Type), var(Hole), atom(Type), !,
+    json_capture_json_type(Type, JsonTypeName),
+    json_value_sql(Position, ValueSql),
+    json_type_sql(Position, TypeSql),
+    format(atom(TypeGuard), '~w = ''~w''', [TypeSql, JsonTypeName]),
+    (   bound_lookup(Bound0, Hole, typed(Existing, _))
+    ->  Bound = Bound0,
+        format(atom(Equality), '~w = ~w', [ValueSql, Existing]),
+        WhereTexts = [TypeGuard, Equality]
+    ;   Bound = [Hole-typed(ValueSql, Type) | Bound0],
+        WhereTexts = [TypeGuard]
+    ).
 % The empty object: open with no members, so it asserts object-ness and
 % nothing else.
 json_pattern_sql('{}', Position, Index, Index, Bound, Bound, [], [Text]) :- !,
@@ -2340,6 +2374,18 @@ json_pattern_sql(Pattern, _, _, _, _, _, _, _) :-
 json_object_guard(Position, Text) :-
     json_type_sql(Position, TypeSql),
     format(atom(Text), '~w = ''object''', [TypeSql]).
+
+% The capture types, clause-for-clause with body.pl:json_capture_type/2 (the
+% agreement is pinned by the json_typed_capture plunit unit and, ultimately,
+% by the byte-identical tick-log grade). Each maps to exactly ONE json1
+% `json_type` answer, which is what keeps the guard a single equality; `bool`
+% is absent for the reason body.pl states (json_flex card C4) and lands on the
+% same named refusal a typo does.
+json_capture_json_type(int,   integer) :- !.
+json_capture_json_type(float, real) :- !.
+json_capture_json_type(text,  text) :- !.
+json_capture_json_type(Type,  _) :-
+    throw(unsupported_construct(json_capture_type_unknown(Type))).
 
 json_members_sql([], _, Index, Index, Bound, Bound, [], []).
 json_members_sql([Key-Sub | Rest], Position, Index0, Index, Bound0, Bound,

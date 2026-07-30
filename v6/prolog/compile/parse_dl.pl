@@ -1416,10 +1416,28 @@ brace_pairs((Pair, Rest), Vars0, Vars, S0, S) :-
 brace_pairs(Pair, Vars0, Vars, S0, S) :-
     brace_pair(Pair, Vars0, Vars, S0, S).
 
-brace_pair(Key:Value, Vars0, Vars, S0, S) :-
+brace_pair(Key:Typed, Vars0, Vars, S0, S) :-
     brace_key(Key, Vars0, Vars1, S0, S1), ws0(S1, S2),
     lit_dcg(`:`, S2, S3), ws0(S3, S4),
-    expr(Value, Vars1, Vars, S4, S).
+    expr(Value, Vars1, Vars, S4, S5),
+    brace_value_type(Value, Typed, S5, S).
+
+% The TYPED CAPTURE suffix, `{stars: Stars: int}`. The second colon is the
+% same type marker the decl plane uses (ruling decl_column_spelling =
+% colon_typed_ordered_columns), one level down, and it needs no term-door
+% work at all: `:` is 600 xfy in SWI, so `stars: Stars: int` already reads as
+% `:(stars, :(Stars, int))`.
+%
+% Unambiguous by position rather than by lookahead: inside a braces literal a
+% value is always followed by `,` or `}`, so a colon after one can only be
+% this. The type WORD is not checked here -- an unrecognised name is a named
+% refusal at both doors (body.pl json_capture_type/2,
+% lower.pl json_capture_json_type/2), which is where the message can say what
+% the live types are.
+brace_value_type(Value, Value : Type, S0, S) :-
+    ws0(S0, S1), lit_dcg(`:`, S1, S2), !, ws0(S2, S3),
+    ident(Type, S3, S).
+brace_value_type(Value, Value, S, S).
 
 % The key axis. Every form but the plain label is a MATCHER:
 %

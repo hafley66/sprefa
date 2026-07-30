@@ -5,7 +5,12 @@
 
 :- module(body,
           [ rel_ref/2, solve/2, body_atoms/2, eval_expr/2, eval_head/2,
-            json_canon/2, comparison_goal/1, substitute_goal/3 ]).
+            json_canon/2, comparison_goal/1, substitute_goal/3,
+            % Exported for the json_typed_capture agreement unit: this table
+            % has a clause-for-clause twin in lower.pl and the two doors
+            % drifting apart is not something a byte-diff can catch (the
+            % compiled side never produces a log to diff when it refuses).
+            json_capture_type/2 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -164,6 +169,33 @@ json_decode(Value, Pattern) :- var(Pattern), !, Pattern = Value.
 % meaning. Both spellings are holes and both arrive here.
 json_decode(Value, Pattern) :- nonvar(Pattern), Pattern = $(Hole), !,
     Hole = Value.
+% TYPED CAPTURE `{stars: Stars: int}` (ruling decl_column_spelling =
+% colon_typed_ordered_columns, read one level down): the colon is already the
+% language's type marker on the decl plane, so it is the type marker here too.
+% `:` is 600 xfy in SWI, which makes `stars: Stars: int` read as
+% `:(stars, :(Stars, int))` with no term-door parser work at all.
+%
+% The type is a MATCHER, not a cast. An untyped hole binds whatever json value
+% sits at the position and the emitter types the capture `text` (lower.pl
+% json_pattern_sql/8's var clause says so in as many words), which is why a
+% json number could not feed an `int` head column without
+% edge_head_column_type_mismatch. A typed capture states the type instead of
+% widening it, and BOTH doors then filter on it: this clause, and
+% `json_type(<path>) = 'integer'` in the emitted WHERE.
+%
+% Filtering rather than throwing is the deliberate half. A document whose
+% `stars` is a string is DATA, not a program defect, and it is the same shape
+% the json plane already answers with zero rows for an absent key
+% (decode_missing_key_fails_quietly). Throwing would also have no emitted
+% twin: SQL cannot raise a named refusal from a WHERE clause, so a thrown
+% oracle and a filtering emitter would disagree on every such document. The
+% program-level mistake -- declaring a capture `text` and feeding it to an
+% `int` column -- stays LOUD, at compile time, through
+% edge_head_column_type_mismatch naming the rel and the column.
+json_decode(Value, Pattern) :- nonvar(Pattern), Pattern = (Hole : Type),
+    var(Hole), atom(Type), !,
+    json_capture_type(Type, Value),
+    Hole = Value.
 % The empty object pattern is OPEN with no members, so it matches any object
 % and binds nothing.
 json_decode(Value, '{}') :- !, Value = obj(_).
@@ -182,6 +214,28 @@ json_decode(List, Pattern) :- is_list(Pattern), !,
 json_decode(Value, Pattern) :- Value = Pattern.
 
 json_decode_flip(Pattern, Value) :- json_decode(Value, Pattern).
+
+% The capture types, one clause per json1 `json_type` answer the emitted guard
+% tests for, so the two doors cannot drift apart on which values pass:
+%
+%   int    json_type = 'integer'   integer/1
+%   float  json_type = 'real'      float/1
+%   text   json_type = 'text'      an atom that is not the json-null stand-in
+%
+% `bool` is deliberately ABSENT and therefore refused by name. A json boolean
+% has no settled storage on this plane yet -- the json_flex verdict's card C4
+% measured a top-level `true` DOCUMENT degrading to the integer 1 through the
+% real emitted arrival statement -- so a `bool` capture would have to pick a
+% side of an open card. Refusing it says that; accepting it would guess.
+%
+% An unrecognised type name is a NAMED REFUSAL rather than a capture that
+% never matches: a typo would otherwise turn into a rule that silently
+% derives nothing, which is the exact silence class this file's headers keep
+% naming. lower.pl throws the same term on the compiled side.
+json_capture_type(int,   Value) :- !, integer(Value).
+json_capture_type(float, Value) :- !, float(Value).
+json_capture_type(text,  Value) :- !, atom(Value), Value \== none.
+json_capture_type(Type,  _) :- throw(json_capture_type_unknown(Type)).
 
 braces_decode((Left, Right), Pairs) :- !,
     braces_decode(Left, Pairs), braces_decode(Right, Pairs).
