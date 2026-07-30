@@ -537,8 +537,9 @@ export interface IHostEffectDone {
 
 export interface IHostRunner {
   /** Cold. Boot-replays every host demand row, then follows the tick stream's
-   *  demand deltas; each unanswered witness runs its executor once and its
-   *  decoded rows land as an EDB arrival on the response rel. */
+   *  demand deltas. Compatible `sprefa_extract` witnesses in one frontier
+   *  share one executor invocation; generic shell witnesses remain singleton.
+   *  Every decoded projection lands as an EDB arrival on its response rel. */
   readonly effects$: Observable<IHostEffectDone>;
 }
 

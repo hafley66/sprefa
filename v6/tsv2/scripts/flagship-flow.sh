@@ -123,6 +123,9 @@ say "PASS  v6 settled: flow_edge:flow_reach:flow_param_type:flow_node_type = $se
 for rel in flow_edge flow_reach flow_param_type flow_node_type; do
   dump_v6 "$rel" "$WORK/v6.$rel.tsv"
 done
+for rel in df_direct flow_arg_edge flow_ret_edge call_target; do
+  dump_v6 "$rel" "$WORK/v6.$rel.tsv"
+done
 
 python3 "$CLASSIFY" "$WORK"
 say "artifacts: $WORK"

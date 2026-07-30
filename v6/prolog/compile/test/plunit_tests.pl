@@ -26,7 +26,7 @@
 :- use_module('../../1_expansion', [ expansion_phase/3, expand_program/3 ]).
 :- use_module('../parse_dl', [ parse_dl/4 ]).
 :- use_module('../print_dl', [ print_dl_program/3, print_term/5 ]).
-:- use_module('../registry', [ surface/5, expression/5 ]).
+:- use_module('../registry', [ surface/5, expression/5, host_execution/3 ]).
 :- use_module('../../1_host_expand',
               [ prepare_program/5, compile_host_decl/2, compile_ts_query/2 ]).
 :- use_module('../emit_ts',
@@ -1332,6 +1332,18 @@ test(extract_host_uses_compiler_known_executor) :-
               [col(callee, text)],
               template("\"$DL_EXTRACT_BIN\" --family call {path}")),
       host_plan(extract, _, _, _, _, _,
+                input_roles([identity, freshness]))),
+    !.
+
+test(named_extractor_projection_uses_template_selected_executor) :-
+    Template = "\"$DL_EXTRACT_BIN\" --family cst,type,call,df {path}",
+    host_execution(call_node, Template, sprefa_extract),
+    compile_host_decl(
+      sh_decl(call_node,
+              [col(path, text), col(digest, text)],
+              [col(record, text), col(kind, text), col(name, text)],
+              template(Template)),
+      host_plan(call_node, _, _, _, _, _,
                 input_roles([identity, freshness]))),
     !.
 

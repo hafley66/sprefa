@@ -8,7 +8,7 @@
 
 :- module(extraction_host_batching_lab, [go/0]).
 
-:- use_module('../../compile/registry', [host_executor/2]).
+:- use_module('../../compile/registry', [host_execution/3]).
 :- use_module(library(http/json), [atom_json_dict/3]).
 :- use_module(library(process), [process_create/3, process_wait/2]).
 :- use_module(library(readutil), [read_file_to_string/3]).
@@ -55,19 +55,15 @@ fixture_census_receipt :-
     fixture_text('v6/dl/fixtures/flagship-callgraph.dl6', Callgraph),
     sh_declaration_count(Callgraph, 3),
     count_substring(Callgraph,
-                    "`\"$DL_EXTRACT_BIN\" --family call {path}`", 2),
+                    "`\"$DL_EXTRACT_BIN\" --family cst,type,call,df {path}`", 2),
     fixture_text('v6/dl/fixtures/diag-rail.dl6', Diag),
     sh_declaration_count(Diag, 2),
     count_substring(Diag,
-                    "`\"$DL_EXTRACT_BIN\" --family call {path}`", 2),
+                    "`\"$DL_EXTRACT_BIN\" --family cst,type,call,df {path}`", 2),
     fixture_text('v6/dl/fixtures/flagship-flow.dl6', Flow),
     sh_declaration_count(Flow, 9),
     count_substring(Flow,
-                    "`\"$DL_EXTRACT_BIN\" --family df {path}`", 4),
-    count_substring(Flow,
-                    "`\"$DL_EXTRACT_BIN\" --family call {path}`", 1),
-    count_substring(Flow,
-                    "`\"$DL_EXTRACT_BIN\" --family type {path}`", 2),
+                    "`\"$DL_EXTRACT_BIN\" --family cst,type,call,df {path}`", 7),
     count_substring(Flow, "--resolve", 1),
     fixture_text('v6/dl/fixtures/0_extraction-clock-golden.dl6', Golden),
     sh_declaration_count(Golden, 1),
@@ -80,14 +76,14 @@ fixture_census_receipt :-
 % split at ARG_MAX, so extractor_processes below counts the one-file fixture
 % case where xargs emits one child.
 current_counts(flagship_callgraph, N, 1, HostRuns, ExtractRuns) :-
-    HostRuns is 1 + 2 * N,
-    ExtractRuns is 2 * N.
+    HostRuns is 1 + N,
+    ExtractRuns is N.
 current_counts(diag_rail, N, 1, HostRuns, ExtractRuns) :-
-    HostRuns is 2 * N,
-    ExtractRuns is 2 * N.
+    HostRuns is N,
+    ExtractRuns is N.
 current_counts(flagship_flow, N, 1, HostRuns, ExtractRuns) :-
-    HostRuns is 2 + 7 * N,
-    ExtractRuns is 1 + 7 * N.
+    HostRuns is 2 + N,
+    ExtractRuns is 1 + N.
 current_counts(extraction_clock_golden, _N, Versions, HostRuns, ExtractRuns) :-
     HostRuns is Versions,
     ExtractRuns is Versions.
@@ -106,22 +102,24 @@ fanout_counts(extraction_clock_golden, _N, Versions, HostRuns, ExtractRuns) :-
     ExtractRuns is Versions.
 
 current_cardinality_receipt :-
-    current_counts(flagship_callgraph, 1, 1, 3, 2),
-    current_counts(diag_rail, 1, 1, 2, 2),
-    current_counts(flagship_flow, 1, 1, 9, 8),
+    current_counts(flagship_callgraph, 1, 1, 2, 1),
+    current_counts(diag_rail, 1, 1, 1, 1),
+    current_counts(flagship_flow, 1, 1, 3, 2),
     current_counts(extraction_clock_golden, 1, 2, 2, 2),
     fanout_counts(flagship_callgraph, 1, 1, 2, 1),
     fanout_counts(diag_rail, 1, 1, 1, 1),
     fanout_counts(flagship_flow, 1, 1, 3, 2),
     fanout_counts(extraction_clock_golden, 1, 2, 2, 2),
-    format("PASS current and one-process-per-path formulas are pinned~n").
+    format("PASS landed one-process-per-path formulas are pinned~n").
 
 executor_boundary_receipt :-
-    host_executor(extract, sprefa_extract),
-    host_executor(call_node, shell),
-    host_executor(call_ref, shell),
-    host_executor(df_node_at, shell),
-    format("PASS current executor metadata cannot safely coalesce named extractor projections~n").
+    Template = "\"$DL_EXTRACT_BIN\" --family cst,type,call,df {path}",
+    host_execution(extract, Template, sprefa_extract),
+    host_execution(call_node, Template, sprefa_extract),
+    host_execution(call_ref, Template, sprefa_extract),
+    host_execution(df_node_at, Template, sprefa_extract),
+    host_execution(local_shell, "printf ok {path}", shell),
+    format("PASS extractor templates share one executor while generic shell remains separate~n").
 
 extract_lines(Families, Lines) :-
     repo_file('v6/sprefa-extract/target/release/extract', Extract),
@@ -236,6 +234,9 @@ wrap_response(Rel, Values, Row) :-
     Row =.. [Rel | Values].
 
 rtkq_absence_receipt :-
-    repo_file('v6/dl/fixtures/rtkq-op-recovery.dl6', Expected),
-    \+ exists_file(Expected),
-    format("PASS V6 RTKQ extraction golden absent; current demand/process count is zero~n").
+    repo_file('v6/dl/fixtures/1_rtkq-extraction-golden.dl6', Expected),
+    exists_file(Expected),
+    fixture_text('v6/dl/fixtures/1_rtkq-extraction-golden.dl6', Text),
+    sh_declaration_count(Text, 1),
+    count_substring(Text, "--ast-pattern", 4),
+    format("PASS V6 RTKQ golden uses one extractor host with four ast patterns~n").

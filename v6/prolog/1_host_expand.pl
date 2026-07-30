@@ -41,7 +41,7 @@
 :- use_module('0_body_walk', [body_conjunction_goals/3]).
 :- use_module('compile/registry',
               [ bind_definition/2,
-                host_executor/2,
+                host_execution/3,
                 host_executor_contract/2,
                 host_input_roles/3
               ]).
@@ -119,7 +119,7 @@ compile_host_decl(
     column_names(Inputs, InputNames),
     column_names(Outputs, OutputNames),
     disjoint_columns(InputNames, OutputNames),
-    validate_host_executor(Name, Inputs),
+    validate_host_executor(Name, Template, Inputs),
     host_input_roles(Name, Inputs, Roles),
     validate_template(Template, InputNames, OutputNames, Roles),
     host_relation_refs(Name, DemandRef, ResponseRef),
@@ -127,8 +127,8 @@ compile_host_decl(
 compile_host_decl(Decl, _) :-
     throw(refused_host_decl(Decl)).
 
-validate_host_executor(Name, Inputs) :-
-    host_executor(Name, Executor),
+validate_host_executor(Name, Template, Inputs) :-
+    host_execution(Name, Template, Executor),
     ( host_executor_contract(Executor, Inputs)
     -> true
     ; throw(host_executor_mismatch(Name, Executor, Inputs))

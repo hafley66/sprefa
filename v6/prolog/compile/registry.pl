@@ -23,6 +23,7 @@
             bind_definition/2,
             bind_executor/2,
             host_executor/2,
+            host_execution/3,
             host_executor_contract/2,
             host_input_contract/3,
             host_input_roles/3,
@@ -192,6 +193,19 @@ bind_executor(watch,    live_watch).
 % its input is fixed, while its output stays the declaration's JSONL projection.
 host_executor(extract, sprefa_extract) :- !.
 host_executor(_,       shell).
+
+% Execution is selected from the declaration as a whole. The old name-based
+% `extract` row remains for compatibility, while every fixed
+% `$DL_EXTRACT_BIN ... {path}` declaration uses the same target-neutral
+% executor regardless of which named projection receives its stdout.
+host_execution(Name, Template, sprefa_extract) :-
+    ( Name == extract
+    ; string(Template),
+      sub_string(Template, 0, _, _, "\"$DL_EXTRACT_BIN\" "),
+      sub_string(Template, _, 6, 0, "{path}")
+    ),
+    !.
+host_execution(_, _, shell).
 
 host_executor_contract(sprefa_extract,
                        [col(path, text), col(digest, text)]).

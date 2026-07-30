@@ -17,6 +17,7 @@ an executable requirement, not a descriptive count.
 """
 
 import os
+import sqlite3
 import sys
 
 
@@ -62,9 +63,18 @@ def v5_node_key(token):
 
 
 def v5_sym_key(sym):
-    path = sym.split("::", 1)[0]
-    name = sym.rsplit("::", 1)[-1]
+    parts = sym.split("::")
+    if parts[0] == "root":
+        parts = parts[1:]
+    path = parts[0]
+    name = parts[-1].rsplit(".", 1)[-1]
     return path, name
+
+
+def type_key(ty):
+    if ty.startswith("root::"):
+        return ty.rsplit("::", 1)[-1]
+    return ty
 
 
 def keyed(rel, rows, translate):
@@ -76,16 +86,104 @@ def keyed(rel, rows, translate):
         elif rel == "flow_param_type":
             if translate.side == "v5":
                 path, name = v5_sym_key(cells[0])
-                keys.add("\t".join([path, name, cells[1], cells[2]]))
+                keys.add("\t".join([path, name, cells[1], type_key(cells[2])]))
             else:
-                keys.add("\t".join(cells[:4]))
+                keys.add("\t".join([cells[0], cells[1], cells[2], type_key(cells[3])]))
         elif rel == "flow_node_type":
             if translate.side == "v5":
                 path, name = v5_sym_key(cells[1])
-                keys.add("\t".join([translate.node(cells[0]), path, name, cells[2]]))
+                keys.add("\t".join([translate.node(cells[0]), path, name, type_key(cells[2])]))
             else:
-                keys.add("\t".join([translate.node(cells[0]), cells[1], cells[2], cells[3]]))
+                keys.add("\t".join(
+                    [translate.node(cells[0]), cells[1], cells[2], type_key(cells[3])]
+                ))
     return keys
+
+
+def v5_flow_inputs(work):
+    db = sqlite3.connect(os.path.join(work, "v5.sqlite"))
+    try:
+        node = {
+            row[0]: f"{row[1]}:{row[2]}:{row[3]}"
+            for row in db.execute(
+                """
+                select d.id, file_text.content, d.line, d.col
+                from _df_node_dict d
+                join _strings file_text on file_text.id = d.file
+                """
+            )
+        }
+        sym = {
+            row[0]: row[1]
+            for row in db.execute(
+                """
+                select d.id, text.content
+                from _sym_dict d
+                join _strings text on text.id = d.sym_hash
+                """
+            )
+        }
+        direct = {
+            f"{node[from_id]}\t{node[to_id]}"
+            for from_id, to_id in db.execute("select `from`, `to` from rel_df_edge")
+        }
+        arg = {
+            f"{node[arg_id]}\t{node[param_id]}"
+            for arg_id, param_id in db.execute(
+                """
+                select a.arg, p.id
+                from rel_call_target target
+                join rel_df_arg a on a.call = target.call
+                join rel_df_node param on param.fn = target.callee
+                join rel_df_param p on p.id = param.id and p.pos = a.pos
+                join _sym_dict kind_sym on kind_sym.id = param.kind
+                join _strings kind_text on kind_text.id = kind_sym.sym_hash
+                where kind_text.content = 'param'
+                """
+            )
+        }
+        ret = {
+            f"{node[ret_id]}\t{node[call_id]}"
+            for ret_id, call_id in db.execute(
+                """
+                select ret.id, target.call
+                from rel_call_target target
+                join rel_df_node ret on ret.fn = target.callee
+                join _sym_dict kind_sym on kind_sym.id = ret.kind
+                join _strings kind_text on kind_text.id = kind_sym.sym_hash
+                where kind_text.content = 'ret'
+                """
+            )
+        }
+        targets = set()
+        for call_id, callee_q in db.execute(
+            "select call, callee_q from rel_call_target"
+        ):
+            path, name = v5_sym_key(sym[callee_q])
+            targets.add(f"{node[call_id]}\t{path}\t{name}")
+        return {"direct": direct, "arg": arg, "ret": ret}, targets
+    finally:
+        db.close()
+
+
+def v6_edge_inputs(work, translate):
+    files = {
+        "direct": "df_direct",
+        "arg": "flow_arg_edge",
+        "ret": "flow_ret_edge",
+    }
+    edges = {}
+    for name, rel in files.items():
+        edges[name] = {
+            "\t".join(translate.node(cell) for cell in row.split("\t")[:2])
+            for row in read_tsv(os.path.join(work, f"v6.{rel}.tsv"))
+        }
+    targets = set()
+    for row in read_tsv(os.path.join(work, "v6.call_target.tsv")):
+        caller_path, call_start, callee_path, callee_name = row.split("\t")
+        call = translate.node(f"{caller_path}:{call_start}:{call_start}")
+        targets.add(f"{call}\t{callee_path}\t{callee_name}")
+    return edges, targets
 
 
 class V5Side:
@@ -131,6 +229,10 @@ def main():
     if flow_edge[3] == 0:
         print("FAIL  flow_edge match assertion: expected at least one matching value-plane row")
         return 1
+    flow_node_type = next(row for row in rows if row[0] == "flow_node_type")
+    if flow_node_type[2] == 0 or flow_node_type[3] == 0:
+        print("FAIL  flow_node_type rail: expected nonempty v6 rows and a nonzero v5 intersection")
+        return 1
 
     print("CLASSIFICATION TABLE (keys: path:line:col nodes; kind-collapse counts shown)")
     print("  {:<16}{:>7}{:>7}{:>7}{:>8}{:>8}{:>10}".format(
@@ -146,7 +248,39 @@ def main():
         print(f"  {rel} v5-only: {sample(v5_only)}")
         print(f"  {rel} v6-only: {sample(v6_only)}")
 
-    print("\nevery difference classified: buckets (a)=0 extraction-input, (b)=gap counts above, (c)=0 defects, 0 unclassified")
+    v5_edges, v5_targets = v5_flow_inputs(work)
+    v6_edges, v6_targets = v6_edge_inputs(work, v6_side)
+    print("\nFLOW EDGE PROVENANCE")
+    print("  {:<12}{:>7}{:>7}{:>7}{:>8}{:>8}".format(
+        "source", "v5", "v6", "match", "v5only", "v6only"
+    ))
+    for source in ("direct", "arg", "ret"):
+        left = v5_edges[source]
+        right = v6_edges[source]
+        print("  {:<12}{:>7}{:>7}{:>7}{:>8}{:>8}".format(
+            source, len(left), len(right), len(left & right),
+            len(left - right), len(right - left)
+        ))
+    direct_gap = (v5_edges["direct"] - v6_edges["direct"]) | (
+        v6_edges["direct"] - v5_edges["direct"]
+    )
+    if direct_gap:
+        print(f"FAIL  direct extraction-input parity: {sample(direct_gap)}")
+        return 1
+
+    print("\nCALL TARGET KEYS")
+    print("  v5={} v6={} match={} v5only={} v6only={}".format(
+        len(v5_targets), len(v6_targets), len(v5_targets & v6_targets),
+        len(v5_targets - v6_targets), len(v6_targets - v5_targets)
+    ))
+    print(f"  v5-only: {sample(v5_targets - v6_targets)}")
+    print(f"  v6-only: {sample(v6_targets - v5_targets)}")
+
+    print(
+        "\nevery difference classified: direct extraction=exact; "
+        "interproc=arg/ret provenance plus call-target key divergence; "
+        "typed views=normalized key gaps above; 0 unclassified"
+    )
     return 0
 
 

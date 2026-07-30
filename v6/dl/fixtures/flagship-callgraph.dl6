@@ -79,25 +79,26 @@
 sh enumerate_at(rev: text, glob: text) -> (path: text, digest: text) =
   `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
 
-# ── the facts: TWO hosts over ONE binary, because one host is one record shape ──
-# `sprefa-extract --family call` writes a HETEROGENEOUS JSONL stream: `record=node`
+# ── the facts: two relational projections over one extractor invocation ──────
+# `sprefa-extract` writes a HETEROGENEOUS JSONL stream: `record=node`
 # lines carry (kind, name) and no callee, `record=site` lines carry (callee,
 # callee_path) and no kind. The decode drops any line that does not carry every
 # DECLARED output column, which is what makes a named projection work at all -- and
-# it is also why no single declaration can read both shapes. One host per shape is
-# the shipped rule ("One host declaration is one record shape",
-# fixtures/extraction-live.dl6), and its cost is one subprocess per shape per file.
+# it is also why no single declaration can read both shapes. Each declaration
+# remains one relational projection. The served runner groups identical
+# extractor templates and inputs, then decodes the shared stdout once per
+# projection, so the two declarations cost one subprocess per file.
 #
-# `record` is declared and matched even though `--family call` on Rust emits no
-# third shape today: the stream's own tag is what makes the projection a stated
-# filter instead of a bet on the field sets never colliding. `record=specifier`
-# lines carry name and kind exactly like `record=node` lines do, and TS sources DO
-# emit them.
-sh call_node(path: text, digest: text) -> (record: text, kind: text, name: text) =
-  `"$DL_EXTRACT_BIN" --family call {path}`.
+# `record` and `family` are declared and matched because the shared extractor
+# stdout contains every requested family and record shape. Both tags make the
+# projection a stated filter instead of a bet on field sets never colliding.
+# `record=specifier` lines carry name and kind exactly like `record=node` lines
+# do, and TS sources emit them.
+sh call_node(path: text, digest: text) -> (record: text, family: text, kind: text, name: text) =
+  `"$DL_EXTRACT_BIN" --family cst,type,call,df {path}`.
 
-sh call_ref(path: text, digest: text) -> (callee: text) =
-  `"$DL_EXTRACT_BIN" --family call {path}`.
+sh call_ref(path: text, digest: text) -> (record: text, family: text, callee: text) =
+  `"$DL_EXTRACT_BIN" --family cst,type,call,df {path}`.
 
 # ── the demand seed, posted as an ordinary EDB arrival by the rig ──────────────
 rel want_at(rev: text, glob: text).
@@ -116,8 +117,8 @@ file(path, digest) <- want_at(rev, glob), enumerate_at(rev, glob, path, digest).
 #
 #     def(path, name, kind) <-
 #       file(path, digest),
-#       call_node(path, digest, record, kind, name),
-#       record == 'node'.
+#       call_node(path, digest, record, family, kind, name),
+#       record == 'node', family == 'call'.
 #
 # and that is REFUSED, `unsupported_construct(unbound_head_var(_G))`. Minimal
 # repro (any comparison operator, head membership irrelevant):
@@ -133,10 +134,10 @@ file(path, digest) <- want_at(rev, glob), enumerate_at(rev, glob, path, digest).
 # carry the response atom's output columns (lower.pl:383 is where it throws). The
 # message names the wrong thing and carries no location, which is design-review
 # finding B4 in the wild.
-rel node_fact(path: text, record: text, kind: text, name: text).
-node_fact(path, record, kind, name) <-
+rel node_fact(path: text, record: text, family: text, kind: text, name: text).
+node_fact(path, record, family, kind, name) <-
   file(path, digest),
-  call_node(path, digest, record, kind, name).
+  call_node(path, digest, record, family, kind, name).
 
 # ── v5's `def`: every named callable declaration ──────────────────────────────
 # The constant match in argument position IS the record filter; it needs no guard
@@ -148,13 +149,13 @@ node_fact(path, record, kind, name) <-
 # The rig classifies on it; the rail does not filter on it, because filtering to
 # make a diff smaller is the thing the grading protocol forbids.
 rel def(path: text, name: text, kind: text).
-def(path, name, kind) <- node_fact(path, 'node', kind, name).
+def(path, name, kind) <- node_fact(path, 'node', 'call', kind, name).
 
 # ── v5's `call`: every call site's callee, as written ─────────────────────────
 rel call(path: text, callee: text).
 call(path, callee) <-
   file(path, digest),
-  call_ref(path, digest, callee).
+  call_ref(path, digest, 'site', 'call', callee).
 
 # ── v5's `calls`: FILE-SCOPED co-occurrence, ported exactly ───────────────────
 # This is v5's own heuristic, not a resolved call graph: any def in a file is

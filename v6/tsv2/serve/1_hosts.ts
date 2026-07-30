@@ -10,9 +10,10 @@
  *
  * The demand rel is a DERIVED level rel: rules put rows in it. The response
  * rel is an arrival target. So a live host is exactly one loop: read the
- * demand rel's +deltas, spawn the template once per unanswered witness, decode
- * stdout into the declared output columns, submit the result as an ordinary
- * arrival on the response rel. Nothing in the engine learns the word "host".
+ * demand rel's +deltas, group compatible extractor projections inside that
+ * frontier, spawn once per invocation key, decode stdout into each declared
+ * output shape, and submit the results as ordinary arrivals on response rels.
+ * Nothing in the engine learns the word "host".
  *
  * FIRE ONCE PER WITNESS, two dedupes, both needed:
  *   - in process, a Set of claimed witnesses. RX-H1 spells this
@@ -47,7 +48,6 @@ import {
   from,
   map,
   merge,
-  mergeMap,
   of,
   toArray,
 } from "rxjs";
@@ -317,6 +317,56 @@ type HostDemand = {
   readonly inputs: ReadonlyMap<string, IRowValue>;
 };
 
+type HostInvocation = {
+  readonly demands: readonly HostDemand[];
+};
+
+type HostProjection = {
+  readonly demand: HostDemand;
+  readonly arrivals: readonly IArrivalRow[];
+  readonly failure?: unknown;
+};
+
+function invocationKey(demand: HostDemand): string {
+  const orderedInputs = demand.plan.inputs.map((input) => [
+    input.name,
+    input.type,
+    demand.inputs.get(input.name) ?? "",
+  ]);
+  return JSON.stringify([
+    demand.plan.execution,
+    demand.plan.template,
+    orderedInputs,
+  ]);
+}
+
+/**
+ * `sprefa_extract` is applicative at one engine frontier: named projections
+ * with the same command and ordered inputs read the same stdout. Generic shell
+ * declarations remain singleton invocations because their commands may carry
+ * effects even when their text and inputs happen to match.
+ */
+function groupInvocations(demands: readonly HostDemand[]): readonly HostInvocation[] {
+  const groups: HostInvocation[] = [];
+  const extractGroupByKey = new Map<string, HostDemand[]>();
+  for (const demand of demands) {
+    if (demand.plan.execution !== "sprefa_extract") {
+      groups.push({ demands: [demand] });
+      continue;
+    }
+    const key = invocationKey(demand);
+    const group = extractGroupByKey.get(key);
+    if (group) {
+      group.push(demand);
+    } else {
+      const created = [demand];
+      extractGroupByKey.set(key, created);
+      groups.push({ demands: created });
+    }
+  }
+  return groups;
+}
+
 export class HostRunner implements IHostRunner {
   readonly effects$: Observable<IHostEffectDone>;
 
@@ -326,9 +376,10 @@ export class HostRunner implements IHostRunner {
     private readonly engine: ILiveEngine,
     private readonly seam: ISqlSeam,
     plans: readonly IHostPlan[],
+    private readonly executors: ReadonlyMap<string, HostExecutor> = HostExecutors,
   ) {
-    const executable = plans.filter((plan) => HostExecutors.has(plan.execution));
-    const refused = plans.filter((plan) => !HostExecutors.has(plan.execution));
+    const executable = plans.filter((plan) => executors.has(plan.execution));
+    const refused = plans.filter((plan) => !executors.has(plan.execution));
     this.effects$ =
       executable.length === 0 && refused.length === 0
         ? EMPTY
@@ -341,15 +392,20 @@ export class HostRunner implements IHostRunner {
               }),
             ),
             merge(this.bootDemand$(executable), this.liveDemand$(executable)).pipe(
-              filter((demand) => this.claimOnce(demand)),
-              concatMap((demand) => this.runOnce(demand)),
+              map((batch) => batch.filter((demand) => this.claimOnce(demand))),
+              filter((batch) => batch.length > 0),
+              concatMap((batch) =>
+                from(groupInvocations(batch)).pipe(
+                  concatMap((invocation) => this.runInvocation(invocation)),
+                ),
+              ),
             ),
           );
   }
 
   /** Boot replay: every live demand row, minus the witnesses the durable cache
    *  already answered. `defer` holds the scan to subscribe time. */
-  private bootDemand$(plans: readonly IHostPlan[]): Observable<HostDemand> {
+  private bootDemand$(plans: readonly IHostPlan[]): Observable<readonly HostDemand[]> {
     return defer(() =>
       WitnessCache.clearDeadLocks(this.seam).pipe(
         concatMap(() => from(plans)),
@@ -360,6 +416,7 @@ export class HostRunner implements IHostRunner {
                 concatMap((rows) => from(rows.map((row) => this.demandOf(plan, row)))),
                 filter((demand) => {
                   if (!answered.has(demand.witnessDigest)) return true;
+                  this.claimOnce(demand);
                   ServeTrace.effect(plan.name, demand.witnessDigest, "cache_hit", 0, 0);
                   return false;
                 }),
@@ -367,22 +424,22 @@ export class HostRunner implements IHostRunner {
             ),
           ),
         ),
+        toArray(),
       ),
     );
   }
 
   /** The live half: this tick's +deltas on each demand rel. */
-  private liveDemand$(plans: readonly IHostPlan[]): Observable<HostDemand> {
+  private liveDemand$(plans: readonly IHostPlan[]): Observable<readonly HostDemand[]> {
     const planByRel = new Map(plans.map((plan) => [plan.demandRel, plan]));
     return this.engine.ticks$.pipe(
-      mergeMap((outcome) =>
-        from(
-          outcome.deltas.rels.flatMap((delta) => {
-            const plan = planByRel.get(delta.rel);
-            return plan ? delta.add.map((row) => this.demandOf(plan, row)) : [];
-          }),
-        ),
+      map((outcome) =>
+        outcome.deltas.rels.flatMap((delta) => {
+          const plan = planByRel.get(delta.rel);
+          return plan ? delta.add.map((row) => this.demandOf(plan, row)) : [];
+        }),
       ),
+      filter((batch) => batch.length > 0),
     );
   }
 
@@ -404,59 +461,111 @@ export class HostRunner implements IHostRunner {
     return true;
   }
 
-  /** One witness: claim it durably, spawn, decode, submit the arrival, settle
-   *  the cache row. Every failure lands as an 'error' cache row and one
-   *  reported effect; the stream never dies. */
-  private runOnce(demand: HostDemand): Observable<IHostEffectDone> {
+  private project(demand: HostDemand, stdout: string): HostProjection {
     const { plan, witnessDigest } = demand;
+    try {
+      const outputRows = decodeOutput(plan.name, stdout, plan.outputs);
+      const responseColumns = this.engine.program.relColumns[plan.responseRel] ?? [];
+      const arrivals: IArrivalRow[] = outputRows.map((outputRow, ordinal) => ({
+        rel: plan.responseRel,
+        sign: "add" as const,
+        row: responseColumns.map((column) => {
+          if (column === "witness_digest") return witnessDigest;
+          if (column === "ordinal") return ordinal;
+          const input = demand.inputs.get(column);
+          if (input !== undefined) return input;
+          return outputRow[plan.outputs.findIndex((output) => output.name === column)] ?? "";
+        }),
+      }));
+      return { demand, arrivals };
+    } catch (failure: unknown) {
+      return { demand, arrivals: [], failure };
+    }
+  }
+
+  private settleProjection(projection: HostProjection, startedAt: number): Observable<IHostEffectDone> {
+    const { plan, witnessDigest } = projection.demand;
+    const outcome: "done" | "error" = projection.failure === undefined ? "done" : "error";
+    const rows = projection.failure === undefined ? projection.arrivals.length : 0;
+    return WitnessCache.settle(this.seam, plan.name, witnessDigest, outcome, rows).pipe(
+      map((): IHostEffectDone => {
+        ServeTrace.effect(
+          plan.name,
+          witnessDigest,
+          outcome,
+          rows,
+          performance.now() - startedAt,
+          projection.failure,
+        );
+        return { host: plan.name, witnessDigest, responseRows: rows, outcome };
+      }),
+      catchError((settleFailure: unknown) => {
+        ServeTrace.effect(
+          plan.name,
+          witnessDigest,
+          "error",
+          0,
+          performance.now() - startedAt,
+          settleFailure,
+        );
+        return of({
+          host: plan.name,
+          witnessDigest,
+          responseRows: 0,
+          outcome: "error" as const,
+        });
+      }),
+    );
+  }
+
+  private settleInvocationError(
+    invocation: HostInvocation,
+    failure: unknown,
+    startedAt: number,
+  ): Observable<IHostEffectDone> {
+    return from(invocation.demands).pipe(
+      concatMap((demand) =>
+        this.settleProjection({ demand, arrivals: [], failure }, startedAt),
+      ),
+    );
+  }
+
+  /** One frontier-compatible invocation: claim every witness, spawn once,
+   * project the shared stdout into each response rel, submit all successful
+   * projections in one engine batch, then settle every witness separately. */
+  private runInvocation(invocation: HostInvocation): Observable<IHostEffectDone> {
+    const first = invocation.demands[0];
+    if (!first) return EMPTY;
     const startedAt = performance.now();
-    const responseColumns = this.engine.program.relColumns[plan.responseRel] ?? [];
-    return WitnessCache.claim(this.seam, plan.name, witnessDigest).pipe(
+    return from(invocation.demands).pipe(
+      concatMap((demand) =>
+        WitnessCache.claim(this.seam, demand.plan.name, demand.witnessDigest),
+      ),
+      toArray(),
       concatMap(() => {
-        const executor = HostExecutors.get(plan.execution);
-        if (!executor) throw new Error(`unknown host executor '${plan.execution}' for host '${plan.name}'`);
-        return executor(plan.name, fillTemplate(plan.template, demand.inputs), envForInputs(demand.inputs));
+        const executor = this.executors.get(first.plan.execution);
+        if (!executor) {
+          throw new Error(`unknown host executor '${first.plan.execution}' for host '${first.plan.name}'`);
+        }
+        return executor(
+          first.plan.name,
+          fillTemplate(first.plan.template, first.inputs),
+          envForInputs(first.inputs),
+        );
       }),
       concatMap((stdout) => {
-        const outputRows = decodeOutput(plan.name, stdout, plan.outputs);
-        // `ordinal` is the answer's own row index (1_host_expand.pl keys the
-        // response rel on (witness_digest, ordinal)): N rows of one answer are
-        // N distinct keys, so a multi-row host -- every extractor -- keeps all
-        // of them, while a late answer for the same witness still replaces row
-        // for row.
-        const arrivals: IArrivalRow[] = outputRows.map((outputRow, ordinal) => ({
-          rel: plan.responseRel,
-          sign: "add" as const,
-          row: responseColumns.map((column) => {
-            if (column === "witness_digest") return witnessDigest;
-            if (column === "ordinal") return ordinal;
-            const input = demand.inputs.get(column);
-            if (input !== undefined) return input;
-            return outputRow[plan.outputs.findIndex((output) => output.name === column)] ?? "";
-          }),
-        }));
-        // A host that answers with zero rows still settles its cache row: the
-        // response rel gets nothing, so only the cache records that this
-        // witness was asked and answered.
+        const projections = invocation.demands.map((demand) => this.project(demand, stdout));
+        const arrivals = projections.flatMap((projection) =>
+          projection.failure === undefined ? projection.arrivals : [],
+        );
         const landed: Observable<unknown> =
           arrivals.length === 0 ? of(undefined) : this.engine.submit(arrivals).pipe(toArray());
         return landed.pipe(
-          concatMap(() => WitnessCache.settle(this.seam, plan.name, witnessDigest, "done", arrivals.length)),
-          map((): IHostEffectDone => {
-            ServeTrace.effect(plan.name, witnessDigest, "done", arrivals.length, performance.now() - startedAt);
-            return { host: plan.name, witnessDigest, responseRows: arrivals.length, outcome: "done" };
-          }),
+          concatMap(() => from(projections)),
+          concatMap((projection) => this.settleProjection(projection, startedAt)),
         );
       }),
-      catchError((failure: unknown) =>
-        WitnessCache.settle(this.seam, plan.name, witnessDigest, "error", 0).pipe(
-          catchError(() => of(undefined)),
-          map((): IHostEffectDone => {
-            ServeTrace.effect(plan.name, witnessDigest, "error", 0, performance.now() - startedAt, failure);
-            return { host: plan.name, witnessDigest, responseRows: 0, outcome: "error" };
-          }),
-        ),
-      ),
+      catchError((failure: unknown) => this.settleInvocationError(invocation, failure, startedAt)),
     );
   }
 }
