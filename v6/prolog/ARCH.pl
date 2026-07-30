@@ -397,8 +397,7 @@ construct(struct_type_decl,     t5, new).   % ruling compound_storage; `type nam
 construct(decode_join,          t5, new).   % decode/2 = dictionary join, same ruling
 construct(match_block,          t5, new).   % ruling match_block_word; arms expand to rules
 construct(host_decl,            t5, new).   % sh_decl/4, EXPLICIT input->output split
-construct(probe_rider,          t5, new).   % probe/4 + @ salt(col: Val) riders
-construct(query_form,           t5, new).   % query/1, `? rel(args)`
+construct(query_form,           t5, new).   % query/1, `? rel(args)` (top-level only; RHS probe + @ salt riders REMOVED by v6.2 host-surface locks)
 construct(ts_query_value,       t5, new).   % ts_query/1 compiles to exact query text
 construct(latest_sample,        t5, new).   % replacement spelling for the killed only()
 
@@ -554,7 +553,6 @@ covers('1_match_block',           match_block).        % match/2 x3
 covers(match_block_word,          match_block).
 covers('2_hosts_wiring',          host_decl).          % sh_decl/4 x4
 covers(host_residency,            host_decl).
-covers('2_hosts_wiring',          probe_rider).        % probe/4 x5
 covers('2_hosts_wiring',          query_form).         % query/1 + bind_decl/2 x7
 covers('2_hosts_wiring',          ts_query_value).     % ts_query/1 x1
 covers(merge_family,              latest_sample).      % latest/1 x18

@@ -62,6 +62,25 @@ answered(lang_design_lock_state,
          'LOCKED: single rel type model + one checker, host = ordinary RHS atom (? and @ removed), parser residency rust, surface freeze + stop rule, target-neutral plan order, bool/float storage, clock-checker scope. OPEN CARDS: scan/match composition (4 questions + 3 surface cards), json residency/arrays/null/schema/recursion (5 cards), span-spine decision rows, assign 3 cards, decl-legibility cluster, older slot pile. Verdict: value plane + host surface + storage locked; composition surface and json/module/span identity are the remaining design').
 
 % finding(Name, Severity, Text). -- appended as review proceeds.
+finding(match_arm_new_tokens_unruled, syntax_violation,
+        'commit 9cadb419 minted |-> and |+> as NEW text-door tokens for guards-first match arms (prior match_arm reused <- / <+ head-first); rulings.pl byte-unchanged across the branch, only authority is an unattributed surface_ruling/2 in the agent-written completion-drive plan WHICH FORBIDS new spellings 8 lines earlier; term form unchanged, 23 .dl6 fixtures hard-migrated; USER CARD: ratify into rulings.pl vs revert to arrow reuse').
+finding(bop_load_query_flake, defect_unowned,
+        'tests/bopLoadQuery.test.ts load-then-q fails under full-suite load, passes 6/6 isolated -- port/contention flake class, indexed nowhere; second undisclosed failure beside the known serveHost one').
+finding(branch_gate_red, standing,
+        'just green is RED on this tip: 18 roundtrip failures all 4_struct_values fail(not_variant) (owned by phase5 lane in flight); ledger counts stale in the green direction (plunit actually 188/188 vs claimed 173, text_door 123/123 vs 122)').
+finding(spot_check_clean_bill, cleared,
+        '16/25 commits clean; eprintln net 109->109 (reflow only); zero dep additions; no second type system (9a245a2e adds no runtime interfaces; extractor adds 2 typed structs per trait boundary); no new magic names; probe/salt removal genuinely complete in tracked source; full sweep regenerates byte-identical (no gen staleness debt)').
+finding(fmt_residue, trivial,
+        'cargo fmt --check fails on src/setup/hooks_tests.rs (one stray blank line) -- 4afb949b incomplete; coordinator fixing').
+finding(arch_stale_probe_rider, trivial,
+        'ARCH.pl construct(probe_rider, t5, new) survives the probe-surface removal; coordinator fixing').
+adopted(fold_order_wave2,
+        [fix_red_gates_first, rule_on_match_tokens, kill_folded_labs,
+         wire_ghcacher_gate_post_luna, fold_mode_lab_views,
+         clock_then_rel_definition_hash_serial, comment_fold_post_luna,
+         flow_fold_post_terra, park_card_blocked_labs]).
+finding(clock_opus_standdown_bank, handoff,
+        'stood-down opus clock agent banked UNVERIFIED draft 3eb59512 (branch clock-checker-resume, self-minted worktree .claude/worktrees/clock-checker-resume after its assigned tree was reaped -- disclosed deviation, tree+branch pending cleanup after reconciliation). SOLID probe findings for the sol reviewer: all 8 historical programs ACCEPTED by check_clock_program/1 (not_provable rows are honest); A4/A7/A8/A9 decl-only = empty causal graph; A5 same/1 vs same/2 are distinct Name/Arity clock nodes so the emitted-identifier collision is invisible by construction; A6 zero-offset data alone is NON-DISCRIMINATING (hardcoded offset-0 would pass) -- pair with edge_chain_hops_tick_per_stage (inferred stage_two offset 1, observed tick 2 vs origin 1) to make the crosscheck falsifiable. Pre-edit baseline plunit 188/188.').
 finding(worktree_base_staleness_recurrence, process,
         'Agent-tool worktrees cut from stale local main (01ac896e, 73 behind base 6c3a7e2d) -- the 2026-07-28 process-defect class again; all 4 worktree opus lanes hit it; clock + phase5 agents STOPPED correctly per dispatch law; coordinator resumed each with the sanctioned ff-only merge to 6c3a7e2d, commits land on agent branches, merge-back by sha').
 % stale_in_claude_md(Claim, Correction). -- auto-loaded context now contradicted by the world.

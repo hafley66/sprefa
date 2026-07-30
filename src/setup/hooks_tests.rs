@@ -1,4 +1,3 @@
-
 use super::super::{bootstrap_project, wire_repo_skills_j, SetupJournal};
 use super::*;
 use serde_json::Value;
