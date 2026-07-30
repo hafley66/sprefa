@@ -1126,6 +1126,24 @@ pub struct ScipSymbolInfo {
     pub symbol: String,
     pub display_name: String,
     pub kind: i32,
+    /// Relationships to other symbols (implements / type-definition /
+    /// references / defines). RETAINED as of the extractor final-form lane:
+    /// the diet used to drop these, which made v5's `scip_impl` and the
+    /// `scip_edge` family inexpressible from a v6 index. They are raw index
+    /// facts and the joins over them belong in the dl layer, not here.
+    pub relationships: Vec<ScipRelationship>,
+}
+
+/// One SCIP relationship row: this symbol relates to `symbol` in one or more of
+/// four ways. The four flags are not exclusive; scip.proto sets several at once
+/// (an overriding method is both a reference and an implementation).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScipRelationship {
+    pub symbol: String,
+    pub is_reference: bool,
+    pub is_implementation: bool,
+    pub is_type_definition: bool,
+    pub is_definition: bool,
 }
 
 /// One indexed document: path relative to the indexed root + occurrences +
@@ -1343,6 +1361,93 @@ pub enum FlatFact {
         caller_site_start: u32,
         caller_site_end: u32,
         kind: String,
+    },
+    /// A project-mode `Resolve<TypeF>` edge: one type reference resolved to the
+    /// declaration it names. The flat twin of `ProjectEdge`, for the same reason
+    /// as `ResolvedEdge` above: the v6 host decodes top-level keys, so the
+    /// target coordinate travels as a path plus a name, never a nested span
+    /// join. `owner` is the referencing declaration, `target` what it resolved
+    /// to.
+    #[serde(rename = "resolved_type_edge")]
+    ResolvedTypeEdge {
+        owner_path: String,
+        owner_name: Option<String>,
+        owner_start: u32,
+        owner_end: u32,
+        target_path: String,
+        target_name: Option<String>,
+        kind: String,
+    },
+    /// One SCIP occurrence: a symbol mentioned at a byte span in one document.
+    /// RAW index fact, deliberately unjoined. v5's `scip_def` is this row with
+    /// `definition` true, `scip_ref` is it with `definition` false, and
+    /// `scip_local` is it with a `local `-prefixed symbol; those splits are one
+    /// filter each in the dl layer, which is where the machines live.
+    #[serde(rename = "scip_occurrence")]
+    ScipOccurrenceRow {
+        path: String,
+        symbol: String,
+        start: u32,
+        end: u32,
+        /// The raw scip.proto SymbolRole bitfield, kept whole so no role is
+        /// lost in projection.
+        roles: i32,
+        /// `roles & DEFINITION`, hoisted because every consumer wants it and
+        /// bit arithmetic in a dl rule is worse than a column.
+        definition: bool,
+    },
+    /// One SCIP symbol information row: v5's `scip_name`. `path` is the
+    /// document that declared it, or null for an index's external symbols.
+    #[serde(rename = "scip_symbol")]
+    ScipSymbolRow {
+        path: Option<String>,
+        symbol: String,
+        display_name: String,
+        /// The raw scip.proto SymbolInformation.Kind enum value.
+        kind: i32,
+    },
+    /// One SCIP relationship between two symbols: v5's `scip_impl` and the
+    /// symbol half of `scip_edge`. The four flags are not exclusive; scip.proto
+    /// sets several at once for an overriding method.
+    #[serde(rename = "scip_relationship")]
+    ScipRelationshipRow {
+        symbol: String,
+        related_symbol: String,
+        is_reference: bool,
+        is_implementation: bool,
+        is_type_definition: bool,
+        is_definition: bool,
+    },
+    /// One file-to-file dependency edge, derived from a SCIP index: `src_path`
+    /// contains a non-definition occurrence of a symbol whose definition lives
+    /// in `dst_path`. `symbols` is how many distinct symbols cross that edge.
+    ///
+    /// This is the ONE derived relation the extractor projects rather than
+    /// leaving to the dl layer, and the reason is measured, not stylistic: over
+    /// v6/tsv2 (212 TypeScript files) the raw occurrence rows are 122,317 and
+    /// the edges they fold to are 755. Shipping the occurrences to compute the
+    /// edges above the wire is a 160x amplification of a fact one pass over a
+    /// hashmap produces here. The raw rows stay available under `--scip-facts`
+    /// for every other join.
+    ///
+    /// It is v5's `module_edge` by another name, and it exists because v6 has no
+    /// TypeScript module resolver; SCIP bypasses the resolver entirely.
+    #[serde(rename = "file_edge")]
+    FileEdgeRow {
+        src_path: String,
+        dst_path: String,
+        symbols: u32,
+    },
+    /// One file, once: its byte length and line count. v5's `file_lines` and
+    /// the size half of `content`. `digest` is the same BlobHash the phase-2
+    /// cache and every resolved edge key on, so this row is what lets a
+    /// consumer join a path to the content key without hashing the file again.
+    #[serde(rename = "file")]
+    FileRow {
+        path: String,
+        digest: String,
+        bytes: u32,
+        lines: u32,
     },
 }
 

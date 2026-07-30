@@ -19,7 +19,9 @@
 pub mod dispatch;
 pub mod family;
 pub mod lang;
+pub mod project;
 pub mod rows;
+pub mod schema;
 pub mod scip;
 pub mod seams;
 pub mod shape;
@@ -37,6 +39,10 @@ pub use lang::{
     query_patterns, source_for, sources, AstCaptureFact, AstPatternQuery, AstgrepSource, GoSource,
     KotlinSource, PrologSource, RustSource, TsSource,
 };
+pub use project::{
+    resolve_project, resolve_project_jsonl, scip_facts, scip_facts_jsonl, scip_file_edges_jsonl,
+    FsBlobSource, ProjectError, ResolveArms, ResolveRequest, ScipMode,
+};
 pub use rows::{Edge, FamilyBundle, Node};
 pub use scip::{
     byte_range, definition_of, join_documents, site_occurrence, ScipGo, ScipRust, ScipTypescript,
@@ -45,8 +51,10 @@ pub use seams::{
     build_def_index, containing_def_site, corpus_defs, covering_def, def_named, own_blob,
     BlobSource, DefIndex, DefSite, FileSet, IndexBag, ManifestMap, OccurrenceRole, ParseError,
     Parser, PositionEncoding, Project, ProjectCx, ProjectDigest, Resolve, ScipDocument, ScipError,
-    ScipIndex, ScipOccurrence, ScipSource, ScipSymbolInfo,
+    ScipIndex, ScipOccurrence, ScipRelationship, ScipSource, ScipSymbolInfo,
 };
 pub use shape::{BlobHash, FamilyTag, NameId, NodeRef, Span, Strings};
 pub use source::{ExtractOutput, FamilyMask, Source};
-pub use wire::{flatten, flatten_jsonl, FlatFact, SpanOut};
+pub use wire::{
+    file_fact, flatten, flatten_jsonl, flatten_scip, scip_file_edges, FlatFact, SpanOut, SCHEMA,
+};

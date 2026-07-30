@@ -226,7 +226,19 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
             // Module specifier rows are v6-ONLY (no v5 oracle facet): reported
             // by the ledger test below, never asserted.
             FlatFact::Specifier { .. } => {}
+            // Project-mode rows: `flatten` never produces these either. They
+            // come out of `project::resolve_project`, and the CLI goldens in
+            // 1_resolve_cli.rs pin their shapes.
             FlatFact::ResolvedEdge { .. } => {}
+            FlatFact::ResolvedTypeEdge { .. } => {}
+            // Opt-in modes, never in `flatten`: `--scip-facts` projects a loaded
+            // SCIP index and `--file-fact` the file identity row. Both are
+            // pinned by 5_scip_facts_cli.rs.
+            FlatFact::ScipOccurrenceRow { .. } => {}
+            FlatFact::ScipSymbolRow { .. } => {}
+            FlatFact::ScipRelationshipRow { .. } => {}
+            FlatFact::FileRow { .. } => {}
+            FlatFact::FileEdgeRow { .. } => {}
         }
     }
     set

@@ -4,6 +4,13 @@
 //! ALL); `--bench` times extract + flatten and reports per-family counts to stderr;
 //! `--schema` prints the JSONL output contract and exits. The bin names no
 //! ast-grep/oxc type outside the `Source` impls (the uniform-surface law).
+//!
+//! THE BIN OWNS NO EXTRACTION LOGIC. Argument parsing, one library call, print.
+//! Phase 2 used to be assembled here, in a private adapter that reached only the
+//! `CallF` arm with no SCIP, and nothing asserted the difference against what the
+//! library could already do. The recipe now lives in `sprefa_extract::project`
+//! and `tests/4_capability_parity.rs` asserts the binary reaches every library
+//! capability, so that drift cannot recur silently.
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -11,66 +18,18 @@ use std::time::Instant;
 use clap::Parser;
 
 use sprefa_extract::{
-    build_def_index, dispatch, flatten, query_patterns, source_for, AstPatternQuery, BlobHash,
-    CallF, ExtractOutput, FamilyMask, FileSet, FlatFact, GoSource, IndexBag, KotlinSource,
-    ManifestMap, ProjectCx, ProjectDigest, ProjectEdge, PrologSource, Resolve, RustSource, Source,
-    TsSource,
+    dispatch, file_fact, flatten, query_patterns, resolve_project_jsonl, scip_facts_jsonl,
+    scip_file_edges_jsonl, source_for, AstPatternQuery, FamilyMask, ResolveArms, ResolveRequest,
+    ScipMode, SCHEMA,
 };
 
-/// Self-describing enough that `extract --help` + `extract --schema` are a
-/// complete contract for a fresh caller (human or AI). No outside docs needed.
-const LONG_ABOUT: &str = "\
-Extract normalized graph facts from one source file and stream them as JSONL
-(one JSON object per line) to stdout. No daemon, no database, no network.
+#[path = "extract/help.rs"]
+mod help;
 
-PROJECT MODE
-  `--resolve PATH...` extracts every supplied file, builds one definition index,
-  then emits resolved caller-to-callee edges as JSONL. It requires two or more
-  source paths when resolving across files.
-
-PATTERN MODE
-  Repeat `--ast-pattern ID=PATTERN` to run several ast-grep patterns over one
-  parsed source root. `--ast-selector ID=KIND` makes one pattern contextual and
-  selects that syntax-node kind from its context. Repeat `--ast-capture ID=NAME`
-  for each single-node metavariable to emit. Output rows are flat and carry
-  capture + whole-match half-open byte spans. Pattern text is a CLI contract
-  input, never DL syntax.
-
-OUTPUT
-  Each line is one fact tagged by `record` (run `extract --schema` for every
-  shape, its fields, and the per-family `kind` vocabularies). Spans are
-  half-open byte offsets [start, end) into the file; records join across
-  families by matching spans.
-
-LANGUAGE COVERAGE (first-match, by extension)
-  ts/tsx/mts/cts/js/jsx/mjs/cjs    full     families: cst, type, call, df, const
-  rs                               full     families: cst, type, call, df, const
-  go                               full     families: cst, type, call, df (no const facet)
-  kt/kts                           full     families: cst, type, call, df (no const facet)
-  pl/pro/prolog/datalog/horn       full     families: cst, type, call, df
-  python/c/... (any ast-grep grammar)        cst only
-  any other extension              no output, exit 0 (not an error)
-
-  Selecting a family a language does not emit makes that family simply absent.
-  An unrecognized language produces zero lines and exits 0.
-
-EXIT CODES
-  0  facts streamed (possibly none), or --schema/--help/--version
-  1  could not read the input file (I/O or UTF-8)";
-
-const PATH_LONG: &str = "\
-A source file to extract. Language is inferred from the extension (see coverage
-above). Output goes to stdout; with --bench, the timing summary goes to stderr
-instead and no facts are printed.";
-
-const FAMILY_LONG: &str = "\
-Comma-separated subset of: cst,type,call,df. Defaults to all four. Unknown names
-are silently ignored; `type` and `types` are equivalent.";
-
-const BENCH_LONG: &str = "\
-Extract + flatten, then print one summary line to stderr (per-family node counts
-and total fact count) and emit nothing to stdout. Use it to check which families
-a language produces without parsing JSONL.";
+use help::{
+    BENCH_LONG, FAMILY_LONG, FILE_FACT_LONG, LONG_ABOUT, PATH_LONG, PROJECT_ROOT_LONG,
+    SCIP_BUILD_LONG, SCIP_DEPS_LONG, SCIP_FACTS_LONG, SCIP_INDEX_LONG,
+};
 
 #[derive(Parser)]
 #[command(
@@ -90,12 +49,56 @@ struct Cli {
     #[arg(long, long_help = BENCH_LONG)]
     bench: bool,
 
-    /// Resolve caller-to-callee edges across all supplied paths.
+    /// Resolve cross-file edges across all supplied paths (see --family).
     #[arg(
         long,
         conflicts_with_all = ["bench", "ast_pattern", "ast_selector", "ast_capture"]
     )]
     resolve: bool,
+
+    /// Root that SCIP document paths are relative to; also the --scip-build root.
+    #[arg(long, value_name = "DIR", long_help = PROJECT_ROOT_LONG)]
+    project_root: Option<PathBuf>,
+
+    /// Load a prebuilt index.scip into the resolve context.
+    #[arg(
+        long,
+        value_name = "FILE",
+        requires = "project_root",
+        conflicts_with = "scip_build",
+        long_help = SCIP_INDEX_LONG,
+    )]
+    scip_index: Option<PathBuf>,
+
+    /// Build the index with the language's own indexer, then load it.
+    #[arg(
+        long,
+        requires_all = ["project_root"],
+        long_help = SCIP_BUILD_LONG,
+    )]
+    scip_build: bool,
+
+    /// Stream file-to-file dependency edges folded from a SCIP index.
+    #[arg(
+        long,
+        requires = "project_root",
+        conflicts_with_all = ["bench", "ast_pattern", "resolve", "scip_facts", "file_fact"],
+        long_help = SCIP_DEPS_LONG,
+    )]
+    scip_deps: bool,
+
+    /// Stream the raw SCIP index as facts: occurrences, symbols, relationships.
+    #[arg(
+        long,
+        requires = "project_root",
+        conflicts_with_all = ["bench", "ast_pattern", "resolve"],
+        long_help = SCIP_FACTS_LONG,
+    )]
+    scip_facts: bool,
+
+    /// Prepend one `file` record: path, content digest, byte count, line count.
+    #[arg(long, conflicts_with_all = ["resolve", "scip_facts", "ast_pattern"], long_help = FILE_FACT_LONG)]
+    file_fact: bool,
 
     /// Ast-grep pattern in ID=PATTERN form. Repeat to batch patterns over one parse.
     #[arg(
@@ -140,7 +143,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if cli.resolve {
-        resolve_project(&cli.paths)?;
+        stream_resolve(&cli)?;
+        return Ok(());
+    }
+
+    if cli.scip_deps {
+        for line in scip_file_edges_jsonl(&scip_request(&cli))? {
+            println!("{line}");
+        }
+        return Ok(());
+    }
+
+    if cli.scip_facts {
+        for line in scip_facts_jsonl(&scip_request(&cli))? {
+            println!("{line}");
+        }
         return Ok(());
     }
 
@@ -156,6 +173,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         stream_ast_queries(&path_str, &content, &queries)?;
         return Ok(());
     }
+    // The file row rides the SAME read as extraction: counting lines must never
+    // cost a second pass over the file, let alone a second subprocess.
+    if cli.file_fact {
+        println!(
+            "{}",
+            serde_json::to_string(&file_fact(&path_str, &content))?
+        );
+    }
     let mask = cli
         .family
         .as_deref()
@@ -167,6 +192,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         stream(&path_str, &content, mask)?;
     }
     Ok(())
+}
+
+/// The SCIP-mode half of the CLI's flags, shared by `--resolve` and
+/// `--scip-facts`.
+fn scip_request(cli: &Cli) -> ResolveRequest<'_> {
+    ResolveRequest {
+        paths: &cli.paths,
+        arms: ResolveArms::default(),
+        scip: match (&cli.scip_index, cli.scip_build) {
+            (Some(path), _) => ScipMode::Load(path),
+            (None, true) => ScipMode::Build,
+            (None, false) => ScipMode::Off,
+        },
+        project_root: cli.project_root.as_deref(),
+    }
 }
 
 fn split_assignment<'a>(flag: &str, value: &'a str) -> Result<(&'a str, &'a str), String> {
@@ -244,96 +284,51 @@ fn stream_ast_queries(
     Ok(())
 }
 
-struct ProjectInput {
-    path: String,
-    blob: BlobHash,
-    output: ExtractOutput,
-}
-
-fn resolve_project(paths: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
-    let mut inputs = Vec::with_capacity(paths.len());
-    for path in paths {
-        let content = std::fs::read(path)?;
-        let path = path.to_string_lossy().to_string();
-        if let Some(output) = dispatch(&path, &content, FamilyMask::ALL) {
-            inputs.push(ProjectInput {
-                blob: BlobHash::of(&content),
-                path,
-                output,
-            });
-        }
-    }
-
-    let pairs: Vec<(BlobHash, &ExtractOutput)> = inputs
-        .iter()
-        .map(|input| (input.blob, &input.output))
-        .collect();
-    let files = FileSet;
-    let manifests = ManifestMap;
-    let cx = ProjectCx {
-        files: &files,
-        manifests: &manifests,
-        reader: None,
-        digest: ProjectDigest::default(),
-        indexes: IndexBag::default(),
+/// Project mode: translate flags to a `ResolveRequest`, call the library, print.
+/// Every decision below is argument shaping; the recipe itself is
+/// `sprefa_extract::project`.
+fn stream_resolve(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+    // Under --resolve, --family names the phase-2 arms. Absent, the default is
+    // `call` alone, which keeps pre-existing --resolve output byte-identical.
+    let arms = match cli.family.as_deref() {
+        None => ResolveArms {
+            call: true,
+            types: false,
+        },
+        Some(families) => parse_arms(families)?,
     };
-    cx.indexes
-        .def_index
-        .set(build_def_index(&pairs))
-        .expect("fresh project definition index");
-
-    let mut lines = Vec::new();
-    for input in &inputs {
-        for edge in resolve_call_edges(&input.path, &input.output, &cx) {
-            let Some(callee) = inputs
-                .iter()
-                .find(|candidate| candidate.blob == edge.dst_blob)
-            else {
-                continue;
-            };
-            let caller_name = input.output.call.as_ref().and_then(|call| {
-                call.node(edge.src)
-                    .name
-                    .map(|name| input.output.strings.lookup(name).to_string())
-            });
-            let callee_name = callee.output.call.as_ref().and_then(|call| {
-                call.nodes
-                    .iter()
-                    .find(|node| node.span == edge.dst_span)
-                    .and_then(|node| node.name)
-                    .map(|name| callee.output.strings.lookup(name).to_string())
-            });
-            lines.push(serde_json::to_string(&FlatFact::ResolvedEdge {
-                caller_path: input.path.clone(),
-                caller_name,
-                callee_path: callee.path.clone(),
-                callee_name,
-                caller_site_start: edge.call_site.map_or(0, |span| span.start),
-                caller_site_end: edge.call_site.map_or(0, |span| span.end()),
-                kind: edge.kind.as_str().to_string(),
-            })?);
-        }
-    }
-    lines.sort();
-    for line in lines {
+    let request = ResolveRequest {
+        arms,
+        ..scip_request(cli)
+    };
+    for line in resolve_project_jsonl(&request)? {
         println!("{line}");
     }
     Ok(())
 }
 
-fn resolve_call_edges(
-    path: &str,
-    output: &ExtractOutput,
-    cx: &ProjectCx,
-) -> Vec<ProjectEdge<CallF>> {
-    match source_for(path).map(Source::name) {
-        Some("ts") => Resolve::<CallF>::resolve(&TsSource, output, cx),
-        Some("rust") => Resolve::<CallF>::resolve(&RustSource, output, cx),
-        Some("go") => Resolve::<CallF>::resolve(&GoSource, output, cx),
-        Some("kotlin") => Resolve::<CallF>::resolve(&KotlinSource, output, cx),
-        Some("prolog") => Resolve::<CallF>::resolve(&PrologSource, output, cx),
-        _ => Vec::new(),
+/// `--family` under `--resolve`. Unlike the phase-1 mask, an unknown name here
+/// is an ERROR rather than a silent drop: the phase-1 mask can afford to ignore
+/// noise because every family it does know still runs, while a typo'd resolve
+/// arm would silently produce an empty stream that reads as "nothing resolved".
+fn parse_arms(families: &[String]) -> Result<ResolveArms, String> {
+    let mut arms = ResolveArms::default();
+    for family in families {
+        match family.trim() {
+            "call" => arms.call = true,
+            "type" | "types" => arms.types = true,
+            other => {
+                return Err(format!(
+                    "--family '{other}' is not a resolve arm; under --resolve only \
+                     'call' and 'type' are meaningful"
+                ))
+            }
+        }
     }
+    if !arms.call && !arms.types {
+        return Err("--family selected no resolve arm".to_string());
+    }
+    Ok(arms)
 }
 
 fn parse_mask(families: &[String]) -> FamilyMask {
@@ -384,65 +379,9 @@ fn bench(path: &str, content: &[u8], mask: FamilyMask) -> Result<(), Box<dyn std
     Ok(())
 }
 
-/// The JSONL contract, as one block. Keep it in sync with `wire::FlatFact` (the
-/// source of truth); this mirrors it for human/AI readers without a doc-build step.
-const SCHEMA: &str = "\
-sprefa-extract JSONL contract: one fact per line, each a JSON object tagged by \
-`record`. All spans are half-open byte offsets [start, end) into the file. \
-Records join across families by matching spans.
-
-RECORD SHAPES
-  record=node   family=<cst|type|call|df>  span={start,end}   kind=<slug>   name=<string|null>
-  record=edge   family=<cst|df>            kind=<slug>        from={start,end}  to={start,end}
-  record=sig    family=type                owner={start,end}  owner_start=<u32>  owner_end=<u32>  slot=<param|ret>  pos=<u32>  ty=<name>
-  record=param  family=df                  span={start,end}   pos=<u32>
-  record=arg    family=df                  call={start,end}   pos=<i64>  arg={start,end}
-  record=site   family=call                span={start,end}   callee=<name>  callee_path=<string|null>
-  record=const  family=type                owner={start,end}  field=<string|null>  text=<string>  kind=<lit|template>
-  record=capture  query=<id>  capture=<name>  text=<string>  start=<u32>  end=<u32>  match_start=<u32>  match_end=<u32>
-  record=resolved_edge  caller_path=<string>  caller_name=<string|null>  callee_path=<string>  callee_name=<string|null>  caller_site_start=<u32>  caller_site_end=<u32>  kind=<slug>
-
-FIELDS
-  family       the graph plane: cst (concrete syntax tree), type (declarations),
-               call (callables + call sites), df (intra-procedural value flow).
-  span         a node location; half-open bytes.
-  kind         the node/edge slug from the per-family vocabulary below.
-  name         the declared identifier, when the node carries one (else null).
-  owner        the span of the owning declaration (sig/const joins to its callable).
-  owner_start  flat start byte of the sig owner span; retained alongside owner for text-host joins.
-  owner_end    flat end byte of the sig owner span; retained alongside owner for text-host joins.
-  slot         param or ret.
-  pos          parameter index (0 for a return slot).
-  ty           the referenced type's bare name, UNRESOLVED in phase 1.
-  callee       the callee's trailing name as written (the resolution key).
-  callee_path  the full qualified path when >1 segment (filled by resolution; else null).
-  field        dotted path into an object const, or an enum member (else null).
-  text         the resolved string value of a const.
-  query        caller-supplied identity for one batched ast-grep pattern.
-  capture      one requested single-node ast-grep metavariable.
-  start/end    capture's half-open byte span in pattern mode.
-  match_start/match_end  whole pattern match's half-open byte span.
-  caller_site_start  start byte of the call site that produced a resolved edge.
-  caller_site_end    end byte of the call site that produced a resolved edge.
-
-KIND VOCABULARIES (the `kind` field)
-  type node   struct enum trait class interface alias function method const
-  call node   function method lambda
-  df node     param let_bind var_read var_write lit call_res new member ret
-              borrow binop unop loop if match block closure try break expr
-              cond logic concat template
-  cst node    the grammar node type as named by ast-grep / tree-sitter (open set)
-  cst edge    child
-  df edge     direct
-  const kind  lit (cooked literal) | template (raw source slice, holes intact)
-  sig slot    param | ret
-
-PHASE-1 LIMITS (default mode)
-  No name resolution: type edges, caller->callee links, and cross-file joins are
-  NOT emitted. `site` records carry the callee name as written; `sig` records
-  carry the referenced type's bare name. `--resolve PATH...` emits resolved
-  caller->callee `resolved_edge` records.";
-
+/// `--schema` prints the library's own wire contract. The text lives in
+/// `sprefa_extract::wire::SCHEMA`, not here, so a library consumer can read the
+/// same contract without shelling out to this binary.
 fn print_schema() {
     println!("{SCHEMA}");
 }
