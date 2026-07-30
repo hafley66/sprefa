@@ -1,0 +1,21 @@
+# Technique 6: BEGIN: gen ownership. The host pairs start/end lines; the rule
+# adds the grammar witness at the start marker and exposes the owned range.
+
+bind watch(glob: text, path: text, digest: text).
+rel file(path: text, digest: text).
+file(path, digest) <- watch('**/*.rs', path, digest).
+
+sh comment_fact(path: text, digest: text) -> (line: int, kind: text, comment_text: text) =
+  `: {digest}; "$DL_EXTRACT_BIN" --family cst {path} | python3 "$DL_COMMENT_NODE" comments {path}`.
+rel comment_node(path: text, digest: text, line: int, kind: text, comment_text: text).
+comment_node(path, digest, line, kind, comment_text) <- file(path, digest), comment_fact(path, digest, line, kind, comment_text).
+
+sh zone_marker(path: text, digest: text) -> (start: int, end_line: int, name: text) =
+  `: {digest}; python3 "$DL_POLICY_MARKERS" zone {path}`.
+rel zone_candidate(path: text, digest: text, start: int, end_line: int, name: text).
+zone_candidate(path, digest, start, end_line, name) <- file(path, digest), zone_marker(path, digest, start, end_line, name).
+
+rel gen_zone(path: text, start: int, end_line: int, name: text).
+gen_zone(path, start, end_line, name) <- zone_candidate(path, digest, start, end_line, name), comment_node(path, digest, start, kind, text), end_line > start.
+
+? gen_zone(path, start, end_line, name).

@@ -1,0 +1,29 @@
+# Technique 4: LANG-JUNCTION(slug) capture, grammar witness, and registry drift
+# antijoin. The registry side is a host row so the language list remains data.
+
+bind watch(glob: text, path: text, digest: text).
+rel file(path: text, digest: text).
+file(path, digest) <- watch('**/*.rs', path, digest).
+
+sh comment_fact(path: text, digest: text) -> (line: int, kind: text, comment_text: text) =
+  `: {digest}; "$DL_EXTRACT_BIN" --family cst {path} | python3 "$DL_COMMENT_NODE" comments {path}`.
+rel comment_node(path: text, digest: text, line: int, kind: text, comment_text: text).
+comment_node(path, digest, line, kind, comment_text) <- file(path, digest), comment_fact(path, digest, line, kind, comment_text).
+
+sh junction_marker(path: text, digest: text) -> (line: int, slug: text, meaning: text) =
+  `: {digest}; python3 "$DL_POLICY_MARKERS" junction {path}`.
+rel junction_text(path: text, digest: text, line: int, slug: text, meaning: text).
+junction_text(path, digest, line, slug, meaning) <- file(path, digest), junction_marker(path, digest, line, slug, meaning).
+
+rel junction(path: text, line: int, slug: text, meaning: text).
+junction(path, line, slug, meaning) <- junction_text(path, digest, line, slug, meaning), comment_node(path, digest, line, kind, text).
+
+sh registry_marker(path: text, digest: text) -> (slug: text) =
+  `: {digest}; python3 "$DL_POLICY_MARKERS" registry {path}`.
+rel registry_slug(path: text, digest: text, slug: text).
+registry_slug(path, digest, slug) <- file(path, digest), registry_marker(path, digest, slug).
+
+rel junction_drift(path: text, line: int, slug: text).
+junction_drift(path, line, slug) <- junction(path, line, slug, meaning), not(registry_slug(path, digest, slug)).
+
+? junction(path, line, slug, meaning).
