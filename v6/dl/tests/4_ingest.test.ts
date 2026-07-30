@@ -295,10 +295,10 @@ test("extract exit 1 on a real (non-ENOENT) failure is thrown", async () => {
   }
 });
 
-test("extractFile: real extract binary emits exactly 79 records for bad.ts, spawn-only smoke", async () => {
+test("extractFile: in-tree release extract emits exactly 82 records for bad.ts, spawn-only smoke", async () => {
   const records: ExtractRecord[] = [];
   for await (const record of extractFile(BAD_TS)) records.push(record);
-  assert.equal(records.length, 79);
+  assert.equal(records.length, 82);
   assert.ok(
     records.some(
       (record) =>

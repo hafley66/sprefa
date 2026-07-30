@@ -35,6 +35,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
+import { fileURLToPath } from "node:url";
 
 import { differenceWith, isEqual } from "lodash-es";
 
@@ -52,7 +53,7 @@ import type {
   ToFactLines,
   Value,
 } from "./0_types.ts";
-import type { ExtractBinDefault, SpineRelName } from "../tasks.d.ts";
+import type { SpineRelName } from "../tasks.d.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The spine rel schema: one source of truth for both spineDeclsLocal (RelDecl[], for
@@ -89,15 +90,55 @@ export const spineDeclsLocal: readonly RelDecl[] = SPINE_REL_SCHEMA.map((entry) 
 // extractFile: spawn DL_EXTRACT_BIN, JSONL over stdout -> ExtractRecord per line.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const DEFAULT_EXTRACT_BIN: ExtractBinDefault =
-  "/Users/chrishafley/projects/sprefa/.claude/worktrees/extract-golden-plan/v6/sprefa-extract/target/debug/extract";
+const EXTRACT_CRATE_DIR = fileURLToPath(new URL("../../sprefa-extract", import.meta.url));
+const RELEASE_EXTRACT_BIN = path.join(EXTRACT_CRATE_DIR, "target", "release", "extract");
+let releaseExtractBuild: Promise<string> | undefined;
 
-function extractBinPath(): string {
-  return process.env.DL_EXTRACT_BIN ?? DEFAULT_EXTRACT_BIN;
+function isExecutable(filePath: string): boolean {
+  try {
+    fs.accessSync(filePath, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function buildReleaseExtract(): Promise<string> {
+  const child = spawn("cargo", ["build", "--release", "--features", "cli", "--bin", "extract"], {
+    cwd: EXTRACT_CRATE_DIR,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let stderrText = "";
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderrText += chunk.toString("utf8");
+  });
+  const exitCode = await new Promise<number>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", (code) => resolve(code ?? 0));
+  });
+  if (exitCode !== 0) {
+    throw new Error(`cargo build of in-tree release extract exited ${exitCode}: ${stderrText.trim()}`);
+  }
+  if (!isExecutable(RELEASE_EXTRACT_BIN)) {
+    throw new Error(`cargo build completed without executable '${RELEASE_EXTRACT_BIN}'`);
+  }
+  return RELEASE_EXTRACT_BIN;
+}
+
+async function extractBinPath(): Promise<string> {
+  const override = process.env.DL_EXTRACT_BIN;
+  if (override && isExecutable(override)) return override;
+  if (isExecutable(RELEASE_EXTRACT_BIN)) return RELEASE_EXTRACT_BIN;
+
+  releaseExtractBuild ??= buildReleaseExtract().catch((error: unknown) => {
+    releaseExtractBuild = undefined;
+    throw error;
+  });
+  return releaseExtractBuild;
 }
 
 export async function* extractFile(filePath: string): AsyncIterable<ExtractRecord> {
-  const child = spawn(extractBinPath(), [filePath]);
+  const child = spawn(await extractBinPath(), [filePath]);
   child.stdin.end();
 
   let stderrText = "";

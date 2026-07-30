@@ -270,6 +270,18 @@ verification(reference_runtime_finish,
                     sweep_identical(113),
                     sweep_wrong(0),
                     known_run_errors(2))).
+verification(phase5_ingest_binary,
+             passed(typecheck(1),
+                    focused_ingest(10),
+                    full_dl_pass(96),
+                    explicit_skip(1),
+                    release_records(82))).
+decision_card(bool_storage,
+              [integer_check_0_1, text_true_false, sqlite_truthiness_eliminated]).
+decision_card(float_precision,
+              [sqlite_real_binary64_exact, real_epsilon, scaled_integer_decimal, canonical_decimal_text]).
+decision_card(clock_checker_scope,
+              [label_then_infer, named_refusals, clocks_only, rings_only, runtime_receipts_only]).
 extractor_addition(ast_pattern_query,
                    'typed Rust AstPatternQuery and flat AstCaptureFact rows; CLI pattern/selector/capture inputs; no TypeScript parsing or DL type/syntax addition').
 host_overuse(grafana_v6_crawl,
