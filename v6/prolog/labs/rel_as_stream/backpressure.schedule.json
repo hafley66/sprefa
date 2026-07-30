@@ -1,0 +1,7 @@
+[ [ {"rel":"read_at","sign":"add","row":["slow",0]} ],
+  [ {"rel":"produce","sign":"add","row":["p1"]} ],
+  [ {"rel":"produce","sign":"add","row":["p2"]} ],
+  [ {"rel":"produce","sign":"add","row":["p3"]} ],
+  [ {"rel":"produce","sign":"add","row":["p4"]} ],
+  [ {"rel":"read_at","sign":"add","row":["slow",2]} ],
+  [ {"rel":"produce","sign":"add","row":["p5"]} ] ]

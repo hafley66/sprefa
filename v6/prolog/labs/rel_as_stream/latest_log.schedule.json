@@ -1,0 +1,2 @@
+[ [ {"rel":"stream","sign":"add","row":[1,"a"]}, {"rel":"stream","sign":"add","row":[2,"b"]} ],
+  [ {"rel":"poke","sign":"add","row":["now"]} ] ]

@@ -1,0 +1,5 @@
+[
+  [ {"rel":"event","sign":"add","row":["clicks","a"]} ],
+  [ {"rel":"event","sign":"add","row":["clicks","b"]}, {"rel":"event","sign":"add","row":["clicks","c"]} ],
+  [ {"rel":"event","sign":"add","row":["clicks","d"]} ]
+]

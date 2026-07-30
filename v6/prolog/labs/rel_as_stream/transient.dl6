@@ -1,0 +1,6 @@
+# keep(count(0)): does a log rel become a purely transient event?
+rel ev(payload: text) log keep(count(0)).
+rel derived(payload: text) .
+rel recorded(payload: text) log keep(all).
+derived(Payload) <- ev(Payload).
+recorded(Payload) <+ ev(Payload).

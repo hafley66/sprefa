@@ -1,0 +1,11 @@
+# The ordinal mint written left-to-right as one match block.
+rel event(name: text, payload: text) log keep(all).
+rel cursor(name: text, at: int) key(1).
+rel stream(name: text, ordinal: int, payload: text) log keep(all).
+
+match event(Name, Payload) (
+  ; not(cursor(Name, _At))                          |+> cursor(Name, 1)
+  ; pre(cursor(Name, At)), Next := At + 1           |+> cursor(Name, Next)
+  ; not(cursor(Name, _Seen))                        |+> stream(Name, 1, Payload)
+  ; pre(cursor(Name, Prior)), Step := Prior + 1     |+> stream(Name, Step, Payload)
+).
