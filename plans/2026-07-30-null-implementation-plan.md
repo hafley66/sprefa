@@ -215,7 +215,7 @@ Additionally, `compile_comparison/3` (`:639-644`) does not emit a new *site* but
 become type-directed: `==`/`\==` on nullable operands lower to `IS` / `IS NOT`, and
 `< =< > >=` refuse an unnarrowed nullable operand (step 6).
 
-### 4.2 Measured no-ops: 9 sites the implementer must NOT touch
+### 4.2 Measured no-ops: 10 sites the implementer must NOT touch
 
 | # | site | file:line | why unchanged |
 |---|---|---|---|
