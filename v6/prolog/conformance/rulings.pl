@@ -478,3 +478,19 @@ ruling(openapi_generated_code_checked_in, spec_and_output_both_checked_in, user,
 % candidate A, tier-0 sugar over row absence, and it stacks with get_else.
 ruling(null_design, get_else_use_site_never_storage, user,
        'user 2026-07-30: "do what makes best least brouhaha, i like none/some etc. but idk how enum wrappers and generics work here"').
+
+% 2026-07-30. Rel-as-stream cards, settled across the session (lab =
+% plans/2026-07-30-rel-as-stream-lab.md; card 4's refusal proposal was
+% superseded mid-session by retention_minus making finalize-over-log fire).
+ruling(stream_ordinal_spelling, seq_column_type_sugar, user,
+       'card 1b: seq(name) column type, one expansion stamps the cursor rel + four rules; tier-0 (a). 1c engine-minted @ binding is DEAD: user "i HATE the @ symbol in code, its a harbinger of stupid"').
+ruling(zip_reserved_row, keep_with_join_naming_message, user,
+       'card 2b: user "do the least fucky thing" -- deleting the row would make a typo a silent empty EDB; the refusal message names the one-line equijoin').
+ruling(stream_backpressure, watermark_gated_writer_visible_overflow, user,
+       'card 3a: zero new constructs; overflow lands in a visible dropped rel instead of vanishing. User: "visible overflow being lowerable is one thing but like yea we need a way to do csp and our clock system for it i guess at some point" -- CSP = pending log + one-per-drain-tick queue + clock-joined drain, banked as a future arc, no construct known missing yet').
+ruling(latest_over_log, load_time_refusal_naming_max_ordinal, user,
+       'card 5b: latest() over a log rel refuses with the max(Ordinal) rewrite in the message; defining it as newest would make latest mean two things by callee decl').
+ruling(stream_decl_word, no_word_convention_only, user,
+       'card 6a: log + ordinal + keep bound IS the definition; a stream word would hide the retention choice, the one an author must make on purpose').
+ruling(cross_rel_drain_order, non_contract_documented, user,
+       'card 7a: between-rel delta interleaving is a function of drain placement, measured not-fixable-in-general by the runtime bridge arc; TICK-MODEL gets the one-paragraph non-promise').
