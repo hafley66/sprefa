@@ -23,6 +23,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `bug` plans/2026-07-11-scip-atlas.md:117 — TS class-method bodies emit zero df nodes
 - `bug` plans/2026-07-11-scip-atlas.md:38 — watchgate allowlist for index.scip; dl index pokes daemon
 - `bug` plans/2026-07-14-bounded-single-sweep-runtime.md:376 — decouple daemon socket readiness from cold replay so a healthy daemon does not trigger concurrent in-process fallback
+- `bug` plans/2026-07-29-higher-order-rel-scan.md:106 — Reconcile scan's required ordered occurrence loop with the thirteen current pre fixtures before claiming same-instant reducer semantics.
 - `decision` plans/2026-07-10-change-cost-friction-inventory.md:152 — item 5 — a resolution_source column (values scip|syntactic|alias|narrowed) on call_edge/type_link (rev twins included), plus a public eng.ensure_families(&[...])
 - `decision` plans/2026-07-11-codex-feedback-queue.md:122 — CLI flag taxonomy — query/mutate/effects axes
 - `decision` plans/2026-07-11-scip-atlas.md:147 — coordinate policy — no new line-keyed joins; byte spans + edge projection; migrate call_site/df joins when touched
@@ -51,6 +52,8 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `decision` plans/2026-07-29-file-identity-span-spine.md:370 — Choose the user-visible declaration spelling for standard library value views separately from their rel declarations. No spelling is introduced by this plan.
 - `decision` plans/2026-07-29-file-span-storage-lab.md:531 — Choose the surface spelling for generic relation-reference columns after accepting or rejecting the generic ref(Relation) semantics.
 - `decision` plans/2026-07-29-file-span-storage-lab.md:534 — Choose the authoring spelling for registered typed host executors; implementation may reuse IHostPlan internally without exposing new syntax first.
+- `decision` plans/2026-07-29-higher-order-rel-scan-findings.md:204 — Select one compile-time named-rule spelling after the ordered occurrence loop lands; the lab proves all three erase to the same canonical signature and ordinary relation graph.
+- `decision` plans/2026-07-29-higher-order-rel-scan.md:102 — Determine whether existing rel declarations plus a separate named rule declaration can express Rule<A,B>, or whether the existing rel A(inputs) -> (outputs) note should become the directional rule signature.
 - `decision` plans/2026-07-29-reference-membership-boundary.md:62 — Select how resolver-created public target membership participates in the relation clock.
 - `decision` plans/2026-07-29-rel-value-unification-lab.md:478 — Decide automatic versus explicit relation-reference spelling only after both forms run through the real parser and compiler.
 - `decision` plans/2026-07-29-rel-value-unification-lab.md:481 — Decide rel A-to-B versus ordinary rel plus modes only after deterministic, multi-row, keyed-update, cached, and host-produced real fixtures establish its SQL and Rx meaning.
@@ -114,6 +117,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-07-18-db-seam-migration.md:462 — extend .dl/no-new-rusqlite.dl scans from src/**/*.rs to tests/**/*.rs so the rail covers the it suite
 - `feature` plans/2026-07-20-typed-template-bootstrap-lab.md:709 — Define the exact positional-slot surface spelling after named brace and colon slots pass parser and normalization tests.
 - `feature` plans/2026-07-25-analysis-engine-bakeoff-labs.md:50 — bake-off harness — fact loader (extract JSONL) + Q1–Q10 runners + measure script (wall, peak RSS via memcap, LOC, cold-start)
+- `feature` plans/2026-07-29-higher-order-rel-scan.md:104 — Prototype scan, switchMap, and switchScan as expansion-only algorithms over the existing kernel and record the first case that cannot lower.
 - `perf` plans/2026-07-11-codex-feedback-queue.md:92 — semi-naive delta-growth bail + wedge visibility
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:189 — replace corpus-wide extraction payload caches with bounded byte-weighted reuse and stream WORK and Git inventories into staging
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:190 — replace per-connection 512 MiB SQLite cache and mmap settings with one measured process-wide budget and permit disk-backed large temporary work
@@ -276,6 +280,10 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-29-file-identity-span-spine.md:370 `decision` — Choose the user-visible declaration spelling for standard library value views separately from their rel declarations. No spelling is introduced by this plan.
 - plans/2026-07-29-file-span-storage-lab.md:531 `decision` — Choose the surface spelling for generic relation-reference columns after accepting or rejecting the generic ref(Relation) semantics.
 - plans/2026-07-29-file-span-storage-lab.md:534 `decision` — Choose the authoring spelling for registered typed host executors; implementation may reuse IHostPlan internally without exposing new syntax first.
+- plans/2026-07-29-higher-order-rel-scan-findings.md:204 `decision` — Select one compile-time named-rule spelling after the ordered occurrence loop lands; the lab proves all three erase to the same canonical signature and ordinary relation graph.
+- plans/2026-07-29-higher-order-rel-scan.md:102 `decision` — Determine whether existing rel declarations plus a separate named rule declaration can express Rule<A,B>, or whether the existing rel A(inputs) -> (outputs) note should become the directional rule signature.
+- plans/2026-07-29-higher-order-rel-scan.md:104 `feature` — Prototype scan, switchMap, and switchScan as expansion-only algorithms over the existing kernel and record the first case that cannot lower.
+- plans/2026-07-29-higher-order-rel-scan.md:106 `bug` — Reconcile scan's required ordered occurrence loop with the thirteen current pre fixtures before claiming same-instant reducer semantics.
 - plans/2026-07-29-reference-membership-boundary.md:62 `decision` — Select how resolver-created public target membership participates in the relation clock.
 - plans/2026-07-29-rel-value-unification-lab.md:478 `decision` — Decide automatic versus explicit relation-reference spelling only after both forms run through the real parser and compiler.
 - plans/2026-07-29-rel-value-unification-lab.md:481 `decision` — Decide rel A-to-B versus ordinary rel plus modes only after deterministic, multi-row, keyed-update, cached, and host-produced real fixtures establish its SQL and Rx meaning.

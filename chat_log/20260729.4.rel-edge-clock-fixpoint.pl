@@ -324,3 +324,31 @@ next_action(1,
             'resolve the target-membership boundary: materialized world targets are public final rows but currently produce no target arrival delta').
 next_action(2,
             'rename remaining StructPlane and dictionary-era internal vocabulary after the membership ruling fixes the runtime boundary').
+
+ruled_this_session(switch_model_scope,
+                    preserve_existing_keyed_replace_and_host_teardown).
+ruled_this_session(text_expression_scope,
+                    proven_v5_parity_or_golden_gap_only).
+next_action(text_expression_parity,
+            'admit each missing text operation only from a motivating parity or golden fixture; lower to SQLite on an exact capability receipt, otherwise use the existing batched typed host boundary').
+
+session_task(higher_order_rel_scan,
+             'plans/2026-07-29-higher-order-rel-scan.md').
+locked(higher_order_runtime_boundary,
+       'named relations and rules may be compile-time composition arguments, but specialization removes them before SQL; no function-valued rows').
+observed(existing_directional_host_syntax,
+         'sh name(inputs) -> (outputs) = template is implemented for host plans; bind name(columns) is a world-fed relation declaration; neither currently defines a general function-rel').
+next_action(higher_order_rel_scan,
+            'prove scan and switchScan over named keyed state, ordered occurrences, finalize, and the external relation boundary before selecting syntax').
+locked(signature_inference_compatibility,
+       'explicit declarations and future inference must elaborate to the same canonical type, clock grade, cardinality, lifetime, and effect signature; inference cannot change interpretation').
+observed(higher_order_scan_lab,
+         '7 prototype receipts and 9 selected existing-world fixtures pass; switchMap and host-demand SQLite checks exit zero').
+locked(higher_order_lowering,
+       'named rule argument specializes through a canonical compile-time signature into keyed rels and ordinary arrows; no function value survives into the checked graph or SQLite').
+locked(switch_map_lowering,
+       'runtime expansion-only over keyed scope, demand, and view rules; checker-visible sugar retains source diagnostics and scope-cover proof').
+observed(scan_blocker,
+         'scan and switchScan both reach only unsupported_construct(edge_body_needs_pre); pre_occurrence_loop owns 13 current refused fixtures and is the next V5-usurping implementation arc').
+next_action(pre_occurrence_loop,
+            'implement ordered occurrence processing in the emitted runtime, applying keyed writes between occurrences and netting boundary deltas once').
