@@ -44,8 +44,11 @@
  *   (a) restoring `disposeProgram(state)` above `server.close(...)` in
  *       4_http.ts turns the first test red -- the post-close tick never reaches
  *       the SSE client, because the tick loop faults on a closed database.
- *   (b) pinning `startServed`'s default back to a constant turns the third test
- *       red with EADDRINUSE the moment two servers are asked for at once.
+ *   (b) pinning `startServed`'s default back to a constant (17999) turns the
+ *       third test red in under a millisecond: the second of the three servers
+ *       cannot bind, so the Promise.all rejects with EADDRINUSE. The other three
+ *       tests stay green, which is the point -- a constant port is invisible
+ *       until something else wants it.
  */
 
 import assert from "node:assert/strict";
