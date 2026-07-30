@@ -173,9 +173,20 @@ export class LiveEngine implements ILiveEngine {
         return outcome;
       }),
       finalize(() => queued.subscriber.complete()),
+      // A TICK FAULT IS THE SUBMITTER'S, NOT THE LANE'S. `queued.subscriber` is
+      // this batch's own reply channel, so the failure reaches whoever caused it
+      // (over http that is a 500 naming the fault, serve/4_http.ts routeRequest$).
+      // The lane then absorbs it with EMPTY and keeps turning. It used to
+      // re-throw here, and an error inside `concatMap` terminates the OUTER
+      // observable: `ticks$` died on the first bad tick, `tap({ finalize })`
+      // flipped `running` false so every later submit failed with "engine is not
+      // running", and because `runProgram$` merges `ticks$` into the app graph
+      // the error reached serveTsv2's single subscriber and killed the process
+      // (measured: the whole server went ECONNREFUSED). Receipt:
+      // tests/engineFault.test.ts, red-first output in its header.
       catchError((failure: unknown) => {
         queued.subscriber.error(failure);
-        return throwError(() => failure);
+        return EMPTY;
       }),
     );
   }

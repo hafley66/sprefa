@@ -31,8 +31,11 @@
  * one keeps running.
  *
  * ARRIVAL VALIDATION lives here, not in the engine: a malformed POST is a
- * client error (400), while a fault raised by the tick loop itself is fatal and
- * must reach main.ts. Mixing the two would turn every engine bug into a 400.
+ * client error (400). A fault raised by the tick loop ITSELF is a 500 and
+ * reaches only the submitter that caused it -- the tick lane absorbs it and
+ * keeps turning (serve/3_engine.ts runBatch, tests/engineFault.test.ts). The
+ * two must not be mixed: a 400 for an engine bug would blame the client, and a
+ * process exit for a bad row lets any client end the server.
  */
 
 import * as http from "node:http";
