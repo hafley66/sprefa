@@ -305,6 +305,9 @@ decision_card(float_precision,
               [sqlite_real_binary64_exact, real_epsilon, scaled_integer_decimal, canonical_decimal_text]).
 decision_card(clock_checker_scope,
               [label_then_infer, named_refusals, clocks_only, rings_only, runtime_receipts_only]).
+decision(bool_storage, integer_not_null_check_0_1).
+decision(float_precision, sqlite_real_finite_binary64_exact_shortest_roundtrip).
+decision(clock_checker_scope, label_ring_sign_grade_then_infer_clocks).
 extractor_addition(ast_pattern_query,
                    'typed Rust AstPatternQuery and flat AstCaptureFact rows; CLI pattern/selector/capture inputs; no TypeScript parsing or DL type/syntax addition').
 host_overuse(grafana_v6_crawl,
