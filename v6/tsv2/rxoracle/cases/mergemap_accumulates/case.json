@@ -1,0 +1,22 @@
+{
+  "expect": "exact",
+  "summary": "mergeMap: every outer request keeps its inner alive, all results accumulate, nothing supersedes anything.",
+  "note": "the control case -- if this ever diverges the harness itself is wrong",
+  "stepMs": 500,
+  "guardMs": 100,
+  "steps": [
+    {
+      "label": "seed the lookup table",
+      "batch": [
+        { "rel": "item", "sign": "add", "row": ["a", "one"] },
+        { "rel": "item", "sign": "add", "row": ["a", "two"] },
+        { "rel": "item", "sign": "add", "row": ["b", "one"] },
+        { "rel": "item", "sign": "add", "row": ["b", "two"] }
+      ]
+    },
+    { "label": "request r1 over a", "batch": [{ "rel": "request", "sign": "add", "row": ["r1", "a"] }] },
+    { "label": "request r2 over b", "batch": [{ "rel": "request", "sign": "add", "row": ["r2", "b"] }] },
+    { "label": "request r3 over a again", "batch": [{ "rel": "request", "sign": "add", "row": ["r3", "a"] }] },
+    { "label": "idle", "batch": [] }
+  ]
+}

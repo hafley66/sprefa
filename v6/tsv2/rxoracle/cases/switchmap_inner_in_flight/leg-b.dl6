@@ -1,0 +1,26 @@
+# switchmap_inner_in_flight -- leg B. THE FLAGSHIP.
+#
+# The nearest thing DL6 has to switchMap: an edge rule into a `key(1)` head, so
+# a new route for the same session REPLACES the old one, and a level rule that
+# joins the surviving route against the host answer. When the key is replaced,
+# the old route's `__host_demand_fetch_body` row retracts, which is the closest
+# thing this language has to unsubscribing an inner.
+#
+# The host writes its own tag into the spawn ledger BEFORE and AFTER its sleep,
+# so the receipt can tell "was started" apart from "ran to completion". That
+# ordering is the same one served-endurance.dl6 uses and for the same reason:
+# a mark written only at the end would say nothing about a run that was killed.
+#
+# `$RXO_MARKS` and `$RXO_NAP` are ordinary environment references inherited by
+# the spawned shell. The compiler checks the template references every declared
+# input and no output, and leaves environment names alone.
+
+rel route_change(session_id: text, route_id: text) log keep(all).
+rel open_route(session_id: text, route_id: text) key(1).
+rel body(session_id: text, route_id: text, payload: text).
+
+sh fetch_body(route_id: text) -> (payload: text) =
+  `printf 'start %s\n' "{route_id}" >> "$RXO_MARKS"; sleep "$RXO_NAP"; printf 'done %s\n' "{route_id}" >> "$RXO_MARKS"; printf '%s' "{route_id}-body"`.
+
+open_route(SessionId, RouteId) <+ route_change(SessionId, RouteId).
+body(SessionId, RouteId, Payload) <- open_route(SessionId, RouteId), fetch_body(RouteId, Payload).
