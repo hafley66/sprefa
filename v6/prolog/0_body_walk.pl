@@ -78,7 +78,10 @@
 :- module(body_walk,
           [ walk_body/3,
             body_conjunction_goals/3,
-            body_wrapper_refs/4
+            body_wrapper_refs/4,
+            relation_atom_wrapper/1,
+            event_relation_atom/2,
+            body_relation_atoms/4
           ]).
 
 :- use_module(library(lists)).
@@ -160,6 +163,50 @@ spliced_goal(event(_, _, Surface, Term), walk_policy(_, splice_bare(true)),
     !,
     Surface \= surface(_, _, splice_bare, _, _).
 spliced_goal(event(_, _, _, Term), _, Term).
+
+% ── the wrapper family that carries a relation atom ──────────────────────────
+%
+% ONE statement of which wrappers hold a relation ATOM as their single
+% argument. This list was written out three times -- in the shared program
+% check, in the compiler's relation-pattern residue check, and in the oracle's
+% relation-value rewriter -- and burr B11 of
+% plans/2026-07-30-relpattern-adversarial-review.md is exactly that: three
+% traversals, three policies, and the asymmetries between them observable as
+% behaviour.
+%
+% NOT DERIVED from registry.pl, and the reason is not laziness. The rows whose
+% LowerRole is wrapper(rel_atom, _) also include next/1, whose argument the
+% walk SPLICES in as its own event (counting the wrapper too would count that
+% atom twice), and the four reserved lifecycle wrappers, which are refused
+% before anything asks them for a relation atom. The set below is therefore
+% stated, and compile/test/plunit_tests.pl's
+% relation_atom_wrapper_family_matches_the_registry pins it against the
+% registry rows so the two cannot drift apart in silence.
+relation_atom_wrapper(latest).
+relation_atom_wrapper(pre).
+relation_atom_wrapper(finalize).
+
+% The relation atom one event carries: the term itself when the walk found a
+% bare atom, or the wrapper's argument for the family above. Fails for every
+% other node, which is what makes it a filter as well as a projection.
+event_relation_atom(event(_, _, Surface, Term), Atom) :-
+    (   Surface == plain_atom
+    ->  Atom = Term
+    ;   nonvar(Term),
+        functor(Term, Wrapper, 1),
+        relation_atom_wrapper(Wrapper),
+        arg(1, Term, Atom)
+    ).
+
+% Every relation atom a body reaches, with the POLARITY the walk gave it, in
+% source order. Polarity is an argument rather than a filter so a caller can
+% ask for the negated ones specifically (a relation value under not/1 is a
+% named refusal) without a second traversal.
+body_relation_atoms(Body, Policy, Polarity, Atom) :-
+    walk_body(Body, Policy, Events),
+    member(Event, Events),
+    Event = event(_, Polarity, _, _),
+    event_relation_atom(Event, Atom).
 
 % Every reference carried by one wrapper family, in source order: the argument
 % of each latest/1, pre/1 or finalize/1 the walk reached. This is the shared

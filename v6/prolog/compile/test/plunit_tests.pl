@@ -25,6 +25,7 @@
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
 :- use_module('../../1_expansion', [ expansion_phase/3, expand_program/3 ]).
 :- use_module('../parse_dl', [ parse_dl/4 ]).
+:- use_module('../../0_body_walk', [ relation_atom_wrapper/1 ]).
 :- use_module('../print_dl', [ print_dl_program/3, print_term/5 ]).
 :- use_module('../registry', [ surface/5, expression/5, host_execution/3 ]).
 :- use_module('../../1_host_expand',
@@ -1994,6 +1995,33 @@ departure_ref_case([ (a(Item) <+ finalize(one(Item))),
 % A negated finalize is opaque to the walk on both sides.
 departure_ref_case([ (out(Item) <+ src(Item), not(finalize(gone(Item)))) ]).
 
+% ── B11: one wrapper family, checked against the registry ───────────────────
+%
+% The list "which wrappers carry a relation ATOM" was written out three times
+% (0_program_check.pl, compile/lower.pl, 0_relation_pattern.pl) with three
+% different traversal policies around it -- burr B11 of
+% plans/2026-07-30-relpattern-adversarial-review.md. It is stated once now, in
+% 0_body_walk.pl, and this test is what keeps that statement honest without
+% deriving it: the family must be exactly the registry rows whose LowerRole is
+% wrapper(rel_atom, _), minus the SPLICE families (next/1's argument is walked
+% in as its own event, so counting the wrapper too would count that atom twice)
+% and minus the reserved rows (refused long before anything asks them for a
+% relation atom).
+%
+% A new wrapper(rel_atom, _) row that is neither spliced nor reserved therefore
+% fails HERE, by name, instead of being silently absent from one of the three
+% former copies.
+test(relation_atom_wrapper_family_matches_the_registry) :-
+    findall(Functor,
+            ( surface(Functor/1, _, AnalyzeRole, wrapper(rel_atom, _), Status),
+              AnalyzeRole \== splice_bare,
+              Status \== reserved ),
+            Rows),
+    sort(Rows, FromRegistry),
+    findall(Wrapper, relation_atom_wrapper(Wrapper), Stated0),
+    sort(Stated0, Stated),
+    assertion(Stated == FromRegistry).
+
 :- end_tests(body_walk_characterization).
 
 % ═══════════════════════════════════════════════════════════════════════════
@@ -2639,12 +2667,23 @@ test(non_aggregate_compound_head_argument_stays_plain) :-
 % ═══════════════════════════════════════════════════════════════════════════
 %
 % The conformance corpus grades the ROWS (fixtures/6_relation_depth.pl) and
-% tsv2/tests/relationDepth.test.ts grades the query PLAN. What is left for a
-% unit test is the two compiler-only refusals: positions the dictionary
-% rewrite deliberately does not enter. Neither has a fixture, because neither
-% is a language refusal -- the reference engine executes both happily -- and a
-% conformance fixture would assert the oracle's answer while saying nothing
-% about the compiler's.
+% tsv2/tests/relationDepth.test.ts grades the query PLAN.
+%
+% THE TWO REFUSALS BELOW ARE NO LONGER COMPILER-ONLY. This comment used to say
+% that a conformance fixture would assert the oracle's answer while saying
+% nothing about the compiler's, and it was right about the fixture and wrong
+% about the situation: the reference engine RAN both programs, so the two doors
+% answered differently and nothing in the corpus noticed (burrs B3/B4/B9 of
+% plans/2026-07-30-relpattern-adversarial-review.md). Both are shared refusals
+% now -- relation_value_under_negation and relation_value_in_edge_rule in
+% 0_program_check.pl, which states why refusing beat lowering -- and both have
+% graded fixtures.
+%
+% What is left HERE is the lowering-side residue guard, which is the backstop
+% for anything entering lower_program/2 directly, as these units do with a
+% hand-built plan. It keeps its own names on purpose: reaching it means the
+% shared gate was bypassed, and the diagnostic should say which layer caught
+% the program.
 
 :- begin_tests(relation_depth_lowering).
 

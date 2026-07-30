@@ -155,7 +155,7 @@
                 type_topological_order/2, type_canonical_json/4,
                 type_field_values/4, declared_type_name/2,
                 relation_value_shape/3 ]).
-:- use_module('../0_body_walk', [walk_body/3]).
+:- use_module('../0_body_walk', [walk_body/3, body_relation_atoms/4]).
 :- use_module('../conformance/body', [rel_ref/2]).
 
 :- op(1150, xfx, <-).
@@ -1199,15 +1199,11 @@ check_relation_patterns_lowered(Types, RelPlans, Elided, Head, Body) :-
 
 relation_pattern_residue(Types, RelPlans, Head, Body,
                          relation_pattern_not_lowerable(Ref, Column, TypeName, Value)) :-
-    walk_body((Head, Body),
-              walk_policy(descend_not(true), splice_bare(true)), Events),
-    member(event(_, _, Surface, Term), Events),
-    (   Surface == plain_atom
-    ->  Atom = Term
-    ;   nonvar(Term), functor(Term, Wrapper, 1),
-        memberchk(Wrapper, [latest, pre, finalize]),
-        arg(1, Term, Atom)
-    ),
+    % Rank B11: one wrapper family, stated once in 0_body_walk.pl and
+    % projected here, in 0_program_check.pl, and in the oracle's rewriter.
+    body_relation_atoms((Head, Body),
+                        walk_policy(descend_not(true), splice_bare(true)),
+                        _, Atom),
     compound(Atom),
     functor(Atom, Name, Arity),
     Ref = Name/Arity,

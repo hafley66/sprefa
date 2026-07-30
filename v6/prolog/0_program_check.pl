@@ -44,7 +44,9 @@
           ]).
 
 :- use_module(library(lists)).
-:- use_module('0_body_walk', [body_wrapper_refs/4, walk_body/3]).
+:- use_module('0_body_walk',
+              [ body_wrapper_refs/4, walk_body/3, body_relation_atoms/4,
+                event_relation_atom/2 ]).
 :- use_module('0_type_plane',
               [ type_definitions/2, type_cycle_witness/2, declared_type_name/2,
                 type_definition/4, relation_columns_and_types/5,
@@ -259,6 +261,58 @@ program_violation(relation_column_type_conflict, prog(Decls, Rules),
     OtherType \== TypeName,
     !.
 
+% ── two shapes that used to be a door DISAGREEMENT ───────────────────────────
+%
+% Burrs B3, B4 and B9 of plans/2026-07-30-relpattern-adversarial-review.md. The
+% compiler refused a relation value under not/1 (relation_pattern_not_lowerable)
+% and in an edge rule (relation_value_in_edge_rule); the reference engine ran
+% both. Neither appeared in any graded fixture, so nothing in the corpus ever
+% put the two answers side by side, and the review had to run them by hand to
+% find out they differed.
+%
+% CHOSEN: refuse on BOTH doors, not implement the lowering. Stated plainly
+% because it is a capability decision and not a cleanup:
+%
+%   Implementing them is not small. A relation value under not/1 needs its
+%   dictionary joins scoped INSIDE the NOT EXISTS subquery -- hoisting them to
+%   the outer body, which is where the rewrite appends them today, turns "no
+%   such fpath exists, therefore not(...) holds" into "no rows at all", the
+%   opposite answer. An edge rule has no dictionary-join seam at all:
+%   edge_statements_for_rule/3 compiles trigger occurrences against RelPlans,
+%   and the per-level joins have nowhere to go. Both are new execution shape.
+%
+%   A door disagreement is the worse of the two states. A program that the
+%   reference engine runs and the compiler rejects cannot be graded, so its
+%   behaviour is whatever the engine happens to do, unpinned. Refusing on both
+%   doors makes the boundary a fact of the LANGUAGE, one name, one fixture,
+%   gradeable -- and deleting a shared refusal is how the capability arrives
+%   later, with the fixtures flipping from throws/1 to rows.
+%
+% The compiler's own residue guards stay where they are, as the last-resort
+% backstop for anything entering lower.pl directly (compile/test/plunit_tests.pl
+% calls lower_program/2 with a hand-built plan and reaches exactly that path).
+program_violation(relation_value_under_negation, prog(Decls, Rules),
+                  pattern(Ref, Column, TypeName, Value)) :-
+    type_definitions(Decls, Types),
+    Types \== [],
+    member(Rule, Rules),
+    rule_body(Rule, Body),
+    body_relation_atoms(Body,
+                        walk_policy(descend_not(true), splice_bare(true)),
+                        neg, Atom),
+    relation_value_in_ref_column(Decls, Types, Atom, Ref, Column, TypeName, Value),
+    !.
+
+program_violation(relation_value_in_edge_rule, prog(Decls, Rules),
+                  pattern(Ref, Column, TypeName, Value)) :-
+    type_definitions(Decls, Types),
+    Types \== [],
+    member(Rule, Rules),
+    rule_is_edge(Rule),
+    rule_relation_atom(Rule, Atom),
+    relation_value_in_ref_column(Decls, Types, Atom, Ref, Column, TypeName, Value),
+    !.
+
 % A HIGHER-ORDER goal: a body goal that names the relation it reads in an
 % ARGUMENT rather than as its own functor. `call/N` is the whole family
 % (`call(src, Name, Value)`, `call(Rel, Name, Value)`, `call(src(Name, Value))`)
@@ -349,27 +403,41 @@ headed_relation(Rules, Ref) :-
     head_ref(Head, Ref),
     !.
 
+% A well-formed relation VALUE sitting in a ref-typed column of one atom.
+% Factored out because three classes ask the same question of three different
+% atom sets (every atom, the negated ones, the ones in an edge rule).
+relation_value_in_ref_column(Decls, Types, Atom, Name/Arity, Column, TypeName, Value) :-
+    compound(Atom),
+    functor(Atom, Name, Arity),
+    relation_columns_and_types(Decls, Types, Name/Arity, Columns, ColumnTypes),
+    length(Columns, Arity),
+    nth1(Position, ColumnTypes, TypeName),
+    declared_type_name(Types, TypeName),
+    nth1(Position, Columns, Column),
+    arg(Position, Atom, Value),
+    relation_value_shape(Types, TypeName, Value).
+
+rule_is_edge((_ <+ _)).
+
+rule_body((_ <- Body), Body).
+rule_body((_ <+ Body), Body).
+
 % Every body GOAL, whatever its surface class, including inside not/1 and
 % inside a splice. Unlike body_relation_atom/2 below this does not care what
 % the goal turns out to be, which is the point: the higher-order class is
 % about a functor nothing else in the pipeline recognizes.
-rule_body_goal((_ <- Body), Goal) :- body_goal(Body, Goal).
-rule_body_goal((_ <+ Body), Goal) :- body_goal(Body, Goal).
+rule_body_goal(Rule, Goal) :- rule_body(Rule, Body), body_goal(Body, Goal).
 
 body_goal(Body, Goal) :-
     walk_body(Body, walk_policy(descend_not(true), splice_bare(true)), Events),
     member(event(_, _, _, Goal), Events).
 
+% Rank B11: the wrapper family lives in 0_body_walk.pl now, in one place, and
+% this is the shared projection over it.
 body_relation_atom(Body, Atom) :-
-    walk_body(Body, walk_policy(descend_not(true), splice_bare(true)), Events),
-    member(event(_, _, Surface, Term), Events),
-    (   Surface == plain_atom
-    ->  Atom = Term
-    ;   nonvar(Term),
-        functor(Term, Wrapper, 1),
-        memberchk(Wrapper, [latest, pre, finalize]),
-        arg(1, Term, Atom)
-    ).
+    body_relation_atoms(Body,
+                        walk_policy(descend_not(true), splice_bare(true)),
+                        _, Atom).
 
 % Every VARIABLE argument of every relation atom a rule reaches, with the
 % column it sits in and that column's declared type. Variable identity is the

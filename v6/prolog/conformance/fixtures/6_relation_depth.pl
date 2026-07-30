@@ -538,3 +538,73 @@ fixture(relation_ref_column_fed_by_ref_variable_accepted,
   [ [ +raw('src/a.rs', 10) ] ],
   [ final(seen/1, [ seen(obj([name-'src/a.rs'])) ]),
     ticks(1) ]).
+
+% ═══ the two shapes that used to be a door DISAGREEMENT ═════════════════════
+%
+% Burrs B3, B4 and B9 of plans/2026-07-30-relpattern-adversarial-review.md.
+% The compiler refused a relation value under not/1 and in an edge rule; THIS
+% ENGINE RAN BOTH. Neither shape appeared in any graded fixture, so nothing in
+% the corpus put the two answers side by side and the review had to run them by
+% hand to discover they differed:
+%
+%   oracle:   seen(10)
+%   compiler: relation_pattern_not_lowerable(span/3,file,file,...)
+%
+%   oracle:   span(obj(...),10,20) present
+%   compiler: relation_value_in_edge_rule(...)
+%
+% RED RECEIPT for the two fixtures below, taken with the fixtures in place and
+% relation_value_under_negation / relation_value_in_edge_rule not yet shared:
+%
+%   fail  relation_value_under_negation_rejected
+%   fail  relation_value_in_edge_rule_rejected
+%
+% (a throws/1 fixture that does not throw prints its name alone; both programs
+% ran here and produced rows.)
+%
+% The decision to refuse rather than lower is written out in
+% 0_program_check.pl at the two triggers. In short: a value under not/1 needs
+% its dictionary joins scoped INSIDE the NOT EXISTS, and hoisting them, which
+% is where the rewrite puts them today, inverts the answer; an edge rule has no
+% dictionary-join seam at all. Both are new execution shape, and a shape the
+% two engines answer differently is worse than a shape neither accepts. When
+% the capability lands, these two fixtures flip from throws/1 to rows.
+
+fixture(relation_value_under_negation_rejected,
+  prog([ type_decl(repo,  [col(name, text)]),
+         col_type(repo/1, name, text),
+         type_decl(fpath, [col(name, text)]),
+         col_type(fpath/1, name, text),
+         type_decl(file,  [col(repo, repo), col(at, fpath)]),
+         col_type(file/2, repo, repo), col_type(file/2, at, fpath),
+         col_type(span/3, file, file),
+         col_type(span/3, start, int), col_type(span/3, end, int),
+         col_type(raw/4, repo_name, text), col_type(raw/4, path_name, text),
+         col_type(raw/4, start, int), col_type(raw/4, end, int),
+         col_type(seen/1, start, int) ],
+       [ (seen(Start) <-
+            raw(_, _, Start, _),
+            not(span(file(repo(acme), fpath('missing.rs')), Start, _))) ]),
+  [],
+  [],
+  [ throws(relation_value_under_negation(
+             span/3, file, file, file(repo(acme), fpath('missing.rs')))) ]).
+
+fixture(relation_value_in_edge_rule_rejected,
+  prog([ type_decl(repo,  [col(name, text)]),
+         col_type(repo/1, name, text),
+         type_decl(fpath, [col(name, text)]),
+         col_type(fpath/1, name, text),
+         type_decl(file,  [col(repo, repo), col(at, fpath)]),
+         col_type(file/2, repo, repo), col_type(file/2, at, fpath),
+         col_type(span/3, file, file),
+         col_type(span/3, start, int), col_type(span/3, end, int),
+         kind(span/3, log), keep(span/3, all),
+         col_type(raw/4, repo_name, text), col_type(raw/4, path_name, text),
+         col_type(raw/4, start, int), col_type(raw/4, end, int) ],
+       [ (span(file(repo(acme), fpath('src/a.rs')), 10, 20) <+
+            raw(_, _, _, _)) ]),
+  [],
+  [],
+  [ throws(relation_value_in_edge_rule(
+             span/3, file, file, file(repo(acme), fpath('src/a.rs')))) ]).

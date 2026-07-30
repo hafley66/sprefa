@@ -146,6 +146,11 @@ engine_check_order([ key_position_out_of_range,
                      % Straight after the concrete-argument class it extends:
                      % the same law where the offending value is a variable.
                      relation_column_type_conflict,
+                     % Burrs B3/B4: shapes the compiler refused and this engine
+                     % ran. Refused here too so the two doors answer the same
+                     % program the same way (0_program_check.pl states why).
+                     relation_value_under_negation,
+                     relation_value_in_edge_rule,
                      keyed_level_head,
                      keyed_log_rel,
                      log_on_level_headed_rel,
@@ -171,6 +176,12 @@ engine_refusal(relation_pattern_not_a_relation_value,
                pattern(Ref, Column, TypeName, Value),
                relation_pattern_not_a_relation_value(Ref, Column, TypeName, Value)).
 engine_refusal(dynamic_relation_name, Ref, dynamic_relation_name(Ref)).
+engine_refusal(relation_value_under_negation,
+               pattern(Ref, Column, TypeName, Value),
+               relation_value_under_negation(Ref, Column, TypeName, Value)).
+engine_refusal(relation_value_in_edge_rule,
+               pattern(Ref, Column, TypeName, Value),
+               relation_value_in_edge_rule(Ref, Column, TypeName, Value)).
 engine_refusal(relation_column_type_conflict,
                conflict(Ref, Column, TypeName, OtherRef, OtherColumn, OtherType),
                relation_column_type_conflict(Ref, Column, TypeName,

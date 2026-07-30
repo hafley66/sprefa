@@ -1108,7 +1108,15 @@ check_supported_subset_expanded(Program) :-
                               % the emitter INSERTs a text leaf into its own
                               % `INTEGER NOT NULL` ref column and sqlite keeps
                               % it.
-                              relation_column_type_conflict ]),
+                              relation_column_type_conflict,
+                              % Burrs B3/B4, in the same slot engine.pl gives
+                              % them: shapes this compiler refused at LOWERING
+                              % while the reference engine ran them. Shared now,
+                              % so the refusal is a fact of the language and not
+                              % of one back end. lower.pl keeps its residue
+                              % guards as the backstop for direct entry.
+                              relation_value_under_negation,
+                              relation_value_in_edge_rule ]),
     forall(( member(Rule, Rules), rule_reserved_construct(Rule, Construct) ),
            throw(unsupported_construct(Construct))),
     shared_refusal(Program, [ log_on_level_headed_rel,
@@ -1158,6 +1166,12 @@ compiler_refusal(relation_pattern_not_a_relation_value,
                  pattern(Ref, Column, TypeName, Value),
                  relation_pattern_not_a_relation_value(Ref, Column, TypeName, Value)).
 compiler_refusal(dynamic_relation_name, Ref, dynamic_relation_name(Ref)).
+compiler_refusal(relation_value_under_negation,
+                 pattern(Ref, Column, TypeName, Value),
+                 relation_value_under_negation(Ref, Column, TypeName, Value)).
+compiler_refusal(relation_value_in_edge_rule,
+                 pattern(Ref, Column, TypeName, Value),
+                 relation_value_in_edge_rule(Ref, Column, TypeName, Value)).
 compiler_refusal(relation_column_type_conflict,
                  conflict(Ref, Column, TypeName, OtherRef, OtherColumn, OtherType),
                  relation_column_type_conflict(Ref, Column, TypeName,
