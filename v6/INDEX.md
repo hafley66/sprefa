@@ -11,7 +11,7 @@
 | [.agents/skills/v6-deps/SKILL.md](.agents/skills/v6-deps/SKILL.md) | 145 | V6 dependency dossier (researched 2026-07-19) |
 | [.agents/skills/v6-plan/SKILL.md](.agents/skills/v6-plan/SKILL.md) | 85 | V6 primed context |
 | [AGENTS.md](AGENTS.md) | 103 | v6 — AGENTS.md (start here; stay out of everything else) |
-| [ARCH-MAP.md](ARCH-MAP.md) | 442 | v6 architecture map |
+| [ARCH-MAP.md](ARCH-MAP.md) | 450 | v6 architecture map |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 162 | v6 architecture — every graph algorithm, and why |
 | [DECISIONS.md](DECISIONS.md) | 176 | v6 pinned decisions — STOP re-deriving these |
 | [MAP.md](MAP.md) | 245 | v6 — the living map (algorithms · unification · exploration · DONE) |
@@ -110,7 +110,7 @@
 14:## 1. Surface sugar expands in a declared order
 38:## 2. The writable surface, by axis
 156:## 3. The build DAG's open frontier
-315:## 4. A compiled program's rel dataflow: this program's own
+323:## 4. A compiled program's rel dataflow: this program's own
 ```
 
 ### ARCHITECTURE.md

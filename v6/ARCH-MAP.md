@@ -155,7 +155,7 @@ flowchart TD
 
 ## 3. The build DAG's open frontier
 
-`task/3` in `v6/prolog/ARCH.pl`: 171 tasks, 99 dependency edges. Drawing all of them is noise, so the rel `frontier_edge` keeps only the edges touching a task that is not `done` -- a done task appears exactly when something open still waits behind it. `task_blocked` and `task_ready` are the two antijoins that split the open set.
+`task/3` in `v6/prolog/ARCH.pl`: 174 tasks, 102 dependency edges. Drawing all of them is noise, so the rel `frontier_edge` keeps only the edges touching a task that is not `done` -- a done task appears exactly when something open still waits behind it. `task_blocked` and `task_ready` are the two antijoins that split the open set.
 
 ```mermaid
 flowchart LR
@@ -180,14 +180,18 @@ flowchart LR
   t_file_span_storage_lab["file_span_storage_lab<br/>labbed"]
   t_flow_parity_residue["flow_parity_residue<br/>active"]
   t_flow_parity_upgrade["flow_parity_upgrade<br/>done"]
+  t_golden_oracle_arrival_fix["golden_oracle_arrival_fix<br/>unbuilt"]
   t_higher_order_rel_scan["higher_order_rel_scan<br/>superseded"]
   t_island_partition["island_partition<br/>unbuilt"]
   t_json_flex_lab["json_flex_lab<br/>done"]
   t_json_interop_lab["json_interop_lab<br/>labbed"]
+  t_json_pattern_expand["json_pattern_expand<br/>unbuilt"]
+  t_json_wiring["json_wiring<br/>done"]
   t_kernel_sql_lowering["kernel_sql_lowering<br/>done"]
   t_key_edge_case_census["key_edge_case_census<br/>labbed"]
   t_mode_lab["mode_lab<br/>labbed"]
   t_ordered_aggregate_arc["ordered_aggregate_arc<br/>unbuilt"]
+  t_ordered_aggregate_lab["ordered_aggregate_lab<br/>labbed"]
   t_per_row_consumption["per_row_consumption<br/>unbuilt"]
   t_pre_occurrence_loop["pre_occurrence_loop<br/>done"]
   t_purity_split["purity_split<br/>unbuilt"]
@@ -235,11 +239,14 @@ flowchart LR
   t_higher_order_rel_scan --> t_scan_match_value_lab
   t_higher_order_rel_scan --> t_v6_completion_drive
   t_island_partition --> t_pushdown_optimizer
-  t_json_flex_lab --> t_ordered_aggregate_arc
+  t_json_flex_lab --> t_ordered_aggregate_lab
+  t_json_wiring --> t_golden_oracle_arrival_fix
+  t_json_wiring --> t_json_pattern_expand
   t_kernel_sql_lowering --> t_count_ivm_port
   t_kernel_sql_lowering --> t_demand_clocking
   t_kernel_sql_lowering --> t_register_lowering
   t_mode_lab --> t_scope_cover_check
+  t_ordered_aggregate_lab --> t_ordered_aggregate_arc
   t_pre_occurrence_loop --> t_higher_order_rel_scan
   t_pre_occurrence_loop --> t_scan_match_reconciliation
   t_purity_split --> t_island_partition
@@ -276,6 +283,7 @@ flowchart LR
   class t_higher_order_rel_scan blocked
   class t_island_partition blocked
   class t_key_edge_case_census blocked
+  class t_ordered_aggregate_arc blocked
   class t_pushdown_optimizer blocked
   class t_receipt_folding blocked
   class t_reference_construction_contexts blocked
@@ -298,17 +306,17 @@ flowchart LR
 | `canonical_plan` | 2 |
 | `closed` | 4 |
 | `done` | 99 |
-| `labbed` | 15 |
+| `labbed` | 16 |
 | `labbing` | 4 |
 | `parked` | 1 |
 | `superseded` | 2 |
-| `unbuilt` | 38 |
+| `unbuilt` | 40 |
 
-**Ready** (open, every dependency done): 47 tasks. **Blocked**: 25 tasks.
+**Ready** (open, every dependency done): 49 tasks. **Blocked**: 26 tasks.
 
 <details><summary>the ready set</summary>
 
-`amplification_sensors`, `analysis_oracle_exam`, `bind_submit_error_arm`, `c7_durable_carry`, `causality_check`, `clock_check`, `count_ivm_port`, `decode_arc`, `demand_clocking`, `dep_ver_minmax_reversed`, `doc_format_extraction`, `effect_abort`, `envelope_types`, `equals_refusal_by_name`, `extract_spelunk`, `extraction_host_batching_lab`, `file_span_redesign`, `flow_parity_residue`, `flow_residue_partial`, `fork_join_malformed_json`, `ghost_forest_view`, `golden_flex_residue`, `group_concat_silent_miscompile`, `host_column_shadows_runtime`, `init_retention`, `json_edge_body_unblock`, `json_interop_lab`, `mode_lab`, `norm_oracle_emitter_divergence`, `null_coherence_lab`, `ordered_aggregate_arc`, `per_row_consumption`, `purity_split`, `reactor_buffertime_flake`, `register_lowering`, `rel_definition_hash_lab`, `rel_value_unification_lab`, `scan_match_reconciliation`, `schema_import_epic`, `simplify_wave`, `struct_dictionary_gc`, `sub_forest`, `sub_graph_disk`, `swipl_gc_abort`, `text_expression_parity`, `ts_grammar_import`, `v5_lsp_exit_hang`
+`amplification_sensors`, `analysis_oracle_exam`, `bind_submit_error_arm`, `c7_durable_carry`, `causality_check`, `clock_check`, `count_ivm_port`, `decode_arc`, `demand_clocking`, `dep_ver_minmax_reversed`, `doc_format_extraction`, `effect_abort`, `envelope_types`, `equals_refusal_by_name`, `extract_spelunk`, `extraction_host_batching_lab`, `file_span_redesign`, `flow_parity_residue`, `flow_residue_partial`, `fork_join_malformed_json`, `ghost_forest_view`, `golden_flex_residue`, `golden_oracle_arrival_fix`, `group_concat_silent_miscompile`, `host_column_shadows_runtime`, `init_retention`, `json_edge_body_unblock`, `json_interop_lab`, `json_pattern_expand`, `mode_lab`, `norm_oracle_emitter_divergence`, `null_coherence_lab`, `ordered_aggregate_lab`, `per_row_consumption`, `purity_split`, `reactor_buffertime_flake`, `register_lowering`, `rel_definition_hash_lab`, `rel_value_unification_lab`, `scan_match_reconciliation`, `schema_import_epic`, `simplify_wave`, `struct_dictionary_gc`, `sub_forest`, `sub_graph_disk`, `swipl_gc_abort`, `text_expression_parity`, `ts_grammar_import`, `v5_lsp_exit_hang`
 
 </details>
 

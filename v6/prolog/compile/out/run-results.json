@@ -427,6 +427,27 @@
     "finalDetail": ""
   },
   {
+    "name": "json_typed_capture_folds_into_a_keyed_int_total",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "json_typed_capture_filters_a_wrong_typed_value",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "json_untyped_capture_binds_without_a_type",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "combine_level_is_the_conjunction_spelling",
     "bucket": "identical",
     "detail": "",
