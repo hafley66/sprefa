@@ -154,19 +154,20 @@ flowchart TD
 
 ## 3. The build DAG's open frontier
 
-`task/3` in `v6/prolog/ARCH.pl`: 166 tasks, 98 dependency edges. Drawing all of them is noise, so the rel `frontier_edge` keeps only the edges touching a task that is not `done` -- a done task appears exactly when something open still waits behind it. `task_blocked` and `task_ready` are the two antijoins that split the open set.
+`task/3` in `v6/prolog/ARCH.pl`: 170 tasks, 98 dependency edges. Drawing all of them is noise, so the rel `frontier_edge` keeps only the edges touching a task that is not `done` -- a done task appears exactly when something open still waits behind it. `task_blocked` and `task_ready` are the two antijoins that split the open set.
 
 ```mermaid
 flowchart LR
   t_bind_submit_error_arm["bind_submit_error_arm<br/>unbuilt"]
   t_byte_span_flattener["byte_span_flattener<br/>closed"]
   t_c7_durable_carry["c7_durable_carry<br/>unbuilt"]
-  t_clock_check["clock_check<br/>active / labbed"]
+  t_clock_check["clock_check<br/>active"]
   t_clock_checker_proof_payoff["clock_checker_proof_payoff<br/>labbed"]
   t_clock_inference["clock_inference<br/>parked"]
-  t_comment_rail_wiring["comment_rail_wiring<br/>done / unbuilt"]
+  t_comment_rail_wiring["comment_rail_wiring<br/>done"]
   t_cost_model["cost_model<br/>unbuilt"]
   t_count_ivm_port["count_ivm_port<br/>unbuilt"]
+  t_csp_idioms_lab["csp_idioms_lab<br/>done"]
   t_demand_clocking["demand_clocking<br/>labbed"]
   t_desugar_machinery["desugar_machinery<br/>done"]
   t_direct_trigger_identity_prototype["direct_trigger_identity_prototype<br/>labbing"]
@@ -184,6 +185,7 @@ flowchart LR
   t_kernel_sql_lowering["kernel_sql_lowering<br/>done"]
   t_key_edge_case_census["key_edge_case_census<br/>labbed"]
   t_mode_lab["mode_lab<br/>labbed"]
+  t_per_row_consumption["per_row_consumption<br/>unbuilt"]
   t_pre_occurrence_loop["pre_occurrence_loop<br/>done"]
   t_purity_split["purity_split<br/>unbuilt"]
   t_pushdown_optimizer["pushdown_optimizer<br/>unbuilt"]
@@ -217,7 +219,7 @@ flowchart LR
   t_clock_check --> t_higher_order_rel_scan
   t_clock_check --> t_island_partition
   t_comment_rail_wiring --> t_text_expression_parity
-  t_desugar_machinery --> t_clock_check
+  t_csp_idioms_lab --> t_per_row_consumption
   t_desugar_machinery --> t_purity_split
   t_emit_ts_direct --> t_sub_graph_disk
   t_existing_target_identity_prototype --> t_direct_trigger_identity_prototype
@@ -291,27 +293,20 @@ flowchart LR
 | `active` | 6 |
 | `canonical_plan` | 2 |
 | `closed` | 4 |
-| `done` | 94 |
-| `labbed` | 16 |
+| `done` | 96 |
+| `labbed` | 15 |
 | `labbing` | 4 |
 | `parked` | 1 |
 | `superseded` | 2 |
-| `unbuilt` | 37 |
+| `unbuilt` | 40 |
 
-**Ready** (open, every dependency done): 46 tasks. **Blocked**: 25 tasks.
+**Ready** (open, every dependency done): 49 tasks. **Blocked**: 25 tasks.
 
 <details><summary>the ready set</summary>
 
-`amplification_sensors`, `analysis_oracle_exam`, `bind_submit_error_arm`, `c7_durable_carry`, `causality_check`, `clock_check`, `comment_rail_wiring`, `count_ivm_port`, `decode_arc`, `demand_clocking`, `dep_ver_minmax_reversed`, `doc_format_extraction`, `effect_abort`, `envelope_types`, `equals_refusal_by_name`, `extract_spelunk`, `extraction_host_batching_lab`, `file_span_redesign`, `flow_parity_residue`, `flow_residue_partial`, `fork_join_malformed_json`, `ghost_forest_view`, `golden_flex_residue`, `group_concat_silent_miscompile`, `host_column_shadows_runtime`, `init_retention`, `json_edge_body_unblock`, `json_interop_lab`, `mode_lab`, `norm_oracle_emitter_divergence`, `null_coherence_lab`, `purity_split`, `reactor_buffertime_flake`, `register_lowering`, `rel_definition_hash_lab`, `rel_value_unification_lab`, `scan_match_reconciliation`, `schema_import_epic`, `simplify_wave`, `struct_dictionary_gc`, `sub_forest`, `sub_graph_disk`, `swipl_gc_abort`, `text_expression_parity`, `ts_grammar_import`, `v5_lsp_exit_hang`
+`amplification_sensors`, `analysis_oracle_exam`, `bind_submit_error_arm`, `c7_durable_carry`, `causality_check`, `clock_check`, `count_ivm_port`, `decode_arc`, `demand_clocking`, `dep_ver_minmax_reversed`, `doc_format_extraction`, `effect_abort`, `envelope_types`, `equals_refusal_by_name`, `extract_spelunk`, `extract_t2_lab`, `extraction_host_batching_lab`, `file_span_redesign`, `flow_parity_residue`, `flow_residue_partial`, `fork_join_malformed_json`, `ghost_forest_view`, `golden_flex_residue`, `group_concat_silent_miscompile`, `host_column_shadows_runtime`, `init_retention`, `json_edge_body_unblock`, `json_interop_lab`, `mode_lab`, `norm_oracle_emitter_divergence`, `null_coherence_lab`, `oracle_body_gate`, `per_row_consumption`, `purity_split`, `reactor_buffertime_flake`, `register_lowering`, `rel_definition_hash_lab`, `rel_value_unification_lab`, `scan_match_reconciliation`, `schema_import_epic`, `self_map_rail`, `simplify_wave`, `struct_dictionary_gc`, `sub_forest`, `sub_graph_disk`, `swipl_gc_abort`, `text_expression_parity`, `ts_grammar_import`, `v5_lsp_exit_hang`
 
 </details>
-
-**`task/3` state contradictions.** `task_state_conflict` counts states per task name; a name with more than one is a row that was appended when its state changed instead of rewritten. `just arch`'s `go` does not catch this -- it checks the dependency graph is acyclic and total, which a duplicated row does not break.
-
-| task | states |
-|---|---|
-| `clock_check` | `active`, `labbed` |
-| `comment_rail_wiring` | `done`, `unbuilt` |
 
 ## 4. A compiled program's rel dataflow: this program's own
 
