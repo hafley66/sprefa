@@ -1,0 +1,9 @@
+{
+  "name": "pet-dashboard",
+  "version": "0.3.1",
+  "description": "Consumes the pet-contracts OpenAPI shapes. Declares the dependency it uses.",
+  "license": "MIT",
+  "dependencies": {
+    "pet-contracts": "^1.4.0"
+  }
+}

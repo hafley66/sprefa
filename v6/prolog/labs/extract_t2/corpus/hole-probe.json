@@ -1,0 +1,6 @@
+{
+  "scalar": "int",
+  "object": { "type": "array", "items": "double" },
+  "array": ["boolean", "double"],
+  "number": 16
+}
