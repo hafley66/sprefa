@@ -422,3 +422,22 @@ ruling(json_key_hole_marker, dollar, user,
 % .dl6 fixtures stand.
 ruling(match_arm_tokens, ratified_ltr_pair, user,
        'user 2026-07-30: "i was the one that wanted |-> so we had ltr reading nature, i want these programs with rels looking sexy and uniform and able to express flow across times"').
+
+% 2026-07-30 json card round. User rulings, recorded verbatim in the
+% justification field.
+ruling(json5_subset, unquoted_keys_only, user,
+       'user 2026-07-30: "just unquoted keys". Trailing commas and # comments are NOT taken; the subset is exactly json plus bare identifier keys').
+ruling(list_spelling, list_of_type, user,
+       'user 2026-07-30: "list spelling is list(text) seems easy enough"').
+ruling(string_quote, both_parse, user,
+       'user 2026-07-30: "sring quote: both"').
+ruling(descent_depth_cap, uncapped, user,
+       'user 2026-07-30: "descent depth nah, css aint got it". ** stays unbounded like the CSS descendant combinator; a cap can be added later without breaking programs, a cap removed later cannot').
+% The pattern-goal spelling was delegated to the cheapest-to-migrate option.
+% decode(body, {..}) is a named body atom: a functor rename is a mechanical
+% sweep across parser, printer, registry and fixtures. `body = {..}` bakes the
+% meaning into an OPERATOR, which is parsed, printed, registry-listed and
+% grammar-highlighted as syntax, and = already carries an unrelated meaning
+% elsewhere. So the named goal is the reversible choice.
+ruling(json_pattern_goal_spelling, named_goal_decode, user,
+       'user 2026-07-30: "do whatever is easiest to change later for decode/pattern-goal spelling". Coordinator picked the named body atom over the operator form on migration cost').
