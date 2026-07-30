@@ -209,9 +209,17 @@ print_dl_program_with_edb_types(prog(RawDecls, RawRules), Bindings,
 decl_ref_order(Decls, Order) :-
     findall(Item,
             ( member(Decl, Decls),
-              decl_order_item(Decl, Item)
+              decl_order_item(Decl, Item),
+              \+ shadowed_by_type_decl(Decls, Item)
             ), Refs0),
     dedup_preserve_order(Refs0, Order).
+
+% A rel whose type_decl already prints must not also print from its bare
+% col_type/kind/keyed/keep ref, or the decl line doubles and the reparse
+% drops the type (parse_dl relation_schema arity-checks the doubled list).
+shadowed_by_type_decl(Decls, Name/Arity) :-
+    member(type_decl(Name, Specs), Decls),
+    length(Specs, Arity).
 
 decl_order_item(enum_decl(Name, Variants), enum_decl(Name, Variants)).
 decl_order_item(Decl, Decl) :- Decl = type_decl(_, _).
