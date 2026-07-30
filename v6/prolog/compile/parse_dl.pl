@@ -550,12 +550,26 @@ decl_b_columns(RelName, [column(ColName, Type) | Rest], S0, S) :-
     ws0(S4, S5), decl_b_column_type(RelName, ColName, Type, S5, S6), ws0(S6, S7),
     ( lit_dcg(`,`, S7, S8) -> decl_b_columns(RelName, Rest, S8, S) ; Rest = [], S = S7 ).
 
-decl_b_column_type(_, _, int, S0, S) :- word(`int`, S0, S), !.
-decl_b_column_type(_, _, text, S0, S) :- word(`text`, S0, S), !.
-decl_b_column_type(_, _, json, S0, S) :- word(`json`, S0, S), !.
+% ONE type vocabulary, read through typed_column_type/3 -- where `rel` decls
+% already read it, and where host OUTPUT columns already read it
+% (host_output_column_type/5 below is this exact two-clause shape). These
+% clauses used to spell int|text|json by hand, so `float`, `bool` and a
+% declared struct name all fell through to the wrapper clause, degraded to the
+% untyped `none`, and reported unsupported_surface(column_type_wrapper(...)).
+% Host INPUTS and bind columns were the last surfaces answering a narrower
+% vocabulary than the `rel` decl sitting beside them.
+%
+% ORDER IS THE SEMANTICS. The wrapper forms go first: typed_column_type/3's
+% last clause takes any bare identifier as a struct type name, and `Key` in
+% `Key(text)` is a bare identifier, so reading types first would leave the
+% `(text)` unconsumed and turn a named refusal into a parse error.
 decl_b_column_type(RelName, ColName, none, S0, S) :-
     coltype(Wrapper, S0, S),
+    Wrapper \== none,
+    !,
     record_finding(unsupported_surface(column_type_wrapper(RelName, ColName, Wrapper))).
+decl_b_column_type(_, _, Type, S0, S) :-
+    typed_column_type(Type, S0, S).
 
 coltype(Wrapper, S0, S) :-
     ( word(`Key`, S0, S1) -> Wrapper = 'Key'

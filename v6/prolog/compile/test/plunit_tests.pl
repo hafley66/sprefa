@@ -1186,6 +1186,53 @@ test(selected_surface_round_trips) :-
     parse_dl(PrintedCodes, Reparsed, _, []),
     Program =@= Reparsed.
 
+% D8. `sh` and `bind` column types ran through decl_b_column_type/5, which
+% knew int|text|json and nothing else: a `float` or `bool` column silently
+% degraded to the untyped `none` and reported
+% unsupported_surface(column_type_wrapper(Name, Column, none)). `rel` decls
+% have accepted the full vocabulary since the type pass, and host OUTPUT
+% columns already ran through typed_column_type/3, so the gap was host INPUTS
+% and bind columns only -- one declaration surface answering three different
+% type vocabularies.
+%
+% RED RECEIPT, run at a4629623 over
+%   sh weigh(kilos: float, ok: bool) -> (note: text) = `...`.
+%   bind reading(kilos: float, ok: bool, at: patch).
+%
+%   FINDINGS: [unsupported_surface(column_type_wrapper(weigh,kilos,none)),
+%              unsupported_surface(column_type_wrapper(weigh,ok,none))]
+%   DECL: sh_decl(weigh,[col(kilos,none),col(ok,none)],[col(note,text)],...)
+%   FINDINGS: [unsupported_surface(column_type_wrapper(reading,kilos,none)),
+%              unsupported_surface(column_type_wrapper(reading,ok,none)),
+%              unsupported_surface(column_type_wrapper(reading,at,none))]
+%   DECL: bind_decl(reading,[col(kilos,none),col(ok,none),col(at,none)])
+%
+% PREMISE CORRECTED while writing this: struct type names did NOT work there
+% either. `at: patch` degraded the same way -- only host OUTPUTS resolved a
+% struct name. The three surfaces now read one vocabulary.
+test(host_input_and_bind_columns_read_the_full_type_vocabulary) :-
+    string_codes(
+      "sh weigh(kilos: float, ok: bool) -> (note: text) = `run {kilos} {ok}`.\nbind reading(kilos: float, ok: bool, at: patch).\n",
+      Codes),
+    parse_dl(Codes, Program, _, []),
+    arg(1, Program, Decls),
+    memberchk(sh_decl(weigh, [col(kilos, float), col(ok, bool)],
+                      [col(note, text)], _), Decls),
+    memberchk(bind_decl(reading,
+                        [col(kilos, float), col(ok, bool), col(at, patch)]),
+              Decls).
+
+% The wrapper refusal the widened clause must NOT swallow: `Key(...)` and its
+% two siblings are dead spellings, and they stay named rather than becoming a
+% parse error or a struct type called Key.
+test(host_input_column_wrapper_is_still_a_named_refusal) :-
+    string_codes(
+      "sh weigh(path: Key(text)) -> (note: text) = `run {path}`.\n",
+      Codes),
+    parse_dl(Codes, _, _, Findings),
+    memberchk(unsupported_surface(column_type_wrapper(weigh, path, 'Key')),
+              Findings).
+
 test(rhs_probe_marker_is_rejected,
      [throws(dl_parse_error(statement, _))]) :-
     string_codes(

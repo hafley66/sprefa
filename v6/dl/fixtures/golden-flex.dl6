@@ -59,19 +59,25 @@
 #   NESTED BRACES                  same refusal, one level deeper, so a two-hop
 #                                  struct value can never be assembled in-language
 #                                  at all -- it only ever arrives whole.
-#   float / bool IN sh AND bind    MEASURED writing this file, NEW: `rel` decls
-#                                  accept int|text|json|bool|float plus struct
-#                                  names (parse_dl.pl typed_column_type/3) but
-#                                  `sh` and `bind` decls run through
-#                                  decl_b_column_type/5, which knows only
-#                                  int|text|json. A `float` or `bool` column
-#                                  there silently degrades to the untyped `none`
-#                                  and reports unsupported_surface(
-#                                  column_type_wrapper(Name, Column, none)).
-#                                  Struct type names DO work there. The two
-#                                  declaration doors disagree on the type
-#                                  vocabulary; the host below therefore carries
-#                                  INT grams, not float kilos.
+#   float / bool IN sh AND bind    THE DECL SURFACE IS FIXED, the layer under it
+#                                  is not. decl_b_column_type/5 knew only
+#                                  int|text|json and degraded everything else to
+#                                  the untyped `none`; it now reads
+#                                  typed_column_type/3, the same vocabulary
+#                                  `rel` decls and host OUTPUT columns read, so
+#                                  float, bool and struct names all SPELL. What
+#                                  is still refused is one layer down and was
+#                                  found by trying it here: a float or bool host
+#                                  INPUT reaches the witness-digest concat as a
+#                                  typed value and is refused
+#                                  concat_non_display_piece(concat([...,kilos,
+#                                  ":",float,"=",_]), _). MEASURED both ways:
+#                                  `kilos: float` and `healthy: bool` as a third
+#                                  `weigh` input both produce exactly that, and
+#                                  the same shape with `lane: int` gets past it.
+#                                  So the host below still carries INT grams --
+#                                  now for a reason one layer deeper, and a
+#                                  named one.
 #   BARE TOP-LEVEL FACT            `quarantined('weed').` at top level lowers to
 #                                  a level rule over a minted literal seed and is
 #                                  refused level_rule_no_positive_body. Every
@@ -111,9 +117,10 @@
 #
 #   norm/1 diverged oracle vs emitter  FIXED             header above; graded by
 #                                                     display_key below
-#   float/bool unspellable in sh + bind decls         header above
-#                                                     (parse_dl.pl
-#                                                     decl_b_column_type/5)
+#   float/bool unspellable in sh + bind decls  FIXED   header above; the
+#                                                     REMAINING half is the
+#                                                     witness-digest concat
+#                                                     (concat_non_display_piece)
 #   JSON schedule cannot carry an object value        compile/scripts/
 #                                                     golden_oracle.pl header;
 #                                                     dl6_oracle.pl's own
