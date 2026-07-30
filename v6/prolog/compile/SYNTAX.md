@@ -185,6 +185,44 @@ construct inventory.
 | `true` / `false` as values | unavailable | bare identifiers remain variables in argument position |
 | `null` | unavailable | no term-form mapping |
 
+### The json plane
+
+`json` is a column type, and the brace grammar is one grammar with two roles:
+the LITERAL is the PATTERN minus holes. Which lowering a brace pattern gets is
+decided by the SOURCE COLUMN'S DECLARED TYPE, never by the pattern -- a
+declared struct becomes a dictionary join, a `json` column becomes json1 SQL.
+
+| term-form shape | `.dl6` spelling | role | ruling |
+|---|---|---|---|
+| `'{}'(Pairs)` | `{key: value, ...}` | object literal / open object pattern | `json5_subset = unquoted_keys_only` |
+| `'{}'` (arity 0) | `{}` | empty object; matches any object, binds nothing | term-door agreement |
+| `spread(Pattern)` | `[... pattern]` | array fan-out, one row per element | the gh-cache flagship |
+| `$(Var)` as a KEY | `$name` | key capture; the key is data | `json_key_hole_marker = dollar` |
+| `$(Var)` as a VALUE | `$name` | alias for the bare variable (text door) | same ruling |
+| `'**'` as a KEY | `**` | descent at any depth, root included | `descent_depth_cap = uncapped` |
+| quoted key | `{'name': v}` / `{"name": v}` | literal label, never a hole | `string_quote = both_parse` |
+| `list(T)` | `tags: list(text)` | typed view over the json array carrier | `list_spelling = list_of_type` |
+| tagged brace | `Tag{...}` / `_{...}` | `unsupported_construct(tagged_brace_reserved(Tag))` | reserved |
+
+Bareness is the literal marker on the KEY plane and quoting is the literal
+marker on the VALUE plane, and that is forced rather than chosen: JSON5 permits
+unquoted keys and forbids unquoted string values, so the value slot is free for
+dl6 variables and the key slot is not. Every key-axis production is therefore
+PATTERN-ONLY, forever -- constructing an object with a computed key is
+`json_object(Key, Value)`, never a brace literal.
+
+NOT taken out of JSON5: trailing commas, and `#` comments inside a brace.
+
+`Tag{...}` is reserved by measurement, not preference. SWI reads `_{a: 1}` and
+`point{x: 1}` as DICTS, a term shape `{}`/1 can never unify with, so the term
+door could never agree with a text door that read them as json. The refusal
+also keeps the spelling free for the stated future use of `{` beyond json.
+
+Cost, in joins: an exact key at any depth is 0 (one accumulated `json_extract`
+path); array spread, key capture and key wildcard are 1 (`json_each`); `**` is
+1 (`json_tree`, whose `fullkey` rides the same join). Statement counts stay
+flat per rule.
+
 ### Legacy surface: parsed, then refused
 
 These spellings remain in `parse_dl.pl` because current `.dl6` files use
