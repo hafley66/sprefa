@@ -1,2 +1,2 @@
-{"tick":1,"deltas":{"finding":{"add":[["a.rs",{"end":9,"start":3}]],"del":[]},"touched":{"add":[["a.rs"]],"del":[]}}}
-{"tick":2,"deltas":{"finding":{"add":[["b.rs",{"end":4,"start":1}]],"del":[]},"touched":{"add":[["b.rs"]],"del":[]}}}
+{"tick":1,"deltas":{"finding":{"add":[["a.rs",{"end":9,"start":3}]],"del":[]},"span":{"add":[[3,9]],"del":[]},"touched":{"add":[["a.rs"]],"del":[]}}}
+{"tick":2,"deltas":{"finding":{"add":[["b.rs",{"end":4,"start":1}]],"del":[]},"span":{"add":[[1,4]],"del":[]},"touched":{"add":[["b.rs"]],"del":[]}}}

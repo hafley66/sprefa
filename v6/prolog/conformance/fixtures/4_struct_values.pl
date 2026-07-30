@@ -368,12 +368,8 @@ fixture(struct_host_output_schedule_answer_interned,
     final(host_start/2, [host_start('a.rs', 17)]),
     ticks(1) ]).
 
-% THE SHARED CHILD (types-as-rels verdict Q3, domination_shared_child_survives
-% / domination_sole_owner_cascades) as a compiled fixture. Two parents hold the
-% SAME child value; releasing one leaves the survivor's rendering intact, and
-% releasing the last one removes both parents. What the tick log shows is the
-% VALUE plane only -- the dictionary is boundary-invisible (Edge 2), which is
-% exactly why GC timing on it cannot be observed here.
+% Two parents reference the same public target row. Parent retraction does not
+% cascade into target membership.
 fixture(struct_shared_child_survives_one_release,
   prog([ type_decl(span, [col(start, int), col(end, int)]),
          col_type(hit/2, owner, text),
@@ -389,3 +385,21 @@ fixture(struct_shared_child_survives_one_release,
                     [ -hit(right, obj([end-2, start-1])) ] ]),
     final(hit/2, []),
     ticks(3) ]).
+
+% Nested ingress becomes a target arrival before the parent. A level rule
+% reading the target therefore settles at the same external tick.
+fixture(relation_reference_target_and_parent_share_tick,
+  prog([ type_decl(span, [col(start, int), col(end, int)]),
+         col_type(finding/1, at, span),
+         col_type(span_seen/2, start, int),
+         col_type(span_seen/2, end, int) ],
+       [ (span_seen(Start, End) <- span(Start, End)) ]),
+  [],
+  [ [ +finding(obj([end-9, start-3])) ] ],
+  [ deltas(span/2, [ [ +span(3, 9) ] ]),
+    deltas(finding/1, [ [ +finding(obj([end-9, start-3])) ] ]),
+    deltas(span_seen/2, [ [ +span_seen(3, 9) ] ]),
+    final(span/2, [ span(3, 9) ]),
+    final(finding/1, [ finding(obj([end-9, start-3])) ]),
+    final(span_seen/2, [ span_seen(3, 9) ]),
+    ticks(1) ]).

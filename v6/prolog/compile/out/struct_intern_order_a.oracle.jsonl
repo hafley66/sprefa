@@ -1,2 +1,2 @@
-{"tick":1,"deltas":{"mark":{"add":[[{"end":2,"start":1}]],"del":[]}}}
-{"tick":2,"deltas":{"mark":{"add":[[{"end":4,"start":3}]],"del":[]}}}
+{"tick":1,"deltas":{"mark":{"add":[[{"end":2,"start":1}]],"del":[]},"span":{"add":[[1,2]],"del":[]}}}
+{"tick":2,"deltas":{"mark":{"add":[[{"end":4,"start":3}]],"del":[]},"span":{"add":[[3,4]],"del":[]}}}

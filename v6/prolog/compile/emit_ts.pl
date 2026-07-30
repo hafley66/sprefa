@@ -265,20 +265,26 @@ struct_ref_column_entries(RelPlans, Lines) :-
 column_type_ref_entry(ref(TypeName), Text) :- !, js_string(TypeName, Text).
 column_type_ref_entry(_, 'null').
 
-% The intern wrapper. Interning runs BEFORE the tick's own arrival statements,
-% so everything downstream sees a plain INTEGER ref column and needs to know
-% nothing about the value plane. Both emitter modes route through it: the
-% naive referee and the incremental default absorb the same rewritten batch.
-struct_tick_wrapper_lines(false, _, []) :- !.
-struct_tick_wrapper_lines(true, Name, Lines) :-
-    js_string(Name, _NameText),
-    Lines =
-    [ 'function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
-      '  return StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals).pipe(',
-      '    concatMap((interned) => runTickOnInternedArrivals(seam, interned)),',
-      '  );',
-      '}'
-    ].
+% Relation references normalize inside each emitter mode after that mode has
+% opened its tick boundary. Target rows pass through the same arrival
+% applicator as authored rows, then parent fields carry the resolved integer
+% endpoints. No second externally visible tick or reference-value runtime
+% exists.
+struct_tick_wrapper_lines(_, _, []).
+
+naive_reference_normalize_lines(false, []) :- !.
+naive_reference_normalize_lines(true,
+    [ '    concatMap((before) => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,',
+      '      (targets) => applyArrivals(seam, targets),',
+      '    ).pipe(map((normalized) => { arrivals = normalized; return before; }))),'
+    ]).
+
+incremental_reference_normalize_lines(false, []) :- !.
+incremental_reference_normalize_lines(true,
+    [ '    concatMap(() => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,',
+      '      (targets) => IncrementalRuntime.applyArrivals(seam, targets, INCREMENTAL_RELATIONS),',
+      '    ).pipe(map((normalized) => { arrivals = normalized; }))),'
+    ]).
     % `of` covers two zero-op shapes, not just the edge-rule forkJoin([])
     % guard it was originally added for: an edge-free tick still needs it for
     % edge_resolver_block/3's `of([])` when EdgeStatements is nonempty, AND
@@ -1431,16 +1437,19 @@ naive_retention_fn_lines(_RetentionStatements,
       '}'
     ]).
 
-run_naive_tick_fn_lines(Name, [], HasRetention, UsesTick, DepartureRefs, Lines) :- !,
+run_naive_tick_fn_lines(Name, [], HasRetention, UsesTick, DepartureRefs,
+                        HasStructTypes, Lines) :- !,
     departure_stage_naive_lines(DepartureRefs, DepartureStageLines),
     format(atom(NameCommentLine), '  // ~w: no edge rules -- absorb arrivals, recompute levels, diff.', [Name]),
     retention_tick_lines(HasRetention, RetentionLines),
     advance_tick_naive_line(UsesTick, AdvanceTickLines),
+    naive_reference_normalize_lines(HasStructTypes, NormalizeLines),
     append(
     [ [ 'function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
         '  return readSnapshot(seam).pipe('
       ],
       AdvanceTickLines,
+      NormalizeLines,
       [ '    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),',
         '    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),'
       ],
@@ -1454,10 +1463,11 @@ run_naive_tick_fn_lines(Name, [], HasRetention, UsesTick, DepartureRefs, Lines) 
       ]
     ], Lines).
 run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick,
-                        DepartureRefs, Lines) :-
+                        DepartureRefs, HasStructTypes, Lines) :-
     EdgeStatements \== [],
     departure_stage_naive_lines(DepartureRefs, DepartureStageLines),
     advance_tick_naive_line(UsesTick, AdvanceTickLines),
+    naive_reference_normalize_lines(HasStructTypes, NormalizeLines),
     edge_resolve_call_exprs(EdgeStatements, ResolveCallExprs),
     ( ResolveCallExprs = [SingleCall]
     -> format(atom(EdgeWritesExpr), '~w', [SingleCall])
@@ -1472,6 +1482,7 @@ run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick,
       '  return readSnapshot(seam).pipe('
       ],
       AdvanceTickLines,
+      NormalizeLines,
       [ '    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),',
       % TICK PHASE ALIGNMENT: the referee freezes the level plane where
       % engine.pl does -- after arrivals, before the edge batch. The naive
@@ -1498,11 +1509,12 @@ run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick,
       ]
     ], Lines).
 
-run_ordered_tick_fn_lines(false, _, _, _, _, []) :- !.
+run_ordered_tick_fn_lines(false, _, _, _, _, _, []) :- !.
 run_ordered_tick_fn_lines(true, Name, HasRetention, UsesTick, DepartureRefs,
-                          Lines) :-
+                          HasStructTypes, Lines) :-
     departure_stage_naive_lines(DepartureRefs, DepartureStageLines),
     advance_tick_naive_line(UsesTick, AdvanceTickLines),
+    naive_reference_normalize_lines(HasStructTypes, NormalizeLines),
     retention_tick_lines(HasRetention, RetentionLines),
     format(atom(NameCommentLine),
            '  // ~w: ordered process_occurrences with evolving pre snapshots.',
@@ -1512,6 +1524,7 @@ run_ordered_tick_fn_lines(true, Name, HasRetention, UsesTick, DepartureRefs,
         '  return readSnapshot(seam).pipe('
       ],
       AdvanceTickLines,
+      NormalizeLines,
       [ '    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),',
         '    concatMap((before) => snapshotOrderedPre(seam).pipe(map(() => before))),',
         '    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),',
@@ -1649,6 +1662,7 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
                               HasRetention, UsesTick, DepartureRefs,
                               HasStructTypes, HasOrderedProgram, Lines) :-
     advance_tick_pipeline_line(UsesTick, AdvanceTickLines),
+    incremental_reference_normalize_lines(HasStructTypes, NormalizeLines),
     departure_stage_incremental_lines(DepartureRefs, DepartureStageLines),
     pre_edge_level_reconcile_lines(EdgeStatements, PreEdgeReconcileLines, PipeSplitLines),
     ( EdgeStatements == []
@@ -1670,6 +1684,7 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
       '  return IncrementalRuntime.prepareTick(seam, INCREMENTAL_RELATIONS).pipe('
       ],
       AdvanceTickLines,
+      NormalizeLines,
       [ '    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, INCREMENTAL_RELATIONS)),',
       '    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),'
       ],
@@ -1699,10 +1714,6 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
 run_tick_dispatch_lines(DerivedEdgeCarryRequired, Lines) :-
     run_tick_dispatch_lines(DerivedEdgeCarryRequired, false, false, Lines).
 
-% STRUCT-AS-ROWS: when the program declares a type, the dispatch function is
-% renamed and StructPlane.intern/4 becomes the one runTick, so BOTH emitter
-% modes absorb the same rewritten batch. Without a type declaration the two
-% clauses below are byte-identical to what they were before this arc.
 run_tick_dispatch_lines(_, HasStructTypes, true,
     [ Signature,
       '  return runOrderedTick(seam, arrivals);',
@@ -1723,8 +1734,6 @@ run_tick_dispatch_lines(false, HasStructTypes, false,
       '}'
     ]) :- dispatch_signature(HasStructTypes, Signature).
 
-dispatch_signature(true,
-    'function runTickOnInternedArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {') :- !.
 dispatch_signature(_,
     'function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {').
 
@@ -1861,9 +1870,10 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     program_uses_tick(TickProg, UsesTick),
     advance_tick_fn_lines(UsesTick, AdvanceTickFnLines),
     run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick,
-                            DepartureRefs, RunNaiveTickFnLines),
+                            DepartureRefs, HasStructTypes, RunNaiveTickFnLines),
     run_ordered_tick_fn_lines(HasOrderedProgram, Name, HasRetention, UsesTick,
-                              DepartureRefs, RunOrderedTickFnLines),
+                              DepartureRefs, HasStructTypes,
+                              RunOrderedTickFnLines),
     incremental_program_safe(Plan, EdgeStatements, RuleLevelStatements, IncrementalSafe),
     reconcile_every_tick(Plan, ReconcileEveryTick),
     derived_edge_carry_required(Plan, EdgeStatements, DerivedEdgeCarryRequired),

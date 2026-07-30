@@ -14,10 +14,9 @@
  *           assign the same dense ids would print the same bytes while the
  *           rendering was, in fact, id-shaped. So the build-order test asserts
  *           the logs agree AND the dense ids DISAGREE.
- *   EDGE 2  whether the dictionary leaked. A dictionary rel in the log is
- *           invisible to "is the log identical" only until a program declares
- *           one, so this asserts the log's rel-name set against the ORACLE's
- *           while sqlite_master provably holds the dictionary tables.
+ *   EDGE 2  whether automatic nesting changes ordinary relation membership.
+ *           The target and parent must both appear at the same external tick,
+ *           and sqlite_master must hold one public target table.
  *   COST    the intern path's statement count, flat in the number of arriving
  *           values (repo law: formerly-quadratic paths get COUNT tests, never
  *           end-state equality alone), and the boundary read's PLAN.
@@ -29,7 +28,7 @@
  *      i.e. render the id, the exact Edge 1 failure. 2 of 7 RED:
  *        "a ref column printed a bare number, i.e. an id:
  *         {"tick":1,"deltas":{"mark":{"add":[[1]],"del":[]}}}"
- *        "this fixture's boundary read must touch the dictionary: SELECT
+ *        "this fixture's boundary read must touch the target relation: SELECT
  *         "at", "_sign" AS "__sign", count(*) ... FROM "__delta_mark""
  *   b. structPlane.ts internOneType/4 rewritten to run one INSERT per tuple
  *      (the N+1 shape the count test exists for). 1 of 7 RED: "three values
@@ -68,6 +67,7 @@ import type {
   IArrivalBatch,
   IBootStatement,
   IGenProgram,
+  IRow,
   ISqlSeam,
   IStructRefColumns,
   IStructTypePlan,
@@ -156,9 +156,9 @@ test("edge 1: two build orders render identically while their dense ids differ",
   }
 });
 
-// ── EDGE 2: dictionaries are boundary-invisible ──────────────────────────────
+// ── EDGE 2: nested targets are ordinary same-tick relation arrivals ──────────
 
-test("edge 2: the log's rel-name set matches the oracle while sqlite_master holds the dictionary", async () => {
+test("edge 2: the nested target and parent are public arrivals in one tick", async () => {
   const seam = await bootedSeam(shared.program as EmittedProgram);
   const lines = await runSchedule(shared.program as EmittedProgram, seam, [
     [
@@ -176,9 +176,22 @@ test("edge 2: the log's rel-name set matches the oracle while sqlite_master hold
   }
   assert.deepEqual(
     [...logged].sort(),
-    ["hit"],
-    "resolver-created target rows are queryable current state but do not synthesize outside-arrival deltas",
+    ["hit", "span"],
+    "the normalized target must use the same public relation clock as authored arrivals",
   );
+  const firstTick = JSON.parse(lines[0]!) as {
+    deltas: Record<string, { add: readonly IRow[]; del: readonly IRow[] }>;
+  };
+  assert.deepEqual(firstTick.deltas, {
+    hit: {
+      add: [
+        ["left", { end: 2, start: 1 }],
+        ["right", { end: 2, start: 1 }],
+      ],
+      del: [],
+    },
+    span: { add: [[1, 2]], del: [] },
+  });
   assert.deepEqual(
     Object.keys(shared.program.relColumns).sort(),
     ["hit", "span"],
@@ -272,11 +285,11 @@ test("count: resolving is three statements per target relation, flat in the numb
   assert.equal(fifty, three, `fifty values must cost what three did, got ${fifty} vs ${three}`);
 });
 
-test("count: a tick carrying no struct value runs zero intern statements", async () => {
+test("count: a tick carrying no nested relation value runs zero normalization statements", async () => {
   const base = await bootedSeam(orderA.program as EmittedProgram);
   const { seam, statements } = countingSeam(base);
   await firstValueFrom(StructPlane.intern(seam, SPAN_TYPES, SPAN_REF_COLUMNS, []));
-  assert.equal(statements.length, 0, `a tick with no struct value must run zero intern statements: ${statements.length}`);
+  assert.equal(statements.length, 0, `a tick with no nested relation value must run zero normalization statements: ${statements.length}`);
 });
 
 test("key: equal key and equal row reuse one target id", async () => {
@@ -360,14 +373,14 @@ test("plan: the boundary render of a ref column SEARCHes the target view by rowi
 
 // ── CRASH: what a kill mid-intern can leave behind ───────────────────────────
 
-test("crash: a kill between target resolution and the parent write leaves only an unreferenced target row", async () => {
+test("crash: standalone resolution replay follows ordinary duplicate-arrival semantics", async () => {
   const directory = mkdtempSync(join(tmpdir(), "struct-plane-"));
   const path = `file:${join(directory, "crash.sqlite")}`;
   try {
     // The interrupted tick: intern runs, then the process dies before the
     // arrival statements. Ordering, not a transaction, is what makes this
-    // safe -- the dictionary is written FIRST, so the only residue is a row
-    // nothing references. A parent row without its dictionary row, the
+    // safe -- the target is written FIRST, so the only residue is a row
+    // nothing references. A parent row without its target row, the
     // direction that WOULD break the boundary render, is unreachable.
     const crashed = await bootedSeam(orderA.program as EmittedProgram, path);
     await firstValueFrom(StructPlane.intern(crashed, SPAN_TYPES, SPAN_REF_COLUMNS, markBatch(1)));
@@ -376,11 +389,12 @@ test("crash: a kill between target resolution and the parent write leaves only a
     const marks = await firstValueFrom(
       crashed.runner.execute(crashed.db, `SELECT count(*) AS n FROM "mark"`).pipe(map((r) => Number(r.rows[0]!["n"]))),
     );
-    assert.equal(marks, 0, "the parent row must be absent; only the dictionary row survived");
+    assert.equal(marks, 0, "the parent row must be absent; only the target row survived");
 
     // The restart replays the same tick. Content addressing is what makes
     // the orphan harmless: the retry finds the existing row, does not mint a
-    // second one, and the log is what a clean run would have printed.
+    // second one. As with replaying any ordinary set arrival, the standing
+    // target has no second add delta; the parent still arrives at this tick.
     const replayed = await runSchedule(orderA.program as EmittedProgram, crashed, ORDER_A_SCHEDULE);
     const afterIds = await denseIds(crashed, "span", ["start", "end"]);
     assert.equal(
@@ -389,12 +403,13 @@ test("crash: a kill between target resolution and the parent write leaves only a
       `the replay must reuse the orphan, not mint a duplicate: ${JSON.stringify(afterIds)}`,
     );
 
-    const clean = await bootedSeam(orderA.program as EmittedProgram);
-    const cleanLines = await runSchedule(orderA.program as EmittedProgram, clean, ORDER_A_SCHEDULE);
     assert.deepEqual(
       deltaPayloads(replayed),
-      deltaPayloads(cleanLines),
-      "a run that resumed over an orphaned dictionary row must print what a clean run prints",
+      [
+        '{"deltas":{"mark":{"add":[[{"end":2,"start":1}]],"del":[]}}}',
+        '{"deltas":{"mark":{"add":[[{"end":4,"start":3}]],"del":[]},"span":{"add":[[3,4]],"del":[]}}}',
+      ],
+      "replay must reuse the standing target and preserve the parent tick",
     );
   } finally {
     rmSync(directory, { recursive: true, force: true });

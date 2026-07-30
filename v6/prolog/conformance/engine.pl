@@ -82,7 +82,11 @@
 :- use_module('../0_body_walk', [walk_body/3, body_wrapper_refs/4]).
 :- use_module('../0_program_check',
               [ first_violation/3, relation_kind/3, declared_key/3 ]).
-:- use_module('../0_type_plane', [ world_row_shape_violation/3, canonicalize_world_rows/3 ]).
+:- use_module('../0_type_plane',
+              [ world_row_shape_violation/3,
+                canonicalize_world_rows/3,
+                normalize_relation_reference_rows/3
+              ]).
 :- use_module('../1_host_expand', [prepare_program/5]).
 :- use_module(rulings).
 :- use_module(body).
@@ -445,8 +449,10 @@ run_program(SugaredProg, Initial0, Schedule0, FinalAll, DeltaTicks) :-
     % the decl induces the canonical form, so every world row is rewritten to
     % it HERE, before any store or Set membership can see a second spelling.
     Prog = prog(ProgDecls, _),
-    canonicalize_world_rows(ProgDecls, Initial0, Initial),
-    maplist(canonicalize_world_rows(ProgDecls), Schedule0, Schedule),
+    canonicalize_world_rows(ProgDecls, Initial0, CanonicalInitial),
+    maplist(canonicalize_world_rows(ProgDecls), Schedule0, CanonicalSchedule),
+    normalize_relation_reference_rows(ProgDecls, CanonicalInitial, Initial),
+    maplist(normalize_relation_reference_rows(ProgDecls), CanonicalSchedule, Schedule),
     seed_store(Prog, Initial, Store0),
     Prog = prog(_, Rules),
     split_rules(Rules, AggRules, PlainLevel, _),

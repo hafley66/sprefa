@@ -1,1 +1,1 @@
-{"final":{"def_start":[["a.rs",17],["b.rs",3]],"node_fact":[["a.rs","main",{"end":42,"start":17}],["b.rs","helper",{"end":9,"start":3}]]}}
+{"final":{"def_start":[["a.rs",17],["b.rs",3]],"node_fact":[["a.rs","main",{"end":42,"start":17}],["b.rs","helper",{"end":9,"start":3}]],"span":[[42,17],[9,3]]}}

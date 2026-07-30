@@ -264,11 +264,11 @@ export interface IIncrementalRuntime {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The declared value plane (ruling compound_storage = struct_as_rows).
+// Relation-reference ingress normalization over ordinary target rels.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * One declared struct type's storage plan, emitted by
+ * One referenced target rel's storage plan, emitted by
  * lower.pl:struct_type_plans/2 in TOPOLOGICAL order (children before parents),
  * which is what makes the post-order intern one left fold with no recursion at
  * the SQL layer.
@@ -291,7 +291,7 @@ export interface IStructTypePlan {
   readonly lookupSql: string;
 }
 
-/** Per rel name, the declared struct type of each column position (`null` for
+/** Per parent rel name, the target rel of each column position (`null` for
  *  a scalar column). Only rels with at least one ref column appear. */
 export type IStructRefColumns = Readonly<Record<string, readonly (string | null)[]>>;
 
@@ -307,9 +307,10 @@ export interface IStructPlane {
     types: readonly IStructTypePlan[],
     refColumns: IStructRefColumns,
     arrivals: IArrivalBatch,
+    applyTargets?: (arrivals: IArrivalBatch) => Observable<unknown>,
   ): Observable<IArrivalBatch>;
-  /** Canonical JSON: sorted object keys, no whitespace. The ruled
-   *  cross-target encoding, and what `__rendered` memoizes. */
+  /** Canonical JSON: sorted object keys, no whitespace. Transient wire and
+   * boundary comparison encoding; never a stored relation payload. */
   canonicalText(value: unknown): string;
 }
 
@@ -397,7 +398,7 @@ export interface ITickLogEmitter {
    *  object/array text canonicalized as JSON (sorted keys, no whitespace),
    *  anything else as a JSON string. Exported because the final-state grading
    *  leg has to encode by the same rule as the per-tick leg -- it did not,
-   *  and a struct column (whose stored value IS canonical JSON text) was the
+   *  and a relation reference rendered as canonical JSON text was the
    *  first value to make the two legs disagree. */
   valueText(value: IRowValue): string;
 }
@@ -414,7 +415,7 @@ export interface ITickLogEmitter {
 /** One declared world column, exactly as emit_ts.pl writes it. */
 export interface IHostColumnPlan {
   readonly name: string;
-  /** Primitive storage name or a declared struct type name. The compiler's
+  /** Primitive storage name or a referenced target rel name. The compiler's
    * shared type-plane check refuses every other spelling before emission. */
   readonly type: string;
 }

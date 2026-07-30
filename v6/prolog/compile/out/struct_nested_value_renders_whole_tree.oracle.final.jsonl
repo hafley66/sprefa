@@ -1,1 +1,1 @@
-{"final":{"diag":[[{"at":{"end":9,"start":3},"file":"a.rs"},"unused"]],"diag_file":[["a.rs"]]}}
+{"final":{"diag":[[{"at":{"end":9,"start":3},"file":"a.rs"},"unused"]],"diag_file":[["a.rs"]],"place":[["a.rs",{"end":9,"start":3}]],"span":[[3,9]]}}

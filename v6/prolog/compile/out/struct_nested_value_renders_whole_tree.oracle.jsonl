@@ -1,1 +1,1 @@
-{"tick":1,"deltas":{"diag":{"add":[[{"at":{"end":9,"start":3},"file":"a.rs"},"unused"]],"del":[]},"diag_file":{"add":[["a.rs"]],"del":[]}}}
+{"tick":1,"deltas":{"diag":{"add":[[{"at":{"end":9,"start":3},"file":"a.rs"},"unused"]],"del":[]},"diag_file":{"add":[["a.rs"]],"del":[]},"place":{"add":[["a.rs",{"end":9,"start":3}]],"del":[]},"span":{"add":[[3,9]],"del":[]}}}

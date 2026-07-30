@@ -53,7 +53,7 @@ interface IBootStatement {
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [{ name: "scan_span", inputs: [{ name: "path", type: "text" }], outputs: [{ name: "at", type: "span" }], template: "scan {path}", demandRel: "__host_demand_scan_span", responseRel: "__host_response_scan_span", execution: "live_sh" }];
+export const hostPlans: readonly IHostPlanData[] = [{ name: "scan_span", inputs: [{ name: "path", type: "text" }], outputs: [{ name: "at", type: "span" }], template: "scan {path}", demandRel: "__host_demand_scan_span", responseRel: "__host_response_scan_span", execution: "shell" }];
 export const bindPlans: readonly IBindPlanData[] = [];
 export const queryPlans: readonly IQueryPlanData[] = [{ rel: "host_start", arity: 2, snapshot: "current" }];
 export const unsupportedExecution: readonly string[] = [];
@@ -243,6 +243,9 @@ function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return readSnapshot(seam).pipe(
+    concatMap((before) => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
+      (targets) => applyArrivals(seam, targets),
+    ).pipe(map((normalized) => { arrivals = normalized; return before; }))),
     concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
     concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
@@ -256,6 +259,9 @@ const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" 
 
 function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepareTick(seam, INCREMENTAL_RELATIONS).pipe(
+    concatMap(() => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
+      (targets) => IncrementalRuntime.applyArrivals(seam, targets, INCREMENTAL_RELATIONS),
+    ).pipe(map((normalized) => { arrivals = normalized; }))),
     concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, INCREMENTAL_RELATIONS)),
     concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),
     concatMap(() => IncrementalRuntime.applyEdges(seam, INCREMENTAL_EDGE_STATEMENTS, INCREMENTAL_RELATIONS)),
@@ -269,17 +275,11 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
   );
 }
 
-function runTickOnInternedArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
     return runNaiveTick(seam, arrivals);
   }
   return runIncrementalTick(seam, arrivals);
-}
-
-function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals).pipe(
-    concatMap((interned) => runTickOnInternedArrivals(seam, interned)),
-  );
 }
 
 export const incrementalPlan: IIncrementalProgramPlan = {

@@ -254,6 +254,16 @@ verification(rtkq_extraction_golden,
                     endpoints_initial(3),
                     endpoints_edit(2),
                     final_relations_empty(4))).
+verification(reference_runtime_finish,
+             passed(plunit(167),
+                    conformance(165),
+                    typecheck(1),
+                    runtime_incremental(11),
+                    runtime_naive(11),
+                    sweep_total(115),
+                    sweep_identical(113),
+                    sweep_wrong(0),
+                    known_run_errors(2))).
 extractor_addition(ast_pattern_query,
                    'typed Rust AstPatternQuery and flat AstCaptureFact rows; CLI pattern/selector/capture inputs; no TypeScript parsing or DL type/syntax addition').
 host_overuse(grafana_v6_crawl,

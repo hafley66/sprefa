@@ -1,68 +1,31 @@
-% 0_type_plane.pl : the declared value plane -- referenced relation values,
-% their storage
-% kind per column, their topological order, their canonical JSON rendering,
-% and the shape check a world arrival must satisfy.
+% 0_type_plane.pl : shared relation-reference schema utilities.
 %
-% RULED 2026-07-29 (rulings.pl compound_storage = struct_as_rows): a declared
-% struct value is a rel row referenced by content id. A parent column stores
-% the ref, never an inline blob; destructuring becomes joins. This file is the
-% ONE place that says what a relation-valued column is, consumed by BOTH doors (the
-% oracle's engine.pl and the compiler's analyze/lower/emit) exactly the way
-% 0_enum_expand.pl and 0_match_expand.pl are.
+% There is one relation model and one checker. A rel column naming another rel
+% means:
+%
+%   target(__id, key..., fields...)
+%   parent(..., target_id INTEGER, ...)
+%
+% Nested ingress is normalized into ordinary target arrivals followed by the
+% parent arrival. Target membership is public and queryable at that tick.
+% SQLite stores typed target columns and the parent integer endpoint. Canonical
+% JSON exists only at the wire/render boundary.
 %
 % ── the decl ─────────────────────────────────────────────────────────────────
 %
 %   type_decl(TypeName, [col(Column, Type), ...])
 %
-% The surface has one declaration word. A `rel` referenced from another
-% relation's column type position is normalized to this internal declaration.
+% `type_decl/2` is a legacy compiler IR record produced from a `rel`
+% declaration referenced in column position. It contributes schema metadata
+% to the same rel. It does not create a language type, hidden dictionary,
+% second table family, or second checker.
 %
 %   rel span(start: int, end: int).
 %   rel finding(path: text, at: span).
 %
-% The lab (plans/2026-07-28-types-as-rels-verdict.md, THE SHORTHAND TABLE)
-% derives a struct decl as `rel` + `key(every content column)`, and that IS
-% the semantics this file implements -- the dictionary table is exactly a
-% keyed set table over the content columns. What it is NOT is a program rel,
-% and that is forced by the arc header's Edge 2: dictionary rows must not
-% reach the boundary, because the oracle holds real terms and has no
-% dictionary at all, so any dictionary rel in the tick log would be a rel the
-% oracle can never produce. The current normalization classifies the
-% referenced declaration as a value relation. Its dictionary stays outside
-% the program relation boundary.
-%
-% A column type is `int`, `text`, `json` (the untyped-json escape hatch, per
-% SLOT-JSON1-FATE: json1 stays as the representation of UNTYPED json ONLY) or
-% the name of a declared type, which is the ref storage kind.
-%
-% ── the two identities, kept in separate columns ─────────────────────────────
-%
-% Per the round-2 surrogate-mate ruling: semantic identity and storage key are
-% different jobs and never share a column.
-%
-%   __semantic  the content key. Derived from the type name plus the value's
-%               canonical content, with every CHILD represented by the child's
-%               own semantic key -- never by the child's dense id, which is
-%               build-order dependent (verdict:
-%               parent_hash_from_dense_would_be_order_dependent).
-%   __id        the dense integer storage mate. SQLite assigns it. It never
-%               crosses the logical boundary, so re-interning a released value
-%               under a different dense id is allowed and unobservable.
-%   __rendered  the memoized canonical JSON text, computed ONCE at intern
-%               time (arc header Edge 1). Values are immutable and children
-%               intern before parents, so a parent's rendering is one concat
-%               over child renderings and there is no recursion at read.
-%
-% __semantic here is the canonical text itself, prefixed by the type name,
-% not a digest of it. That is a deliberate, priced choice: @libsql/client
-% 0.17.4 registers NO user-defined functions at all (measured, verdict
-% plans/2026-07-29-sqlite-udf-graft-verdict.md, "all four candidate method
-% names undefined") and SQLite ships no built-in hash, so a digest would have
-% to be computed outside SQL and threaded through every set-based statement.
-% Full canonical text is injective on values for a fixed type -- strictly
-% stronger than a hash, with no collision case to reason about -- and costs
-% storage, not correctness. SLOT-SEMANTIC-DIGEST names the swap for the day a
-% UDF seam exists.
+% A column schema is `int`, `text`, transient `json`, or a target rel name.
+% Target identity follows key(...), with full-row identity as the unkeyed
+% fallback. `__id` is the dense physical mate used by parent edges.
 
 :- module(type_plane,
           [ type_definitions/2,
@@ -74,6 +37,7 @@
             type_shape_error/4,
             world_row_shape_violation/3,
             canonicalize_world_rows/3,
+            normalize_relation_reference_rows/3,
             type_canonical_json/4,
             type_field_values/4,
             type_ref_columns/3,
@@ -239,6 +203,77 @@ canonicalize_world_rows(Decls, Rows0, Rows) :-
     ->  Rows = Rows0
     ;   maplist(canonicalize_signed_row(Decls, Types), Rows0, Rows)
     ).
+
+% A nested relation row on ingress is shorthand for two ordinary arrivals:
+% the target row first, then the parent row carrying its resolved endpoint.
+% The oracle stores logical terms rather than dense ids, so it retains the
+% parent object value while adding the same public target memberships and
+% clocks that the SQLite door applies before endpoint rewriting.
+normalize_relation_reference_rows(Decls, Rows0, Rows) :-
+    type_definitions(Decls, Types),
+    (   Types == []
+    ->  Rows = Rows0
+    ;   type_topological_order(Types, TypeOrder),
+        findall(Type-Target,
+                ( member(SignedRow, Rows0),
+                  bare_row(SignedRow, Row),
+                  relation_reference_target(Decls, Types, Row, Type, Target) ),
+                TargetPairs),
+        ordered_target_rows(TypeOrder, TargetPairs, Targets0),
+        maplist(reference_target_wrapper(Rows0), Targets0, Targets1),
+        exclude(reference_target_already_arriving(Rows0), Targets1, Targets),
+        append(Targets, Rows0, Rows)
+    ).
+
+relation_reference_target(Decls, Types, Row, TypeName, Target) :-
+    compound(Row),
+    Row =.. [Name | Values],
+    length(Values, Arity),
+    relation_column_types(Decls, Types, Name/Arity, ColumnTypes),
+    nth1(Position, ColumnTypes, TypeName),
+    declared_type_name(Types, TypeName),
+    nth1(Position, Values, Value),
+    type_field_values(Types, TypeName, Value, Fields),
+    Target =.. [TypeName | Fields].
+relation_reference_target(Decls, Types, Row, TypeName, Target) :-
+    compound(Row),
+    Row =.. [Name | Values],
+    length(Values, Arity),
+    relation_column_types(Decls, Types, Name/Arity, ColumnTypes),
+    nth1(Position, ColumnTypes, ChildType),
+    declared_type_name(Types, ChildType),
+    nth1(Position, Values, Value),
+    type_field_values(Types, ChildType, Value, Fields),
+    Child =.. [ChildType | Fields],
+    relation_reference_target(Decls, Types, Child, TypeName, Target).
+
+relation_column_types(_, Types, Name/Arity, ColumnTypes) :-
+    type_definition(Types, Name, Columns, ColumnTypes),
+    length(Columns, Arity),
+    !.
+relation_column_types(Decls, _, Ref, ColumnTypes) :-
+    findall(Type, member(col_type(Ref, _, Type), Decls), ColumnTypes).
+
+ordered_target_rows([], _, []).
+ordered_target_rows([Type | Types], TargetPairs, Targets) :-
+    findall(Target, member(Type-Target, TargetPairs), RawTargets),
+    dedupe_preserving_order(RawTargets, TypeTargets),
+    ordered_target_rows(Types, TargetPairs, Rest),
+    append(TypeTargets, Rest, Targets).
+
+dedupe_preserving_order([], []).
+dedupe_preserving_order([Item | Items], [Item | Unique]) :-
+    exclude(==(Item), Items, Rest),
+    dedupe_preserving_order(Rest, Unique).
+
+reference_target_wrapper(Rows, Target, Wrapped) :-
+    ( member(Signed, Rows), ( Signed = +(_) ; Signed = -(_) ) )
+    -> Wrapped = +Target
+    ;  Wrapped = Target.
+
+reference_target_already_arriving(Rows, Target) :-
+    Target \= +(_),
+    memberchk(Target, Rows).
 
 canonicalize_signed_row(Decls, Types, +(Row0), +(Row)) :- !,
     canonicalize_row(Decls, Types, Row0, Row).

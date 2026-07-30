@@ -12,9 +12,10 @@
  * is flat in requested row count. The target table stores typed columns plus
  * `__id`; canonical JSON exists only as transient wire and comparison text.
  *
- * Resolver-created targets are queryable relation state. This path does not
- * synthesize target arrival deltas. A process interruption before the parent
- * write can therefore leave an unreferenced target row, and replay reuses it.
+ * Generated ticks pass an ordinary arrival applicator. Target rows therefore
+ * enter the same relation clock as authored arrivals before the rewritten
+ * parent rows. Direct insertion remains available to boot and focused storage
+ * receipts that do not run a tick.
  */
 
 import { concatMap, map, of, type Observable } from "rxjs";
@@ -68,15 +69,8 @@ function decodedStructValue(value: unknown): unknown {
  * (0_type_plane.pl:world_row_shape_violation/3); here the data is not static,
  * so the check runs per value at intern time and names the same reasons.
  *
- * ONE deliberate asymmetry: the oracle ALSO refuses a struct value whose keys
- * are not already sorted (SLOT-ARRIVAL-CANONICAL-ORDER), and this door does
- * not. That refusal exists to protect the oracle COMPARISON — the oracle
- * stores world values as terms and its Set membership is term identity, so two
- * spellings of one value would be two rows there and one dictionary row here.
- * At runtime there is no oracle and no term store: interning is content
- * addressed, so any key order lands on the same row and no divergence is
- * reachable. Holding live HTTP payloads to a sorted-key spelling would buy
- * nothing and reject correct JSON.
+ * The oracle canonicalizes object key order at ingress. This door accepts any
+ * key order and canonicalizes before target lookup, producing the same row.
  */
 function checkShape(plan: IStructTypePlan, byName: ReadonlyMap<string, IStructTypePlan>, value: unknown): void {
   if (!isObject(value)) {
@@ -161,7 +155,7 @@ function rewriteRow(
     const rendered = canonicalText(decodedStructValue(value));
     const id = ids.get(semanticKey(refType, rendered));
     if (id === undefined) {
-      throw new Error(`struct intern lost the id for ${refType} value ${rendered}`);
+      throw new Error(`relation reference normalization lost the id for ${refType} value ${rendered}`);
     }
     return id;
   });
@@ -175,6 +169,7 @@ export const StructPlane: IStructPlane = {
     types: readonly IStructTypePlan[],
     refColumns: IStructRefColumns,
     arrivals: IArrivalBatch,
+    applyTargets?: (arrivals: IArrivalBatch) => Observable<unknown>,
   ): Observable<IArrivalBatch> {
     if (types.length === 0 || arrivals.length === 0) return of(arrivals);
     const byName = new Map(types.map((plan) => [plan.name, plan]));
@@ -195,10 +190,12 @@ export const StructPlane: IStructPlane = {
     const ids = new Map<string, number>();
     const pending = types.filter((plan) => perType.has(plan.name));
     return pending.reduce<Observable<unknown>>(
-      (chain, plan) => chain.pipe(concatMap(() => internOneType(seam, plan, perType.get(plan.name)!, ids))),
+      (chain, plan) => chain.pipe(concatMap(() =>
+        internOneType(seam, plan, perType.get(plan.name)!, ids, applyTargets)
+      )),
       of(undefined),
     ).pipe(
-      map((): IArrivalBatch => arrivals.map((arrival): IArrivalRow => {
+      map(() => arrivals.map((arrival): IArrivalRow => {
         const refs = refColumns[arrival.rel];
         if (refs === undefined) return arrival;
         return { rel: arrival.rel, sign: arrival.sign, row: rewriteRow(arrival.row, refs, byName, ids) };
@@ -212,6 +209,7 @@ function internOneType(
   plan: IStructTypePlan,
   bucket: ReadonlyMap<string, ICollected>,
   ids: Map<string, number>,
+  applyTargets: ((arrivals: IArrivalBatch) => Observable<unknown>) | undefined,
 ): Observable<unknown> {
   const lookupToSemantic = new Map<string, string>();
   const tupleByKey = new Map<string, string>();
@@ -232,6 +230,11 @@ function internOneType(
     return fields;
   });
   const encoded = JSON.stringify(tuples);
+  const arrivals: IArrivalBatch = tuples.map((row) => ({
+    rel: plan.name,
+    sign: "add",
+    row,
+  }));
   return seam.runner.execute(seam.db, { sql: plan.conflictSql, args: [encoded] }).pipe(
     map((result) => {
       if (result.rows.length === 0) return undefined;
@@ -240,7 +243,11 @@ function internOneType(
         `relation_reference_conflict(${plan.name}, ${String(row["__requested"])}, ${String(row["__stored"])})`,
       );
     }),
-    concatMap(() => seam.runner.execute(seam.db, { sql: plan.internSql, args: [encoded] })),
+    concatMap(() => {
+      return applyTargets === undefined
+        ? seam.runner.execute(seam.db, { sql: plan.internSql, args: [encoded] })
+        : applyTargets(arrivals);
+    }),
     concatMap(() => seam.runner.execute(seam.db, { sql: plan.lookupSql, args: [encoded] })),
     map((result) => {
       for (const row of result.rows) {
@@ -263,7 +270,7 @@ function internOneType(
 function idFor(ids: ReadonlyMap<string, number>, semantic: string): number {
   const id = ids.get(semantic);
   if (id === undefined) {
-    throw new Error(`struct intern read a child id before its type was interned: ${semantic}`);
+    throw new Error(`relation reference normalization read a child id before its target row: ${semantic}`);
   }
   return id;
 }
