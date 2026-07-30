@@ -114,6 +114,13 @@ flagship:
 extraction-live:
 	cd {{v6}}/tsv2 && bash scripts/extraction-live.sh
 
+# Standing comment-node production rails: compile every rail, grade each
+# technique against a fresh live extraction feed, then run the pinned v5/v6
+# parity comparison for comment_node and arch_node.
+comment-rails:
+	bash {{v6}}/tsv2/scripts/comment-rails.sh
+	bash {{v6}}/tsv2/scripts/comment-parity.sh
+
 # the file-set feed against THIS repo: enumerate = git ls-files exactly, zero
 # node_modules rows, enumerate_at reports git's own blob oids
 # (expect: ENUMERATE HOSTS HOLD, exit 0; needs a populated node_modules)

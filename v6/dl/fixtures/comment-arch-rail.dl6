@@ -1,0 +1,45 @@
+# Technique 1: ARCH JSON marker capture, grammar witness, and hierarchy.
+# Payload destructure and URL splitting stay in the host template because the
+# current sh output seam accepts int/text/json columns only, and v6 has no text
+# expression in the production expression registry.
+
+bind watch(glob: text, path: text, digest: text).
+
+rel file(path: text, digest: text).
+file(path, digest) <- watch('**/*.rs', path, digest).
+
+sh comment_fact(path: text, digest: text) -> (line: int, kind: text, comment_text: text) =
+  `: {digest}; "$DL_EXTRACT_BIN" --family cst {path} | python3 "$DL_COMMENT_NODE" comments {path}`.
+
+rel comment_node(path: text, digest: text, line: int, kind: text, comment_text: text).
+comment_node(path, digest, line, kind, comment_text) <-
+  file(path, digest), comment_fact(path, digest, line, kind, comment_text).
+
+sh arch_marker(path: text, digest: text) -> (line: int, url: text, parent: text, last: text) =
+  `: {digest}; python3 "$DL_ARCH_MARKER" {path}`.
+
+rel marker_hit(path: text, digest: text, line: int, url: text, parent: text, last: text).
+marker_hit(path, digest, line, url, parent, last) <-
+  file(path, digest), arch_marker(path, digest, line, url, parent, last).
+
+rel arch_node(path: text, line: int, url: text, parent: text, last: text).
+arch_node(path, line, url, parent, last) <-
+  marker_hit(path, digest, line, url, parent, last),
+  comment_node(path, digest, line, kind, comment_text).
+
+rel arch_url(url: text).
+arch_url(url) <- arch_node(path, line, url, parent, last).
+
+rel arch_edge(parent: text, child: text).
+arch_edge(parent, url) <- arch_node(path, line, url, parent, last), arch_url(parent).
+
+rel arch_root(url: text).
+arch_root(url) <- arch_node(path, line, url, parent, last), not(arch_url(parent)).
+
+rel arch_leaf(url: text).
+arch_leaf(url) <- arch_url(url), not(arch_edge(url, _)).
+
+rel arch_child_count(parent: text, children: int).
+arch_child_count(parent, count(child)) <- arch_edge(parent, child).
+
+? arch_node(path, line, url, parent, last).
