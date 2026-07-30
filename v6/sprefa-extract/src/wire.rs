@@ -11,14 +11,18 @@
 //! Epic U: the public surface is `flatten(&ExtractOutput)` + `flatten_jsonl`. The
 //! per-family flatteners stay as private helpers; the four per-family `_jsonl`
 //! variants are gone (one sorted path serves all).
+//!
+//! The SCIP projection (`flatten_scip`, `scip_file_edges`) moved to
+//! `crate::scip_rows` on size and on subject: this module flattens the four
+//! extraction families, that one flattens a foreign tool's index. Both stay
+//! re-exported here so no import path moved.
 
 use crate::family::{CallF, CstEdgeKind, CstF, DfF, Family, ProjectEdge, TypeF};
 use crate::rows::FamilyBundle;
+pub use crate::schema::SCHEMA;
+pub use crate::scip_rows::{flatten_scip, scip_file_edges};
 use crate::shape::{BlobHash, Strings};
 use crate::source::ExtractOutput;
-use crate::types::{OccurrenceRole, ScipIndex};
-
-pub use crate::schema::SCHEMA;
 pub use crate::types::{FlatFact, SpanOut};
 
 /// Flatten one file's `ExtractOutput` to flat facts: every present family, in
@@ -152,6 +156,7 @@ fn flatten_call(bundle: &FamilyBundle<CallF>, strings: &Strings) -> Vec<FlatFact
             span: SpanOut::new(spec.span.start, spec.span.end()),
             name: strings.lookup(spec.name).to_string(),
             kind: spec.kind.as_str().to_string(),
+            module: spec.module.map(|id| strings.lookup(id).to_string()),
         });
     }
     out
@@ -205,82 +210,6 @@ pub fn file_fact(path: &str, content: &[u8]) -> FlatFact {
     }
 }
 
-/// Flatten a loaded SCIP index to raw flat facts: every occurrence, every symbol
-/// information row, every relationship.
-///
-/// DELIBERATELY UNJOINED. v5 spells ten separate relations over this data
-/// (`scip_occurrence`, `scip_def`, `scip_ref`, `scip_name`, `scip_local`,
-/// `scip_binding`, `scip_impl`, `scip_edge`, `scip_fn_edge`,
-/// `scip_callee_type`). Every one of them is a filter or a join over these three
-/// rows, and the standing law puts those machines in the dl layer: the extractor
-/// stays a fact producer. Projecting ten relations here would also weld v5's
-/// relation vocabulary into a crate that must survive the rust port unchanged.
-///
-/// `reader` supplies each document's bytes, because SCIP ranges are (line, col)
-/// in the document's own position encoding and this wire is byte offsets. A
-/// document the reader cannot read contributes its symbols and relationships but
-/// no occurrences, and an occurrence whose range does not convert is dropped
-/// rather than clamped into a lie (the `byte_range` law).
-pub fn flatten_scip(index: &ScipIndex, reader: &dyn Fn(&str) -> Option<Vec<u8>>) -> Vec<FlatFact> {
-    let mut out = Vec::new();
-    for document in &index.documents {
-        let content = reader(&document.relative_path);
-        if let Some(content) = &content {
-            for occurrence in &document.occurrences {
-                let Some(span) =
-                    crate::scip::byte_range(content, occurrence.range, document.position_encoding)
-                else {
-                    continue;
-                };
-                out.push(FlatFact::ScipOccurrenceRow {
-                    path: document.relative_path.clone(),
-                    symbol: occurrence.symbol.clone(),
-                    start: span.start,
-                    end: span.end(),
-                    roles: occurrence.roles.0,
-                    definition: occurrence.roles.contains(OccurrenceRole::DEFINITION),
-                });
-            }
-        }
-        for info in &document.symbols {
-            out.push(FlatFact::ScipSymbolRow {
-                path: Some(document.relative_path.clone()),
-                symbol: info.symbol.clone(),
-                display_name: info.display_name.clone(),
-                kind: info.kind,
-            });
-            out.extend(relationship_rows(info));
-        }
-    }
-    // External symbols belong to no document: they are what the corpus
-    // references and does not define, which is exactly how a consumer tells a
-    // library call from a corpus call.
-    for info in &index.external_symbols {
-        out.push(FlatFact::ScipSymbolRow {
-            path: None,
-            symbol: info.symbol.clone(),
-            display_name: info.display_name.clone(),
-            kind: info.kind,
-        });
-        out.extend(relationship_rows(info));
-    }
-    out
-}
-
-fn relationship_rows(info: &crate::types::ScipSymbolInfo) -> Vec<FlatFact> {
-    info.relationships
-        .iter()
-        .map(|related| FlatFact::ScipRelationshipRow {
-            symbol: info.symbol.clone(),
-            related_symbol: related.symbol.clone(),
-            is_reference: related.is_reference,
-            is_implementation: related.is_implementation,
-            is_type_definition: related.is_type_definition,
-            is_definition: related.is_definition,
-        })
-        .collect()
-}
-
 /// Flatten one DfF bundle to flat facts: value-flow NODES (kind = the DfNodeKind
 /// slug; name = the variable / property / type when the node carries one) +
 /// Direct value EDGES (src value -> dst value). The enclosing callable is
@@ -328,80 +257,4 @@ fn flatten_df(bundle: &FamilyBundle<DfF>, strings: &Strings) -> Vec<FlatFact> {
         });
     }
     out
-}
-
-/// Fold a loaded SCIP index into file-to-file dependency edges: `src` holds a
-/// non-definition occurrence of a symbol defined in `dst`.
-///
-/// WHY THIS IS THE ONE DERIVED RELATION THE EXTRACTOR PROJECTS. The fold is
-/// exactly the join a dl rule would write over `flatten_scip`'s occurrence rows,
-/// and by the standing law those machines live in prolog. It is here anyway
-/// because the amplification is measured: over v6/tsv2, 212 TypeScript files
-/// produce 122,317 occurrence rows and 755 edges. Sending 122,317 rows across
-/// the wire to compute 755 is the shape the N+1 law exists to stop. The raw rows
-/// remain available for every join that is not this one.
-///
-/// GRADED AGAINST MADGE over that same corpus: 746 of madge's 752 edges agree,
-/// recall 0.992, precision 0.988. Both divergence classes are understood and
-/// neither is a resolution error.
-///  - 6 madge-only edges are all from `labs/`, which the corpus tsconfig's
-///    `include` omits. scip-typescript indexes the tsconfig program; madge walks
-///    the filesystem. The two tools disagree about the corpus, not the graph.
-///  - 9 scip-only edges are all references to declarations in one types module
-///    from files with NO import of it. SCIP sees an inferred type reaching them
-///    through another module's signature; madge scans import syntax and cannot.
-///    SCIP is right and strictly sees more, the same shape as the flagship
-///    callgraph result.
-///
-/// LOCAL SYMBOLS ARE EXCLUDED. scip reuses `local N` per document, so a `local`
-/// symbol in two files is two different things and joining on it would mint
-/// edges between unrelated files.
-pub fn scip_file_edges(index: &ScipIndex) -> Vec<FlatFact> {
-    use std::collections::{BTreeMap, BTreeSet};
-
-    let mut defining_document: BTreeMap<&str, &str> = BTreeMap::new();
-    for document in &index.documents {
-        for occurrence in &document.occurrences {
-            if !occurrence.roles.contains(OccurrenceRole::DEFINITION)
-                || occurrence.symbol.starts_with("local ")
-            {
-                continue;
-            }
-            defining_document
-                .entry(&occurrence.symbol)
-                .or_insert(&document.relative_path);
-        }
-    }
-
-    // (src, dst) -> the distinct symbols crossing it. A BTreeSet both dedups a
-    // symbol referenced many times in one file and keeps the output ordered.
-    let mut crossings: BTreeMap<(&str, &str), BTreeSet<&str>> = BTreeMap::new();
-    for document in &index.documents {
-        for occurrence in &document.occurrences {
-            if occurrence.roles.contains(OccurrenceRole::DEFINITION)
-                || occurrence.symbol.starts_with("local ")
-            {
-                continue;
-            }
-            let Some(target) = defining_document.get(occurrence.symbol.as_str()) else {
-                continue;
-            };
-            if *target == document.relative_path {
-                continue;
-            }
-            crossings
-                .entry((&document.relative_path, target))
-                .or_default()
-                .insert(&occurrence.symbol);
-        }
-    }
-
-    crossings
-        .into_iter()
-        .map(|((src, dst), symbols)| FlatFact::FileEdgeRow {
-            src_path: src.to_string(),
-            dst_path: dst.to_string(),
-            symbols: symbols.len() as u32,
-        })
-        .collect()
 }

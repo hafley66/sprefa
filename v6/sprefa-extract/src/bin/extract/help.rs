@@ -110,10 +110,16 @@ ts uses scip-typescript, go uses scip-go, rust uses rust-analyzer. This spawns a
 foreign process and is slow: prefer --scip-index when you already have one.";
 
 pub const SCIP_FACTS_LONG: &str = "\
-Load a SCIP index (--scip-index or --scip-build) and stream it as flat facts:
-one scip_occurrence row per symbol mention with byte spans, one scip_symbol row
-per symbol information entry, one scip_relationship row per symbol relationship.
-No resolve arm runs and no source file is parsed.
+Load a SCIP index (--scip-index or --scip-build) and stream EVERYTHING it
+carries as flat facts: scip_metadata, scip_document, scip_occurrence (byte
+spans, all seven role bits, syntax kind, enclosing range), scip_occurrence_doc,
+scip_diagnostic, scip_symbol, scip_relationship, scip_documentation,
+scip_signature and scip_signature_occurrence. No resolve arm runs and no source
+file is parsed beyond reading its bytes for the line/col to byte conversion.
+
+FULL PASSTHROUGH IS NOT FREE. Over v6/tsv2 (204 indexed TypeScript documents)
+the stream is 177,967 rows and 59.4MB, of which scip_occurrence alone is 123,655
+rows and 48.5MB. Use --scip-record to take only the kinds a program demands.
 
 The rows are deliberately unjoined. Filtering and joining them is what produces
 the distinctions a caller wants (a definition is an occurrence with definition
@@ -129,14 +135,41 @@ defined in dst_path, and symbols counts how many distinct symbols cross. This is
 v6's module graph without a module resolver: the indexer already resolved every
 reference, so the graph falls out of the index.
 
-Graded against madge over v6/tsv2 (212 TypeScript files): 746 of madge's 752
-edges agree, recall 0.992, precision 0.988. The 6 madge-only edges are files the
-corpus tsconfig excludes, which the indexer therefore never saw; the 9 scip-only
-edges are inferred type references with no import statement, which a syntactic
-import scanner cannot see.
+Graded against madge over v6/tsv2: 755 of madge's 761 edges agree, recall 0.992,
+precision 0.988. The 6 madge-only edges are files the corpus tsconfig excludes,
+which the indexer therefore never saw; the 9 scip-only edges are inferred type
+references with no import statement, which a syntactic import scanner cannot
+see.
 
 Unlike --scip-facts this needs no file content: both ends of the join are in the
 index.";
+
+pub const SCIP_RECORD_LONG: &str = "\
+Comma-separated list of SCIP record kinds --scip-facts should produce. The
+default is every kind (full passthrough); this is the demand-side lever for its
+cost, and it filters before the rows are built rather than at the wire, so a
+narrowed stream also skips reading the corpus when no occurrence-side kind is
+asked for.
+
+An unknown kind is an error, never a silent drop: a typo would otherwise print
+an empty stream that reads as 'this index has no such facts'.";
+
+pub const DEPS_LONG: &str = "\
+DIET module resolution: parse the supplied TypeScript files, read their import
+and export-from specifiers, and resolve each one to a file path syntactically.
+Emits the same file_edge rows as --scip-deps, so the module graph is one
+relation regardless of which resolver filled it, with symbols counting the
+distinct bound names crossing the edge.
+
+No indexer subprocess and no type checker. The supplied paths are BOTH the
+corpus and the resolution universe: a specifier resolving outside them yields no
+edge. Rules applied, in order: exact relative path; the NodeNext emitted-name
+rewrite (./x.js -> ./x.ts); extension inference; directory index files; then
+tsconfig paths and baseUrl. A bare specifier no tsconfig rule claims stops at
+the node_modules boundary, which is a stated stop and not a failure.
+
+BEST EFFORT, and allowed to lose to --scip-deps. tools/1_madge_oracle.sh diet
+is where the loss is measured.";
 
 pub const FILE_FACT_LONG: &str = "\
 Prepend one `file` record carrying the path, the content digest every resolved

@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use crate::lang::{source_for, GoSource, KotlinSource, PrologSource, RustSource, TsSource};
 use crate::rows::FamilyBundle;
 use crate::scip::{ScipGo, ScipRust, ScipTypescript};
+use crate::scip_rows::ScipRecords;
 use crate::seams::{
     build_def_index, BlobSource, FileSet, IndexBag, ManifestMap, ProjectCx, ProjectDigest,
 };
@@ -73,6 +74,9 @@ pub struct ResolveRequest<'a> {
     /// reader, and the resolve arms' SCIP leg needs one to join documents to
     /// content.
     pub project_root: Option<&'a Path>,
+    /// Which SCIP record kinds `scip_facts` produces. Full passthrough by
+    /// default; narrowing is the demand-side lever for its measured cost.
+    pub scip_records: ScipRecords,
 }
 
 /// Why a project resolve could not run. Distinct from a resolve that ran and
@@ -86,6 +90,11 @@ pub enum ProjectError {
     /// `ScipMode::Build` over paths spanning more than one language, or a
     /// language with no indexer in the roster.
     ScipIndexerUnavailable(String),
+    /// Diet module resolution was requested without `project_root`.
+    DepsNeedRoot,
+    /// A supplied path does not sit under `project_root`, so it has no
+    /// project-relative name and cannot join a module graph.
+    DepsPathOutsideRoot(PathBuf),
 }
 
 impl std::fmt::Display for ProjectError {
@@ -97,6 +106,15 @@ impl std::fmt::Display for ProjectError {
                 write!(f, "a scip mode needs --project-root: scip document paths are project-relative and the resolve arms need a reader to join them to content")
             }
             Self::ScipIndexerUnavailable(detail) => write!(f, "no scip indexer: {detail}"),
+            Self::DepsNeedRoot => write!(
+                f,
+                "diet module resolution needs --project-root: a module graph's node names are project-relative paths"
+            ),
+            Self::DepsPathOutsideRoot(path) => write!(
+                f,
+                "{} is outside --project-root, so it has no project-relative name",
+                path.display()
+            ),
         }
     }
 }
@@ -104,10 +122,10 @@ impl std::fmt::Display for ProjectError {
 impl std::error::Error for ProjectError {}
 
 /// One supplied file, extracted once, kept for the whole resolve.
-struct ProjectInput {
-    path: String,
+pub(crate) struct ProjectInput {
+    pub(crate) path: String,
     blob: BlobHash,
-    output: ExtractOutput,
+    pub(crate) output: ExtractOutput,
 }
 
 /// Run the requested arms over the whole supplied file set and return the flat
@@ -175,7 +193,11 @@ pub fn scip_facts(request: &ResolveRequest) -> Result<Vec<FlatFact>, ProjectErro
     };
     let blobs = FsBlobSource::new(root);
     let reader = blobs.reader();
-    Ok(crate::wire::flatten_scip(&index, &reader))
+    Ok(crate::scip_rows::flatten_scip_records(
+        &index,
+        &reader,
+        &request.scip_records,
+    ))
 }
 
 /// Serialize scip facts to sorted JSONL lines.
@@ -211,7 +233,7 @@ pub fn resolve_project_jsonl(request: &ResolveRequest) -> Result<Vec<String>, Pr
     Ok(sorted_lines(resolve_project(request)?))
 }
 
-fn sorted_lines(facts: Vec<FlatFact>) -> Vec<String> {
+pub(crate) fn sorted_lines(facts: Vec<FlatFact>) -> Vec<String> {
     let mut lines: Vec<String> = facts
         .iter()
         .map(|fact| serde_json::to_string(fact).expect("flat fact is serializable"))
@@ -220,7 +242,7 @@ fn sorted_lines(facts: Vec<FlatFact>) -> Vec<String> {
     lines
 }
 
-fn read_inputs(paths: &[PathBuf]) -> Result<Vec<ProjectInput>, ProjectError> {
+pub(crate) fn read_inputs(paths: &[PathBuf]) -> Result<Vec<ProjectInput>, ProjectError> {
     let mut inputs = Vec::with_capacity(paths.len());
     for path in paths {
         let content = std::fs::read(path).map_err(|err| ProjectError::Read(path.clone(), err))?;

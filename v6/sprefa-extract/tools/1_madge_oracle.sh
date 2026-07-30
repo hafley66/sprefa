@@ -10,10 +10,19 @@
 # This script closes that: it diffs `extract --scip-deps` against madge's own
 # dependency graph over a real TypeScript corpus, and prints a classified table.
 #
-# Usage:  tools/1_madge_oracle.sh <ts-project-root> [extract-binary]
+# Usage:  tools/1_madge_oracle.sh <ts-project-root> [extract-binary] [resolver]
+#
+# resolver = scip (default) grades --scip-deps, the indexer fold.
+# resolver = diet          grades --deps, the syntactic resolver in src/deps.rs.
+# resolver = both          runs each in turn and prints the two tables.
 #
 # The corpus must have a tsconfig.json. Both tools are run over the same root,
 # and the two graphs are compared as sets of (src, dst) project-relative pairs.
+#
+# THE DIET LEG IS EXPLICITLY ALLOWED TO LOSE. It has no type checker, so the
+# SEMANTIC class below is out of its reach by construction; grading it against
+# the same oracle on the same corpus is how that loss is measured instead of
+# argued.
 #
 # TWO DIVERGENCE CLASSES ARE EXPECTED AND ARE NOT ERRORS. Both were measured
 # over v6/tsv2 (212 files, madge 752 edges, scip 755, agreement 746):
@@ -36,8 +45,13 @@
 
 set -euo pipefail
 
-ROOT="${1:?usage: 1_madge_oracle.sh <ts-project-root> [extract-binary]}"
+ROOT="${1:?usage: 1_madge_oracle.sh <ts-project-root> [extract-binary] [resolver]}"
 EXTRACT="${2:-target/release/extract}"
+RESOLVER="${3:-scip}"
+case "$RESOLVER" in
+  scip|diet|both) ;;
+  *) echo "resolver must be scip, diet or both (got '$RESOLVER')" >&2; exit 1 ;;
+esac
 
 command -v madge >/dev/null || {
   echo "madge not on PATH: npm i -g madge, or pass its path via SPREFA_MADGE" >&2
@@ -63,46 +77,78 @@ node -e '
   process.stdout.write(rows.sort().join("\n") + "\n");
 ' "$WORK/madge.json" | LC_ALL=C sort -u > "$WORK/madge.tsv"
 
-# One source path is enough to pick the indexer; --scip-deps covers every
-# document the index holds regardless of which paths are named.
-FIRST_TS="$(find "$ROOT" -name '*.ts' -not -path '*/node_modules/*' | head -1)"
-"$EXTRACT" --scip-deps --project-root "$ROOT" --scip-build "$FIRST_TS" \
-  > "$WORK/scip.jsonl"
-node -e '
-  const fs = require("fs");
-  const rows = fs.readFileSync(process.argv[1], "utf8").trim().split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line))
-    .map((row) => `${row.src_path}\t${row.dst_path}`);
-  process.stdout.write(rows.sort().join("\n") + "\n");
-' "$WORK/scip.jsonl" | LC_ALL=C sort -u > "$WORK/scip.tsv"
-
-comm -12 "$WORK/madge.tsv" "$WORK/scip.tsv" > "$WORK/agree.tsv"
-comm -23 "$WORK/madge.tsv" "$WORK/scip.tsv" > "$WORK/madge_only.tsv"
-comm -13 "$WORK/madge.tsv" "$WORK/scip.tsv" > "$WORK/scip_only.tsv"
+# Every edge stream is normalized the same way, so the two resolvers are graded
+# by identical arithmetic and the tables are comparable line for line.
+edges_tsv() {
+  node -e '
+    const fs = require("fs");
+    const rows = fs.readFileSync(process.argv[1], "utf8").trim().split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .map((row) => `${row.src_path}\t${row.dst_path}`);
+    process.stdout.write(rows.sort().join("\n") + "\n");
+  ' "$1" | LC_ALL=C sort -u
+}
 
 count() { wc -l < "$1" | tr -d ' '; }
 MADGE=$(count "$WORK/madge.tsv")
-SCIP=$(count "$WORK/scip.tsv")
-AGREE=$(count "$WORK/agree.tsv")
 
-echo
-printf 'madge edges   %s\n' "$MADGE"
-printf 'scip edges    %s\n' "$SCIP"
-printf 'agree         %s\n' "$AGREE"
-printf 'madge only    %s\n' "$(count "$WORK/madge_only.tsv")"
-printf 'scip only     %s\n' "$(count "$WORK/scip_only.tsv")"
-node -e '
-  const [agree, madge, scip] = process.argv.slice(1).map(Number);
-  const show = (label, value) =>
-    console.log(`${label} ${Number.isFinite(value) ? value.toFixed(3) : "n/a"}`);
-  show("recall vs madge  ", madge ? agree / madge : NaN);
-  show("precision        ", scip ? agree / scip : NaN);
-' "$AGREE" "$MADGE" "$SCIP"
+grade() {
+  local name="$1" jsonl="$2"
+  edges_tsv "$jsonl" > "$WORK/$name.tsv"
+  comm -12 "$WORK/madge.tsv" "$WORK/$name.tsv" > "$WORK/${name}_agree.tsv"
+  comm -23 "$WORK/madge.tsv" "$WORK/$name.tsv" > "$WORK/${name}_madge_only.tsv"
+  comm -13 "$WORK/madge.tsv" "$WORK/$name.tsv" > "$WORK/${name}_only.tsv"
+  local mine agree
+  mine=$(count "$WORK/$name.tsv")
+  agree=$(count "$WORK/${name}_agree.tsv")
 
-echo
-echo "-- madge only (expect: corpus the tsconfig excludes) --"
-head -20 "$WORK/madge_only.tsv" || true
-echo
-echo "-- scip only (expect: inferred type references with no import) --"
-head -20 "$WORK/scip_only.tsv" || true
+  echo
+  echo "=== resolver: $name ==="
+  printf 'madge edges   %s\n' "$MADGE"
+  printf '%-13s %s\n' "$name edges" "$mine"
+  printf 'agree         %s\n' "$agree"
+  printf 'madge only    %s\n' "$(count "$WORK/${name}_madge_only.tsv")"
+  printf '%-13s %s\n' "$name only" "$(count "$WORK/${name}_only.tsv")"
+  node -e '
+    const [agree, madge, mine] = process.argv.slice(1).map(Number);
+    const show = (label, value) =>
+      console.log(`${label} ${Number.isFinite(value) ? value.toFixed(3) : "n/a"}`);
+    show("recall vs madge  ", madge ? agree / madge : NaN);
+    show("precision        ", mine ? agree / mine : NaN);
+  ' "$agree" "$MADGE" "$mine"
+
+  echo
+  echo "-- madge only (expect: corpus the tsconfig excludes) --"
+  head -20 "$WORK/${name}_madge_only.tsv" || true
+  echo
+  echo "-- $name only (expect: what madge's import scan cannot see) --"
+  head -20 "$WORK/${name}_only.tsv" || true
+}
+
+if [ "$RESOLVER" = scip ] || [ "$RESOLVER" = both ]; then
+  # One source path is enough to pick the indexer; --scip-deps covers every
+  # document the index holds regardless of which paths are named.
+  FIRST_TS="$(find "$ROOT" -name '*.ts' -not -path '*/node_modules/*' | head -1)"
+  "$EXTRACT" --scip-deps --project-root "$ROOT" --scip-build "$FIRST_TS" \
+    > "$WORK/scip.jsonl"
+  grade scip "$WORK/scip.jsonl"
+fi
+
+if [ "$RESOLVER" = diet ] || [ "$RESOLVER" = both ]; then
+  # The diet resolver's universe IS its argument list, so every corpus file is
+  # named. One process over the whole list, never one per file.
+  find "$ROOT" -name '*.ts' -not -path '*/node_modules/*' -print0 \
+    | xargs -0 "$EXTRACT" --deps --project-root "$ROOT" > "$WORK/diet.jsonl"
+  grade diet "$WORK/diet.jsonl"
+fi
+
+if [ "$RESOLVER" = both ]; then
+  echo
+  echo "=== diet vs scip (same corpus, same oracle) ==="
+  printf 'both resolvers  %s\n' "$(comm -12 "$WORK/scip.tsv" "$WORK/diet.tsv" | wc -l | tr -d ' ')"
+  echo "-- scip only, diet missed (expect: inferred type refs, no import statement) --"
+  comm -23 "$WORK/scip.tsv" "$WORK/diet.tsv" | head -20 || true
+  echo "-- diet only, scip missed (expect: corpus the tsconfig excludes) --"
+  comm -13 "$WORK/scip.tsv" "$WORK/diet.tsv" | head -20 || true
+fi

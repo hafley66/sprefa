@@ -414,12 +414,21 @@ pub struct CallSite {
 /// 4b evolution path if TS's from-clause needs a separate source field —
 /// FLAGGED for human review. 4b-ii: `TsSource` collects these (see lang/ts.rs
 /// `module_specifiers`); the from-module field was NOT needed yet (nothing
-/// consumes specifiers before Resolve<CallF>), so it stays unadded.
+/// consumes specifiers before Resolve<CallF>), so it stayed unadded.
+///
+/// THE FROM-MODULE GAP IS CLOSED as of the diet-resolution lane: `module` is
+/// the source module text as written (`./x.ts`, `rxjs`, `node:fs`), and it is
+/// what `crate::deps` resolves to a file path. The gap was real, not stylistic
+/// — with a bound name and no module, a specifier row states that something
+/// entered scope and refuses to say from where, which makes the module graph
+/// inexpressible from phase-1 rows. `None` is for the languages that emit
+/// specifiers with the module already in `name` (go's path-only imports).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Specifier {
     pub span: Span,
     pub name: NameId,
     pub kind: SpecifierKind,
+    pub module: Option<NameId>,
 }
 
 /// How the name enters scope. The seed's `BindingKind` vocabulary
@@ -1104,6 +1113,19 @@ pub enum PositionEncoding {
     Utf32,
 }
 
+impl PositionEncoding {
+    /// The scip.proto enum ordinal, for the wire row that reports which
+    /// encoding a document's ranges were written in.
+    pub fn ordinal(self) -> i32 {
+        match self {
+            Self::Unspecified => 0,
+            Self::Utf8 => 1,
+            Self::Utf16 => 2,
+            Self::Utf32 => 3,
+        }
+    }
+}
+
 /// One occurrence: a (symbol, range, roles) triple — a definition or a
 /// reference site (seed `_4_scip.rs`:26-35). `range` is scip.proto's packed
 /// quad normalized to `[start_line, start_col, end_line, end_col]` (the 3-
@@ -1111,16 +1133,54 @@ pub enum PositionEncoding {
 /// `PositionEncoding` — deliberately NOT a v6 byte `Span`: the line/col ->
 /// byte bridge needs the document's content, which only the consumer holds
 /// (the ratchet / the engine). `crate::scip::byte_range` is that bridge.
+///
+/// PASSTHROUGH (scip-passthrough lane): `syntax_kind`, `enclosing_range`,
+/// `override_documentation` and `diagnostics` used to be dropped here, which
+/// made them inexpressible from a v6 index no matter what a dl rule asked
+/// for. A field the protobuf carries now reaches the wire; what to do with it
+/// is the dl layer's call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScipOccurrence {
     pub symbol: String,
     pub range: [i32; 4],
     pub roles: OccurrenceRole,
+    /// scip.proto `SyntaxKind` ordinal (0 = UnspecifiedSyntaxKind).
+    pub syntax_kind: i32,
+    /// The nearest non-trivial enclosing AST node's range, same normalized
+    /// quad as `range`. `None` when the indexer emitted none.
+    pub enclosing_range: Option<[i32; 4]>,
+    /// Range-specific CommonMark docs overriding the symbol's own.
+    pub override_documentation: Vec<String>,
+    /// Compiler diagnostics the indexer reported at this exact range.
+    pub diagnostics: Vec<ScipDiagnostic>,
+}
+
+/// One scip.proto `Diagnostic`, reported at an occurrence's range. `severity`
+/// and `tags` stay raw enum ordinals; naming them is a dl-layer lookup.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScipDiagnostic {
+    pub severity: i32,
+    pub code: String,
+    pub message: String,
+    pub source: String,
+    pub tags: Vec<i32>,
+}
+
+/// One scip.proto `Signature`: a symbol's rendered signature plus the
+/// occurrences inside it that reference other symbols. Those ranges are
+/// relative to `text`, never to a document, which is why they travel with the
+/// signature instead of joining the document's occurrence rows.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScipSignature {
+    pub language: String,
+    pub text: String,
+    pub occurrences: Vec<ScipOccurrence>,
 }
 
 /// Diet `SymbolInformation` (seed `_4_scip.rs`:37-44): the identity string +
-/// its display name + the raw kind ordinal. Markdown docs, type signatures,
-/// and relationships are dropped per the diet law.
+/// display name + raw kind ordinal, plus everything the protobuf carries
+/// beside them. Docs and signature documentation were dropped by the original
+/// diet and are passed through as of the scip-passthrough lane.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScipSymbolInfo {
     pub symbol: String,
@@ -1132,6 +1192,13 @@ pub struct ScipSymbolInfo {
     /// `scip_edge` family inexpressible from a v6 index. They are raw index
     /// facts and the joins over them belong in the dl layer, not here.
     pub relationships: Vec<ScipRelationship>,
+    /// Markdown docstrings, one string per entry the indexer emitted.
+    pub documentation: Vec<String>,
+    /// The rendered type signature, when the indexer emits one.
+    pub signature: Option<ScipSignature>,
+    /// The owning symbol of a LOCAL symbol; empty for global symbols, whose
+    /// owner is parsed out of the symbol string's own descriptor grammar.
+    pub enclosing_symbol: String,
 }
 
 /// One SCIP relationship row: this symbol relates to `symbol` in one or more of
@@ -1156,15 +1223,43 @@ pub struct ScipDocument {
     pub position_encoding: PositionEncoding,
     pub occurrences: Vec<ScipOccurrence>,
     pub symbols: Vec<ScipSymbolInfo>,
+    /// scip.proto `Language` as the indexer spelled it ("TypeScript", "Go").
+    pub language: String,
+    /// The document's own text. Indexers leave it empty by default and expect
+    /// the client to read the file; it is set for virtual/in-memory documents,
+    /// where the file system has no copy to read.
+    pub text: String,
 }
 
-/// One parsed index.scip: documents + externally-referenced symbols + the
-/// producing indexer identity (metadata.tool_info, kept for the ledger).
+/// One parsed index.scip: the index metadata + documents + the symbols the
+/// corpus references and does not define.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ScipIndex {
     pub documents: Vec<ScipDocument>,
     pub external_symbols: Vec<ScipSymbolInfo>,
-    pub tool: String,
+    pub metadata: ScipMetadata,
+}
+
+impl ScipIndex {
+    /// The producing indexer's identity, "name version" (the ledger line the
+    /// parity goldens print). Derived from metadata rather than stored twice.
+    pub fn tool(&self) -> String {
+        format!("{} {}", self.metadata.tool_name, self.metadata.tool_version)
+    }
+}
+
+/// scip.proto `Metadata` + its nested `ToolInfo`, flattened: one row per
+/// index. `version` and `text_document_encoding` stay raw enum ordinals.
+/// `project_root` is the file:// URL the document paths hang off, which is the
+/// only place an index states what corpus it describes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScipMetadata {
+    pub version: i32,
+    pub tool_name: String,
+    pub tool_version: String,
+    pub tool_arguments: Vec<String>,
+    pub project_root: String,
+    pub text_document_encoding: i32,
 }
 
 /// Why a scip build/load failed (seed `_4_scip.rs`:126-132; String payloads
@@ -1337,6 +1432,9 @@ pub enum FlatFact {
         span: SpanOut,
         name: String,
         kind: String,
+        /// The source module as written, null when the language puts the
+        /// module in `name` (path-only forms).
+        module: Option<String>,
     },
     /// A project-phase (cross-file) resolved edge: `to` lives in ANOTHER blob,
     /// content-keyed by `to_blob` (hex). The 4a wire ruling: ONE arm carries
@@ -1392,9 +1490,48 @@ pub enum FlatFact {
         /// The raw scip.proto SymbolRole bitfield, kept whole so no role is
         /// lost in projection.
         roles: i32,
-        /// `roles & DEFINITION`, hoisted because every consumer wants it and
-        /// bit arithmetic in a dl rule is worse than a column.
+        /// The seven SymbolRole bits, one column each. Hoisted for the same
+        /// reason `definition` always was: bit arithmetic in a dl rule is
+        /// worse than a column, and `roles` alone left six of the seven roles
+        /// unreachable from the language.
         definition: bool,
+        import: bool,
+        write_access: bool,
+        read_access: bool,
+        generated: bool,
+        test: bool,
+        forward_definition: bool,
+        /// The raw scip.proto SyntaxKind ordinal (0 = unspecified).
+        syntax_kind: i32,
+        /// The nearest enclosing AST node's byte span, null when the indexer
+        /// emitted no enclosing range or the range did not convert.
+        enclosing_start: Option<u32>,
+        enclosing_end: Option<u32>,
+    },
+    /// One range-specific documentation string on an occurrence
+    /// (scip.proto `Occurrence.override_documentation`). `pos` is its index in
+    /// the repeated field, so a multi-paragraph doc keeps its order.
+    #[serde(rename = "scip_occurrence_doc")]
+    ScipOccurrenceDocRow {
+        path: String,
+        start: u32,
+        end: u32,
+        pos: u32,
+        text: String,
+    },
+    /// One compiler diagnostic the indexer reported at an occurrence's range
+    /// (scip.proto `Occurrence.diagnostics`). `severity` and `tags` are raw
+    /// enum ordinals; `tags` is a JSON array because the field is repeated.
+    #[serde(rename = "scip_diagnostic")]
+    ScipDiagnosticRow {
+        path: String,
+        start: u32,
+        end: u32,
+        severity: i32,
+        code: String,
+        message: String,
+        source: String,
+        tags: Vec<i32>,
     },
     /// One SCIP symbol information row: v5's `scip_name`. `path` is the
     /// document that declared it, or null for an index's external symbols.
@@ -1405,6 +1542,59 @@ pub enum FlatFact {
         display_name: String,
         /// The raw scip.proto SymbolInformation.Kind enum value.
         kind: i32,
+        /// The owning symbol of a local symbol; empty for global symbols.
+        enclosing_symbol: String,
+    },
+    /// One markdown docstring entry on a symbol
+    /// (scip.proto `SymbolInformation.documentation`). `pos` is its index in
+    /// the repeated field.
+    #[serde(rename = "scip_documentation")]
+    ScipDocumentationRow {
+        symbol: String,
+        pos: u32,
+        text: String,
+    },
+    /// One rendered type signature (scip.proto
+    /// `SymbolInformation.signature_documentation`).
+    #[serde(rename = "scip_signature")]
+    ScipSignatureRow {
+        symbol: String,
+        language: String,
+        text: String,
+    },
+    /// One reference inside a signature's text. `start`/`end` are byte offsets
+    /// into the SIGNATURE TEXT, never into a document, which is why this is
+    /// its own record instead of another `scip_occurrence`.
+    #[serde(rename = "scip_signature_occurrence")]
+    ScipSignatureOccurrenceRow {
+        symbol: String,
+        ref_symbol: String,
+        start: u32,
+        end: u32,
+        roles: i32,
+    },
+    /// One index's metadata (scip.proto `Metadata` + `ToolInfo`), one row per
+    /// index. `project_root` is the only place an index states what corpus it
+    /// describes, and the tool identity is what a ledger entry needs to say
+    /// which indexer release produced a fact.
+    #[serde(rename = "scip_metadata")]
+    ScipMetadataRow {
+        version: i32,
+        tool_name: String,
+        tool_version: String,
+        tool_arguments: Vec<String>,
+        project_root: String,
+        text_document_encoding: i32,
+    },
+    /// One indexed document's own header (scip.proto `Document` minus its
+    /// repeated children). `text` is null unless the indexer inlined the
+    /// document's contents, which it does only for virtual documents.
+    #[serde(rename = "scip_document")]
+    ScipDocumentRow {
+        path: String,
+        language: String,
+        position_encoding: i32,
+        text: Option<String>,
     },
     /// One SCIP relationship between two symbols: v5's `scip_impl` and the
     /// symbol half of `scip_edge`. The four flags are not exclusive; scip.proto
