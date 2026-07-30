@@ -75,6 +75,8 @@ task(grafana_scale_gate, active,
      'pinned Grafana crawl passes with wall time, peak RSS, SQLite bytes, throughput, tick or write amplification, and exact final-row receipts').
 task(file_watcher_scale_gate, active,
      'file watcher passes cardinality and edit-churn sweeps with bounded subscriptions, events, extraction demands, RSS, database growth, and zero duplicate or stale facts').
+task(http_cli_dogfood, active,
+     'bop exercises program load, arrivals, relation query, tick stream, and stats through HTTP; command and route inventories are generated from canonical Prolog facts while handlers remain explicit').
 task(rust_backend, deferred_v7,
      'emit Rust from the identical checked plan and link sprefa-extract directly').
 
@@ -88,6 +90,10 @@ observed(ghcacher_clock_golden,
          'five scheduled ticks produce the pinned final cache state').
 observed(v5_cache_scale_harness,
          'bench/0_gh_cache_scale.sh synthesizes deterministic endpoints and records engine time, process wall, RSS, SQLite bytes, calls, misses, and write rows per tick').
+observed(http_cli_current,
+         'v6/tsv2/cli/bop.ts has serve, run, check, load, and q; run/load/q call the served HTTP interface, while stats and ticks have no CLI verb').
+observed(cli_inventory_current,
+         'registry.pl cli_command/3 and Commander declarations are hand-mirrored and checked by a source-text inventory test; generation has not replaced the mirror').
 
 verification(v5_cache_scale_smoke,
              passed(endpoints(5), calls(10), misses(0), db_mib(1.4), rss_mib(30.7))).
