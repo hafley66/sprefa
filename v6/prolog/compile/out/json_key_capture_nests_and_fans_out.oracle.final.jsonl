@@ -1,0 +1,1 @@
+{"final":{"operation":[["/pets","get","list_pets"],["/users","get","list_users"],["/users","post","create_user"]],"spec":[[{"paths":{"/pets":{"get":{"operationId":"list_pets"}},"/users":{"get":{"operationId":"list_users"},"post":{"operationId":"create_user"}}}}]]}}

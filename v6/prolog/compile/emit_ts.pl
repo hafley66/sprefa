@@ -586,6 +586,12 @@ rel_column_types_entry_line(relplan(Ref, _Kind, _Columns, _Key, ColumnTypes), Li
     format(atom(Line), '  ~w: ~w,', [Name, TypesText]).
 
 boundary_column_type(ref(_), ref) :- !.
+% A `json` column is TEXT at the driver seam: rowValueFromSql/2 hands the
+% stored text back unchanged and ticklog.ts's encodeValue already renders a
+% string that starts with `{` or `[` as a canonical JSON value. Widening
+% IRowColumnType with a "json" member would buy nothing and would have to be
+% mirrored in every seam that switches on the type.
+boundary_column_type(json, text) :- !.
 boundary_column_type(Type, Type).
 
 arrival_targets_lines(ArrivalTargets, Lines) :-

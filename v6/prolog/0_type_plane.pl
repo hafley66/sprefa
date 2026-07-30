@@ -73,7 +73,16 @@ declared_type_name(Types, Name) :- memberchk(type_def(Name, _, _), Types).
 % a typed value).
 column_storage(_, int,  int) :- !.
 column_storage(_, text, text) :- !.
-column_storage(_, json, text) :- !.
+% `json` is its own STORAGE KIND, not an alias for text. The kind is what the
+% decode lowering dispatches on (lower.pl json_decode_source/4): the brace
+% pattern's lowering is a function of the SOURCE COLUMN'S DECLARED TYPE, never
+% of the pattern, so a declared struct becomes a dictionary join and a `json`
+% column becomes json1 SQL. Collapsing json into text here erased exactly the
+% bit that choice reads. Physical storage is still TEXT (lower.pl column_def/3
+% adds the json_valid CHECK); `jsonb` is NOT portable across the two SQLite
+% builds this project already runs (3.43.2 CLI rejects it, @libsql 3.45.1
+% accepts) so the stored bytes stay TEXT.
+column_storage(_, json, json) :- !.
 column_storage(_, bool, bool) :- !.
 column_storage(_, float, float) :- !.
 column_storage(Types, Name, ref(Name)) :- declared_type_name(Types, Name), !.

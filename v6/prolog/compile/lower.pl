@@ -154,7 +154,7 @@
               [ type_definitions/2, type_definition/4, column_storage/3,
                 type_topological_order/2, type_canonical_json/4,
                 type_field_values/4, declared_type_name/2,
-                relation_value_shape/3 ]).
+                relation_value_shape/3, canonical_json_text/2 ]).
 :- use_module('../0_body_walk', [walk_body/3, body_relation_atoms/4]).
 :- use_module('../conformance/body', [rel_ref/2]).
 
@@ -760,6 +760,17 @@ column_def(QuotedColumn, float, Def) :- !,
 % second parent and leaving dangling refs (types-as-rels verdict finding 6,
 % plans/2026-07-28-sqlite-retraction-verdict.md fk_cascade WRONG).
 column_def(QuotedColumn, ref(_), Def) :- !, format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
+% A json column stores TEXT with a json_valid CHECK, never jsonb: the two
+% SQLite builds this project runs disagree about whether jsonb exists at all
+% (system sqlite3 3.43.2 rejects it, the @libsql driver bundles 3.45.1 and
+% accepts it), and a storage decision cannot depend on a function only one of
+% them has. The CHECK is what lets every json1 read below skip a validity
+% guard: json_extract over a column that is not valid JSON RAISES rather than
+% returning NULL, so validity has to be an invariant of the column, not a
+% per-read conjunct.
+column_def(QuotedColumn, json, Def) :- !,
+    format(atom(Def), '~w TEXT NOT NULL CHECK (json_valid(~w))',
+           [QuotedColumn, QuotedColumn]).
 column_def(QuotedColumn, text, Def) :- format(atom(Def), '~w TEXT NOT NULL', [QuotedColumn]).
 
 % ═══ relation reference projection ═════════════════════════════════════════
@@ -1232,13 +1243,44 @@ expand_decode_rules(Types, RelPlans, Rules, Expanded) :-
 expand_decode_rule(Types, RelPlans, (Head <- Body), (Head <- Expanded)) :- !,
     conjunction_goals(Body, Goals),
     partition(is_decode_goal, Goals, DecodeGoals, OtherGoals),
-    (   DecodeGoals == []
-    ->  Expanded = Body
-    ;   foldl(decode_goal_atoms(Types, RelPlans, OtherGoals), DecodeGoals, [], Atoms),
-        append(OtherGoals, Atoms, AllGoals),
+    partition(json_decode_goal(RelPlans, Goals), DecodeGoals,
+              JsonDecodeGoals, StructDecodeGoals),
+    (   StructDecodeGoals == []
+    ->  % Nothing to rewrite. A rule with only json decodes keeps its body
+        % term UNCHANGED (identity, not a rebuild), which is what keeps every
+        % pre-existing emitted module byte-identical and what leaves the json
+        % goals in the position compile_body_guards/5 reads them from.
+        Expanded = Body
+    ;   foldl(decode_goal_atoms(Types, RelPlans, OtherGoals), StructDecodeGoals,
+              [], Atoms),
+        append([OtherGoals, JsonDecodeGoals, Atoms], AllGoals),
         goals_conjunction(AllGoals, Expanded)
     ).
+
 expand_decode_rule(_, _, Rule, Rule).
+
+% THE DISPATCH, and the only place it is made: a decode whose source is bound
+% by a positive body atom at a column declared `json` lowers to json1 SQL, not
+% to a dictionary join. Everything else keeps the struct arm, including its
+% decode_source_not_struct refusal for a source with no typed binding at all.
+%
+% Deliberately a separate walk from decode_binding_type/5 rather than one
+% widened predicate: that one commits (cut) on the first ref-typed binding it
+% finds and stepping PAST a non-ref binding is behaviour the struct arm
+% depends on. Sharing a cut between the two would silently change which
+% binding a repeated variable resolves to.
+json_decode_goal(RelPlans, BodyGoals, decode(Source, _)) :-
+    var(Source),
+    member(Atom, BodyGoals),
+    compound(Atom),
+    functor(Atom, Name, Arity),
+    relplan_column_types(RelPlans, Name/Arity, ColumnTypes),
+    Atom =.. [_ | Args],
+    nth1(Position, Args, Argument),
+    Argument == Source,
+    nth1(Position, ColumnTypes, json),
+    !.
+
 
 is_decode_goal(Goal) :- nonvar(Goal), Goal = decode(_, _).
 
@@ -1882,7 +1924,7 @@ aggregate_insert_scoped_sql(RelPlans, HeadRef, ScopeColumns, QuotedScopeTable,
     include(is_positive_use, Uses, PosUses),
     include(is_negative_use, Uses, NegUses),
     compile_positive_uses(RelPlans, PosUses, [], Bound0, FromParts, PosWhereTexts),
-    compile_body_guards(Body, Bound0, Bound, GuardWhereTexts),
+    compile_body_guards(Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
     compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
     aggregate_group_exprs(Template, Bound, GroupExprs),
     maplist(quote_ident, ScopeColumns, QuotedScopeColumns),
@@ -1895,7 +1937,8 @@ aggregate_insert_scoped_sql(RelPlans, HeadRef, ScopeColumns, QuotedScopeTable,
     ),
     append([PosWhereTexts, GuardWhereTexts, NegWhereTexts, [ScopeWhereText]],
            AllWhereTexts),
-    atomic_list_concat(FromParts, ', ', FromSql),
+    append(FromParts, JsonFromParts, AllFromParts),
+    atomic_list_concat(AllFromParts, ', ', FromSql),
     aggregate_select_statement(Head, Template, Bound, FromSql, AllWhereTexts,
                                SelectStatement),
     format(atom(InsertScopedSql), 'INSERT OR IGNORE INTO ~w (~w) ~w RETURNING ~w',
@@ -2016,10 +2059,11 @@ level_recursive_arm(RelPlans, Rule, RecursiveArm) :-
     include(is_positive_use, Uses, PosUses),
     include(is_negative_use, Uses, NegUses),
     compile_positive_uses(RelPlans, PosUses, [], Bound0, FromParts, PosWhereTexts),
-    compile_body_guards(Body, Bound0, Bound, GuardWhereTexts),
+    compile_body_guards(Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
     compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
     append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], AllWhereTexts),
-    atomic_list_concat(FromParts, ', ', FromSql),
+    append(FromParts, JsonFromParts, AllFromParts),
+    atomic_list_concat(AllFromParts, ', ', FromSql),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     head_select_list(Head, Bound, HeadColumns, SelectExprs),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
@@ -2038,10 +2082,11 @@ level_support_arm(RelPlans, Rule, SupportArm) :-
     include(is_positive_use, Uses, PosUses),
     include(is_negative_use, Uses, NegUses),
     compile_positive_uses(RelPlans, PosUses, [], Bound0, FromParts, PosWhereTexts),
-    compile_body_guards(Body, Bound0, Bound, GuardWhereTexts),
+    compile_body_guards(Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
     compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
     append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], AllWhereTexts),
-    atomic_list_concat(FromParts, ', ', FromSql),
+    append(FromParts, JsonFromParts, AllFromParts),
+    atomic_list_concat(AllFromParts, ', ', FromSql),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     head_select_list(Head, Bound, HeadColumns, AliasedSelectExprs),
     support_group_exprs(Head, Bound, GroupExprs),
@@ -2091,10 +2136,11 @@ level_insert_sql(RelPlans, HeadRef, (Head <- Body), InsertSql) :-
     include(is_negative_use, Uses, NegUses),
     ( PosUses == [] -> throw(unsupported_construct(level_rule_no_positive_body(HeadRef))) ; true ),
     compile_positive_uses(RelPlans, PosUses, [], Bound0, FromParts, PosWhereTexts),
-    compile_body_guards(Body, Bound0, Bound, GuardWhereTexts),
+    compile_body_guards(Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
     compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
     append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], AllWhereTexts),
-    atomic_list_concat(FromParts, ', ', FromSql),
+    append(FromParts, JsonFromParts, AllFromParts),
+    atomic_list_concat(AllFromParts, ', ', FromSql),
     ( aggregate_head_template(Head, Template)
     -> aggregate_select_statement(Head, Template, Bound, FromSql, AllWhereTexts, SelectStatement)
     ;  head_select_list(Head, Bound, none, SelectExprs),
@@ -2113,9 +2159,259 @@ level_insert_sql(RelPlans, HeadRef, (Head <- Body), InsertSql) :-
 % level-rule statement family (recompute insert, delta arm, refCount arm,
 % recursive-CTE arm) so a guard can never be present in one family and
 % silently absent from another -- the phase-C silent-filter-loss class.
-compile_body_guards(Body, Bound0, Bound, GuardWhereTexts) :-
+% Decode goals are collected from the WHOLE conjunction, not from
+% body_guard_goals/2: that predicate selects on the registry's `infix(_)`
+% lowering shape, and decode/2 is `wrapper(expr_pair, lower)`, so it was never
+% in the guard fold. Every decode still standing in a body at this point is a
+% json decode -- expand_decode_rules/4 has already rewritten the struct arm
+% into dictionary atoms and refused a source that is neither.
+%
+% They compile BEFORE the ordinary guards because a decode binds variables a
+% later comparison may read, which is the same left-to-right obligation
+% engine.pl's solve/2 has and the same order compile_positive_uses/6 ->
+% guards already establishes one level up.
+compile_body_guards(Body, Bound0, Bound, JsonFromParts, GuardWhereTexts) :-
+    conjunction_goals(Body, AllGoals),
+    include(is_decode_goal, AllGoals, DecodeGoals),
     body_guard_goals(Body, GuardGoals),
-    compile_guard_goals(GuardGoals, Bound0, Bound, GuardWhereTexts).
+    compile_json_decodes(DecodeGoals, 0, _, Bound0, Bound1,
+                         JsonFromParts, DecodeWhereTexts),
+    compile_guard_goals(GuardGoals, Bound1, Bound, OtherWhereTexts),
+    append(DecodeWhereTexts, OtherWhereTexts, GuardWhereTexts).
+
+% ═══ decode/2 over a `json` column : json1 SQL ══════════════════════════════
+%
+% The coexistence rule, and it is the whole design: THE BRACE PATTERN'S
+% LOWERING IS A FUNCTION OF THE SOURCE COLUMN'S DECLARED TYPE, NEVER OF THE
+% PATTERN.
+%
+%   rel diag(where: place, message: text).   -- a declared struct
+%     decode(Where, {file: File})  ==>  '__dict_place'(Where, File, _)
+%
+%   rel resp(ep: text, body: json).          -- the dynamic escape
+%     decode(Body, {number: N})    ==>  json_extract(b0."body", '$."number"')
+%
+% One surface, two lowerings, picked by the decl. A declared struct has no
+% unknown keys, which is why the key axis (`$name`, `**`) is only ever
+% meaningful over a json column: `decode_field_unknown` exists precisely to
+% say the struct side cannot have one.
+%
+% Anything a decode goal reaches here has ALREADY been classified: the struct
+% arm is rewritten into dictionary atoms by expand_decode_rules/4 before
+% lowering, so every decode still standing in a body at this point is over a
+% json column.
+%
+% COST, in joins (json_syntax lab §2, receipts executed against real sqlite3):
+%
+%   exact key, any depth   0   one json_extract path, accumulated
+%   array spread           1   json_each
+%   key capture $name      1   json_each -- its (key, value) columns ARE the
+%                              construct, zero new SQL machinery
+%   ** descent             1   json_tree
+%
+% Statement counts stay flat per rule: no per-arrival loop and no per-element
+% statement, because every production above is a JOIN rather than a fan of
+% statements.
+%
+% THE TYPE GUARD IS NOT COSMETIC, and this is the one thing an implementation
+% of this design can get wrong silently. json_each/json_tree hand back SQL
+% values, so `value` is JSON text for containers and a bare scalar for leaves,
+% and descending into a leaf is NOT a silent non-match in SQLite -- it RAISES
+% and kills the whole statement. Measured here, system sqlite3 3.43.2, over
+% '[{"number":1},"scalar",{"number":3},7]':
+%
+%   WHERE e0.type = 'object' AND json_extract(e0.value,'$."number"') IS NOT NULL
+%     -> 1,3
+%   WHERE json_extract(e0.value,'$."number"') IS NOT NULL
+%     -> Runtime error: malformed JSON
+%
+% The guard is emitted FIRST in the WHERE list for the same reason: SQL states
+% no evaluation order for AND, and left-to-right is what makes the guard
+% actually protect the extract beside it.
+%
+% Off an alias the guard reads the alias's own `type` column; off a path it
+% reads the TWO-ARGUMENT json_type(Base, Path), which answers NULL for a
+% missing key and for a path through a scalar instead of raising.
+
+compile_json_decodes([], Index, Index, Bound, Bound, [], []).
+compile_json_decodes([decode(Source, Pattern) | Rest], Index0, Index,
+                     Bound0, Bound, FromParts, WhereTexts) :-
+    (   bound_lookup(Bound0, Source, typed(SourceSql, SourceType))
+    ->  true
+    ;   throw(unsupported_construct(decode_source_not_bound(Source)))
+    ),
+    (   SourceType == json
+    ->  true
+    ;   throw(unsupported_construct(decode_source_not_struct(decode(Source, Pattern))))
+    ),
+    json_pattern_sql(Pattern, jsonpos(SourceSql, ['$'], none), Index0, Index1,
+                     Bound0, Bound1, HereFrom, HereWhere),
+    compile_json_decodes(Rest, Index1, Index, Bound1, Bound,
+                         MoreFrom, MoreWhere),
+    append(HereFrom, MoreFrom, FromParts),
+    append(HereWhere, MoreWhere, WhereTexts).
+
+% jsonpos(BaseSql, ReversedPathSegments, RootTypeSql)
+%
+% RootTypeSql is the alias `type` column when this position IS a json_each /
+% json_tree row (the only place a cheaper and safer type answer exists than
+% re-reading the value), `none` when the position is a plain column.
+
+json_value_sql(jsonpos(BaseSql, ['$'], _), BaseSql) :- !.
+json_value_sql(jsonpos(BaseSql, Segments, _), Sql) :-
+    json_path_text(Segments, Path),
+    format(atom(Sql), 'json_extract(~w, ''~w'')', [BaseSql, Path]).
+
+json_type_sql(jsonpos(_, ['$'], RootTypeSql), RootTypeSql) :-
+    RootTypeSql \== none, !.
+json_type_sql(jsonpos(BaseSql, Segments, _), Sql) :-
+    json_path_text(Segments, Path),
+    format(atom(Sql), 'json_type(~w, ''~w'')', [BaseSql, Path]).
+
+json_path_text(Reversed, Path) :-
+    reverse(Reversed, Segments),
+    atomic_list_concat(Segments, Path).
+
+% A path segment is always double-quoted, so a key that is not a bare
+% identifier (`/users`, `$ref`) needs no separate spelling. A key carrying a
+% double quote has no unambiguous path text and is refused by name rather
+% than concatenated into a broken path string.
+json_path_segment(Key, Segment) :-
+    (   sub_atom(Key, _, _, _, '"')
+    ->  throw(unsupported_construct(json_key_contains_quote(Key)))
+    ;   format(atom(Segment), '."~w"', [Key])
+    ).
+
+% ── the pattern compiler ─────────────────────────────────────────────────────
+
+% A hole binds this position. Already bound means this is a JOIN on the value,
+% the same reading compile_pattern_arg/7 gives a repeated variable.
+json_pattern_sql(Pattern, Position, Index, Index, Bound0, Bound, [], WhereTexts) :-
+    var(Pattern), !,
+    json_value_sql(Position, ValueSql),
+    (   bound_lookup(Bound0, Pattern, typed(Existing, _))
+    ->  Bound = Bound0,
+        format(atom(Equality), '~w = ~w', [ValueSql, Existing]),
+        WhereTexts = [Equality]
+    ;   % text, not json: this is the same reading compile_sub_args/7 already
+        % gives a destructured value -- json_extract's result carries no
+        % declared column type, so calling it text is what lets it flow into
+        % an ordinary text head column without a cross-type join refusal.
+        Bound = [Pattern-typed(ValueSql, text) | Bound0],
+        format(atom(NotNull), '~w IS NOT NULL', [ValueSql]),
+        WhereTexts = [NotNull]
+    ).
+% The empty object: open with no members, so it asserts object-ness and
+% nothing else.
+json_pattern_sql('{}', Position, Index, Index, Bound, Bound, [], [Text]) :- !,
+    json_object_guard(Position, Text).
+% `[... Sub]` : one row per array element. json_each over the ARRAY, then the
+% sub-pattern against each element's value.
+json_pattern_sql(spread(Sub), Position, Index0, Index, Bound0, Bound,
+                 FromParts, WhereTexts) :- !,
+    json_value_sql(Position, ValueSql),
+    json_type_sql(Position, TypeSql),
+    format(atom(Alias), 'j~w', [Index0]),
+    format(atom(From), 'json_each(~w) ~w', [ValueSql, Alias]),
+    format(atom(ArrayGuard), '~w = ''array''', [TypeSql]),
+    format(atom(ElementBase), '~w.value', [Alias]),
+    format(atom(ElementType), '~w.type', [Alias]),
+    Index1 is Index0 + 1,
+    json_pattern_sql(Sub, jsonpos(ElementBase, ['$'], ElementType),
+                     Index1, Index, Bound0, Bound, SubFrom, SubWhere),
+    append([From], SubFrom, FromParts),
+    append([ArrayGuard], SubWhere, WhereTexts).
+json_pattern_sql('{}'(Fields), Position, Index0, Index, Bound0, Bound,
+                 FromParts, WhereTexts) :- !,
+    json_object_guard(Position, ObjectGuard),
+    brace_pattern_pairs(Fields, Pairs),
+    json_members_sql(Pairs, Position, Index0, Index, Bound0, Bound,
+                     FromParts, MemberWhere),
+    WhereTexts = [ObjectGuard | MemberWhere].
+% A scalar in pattern position is an equality filter.
+json_pattern_sql(Literal, Position, Index, Index, Bound, Bound, [], [Text]) :-
+    atomic(Literal), !,
+    json_value_sql(Position, ValueSql),
+    sql_literal(Literal, Quoted),
+    format(atom(Text), '~w = ~w', [ValueSql, Quoted]).
+json_pattern_sql(Pattern, _, _, _, _, _, _, _) :-
+    throw(unsupported_construct(json_pattern_shape(Pattern))).
+
+json_object_guard(Position, Text) :-
+    json_type_sql(Position, TypeSql),
+    format(atom(Text), '~w = ''object''', [TypeSql]).
+
+json_members_sql([], _, Index, Index, Bound, Bound, [], []).
+json_members_sql([Key-Sub | Rest], Position, Index0, Index, Bound0, Bound,
+                 FromParts, WhereTexts) :-
+    json_member_sql(Key, Sub, Position, Index0, Index1, Bound0, Bound1,
+                    HereFrom, HereWhere),
+    json_members_sql(Rest, Position, Index1, Index, Bound1, Bound,
+                     MoreFrom, MoreWhere),
+    append(HereFrom, MoreFrom, FromParts),
+    append(HereWhere, MoreWhere, WhereTexts).
+
+% An EXACT key costs no join: the segment is appended to this position's path
+% and the sub-pattern compiles against the extended path, so `{user: {login:
+% $a}}` comes out as ONE json_extract(b0."body", '$."user"."login"').
+json_member_sql(Key, Sub, jsonpos(BaseSql, Segments, RootTypeSql),
+                Index0, Index, Bound0, Bound, FromParts, WhereTexts) :-
+    atom(Key), Key \== '**', !,
+    json_path_segment(Key, Segment),
+    json_pattern_sql(Sub, jsonpos(BaseSql, [Segment | Segments], RootTypeSql),
+                     Index0, Index, Bound0, Bound, FromParts, WhereTexts).
+% KEY CAPTURE. json_each already yields (key, value); the construct the
+% recovery doc graded "genuinely needs new surface syntax" needs zero new SQL
+% (lab receipt L3). The key hole binds `key`, the sub-pattern reads `value`.
+json_member_sql($(KeyHole), Sub, Position, Index0, Index, Bound0, Bound,
+                FromParts, WhereTexts) :- !,
+    json_value_sql(Position, ValueSql),
+    format(atom(Alias), 'j~w', [Index0]),
+    format(atom(From), 'json_each(~w) ~w', [ValueSql, Alias]),
+    format(atom(KeySql), '~w.key', [Alias]),
+    format(atom(MemberBase), '~w.value', [Alias]),
+    format(atom(MemberType), '~w.type', [Alias]),
+    Index1 is Index0 + 1,
+    (   bound_lookup(Bound0, KeyHole, typed(ExistingKey, _))
+    ->  Bound1 = Bound0,
+        format(atom(KeyText), '~w = ~w', [KeySql, ExistingKey]),
+        KeyWhere = [KeyText]
+    ;   Bound1 = [KeyHole-typed(KeySql, text) | Bound0],
+        KeyWhere = []
+    ),
+    json_pattern_sql(Sub, jsonpos(MemberBase, ['$'], MemberType),
+                     Index1, Index, Bound1, Bound, SubFrom, SubWhere),
+    append([From], SubFrom, FromParts),
+    append(KeyWhere, SubWhere, WhereTexts).
+% `**` DESCENT (ruling descent_depth_cap = uncapped, "css aint got it").
+% json_tree walks the whole value, root first, so the sub-pattern is tried at
+% every depth including this object itself -- the same set descendant_object/2
+% enumerates on the oracle side. `fullkey` rides the same join, which is what
+% would make v4's dropped path bind free if a spelling is ever ruled for it.
+json_member_sql('**', Sub, Position, Index0, Index, Bound0, Bound,
+                FromParts, WhereTexts) :- !,
+    json_value_sql(Position, ValueSql),
+    format(atom(Alias), 'j~w', [Index0]),
+    format(atom(From), 'json_tree(~w) ~w', [ValueSql, Alias]),
+    format(atom(NodeBase), '~w.value', [Alias]),
+    format(atom(NodeType), '~w.type', [Alias]),
+    Index1 is Index0 + 1,
+    json_pattern_sql(Sub, jsonpos(NodeBase, ['$'], NodeType),
+                     Index1, Index, Bound0, Bound, SubFrom, SubWhere),
+    append([From], SubFrom, FromParts),
+    WhereTexts = SubWhere.
+json_member_sql(Key, _, _, _, _, _, _, _, _) :-
+    throw(unsupported_construct(json_key_shape(Key))).
+
+% `{a: 1, b: 2}` is `{}`/1 over a comma conjunction of `:`/2 pairs on both
+% doors. Deliberately NOT braces_pattern_pairs/2 (the struct arm's): that one
+% may not see a `$`/1 or `'**'` key and a shared predicate would have to admit
+% keys the struct plane refuses by design.
+brace_pattern_pairs((Left, Right), Pairs) :- !,
+    brace_pattern_pairs(Left, LeftPairs),
+    brace_pattern_pairs(Right, RightPairs),
+    append(LeftPairs, RightPairs, Pairs).
+brace_pattern_pairs(Key: Sub, [Key-Sub]).
 
 % ═══ aggregate heads ════════════════════════════════════════════════════════
 % engine.pl's aggregate contract, clause by clause (level_eval.pl
@@ -2283,12 +2579,13 @@ level_delta_select_arm(RelPlans, Head, Body, use(DeltaRef, DeltaArgs, pos, _),
     maplist(where_text, DeltaWhereParts, DeltaWhereTexts),
     compile_positive_uses(RelPlans, OtherPosUses, DeltaBound, Bound0,
                           OtherFromParts, OtherWhereTexts),
-    compile_body_guards(Body, Bound0, Bound, GuardWhereTexts),
+    compile_body_guards(Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
     compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
     head_select_list(Head, Bound, none, SelectExprs),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
     format(atom(DeltaFrom), '~w d0', [QuotedFrontierTable]),
-    append([[DeltaFrom], IdentityFromParts, OtherFromParts], FromParts),
+    append([[DeltaFrom], IdentityFromParts, OtherFromParts, JsonFromParts],
+           FromParts),
     atomic_list_concat(FromParts, ', ', FromSql),
     append([['d0."_phase" >= 0' | DeltaWhereTexts], IdentityWhereTexts,
             OtherWhereTexts], PositiveWhereTexts),
@@ -2484,6 +2781,17 @@ canonical_column_expr(Column, float, QuotedColumn) :-
 canonical_column_expr(Column, ref(TypeName), Expr) :-
     !,
     dictionary_render_expr(TypeName, Column, Expr).
+% A json column's STORED TEXT is already the rendering. The cross-target log
+% contract is canonical JSON (sorted keys, no whitespace), and json1 will not
+% canonicalize for us at any point in the pipeline -- json() minifies but
+% PRESERVES key order and json_group_object follows row order -- so
+% canonicalization has to happen once, on the way in, where
+% canonical_json_text/2 already does it for the oracle and the TS arrival seam
+% does it for the emitter. Reading the column back through json() here would
+% be a second, weaker canonicalizer that disagrees with the first.
+canonical_column_expr(Column, json, QuotedColumn) :-
+    !,
+    quote_ident(Column, QuotedColumn).
 canonical_column_expr(Column, text, Expr) :-
     quote_ident(Column, QuotedColumn),
     format(atom(Expr),
@@ -2545,6 +2853,12 @@ boot_column_slots(Decls, Types, [ColumnType | ColumnTypes], [Value | Values],
 boot_column_slot(Decls, Types, ColumnType, Value, slot_desc(Slot, Params), Statements) :-
     (   ColumnType = ref(TypeName)
     ->  struct_intern_statements(Decls, Types, TypeName, Value, Slot, Params, Statements)
+    ;   % A json column stores canonical JSON TEXT, so an Initial seed row
+        % binds the rendered text rather than the raw braces term. Same
+        % canonicalizer, same reason as the arrival seam.
+        ColumnType == json
+    ->  canonical_json_text(Value, Text),
+        Slot = '?', Params = [Text], Statements = []
     ;   Slot = '?', Params = [Value], Statements = []
     ).
 

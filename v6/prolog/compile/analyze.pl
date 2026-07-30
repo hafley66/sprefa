@@ -391,6 +391,12 @@ column_type_at_decl(Decls, Rules, Initial, Schedule, Ref, Columns, Position, Typ
                 ), WitnessTypes),
        ( Storage = ref(_)
        -> Type = Storage
+       % A `json` column accepts EVERY json scalar, so an int or text literal
+       % witness in one is not a conflict. Running the cross-check anyway made
+       % `entry(second, 4)` in a json column read as decl_type_conflicts_
+       % witness(entry/2, 2, json, int), refusing a legal document.
+       ; Storage == json
+       -> Type = Storage
        ; member(WitnessType, WitnessTypes), WitnessType \== Storage
        -> throw(unsupported_construct(
                     decl_type_conflicts_witness(Ref, Position, Storage, WitnessType)))

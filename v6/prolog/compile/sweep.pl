@@ -181,6 +181,15 @@ arrival_json_signed(Types, RelPlans, Atom, Sign, Json) :-
 % each already speaks.
 arrival_value_json(Types, ref(TypeName), Value, Json) :- !,
     type_canonical_json(Types, TypeName, Value, Json).
+% A `json` column stores canonical JSON TEXT, so its schedule entry is a JSON
+% STRING carrying that text, not a nested JSON value: the emitted runtime
+% binds it straight into the TEXT column. canonical_json_text/2 is the single
+% canonicalizer both doors use -- json1 will not canonicalize for us at any
+% point (json() minifies but PRESERVES key order), so the bytes have to be
+% right on the way in or the tick log cannot agree.
+arrival_value_json(_, json, Value, Json) :- !,
+    canonical_json_text(Value, Text),
+    json_string(Text, Json).
 arrival_value_json(_, _, Value, Json) :- row_value_json(Value, Json).
 
 % Mirrors ticklog.pl's value_json/2 (that file is never touched; this is an

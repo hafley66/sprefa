@@ -62,7 +62,10 @@ fixture(json_each_fans_out,
 % recovery doc graded this row "(c) blocked on storage"; the lab's L2 receipt
 % executes it as ONE json_each join.
 fixture(json_array_spread_fans_out_correlated_siblings,
-  prog([],
+  prog([col_type(resp/1, body, json),
+        col_type(pull_request/3, number, int),
+        col_type(pull_request/3, title, text),
+        col_type(pull_request/3, author, text)],
        [ (pull_request(Number, Title, Author) <-
             resp(Body),
             decode(Body, spread({number: Number, title: Title,
@@ -76,7 +79,8 @@ fixture(json_array_spread_fans_out_correlated_siblings,
 % Spread over an element that does not match binds nothing and raises nothing:
 % the missing-key silence, one level down inside the fan-out.
 fixture(json_array_spread_skips_non_matching_elements,
-  prog([],
+  prog([col_type(resp/1, body, json),
+        col_type(numbered/1, number, int)],
        [ (numbered(Number) <- resp(Body), decode(Body, spread({number: Number}))) ]),
   [ resp([ {number: 1}, {title: no_number}, {number: 3} ]) ],
   [],
@@ -90,17 +94,19 @@ fixture(json_array_spread_skips_non_matching_elements,
 % The single most-used v5 form, and the lowering is json_each's own (key,value)
 % columns -- zero new SQL machinery (lab receipt L3).
 fixture(json_key_capture_binds_key_and_value,
-  prog([],
+  prog([col_type(raw_doc/1, body, json),
+        col_type(field/2, key, text),
+        col_type(field/2, value, text)],
        [ (field(Key, Value) <- raw_doc(Body), decode(Body, {$Key: Value})) ]),
-  [ raw_doc({name: cli, stars: 4}) ],
+  [ raw_doc({name: cli, owner: octo}) ],
   [],
-  [ final(field/2, [ field(name, cli), field(stars, 4) ]) ]).
+  [ final(field/2, [ field(name, cli), field(owner, octo) ]) ]).
 
 % Two key holes nested: v4/examples/openapi-cardinality-markdown.sprf, the
 % path x method fan-out. Cardinality is the product, which is what makes this
 % the test that key capture really is a join and not a lookup.
 fixture(json_key_capture_nests_and_fans_out,
-  prog([],
+  prog([col_type(spec/1, body, json)],
        [ (operation(Path, Method, Id) <-
             spec(Body),
             decode(Body, {paths: {$Path: {$Method: {operationId: Id}}}})) ]),
@@ -116,7 +122,7 @@ fixture(json_key_capture_nests_and_fans_out,
 % README.md:78. Unbounded like the CSS descendant combinator; lowers to
 % json_tree, whose first row is the root, so the root is a candidate too.
 fixture(json_descent_matches_at_any_depth,
-  prog([],
+  prog([col_type(chart/1, body, json)],
        [ (image(Repository, Tag) <-
             chart(Body),
             decode(Body, {'**': {image: {repository: Repository, tag: Tag}}})) ]),
@@ -129,7 +135,7 @@ fixture(json_descent_matches_at_any_depth,
 % oracle half of the emitted `type = 'object'` guard: without that guard SQLite
 % raises `malformed JSON` and kills the whole statement (lab finding 6).
 fixture(json_descent_into_scalars_is_silent,
-  prog([],
+  prog([col_type(doc/1, body, json)],
        [ (found(Value) <- doc(Body), decode(Body, {'**': {leaf: Value}})) ]),
   [ doc({a: 1, b: text, c: {leaf: here}, d: [1, 2]}) ],
   [],
@@ -138,9 +144,9 @@ fixture(json_descent_into_scalars_is_silent,
 % The EMPTY object, the atom `{}` on both doors. An open pattern with no
 % members: matches any object, binds nothing, and does NOT match a scalar.
 fixture(json_empty_object_pattern_matches_any_object,
-  prog([],
+  prog([col_type(entry/2, name, text), col_type(entry/2, value, json)],
        [ (is_object(Name) <- entry(Name, Value), decode(Value, {})) ]),
-  [ entry(first, {a: 1}), entry(second, 4), entry(third, {}) ],
+  [ entry(first, {a: 1}), entry(second, [1, 2]), entry(third, {}) ],
   [],
   [ final(is_object/1, [ is_object(first), is_object(third) ]) ]).
 
