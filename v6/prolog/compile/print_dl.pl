@@ -461,10 +461,15 @@ print_term(Term, Bindings, ParentPrec, Side, Text) :-
     -> finite_float_text(Term, Text)
     ; string(Term)
     -> quote_value(Term, 0'", Text)
+    ; Term == '{}'
+    -> Text = '{}'
     ; is_list(Term)
     -> print_list(Term, Bindings, Text)
     ; Term = '{}'(Pairs)
     -> print_braces(Pairs, Bindings, PairsText), format(atom(Text), "{~w}", [PairsText])
+    ; Term = spread(Element)
+    -> print_term(Element, Bindings, 0, top, ElementText),
+       format(atom(Text), "[... ~w]", [ElementText])
     ; compound(Term), Term =.. [Op, Left, Right], arith_op(Op, MyPrec)
     -> print_term(Left, Bindings, MyPrec, left, LeftText),
        print_term(Right, Bindings, MyPrec, right, RightText),
@@ -508,13 +513,40 @@ print_list(List, Bindings, Text) :-
     atomic_list_concat(ItemTexts, ', ', Inner),
     format(atom(Text), "[~w]", [Inner]).
 
-print_braces((Key:Value, Rest), Bindings, Text) :- !,
-    print_term(Value, Bindings, 0, top, ValueText),
+print_braces((Pair, Rest), Bindings, Text) :- !,
+    print_brace_pair(Pair, Bindings, PairText),
     print_braces(Rest, Bindings, RestText),
-    format(atom(Text), "~w: ~w, ~w", [Key, ValueText, RestText]).
-print_braces(Key:Value, Bindings, Text) :-
+    format(atom(Text), "~w, ~w", [PairText, RestText]).
+print_braces(Pair, Bindings, Text) :-
+    print_brace_pair(Pair, Bindings, Text).
+
+print_brace_pair(Key:Value, Bindings, Text) :-
+    print_brace_key(Key, Bindings, KeyText),
     print_term(Value, Bindings, 0, top, ValueText),
-    format(atom(Text), "~w: ~w", [Key, ValueText]).
+    format(atom(Text), "~w: ~w", [KeyText, ValueText]).
+
+% The key axis prints back to the exact surface parse_dl.pl's brace_key/5
+% reads. Only three shapes exist and all three round-trip:
+%
+%   '**'      -> **        ruling descent_depth_cap = uncapped
+%   $(Var)    -> $name     ruling json_key_hole_marker = dollar
+%   Atom      -> name      when it is identifier-shaped, otherwise 'name'
+%
+% The quoted fallback is what keeps a real JSON key like `$ref` a key: bare
+% `$ref` would re-read as a hole, so a key whose text is not a plain
+% identifier comes back quoted, which parse_dl.pl reads as a literal label.
+print_brace_key('**', _Bindings, '**') :- !.
+print_brace_key($(Var), Bindings, Text) :- !,
+    print_var(Var, Bindings, Name),
+    format(atom(Text), "$~w", [Name]).
+print_brace_key(Key, _Bindings, Text) :-
+    ( identifier_atom(Key) -> Text = Key ; quote_value(Key, 0'\', Text) ).
+
+identifier_atom(Atom) :-
+    atom(Atom),
+    atom_codes(Atom, [First | Rest]),
+    ( code_type(First, alpha) ; First == 0'_ ),
+    forall(member(Code, Rest), ( code_type(Code, alnum) ; Code == 0'_ )).
 
 % ═══ quoting : always explicit, never Prolog's own ~q "quote only if
 % necessary" logic -- see parse_dl.pl's module header for why every atom
