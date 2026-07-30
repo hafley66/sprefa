@@ -35,8 +35,8 @@ directive(ledger_duty,
           'this file stays current through the session; it is the main coordinator deliverable alongside review').
 
 % lane(Name, Owner, State, Deliverable).
-lane(clock_checker_finish, opus_worktree, dispatched,
-     'finish the paused 3_clock_check.pl per clock_checker_resume_order: A2 stays not-provable, A6 inferred offsets vs runtime ticks, full battery').
+lane(clock_checker_finish, codex_sol, dispatched,
+     'USER DIRECTIVE (best intelligence): sol finishes the paused 3_clock_check.pl per clock_checker_resume_order (A2 stays not-provable, A6 inferred offsets vs runtime ticks, full battery); no-commit flow; then an OPUS 5 agent runs the review gate on sol output and coordinates feedback before coordinator merge. Prior opus lane stood down.').
 lane(spot_check_assimilation_order, opus_readonly, dispatched,
      'review f8ab8ac5..HEAD commit-by-commit, re-run key receipts, inventory every open lab, return classification + optimal fold order').
 lane(phase5_grade_and_fix, opus_worktree, dispatched,
@@ -62,3 +62,19 @@ answered(lang_design_lock_state,
          'LOCKED: single rel type model + one checker, host = ordinary RHS atom (? and @ removed), parser residency rust, surface freeze + stop rule, target-neutral plan order, bool/float storage, clock-checker scope. OPEN CARDS: scan/match composition (4 questions + 3 surface cards), json residency/arrays/null/schema/recursion (5 cards), span-spine decision rows, assign 3 cards, decl-legibility cluster, older slot pile. Verdict: value plane + host surface + storage locked; composition surface and json/module/span identity are the remaining design').
 
 % finding(Name, Severity, Text). -- appended as review proceeds.
+finding(worktree_base_staleness_recurrence, process,
+        'Agent-tool worktrees cut from stale local main (01ac896e, 73 behind base 6c3a7e2d) -- the 2026-07-28 process-defect class again; all 4 worktree opus lanes hit it; clock + phase5 agents STOPPED correctly per dispatch law; coordinator resumed each with the sanctioned ff-only merge to 6c3a7e2d, commits land on agent branches, merge-back by sha').
+% stale_in_claude_md(Claim, Correction). -- auto-loaded context now contradicted by the world.
+stale_in_claude_md('hosts wiring presents `? probe` and `@ salt` riders as landed surface',
+                   'both REMOVED by the v6.2 host-surface locks (no_rhs_probe_marker, no_salt_rider); a registered host relation is an ordinary RHS atom').
+stale_in_claude_md('main is the ride with 32 unpushed commits',
+                   'the ride is codex/rel-ref-file-span-lab, 40+ ahead of local main; origin/main further behind').
+stale_in_claude_md('phase 5 (float/REAL+avg, clock checker) is the remaining unstarted leg',
+                   'bool/float LANDED (landing_ready + verification in 20260730.0 ledger); clock checker paused mid-implementation with recorded resume order').
+stale_in_claude_md('fresh-worktree js packages runnable after checkout',
+                   'pnpm install required per worktree per package (v6/tsv2, v6/sprefa-store/js, v6/dl); bit the terra lane; binary flavor previously ledgered as gen_staleness_gate').
+
+finding(isolation_worktree_reaped_midrun, process,
+        'harness auto-cleans unchanged agent worktrees; a lane that STOPs clean at the base check is exactly that shape, so its resume finds no tree (file_span lane hit it). Mitigation adopted: coordinator-cut worktrees at the correct sha (git worktree add ../sprefa-lane-<name> -b lane/<name> 6c3a7e2d) + non-isolated agents pointed at them; file_span relaunched that way on lane/filespan-reconcile').
+finding(flow_rig_no_binary_override, defect_small,
+        'flagship-flow.sh hardcodes $REPO/target/release/dl with no env override (extract has DL_EXTRACT_BIN); codex terra lane stopped clean on missing binaries after 1/6 runs; coordinator building both release binaries and copying into the codex worktree, then resuming the terra session').
