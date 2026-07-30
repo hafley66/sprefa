@@ -147,8 +147,10 @@ awk -F '\t' '
     if (NR >= 2)
       printf "controlled_shape: plan scales as rules^%.3f over the final interval\n",
         exponent
-    print "general_driver: repeated simple-path enumeration in clock_check:graph_reachable/4"
-    print "dense_graph_shape: simple-path count can be exponential in dependency-graph connectivity"
+    print "graph_engine: clock_check:clock_components/3 over 0_graph.pl (library(ugraphs) + Kosaraju)"
+    print "history: the removed clock_check:graph_reachable/4 enumerated simple paths per pair;"
+    print "history: it measured rules^4.864 here and 255 s on flagship-flow.dl6 at 42 nodes."
+    print "watch_for: an exponent back above 2 means a per-path or per-pair search returned."
   }
 ' "$SUMMARY_FILE"
 

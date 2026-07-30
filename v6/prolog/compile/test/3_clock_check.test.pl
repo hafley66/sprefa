@@ -96,6 +96,74 @@ test(positive_delay_scc_is_productive) :-
            [(loop(X) <+ loop(X))]),
     clock_scc(Program, [loop/1], productive_delayed).
 
+% ── the count rail ──────────────────────────────────────────────────────────
+%
+% Standing law: a formerly-quadratic path gets an operation-count assertion,
+% never end-state equality alone. check_clock_program/1 over a dependent rule
+% chain measured rules^4.864 in wall time while an all-pairs simple-path
+% search sat under clock_scc/3, and cost the plan phase 255 s on
+% flagship-flow.dl6 at 42 graph nodes.
+%
+% Inferences, not wall time, so the rail does not flake on a loaded machine.
+% Two pins, because the two halves of the fix fail differently:
+%
+%   exponent  catches an asymptotic regression at any absolute scale
+%   ceiling   catches a constant-factor regression that keeps the exponent
+%
+% MEASURED, all three on this machine, inference counts for chains of 20 and
+% 58 rules. Exponent is log(count58/count20) / log(58/20).
+%
+%   | variant                                   | 20 rules | 58 rules | exp  |
+%   |-------------------------------------------|---------:|---------:|-----:|
+%   | shipped                                   |   16,670 |   54,331 | 1.11 |
+%   | sabotage: delayed-node set recomputed per |          |          |      |
+%   |   clock path (the hoist undone)           |   69,928 |  524,445 | 1.89 |
+%   | sabotage: simple-path reachability back   |          |          |      |
+%   |   under clock_components/3                |1,132,057 |66,564,729| 3.83 |
+%
+% Both sabotages go RED on both pins. The thresholds sit at 1.5 and 150,000,
+% leaving the shipped numbers 35% and 2.8x of headroom.
+test(clock_check_cost_stays_near_linear_in_chain_length) :-
+    SmallLength = 20,
+    LargeLength = 58,
+    chain_program(SmallLength, SmallProgram),
+    chain_program(LargeLength, LargeProgram),
+    clock_check_inferences(SmallProgram, SmallCount),
+    clock_check_inferences(LargeProgram, LargeCount),
+    Exponent is log(LargeCount / SmallCount) / log(LargeLength / SmallLength),
+    ( Exponent =< 1.5
+    -> true
+    ;  format(user_error,
+              "clock check scales as rules^~3f: ~w then ~w inferences~n",
+              [Exponent, SmallCount, LargeCount]),
+       fail
+    ),
+    ( LargeCount =< 150000
+    -> true
+    ;  format(user_error,
+              "clock check cost ~w inferences at ~w rules, ceiling 150000~n",
+              [LargeCount, LargeLength]),
+       fail
+    ).
+
+% Mirrors the generator in scripts/0_profile_compile_curve.sh: one dependent
+% chain of level rules, which is the shape that measured the 4.864 exponent.
+chain_program(RuleCount, prog([], Rules)) :-
+    findall((Head <- Body),
+            ( between(1, RuleCount, Index),
+              Previous is Index - 1,
+              atom_concat(chain_rel_, Index, HeadName),
+              atom_concat(chain_rel_, Previous, BodyName),
+              Head =.. [HeadName, Value],
+              Body =.. [BodyName, Value] ),
+            Rules).
+
+clock_check_inferences(Program, Count) :-
+    statistics(inferences, Before),
+    ( catch(check_clock_program(Program), _, true) -> true ; true ),
+    statistics(inferences, After),
+    Count is After - Before.
+
 test(zero_grade_negative_scc_refuses) :-
     Program =
       prog([], [ (left(X) <- not(right(X))),
