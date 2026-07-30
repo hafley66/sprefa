@@ -176,6 +176,16 @@ one-subscribe:
 ghcacher-golden:
 	bash {{v6}}/tsv2/goldens/ghcacher_tick_golden/6_gate.sh
 
+# STOPPING-POINT PROGRAM #5: the multirepo dep/repo/rev crawl, both engines over
+# one pinned four-repo corpus. v5 runs examples/version-skew.dl byte-unmodified
+# against a generated SPREFA_CONFIG; v6 runs goldens/multirepo_crawl over the
+# same repos with the repo set posted as EDB rows. Every differing row is
+# bucketed with a proof read from the corpus go.mod bytes.
+# (expect: MULTIREPO CRAWL GRADED: 4/4 rels byte-identical, 1 named gap
+#  (dep_ver = min/max over text refused), 0 unclassified, exit 0)
+multirepo-golden:
+	bash {{v6}}/tsv2/goldens/multirepo_crawl/2_gate.sh
+
 # checked-in gen_emitted modules with no fixture row (door-handwritten.ts)
 # regenerated + diffed against their .dl6 source; target/release/dl and
 # sprefa-extract's release binary refused if a source .rs/Cargo.toml is
@@ -207,4 +217,4 @@ bench:
 green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex dl-test store-test
 
 # everything, including the sweep
-green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed scale-floor
+green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden

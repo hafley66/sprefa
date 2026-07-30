@@ -62,6 +62,7 @@
 | [tsv2/CRAWL-BENCH.md](tsv2/CRAWL-BENCH.md) | 122 | Grafana crawl bench |
 | [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
 | [tsv2/goldens/ghcacher_tick_golden/README.md](tsv2/goldens/ghcacher_tick_golden/README.md) | 46 | Ghcacher clock golden |
+| [tsv2/goldens/multirepo_crawl/README.md](tsv2/goldens/multirepo_crawl/README.md) | 74 | multirepo_crawl — stopping-point program #5, graded against v5 |
 | [tsv2/rxoracle/README.md](tsv2/rxoracle/README.md) | 171 | rxoracle -- grading sprefa's event sequence against literal rxjs |
 
 ## Full header index
@@ -861,6 +862,16 @@
 ### tsv2/goldens/ghcacher_tick_golden/README.md
 ```
 1:# Ghcacher clock golden
+```
+
+### tsv2/goldens/multirepo_crawl/README.md
+```
+1:# multirepo_crawl — stopping-point program #5, graded against v5
+16:## The result
+25:## The one named gap
+43:## Two differences in kind, stated rather than hidden
+59:## A v5 oddity this rig noticed
+68:## Zero new constructs
 ```
 
 ### tsv2/rxoracle/README.md
