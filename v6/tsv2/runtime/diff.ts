@@ -9,27 +9,30 @@
  * value is exactly "new stamps this tick" without any separate stamp
  * column — see gen/switch_as_keyed_replace.ts's route_change handling.
  *
- * Small pure leaf transform (no per-instance state): stays a bare function,
- * the same exemption the rxjs law gives `.map` callbacks.
+ * NOT A LEAF-HELPER EXEMPTION, and this header used to claim it was. The old
+ * text read "small pure leaf transform (no per-instance state): stays a bare
+ * function, the same exemption the rxjs law gives `.map` callbacks". Review
+ * finding 7 disagreed and is right: purity and statelessness are not the test.
+ * The test is whether the function carries a contract worth checking, and this
+ * one is THE boundary-diff algorithm, imported by name from 137 emitted
+ * modules. It is now annotated against `IMultisetDiff` in the header, which is
+ * what buys the compiler check. The exported NAME is unchanged, because the
+ * emitted imports are written by the prolog emitter and moving them is another
+ * lane's change.
+ *
+ * `RowDiff` moved to the header too, as `IRowDiff`. It had no reader outside
+ * this file, so nothing depended on the old name.
  */
 
-import type { IRow } from "./types.ts";
+import type { IMultisetDiff, IRow, IRowDiff } from "./types.ts";
 
 function rowKey(row: IRow): string {
   return JSON.stringify(row);
 }
 
-// A plain data shape returned by one pure function, not implemented by a
-// class — a `type` alias, not an `interface`, so it sits outside the
-// header-declaration / I-prefix law (0_types.ts's `Value`/`Row` precedent).
-export type RowDiff = {
-  readonly add: readonly IRow[];
-  readonly del: readonly IRow[];
-};
-
 /** `prevRows` / `nextRows` are the FULL row lists (duplicates allowed) for
  *  one rel, read before and after one tick's writes. */
-export function multisetDiff(prevRows: readonly IRow[], nextRows: readonly IRow[]): RowDiff {
+export const multisetDiff: IMultisetDiff = (prevRows: readonly IRow[], nextRows: readonly IRow[]): IRowDiff => {
   const prevCounts = new Map<string, { row: IRow; count: number }>();
   for (const row of prevRows) {
     const key = rowKey(row);
@@ -56,4 +59,4 @@ export function multisetDiff(prevRows: readonly IRow[], nextRows: readonly IRow[
     for (let extra = after; extra < entry.count; extra += 1) del.push(entry.row);
   }
   return { add, del };
-}
+};

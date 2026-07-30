@@ -7,7 +7,14 @@
 
 import { map, type Observable } from "rxjs";
 
-import type { IRow, IRowColumnType, IRowValue, ISqlSeam } from "./types.ts";
+import type {
+  IRow,
+  IRowColumnType,
+  IRowValue,
+  IRowValueFromSql,
+  ISelectRows,
+  ISqlSeam,
+} from "./types.ts";
 
 /** A generated program's scalar columns are TEXT, INTEGER, or REAL and never
  *  NULL. Bool columns use constrained INTEGER storage and cross this boundary
@@ -19,7 +26,7 @@ import type { IRow, IRowColumnType, IRowValue, ISqlSeam } from "./types.ts";
  *  narrow (libsql's `Value` is `null | string | number | bigint |
  *  ArrayBuffer`) and would need widening only if a future column type
  *  introduces `bigint` or `null` into this seam. */
-export function rowValueFromSql(type: IRowColumnType | undefined, value: unknown): IRowValue {
+export const rowValueFromSql: IRowValueFromSql = (type: IRowColumnType | undefined, value: unknown): IRowValue => {
   if (type === "bool") {
     if (value === 0 || value === 0n) return false;
     if (value === 1 || value === 1n) return true;
@@ -32,14 +39,17 @@ export function rowValueFromSql(type: IRowColumnType | undefined, value: unknown
     return Object.is(value, -0) ? 0 : value;
   }
   return value as IRowValue;
-}
+};
 
-export function selectRows(
+/** Bound to `ISelectRows` rather than folded into a namespace object: emitted
+ *  modules import this name directly (137 of them), and the import text comes
+ *  from the prolog emitter. The annotation is what buys the compiler check. */
+export const selectRows: ISelectRows = (
   seam: ISqlSeam,
   sql: string,
   columns: readonly string[],
   columnTypes: readonly IRowColumnType[] = [],
-): Observable<IRow[]> {
+): Observable<IRow[]> => {
   return seam.runner.execute(seam.db, sql).pipe(
     map((result) =>
       result.rows.map(
@@ -48,4 +58,4 @@ export function selectRows(
       ),
     ),
   );
-}
+};

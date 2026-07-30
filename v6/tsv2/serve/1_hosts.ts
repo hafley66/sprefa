@@ -64,6 +64,7 @@ import type {
   IHostRunner,
   ISqlSeam,
   IWitnessCache,
+  IWitnessRows,
 } from "../runtime/types.ts";
 import { ServeTrace } from "./0_trace.ts";
 
@@ -697,10 +698,9 @@ export class HostRunner implements IHostRunner {
 /** Read one rel's current rows through an explicit SELECT. Exported for the
  *  endurance receipt, which reads the witness table directly to prove a cached
  *  witness did not refire. */
-export function witnessRows(seam: ISqlSeam): Observable<readonly IRow[]> {
-  return selectRows(
+export const witnessRows: IWitnessRows = (seam: ISqlSeam): Observable<readonly IRow[]> =>
+  selectRows(
     seam,
     `SELECT "host", "witness_digest", "state", "response_rows" FROM "${WITNESS_TABLE}" ORDER BY "host", "witness_digest"`,
     ["host", "witness_digest", "state", "response_rows"],
   );
-}

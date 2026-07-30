@@ -65,6 +65,7 @@ import { selectRows } from "../runtime/rows.ts";
 import { TickLogEmitter } from "../runtime/ticklog.ts";
 import type {
   IArrivalBatch,
+  IBootServedProgram,
   ILiveEngine,
   IRow,
   IServedProgram,
@@ -223,7 +224,10 @@ function isAlreadyExists(failure: unknown): boolean {
   return failure instanceof Error && /already exists/i.test(failure.message);
 }
 
-export function bootServedProgram(seam: ISqlSeam, program: IServedProgram): Observable<void> {
+export const bootServedProgram: IBootServedProgram = (
+  seam: ISqlSeam,
+  program: IServedProgram,
+): Observable<void> => {
   const statements = [...program.ddl, ...WitnessCache.ddl()];
   return from(statements).pipe(
     concatMap((sql) =>
@@ -234,4 +238,4 @@ export function bootServedProgram(seam: ISqlSeam, program: IServedProgram): Obse
     toArray(),
     concatMap(() => BootRunner.run(seam, program.boot)),
   );
-}
+};
