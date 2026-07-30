@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LAB_DIR="$(cd "$(dirname "$0")" && pwd)"
-V6_DIR="$(cd "$LAB_DIR/../../.." && pwd)"
+GOLDEN_DIR="$(cd "$(dirname "$0")" && pwd)"
+V6_DIR="$(cd "$GOLDEN_DIR/../../.." && pwd)"
 ROOT_DIR="$(cd "$V6_DIR/.." && pwd)"
 TSV2_DIR="$V6_DIR/tsv2"
-PROGRAM="$LAB_DIR/0_ghcacher_clock_golden.dl6"
-SCHEDULE="$LAB_DIR/1_schedule.json"
-EXPECTED_TICKS="$LAB_DIR/2_expected.tick.jsonl"
-EXPECTED_FINAL="$LAB_DIR/3_expected.final.jsonl"
+PROGRAM="$GOLDEN_DIR/0_ghcacher_clock_golden.dl6"
+SCHEDULE="$GOLDEN_DIR/1_schedule.json"
+EXPECTED_TICKS="$GOLDEN_DIR/2_expected.tick.jsonl"
+EXPECTED_FINAL="$GOLDEN_DIR/3_expected.final.jsonl"
 WORK_DIR="$(mktemp -d "$TSV2_DIR/.ghcacher-clock-golden.XXXXXX")"
 GENERATED="$WORK_DIR/ghcacher_clock_golden.ts"
 ORACLE_ACTUAL="$WORK_DIR/oracle.jsonl"
@@ -25,7 +25,7 @@ swipl -q -l "$V6_DIR/prolog/compile/compile.pl" \
   -g "compile_dl6('$PROGRAM', '$GENERATED')" \
   -g halt >/dev/null
 
-swipl -q "$LAB_DIR/4_oracle.pl" -- "$PROGRAM" "$SCHEDULE" \
+swipl -q "$GOLDEN_DIR/4_oracle.pl" -- "$PROGRAM" "$SCHEDULE" \
   >"$ORACLE_ACTUAL"
 
 (

@@ -1,2 +1,0 @@
-rel span(start: int, end: int).
-rel mark(at: span).

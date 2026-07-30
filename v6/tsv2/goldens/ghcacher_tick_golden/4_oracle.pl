@@ -1,8 +1,8 @@
 % Prints the reference engine's exact tick log followed by its exact final
 % relation envelope for one .dl6 program and JSON schedule.
 
-:- ensure_loaded('../../compile/scripts/dl6_oracle').
-:- ensure_loaded('../../compile/oracle_dump').
+:- ensure_loaded('../../../prolog/compile/scripts/dl6_oracle').
+:- ensure_loaded('../../../prolog/compile/oracle_dump').
 
 :- initialization(main, main).
 
