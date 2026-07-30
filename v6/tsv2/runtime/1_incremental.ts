@@ -588,9 +588,13 @@ function boundaryDelta(
   const del: IRow[] = [];
   for (const { row, weight } of weights.values()) {
     for (let count = 0; count < weight; count += 1) add.push(row);
-    if (relation.kind === "set") {
-      for (let count = 0; count > weight; count -= 1) del.push(row);
-    }
+    // Negative weight reports on BOTH planes. A `relation.kind === "set"`
+    // guard used to sit here and suppressed a log rel's negative weight, which
+    // is what made retention invisible on this door. A log rel's delta table
+    // only ever carries -1 from applyRetentionStatement (appends are +1), so
+    // reporting it reports exactly the prune: the emitter twin of engine.pl's
+    // LogRemovals in boundary_deltas/6.
+    for (let count = 0; count > weight; count -= 1) del.push(row);
   }
   return { rel: relation.rel, add, del };
 }

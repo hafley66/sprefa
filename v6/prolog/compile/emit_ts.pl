@@ -1433,11 +1433,9 @@ recompute_levels_fn_lines(LevelStatements, Lines) :-
 
 % ═══ buildDeltas ═════════════════════════════════════════════════════════════
 
-build_deltas_fn_lines(RelPlans, EdgeStatements, RetentionStatements,
+build_deltas_fn_lines(RelPlans, EdgeStatements, _RetentionStatements,
                       DepartureRefs, Lines) :-
-    findall(Ref, member(retentionstmt(Ref, _, _), RetentionStatements),
-            RetentionRefs),
-    maplist(diff_local_line(RetentionRefs), RelPlans, DiffLines),
+    maplist(diff_local_line, RelPlans, DiffLines),
     maplist(rel_entry_line, RelPlans, RelEntryLines),
     carry_pending_expr(EdgeStatements, DepartureRefs, CarryExpr),
     format(atom(CarryLine), '    carryPending: ~w,', [CarryExpr]),
@@ -1449,16 +1447,18 @@ build_deltas_fn_lines(RelPlans, EdgeStatements, RetentionStatements,
           ['    ],', CarryLine, '  };', '}']
         ], Lines).
 
-diff_local_line(RetentionRefs,
-                relplan(Ref, _Kind, _Columns, _Key, _ColumnTypes), Line) :-
+% ONE line per rel, and no retention special case. A rel with a keep(...)
+% clause used to emit `del: []` here, which was the naive referee's copy of
+% the same suppression the incremental door carried in boundaryDelta's
+% `kind === "set"` guard. The naive snapshot straddles retention (the tick
+% takes `before`, runs applyNaiveRetention, then takes `after`), so the plain
+% multisetDiff already reports a reclaimed row as a del; the special case was
+% throwing that answer away. A keep(all) rel is unaffected, because nothing
+% is ever reclaimed and the del list comes back empty on its own.
+diff_local_line(relplan(Ref, _Kind, _Columns, _Key, _ColumnTypes), Line) :-
     ref_name(Ref, Name),
-    ( memberchk(Ref, RetentionRefs)
-    -> format(atom(Line),
-              '  const ~wDiff = multisetDiff(before.~w, after.~w); const ~w = { add: ~wDiff.add, del: [] };',
-              [Name, Name, Name, Name, Name])
-    ; format(atom(Line), '  const ~w = multisetDiff(before.~w, after.~w);',
-             [Name, Name, Name])
-    ).
+    format(atom(Line), '  const ~w = multisetDiff(before.~w, after.~w);',
+           [Name, Name, Name]).
 
 rel_entry_line(relplan(Ref, _Kind, _Columns, _Key, _ColumnTypes), Line) :-
     ref_name(Ref, Name),

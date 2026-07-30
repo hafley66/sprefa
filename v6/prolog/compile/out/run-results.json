@@ -364,6 +364,13 @@
     "finalDetail": ""
   },
   {
+    "name": "retention_prune_is_a_visible_minus",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "log_retraction_rejected",
     "bucket": "run_error",
     "detail": "log_retraction_rejected: retract from log rel 'event' (engine.pl retract_from_log)",

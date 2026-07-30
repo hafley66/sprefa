@@ -440,8 +440,9 @@ stamp_extra(Tick, [Row | Rest], Seq, [occ(st(Tick, Seq), Row) | More]) :-
     NextSeq is Seq + 1,
     stamp_extra(Tick, Rest, NextSeq, More).
 
-% r7: Log rels emit one +Row per new stamp; everything else is a set diff of
-% the full visible state (removed then added).
+% r7: Log rels emit one +Row per new stamp and one -Row per stamp retention
+% reclaimed; everything else is a set diff of the full visible state (removed
+% then added).
 boundary_deltas(prog(Decls, _), Store0, Store, PrevAll, NextAll, Deltas) :-
     findall(Stamp-Row,
             ( member(lrow(Stamp, Row), Store),
@@ -449,6 +450,22 @@ boundary_deltas(prog(Decls, _), Store0, Store, PrevAll, NextAll, Deltas) :-
             NewStamped0),
     msort(NewStamped0, NewStamped),
     findall(+Row, member(_-Row, NewStamped), LogAdds),
+    % The symmetric half of the stamp diff. A stamp present at tick start and
+    % absent at tick end was reclaimed by retention, so it is reported as an
+    % ordinary minus. Only apply_retention/3 can remove a stamp: a world or
+    % program retraction of a Log rel throws retract_from_log/1 first, so this
+    % arm is reachable exclusively through a bound the program declared.
+    %
+    % R7 is not weakened. A minus here is a STORAGE-plane fact (the row was
+    % reclaimed), never an occurrence-plane one (the firing still happened and
+    % every rule that was going to see it already did). See the storage-vs-
+    % occurrence statement in compile/TICK-MODEL.md section 5.
+    findall(Stamp-Row,
+            ( member(lrow(Stamp, Row), Store0),
+              \+ memberchk(lrow(Stamp, Row), Store) ),
+            GoneStamped0),
+    msort(GoneStamped0, GoneStamped),
+    findall(-Row, member(_-Row, GoneStamped), LogRemovals),
     findall(Delta,
             ( set_diff_delta(PrevAll, NextAll, Delta),
               Delta = -Row, delta_ref_is_set(Decls, Row) ),
@@ -457,7 +474,7 @@ boundary_deltas(prog(Decls, _), Store0, Store, PrevAll, NextAll, Deltas) :-
             ( set_diff_delta(PrevAll, NextAll, Delta),
               Delta = +Row, delta_ref_is_set(Decls, Row) ),
             SetAdds),
-    append([SetRemovals, SetAdds, LogAdds], Deltas).
+    append([SetRemovals, LogRemovals, SetAdds, LogAdds], Deltas).
 
 set_diff_delta(PrevAll, NextAll, Delta) :-
     (   member(Row, PrevAll), \+ memberchk(Row, NextAll), Delta = -Row
