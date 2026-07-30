@@ -48,6 +48,45 @@ fixture(retention_prune_is_a_visible_minus,
                       [ +event(two) ],
                       [ -event(one), +event(three) ] ]) ]).
 
+% finalize over a Log rel fires on the retention prune. THE NATURAL SPELLING
+% WORKS, which SUPERSEDES the refusal three prior arcs proposed for it:
+% plans/2026-07-30-rel-as-stream-lab.md card 4,
+% plans/2026-07-29-update-arm-verdict.md SLOT-LOG-FINALIZE-REFUSAL, and
+% plans/2026-07-28-consumption-arms-verdict.md assertion 17 all recommended
+% refusing `finalize(logrel(...))` because it was statically dead -- retention
+% pruned with no delta, so the arm had nothing to bind and failed silently.
+% The time-plane verdict priced both directions and the fix won: a refusal
+% needs two implementations plus a fail-first fixture, while making the
+% spelling work needed the retention minus that was wanted anyway.
+%
+% Reading, per compile/TICK-MODEL.md 5.1: this binds the (dS)- of the RETAINED
+% WINDOW, never of the occurrence. The firing already happened and every rule
+% that was going to see it already saw it; what departs is the stored record,
+% under the bound the program itself declared.
+%
+% Cost, named rather than discovered later: a pruning log rel with a finalize
+% listener mints drain ticks for the departures, so this 4-tick schedule runs
+% to 6. Programs that do not bind finalize on that rel pay nothing, because
+% listened_departure_refs/2 gates the carry.
+fixture(finalize_over_log_fires_on_retention_prune,
+  prog([ kind(ev/2, log), keep(ev/2, count(2)),
+         kind(gone/2, log), keep(gone/2, all) ],
+       [ (gone(Ordinal, Payload) <+ finalize(ev(Ordinal, Payload))) ]),
+  [],
+  [ [ +ev(1, a) ], [ +ev(2, b) ], [ +ev(3, c) ], [ +ev(4, d) ] ],
+  [ deltas(ev/2, [ [ +ev(1, a) ],
+                   [ +ev(2, b) ],
+                   [ -ev(1, a), +ev(3, c) ],
+                   [ -ev(2, b), +ev(4, d) ],
+                   [], [] ]),
+    deltas(gone/2, [ [], [], [],
+                     [ +gone(1, a) ],
+                     [ +gone(2, b) ],
+                     [] ]),
+    final(ev/2, [ ev(3, c), ev(4, d) ]),
+    final(gone/2, [ gone(1, a), gone(2, b) ]),
+    ticks(6) ]).
+
 % created_at and updated_at are ordinary columns two ordinary edge rules fill.
 % Promoted from the time-plane lab (T15,
 % plans/2026-07-30-time-plane-unification-verdict.md candidate 3), where it is

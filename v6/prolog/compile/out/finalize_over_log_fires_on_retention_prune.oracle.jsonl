@@ -1,0 +1,6 @@
+{"tick":1,"deltas":{"ev":{"add":[[1,"a"]],"del":[]}}}
+{"tick":2,"deltas":{"ev":{"add":[[2,"b"]],"del":[]}}}
+{"tick":3,"deltas":{"ev":{"add":[[3,"c"]],"del":[[1,"a"]]}}}
+{"tick":4,"deltas":{"ev":{"add":[[4,"d"]],"del":[[2,"b"]]},"gone":{"add":[[1,"a"]],"del":[]}}}
+{"tick":5,"deltas":{"gone":{"add":[[2,"b"]],"del":[]}}}
+{"tick":6,"deltas":{}}

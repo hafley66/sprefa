@@ -371,6 +371,13 @@
     "finalDetail": ""
   },
   {
+    "name": "finalize_over_log_fires_on_retention_prune",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "created_at_pinned_updated_at_advances",
     "bucket": "identical",
     "detail": "",
