@@ -88,6 +88,12 @@ lane(rtkq_extraction_golden, active,
      'grade multiple advanced ast-grep forms, relational union, spans, edits, retractions, and process counts through Rust extraction').
 lane(host_batching_audit, active,
      'measure and reduce per-witness extraction subprocess amplification through existing typed executor contracts').
+lane(host_batching_implementation, active,
+     'group compatible same-tick sprefa_extract demands and fan one stdout into existing typed response relations').
+lane(flow_parity_finish, active,
+     'close empty flow_node_type, v5-only flow edges, and referee symbol-key mismatch with existing facts and syntax').
+lane(phase5_value_plane, active,
+     'implement already ruled bool and float checker, SQLite, and ingest semantics without adding syntax').
 
 task(remove_rhs_question_mark, active,
      'zero executable RHS host probes use question-mark syntax; compiler infers host lowering from the registered contract').
