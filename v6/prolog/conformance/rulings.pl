@@ -464,3 +464,17 @@ ruling(openapi_route_list_generated, generated_from_facts, user,
        'user 2026-07-30: "card 8 does ROUTE_LIST get generated -- yea sure". Turns parity legs 1 and 2 from a check into an identity and deletes the two-hand-kept-lists crack; it is the first production edit this arc makes to serve/').
 ruling(openapi_generated_code_checked_in, spec_and_output_both_checked_in, user,
        'user 2026-07-30: "spec and produced code checked in please". Same staleness-gate shape as the spec artifact ruling').
+
+% 2026-07-30. The null question, four candidates measured by the
+% option-versus-null lab (plans/2026-07-30-option-versus-null-lab.md).
+% Candidate B (Design D, T? nullable columns) is DEAD: null never enters
+% storage or the type system; plans/2026-07-30-null-implementation-plan.md
+% is superseded, no step of it executes. The winning shape is Datomic's:
+% absence stays row absence, and the consumer that wants a total answer
+% spells the default itself with get_else/2 at the use site (one body
+% operator, LEFT JOIN + coalesce in SQL, `?? default` in rx). some/none
+% enum variants stay available as the EXISTING per-rel variant machinery
+% when the caller wants the compiler to count coverage arms; that is
+% candidate A, tier-0 sugar over row absence, and it stacks with get_else.
+ruling(null_design, get_else_use_site_never_storage, user,
+       'user 2026-07-30: "do what makes best least brouhaha, i like none/some etc. but idk how enum wrappers and generics work here"').
