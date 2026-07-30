@@ -86,7 +86,7 @@ async function waitUntil(predicate: () => boolean | Promise<boolean>, what: stri
 test("receipt (b): live interval bind + live sh host, served, matches the oracle fed the same answers", async () => {
   const source = readFileSync(HOST_CLOCK_DL6, "utf8");
   const scheduler = new VirtualTimeScheduler();
-  const served = await startServed(17531, scheduler);
+  const served = await startServed(0, scheduler);
   try {
     const loaded = await postProgram(served.port, source);
     assert.equal(loaded.statusCode, 200, loaded.body);
@@ -142,7 +142,7 @@ test("receipt (b): live interval bind + live sh host, served, matches the oracle
 test("receipt (b) teardown: a program swap stops the previous program's interval", async () => {
   const source = readFileSync(HOST_CLOCK_DL6, "utf8");
   const scheduler = new VirtualTimeScheduler();
-  const served = await startServed(17532, scheduler);
+  const served = await startServed(0, scheduler);
   try {
     assert.equal((await postProgram(served.port, source)).statusCode, 200);
     await waitUntil(() => scheduler.actions.length === 1, "the first program's interval to register");
@@ -181,7 +181,7 @@ test("receipt (b) teardown: a program swap stops the previous program's interval
 test("declared-struct live host output interns once and tick logs render the canonical value", async () => {
   const directory = mkdtempSync(join(tmpdir(), "tsv2-struct-host-"));
   const dbUrl = `file:${join(directory, "served.sqlite")}`;
-  const served = await startServed(17533, undefined, dbUrl);
+  const served = await startServed(0, undefined, dbUrl);
   try {
     const loaded = await postProgram(served.port, STRUCT_HOST_DL6);
     assert.equal(loaded.statusCode, 200, loaded.body);

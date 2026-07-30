@@ -46,7 +46,7 @@ const ROUTE_BATCHES = [
 
 test("a carrying program served one POST at a time matches the oracle replayed on its own consumed schedule", async () => {
   const source = readFileSync(SWITCH_DL6, "utf8");
-  const served = await startServed(17541);
+  const served = await startServed();
   try {
     const loaded = await postProgram(served.port, source);
     assert.equal(loaded.statusCode, 200, loaded.body);

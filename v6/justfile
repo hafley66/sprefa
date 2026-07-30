@@ -57,7 +57,7 @@ sweep:
 bop-test:
 	cd {{v6}}/tsv2 && node --test --experimental-transform-types tests/bopCheck.test.ts tests/bopRun.test.ts tests/bopLoadQuery.test.ts tests/bopCommandInventory.test.ts
 
-# tsv2 runtime + served-engine tests (expect: 65 pass / 1 skip, and growing)
+# tsv2 runtime + served-engine tests (expect: 92 pass / 1 skip, and growing)
 tsv2-test:
 	cd {{v6}}/tsv2 && npm test
 
@@ -133,6 +133,16 @@ enumerate:
 memory-soak:
 	cd {{v6}}/tsv2 && bash scripts/memory-soak.sh
 
+# THE COMPOSITION RECEIPT: one program (dl/fixtures/golden-flex.dl6) exercising
+# every live registry construct, graded six ways -- coverage gate (a new registry
+# row fails it BY NAME), text door, three cardinalities (0 / 1 / 100 rows per
+# input rel) plus a perturbed schedule against the oracle and BOTH emitter modes
+# on tick log AND final state, emitter-mode parity, the norm/1 inverted receipt,
+# and the served HTTP e2e leg with a live subprocess host
+# (expect: GOLDEN FLEX HOLDS, exit 0; ~30s)
+golden-flex:
+	bash {{v6}}/tsv2/scripts/golden-flex.sh
+
 # exactly one terminal subscription per app (dl/src and tsv2/serve)
 one-subscribe:
 	bash {{v6}}/tools/one-subscribe.sh
@@ -154,7 +164,7 @@ bench:
 # ── batteries ──
 
 # the review-gate battery minus the slow sweep; what a merge must pass
-green: conformance roundtrip text-door plunit prolog-lint tsv2-test import-gate one-subscribe dl-test store-test
+green: conformance roundtrip text-door plunit prolog-lint tsv2-test import-gate one-subscribe golden-flex dl-test store-test
 
 # everything, including the sweep
 green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate flagship lsp-diags sweep staleness-gate

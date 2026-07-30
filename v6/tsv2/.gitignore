@@ -2,3 +2,8 @@ node_modules/
 dist/
 *.tsbuildinfo
 .pnpm-debug.log*
+
+# golden-flex is COMPILED FRESH by scripts/golden-flex.sh on every run, so it
+# cannot go stale the way a checked-in gen module can (the recurring class the
+# staleness gate exists for). It is deliberately not tracked.
+gen_emitted/golden-flex.ts

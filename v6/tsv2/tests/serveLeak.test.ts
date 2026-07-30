@@ -44,7 +44,9 @@ current(Id, Kind) <- event(Id, Kind).
 `;
 
 const ITERATIONS = Number(process.env.TSV2_LEAK_ITERATIONS ?? "20");
-const PORT = Number(process.env.TSV2_LEAK_PORT ?? "17551");
+// 0 = ephemeral. TSV2_LEAK_PORT still pins it for the soak script, which needs
+// a known address to curl; the in-process receipt never does.
+const PORT = Number(process.env.TSV2_LEAK_PORT ?? "0");
 const PERF_LOG_PATH = process.env.DL_PERF_LOG;
 const SOAK_ENABLED = PERF_LOG_PATH !== undefined;
 

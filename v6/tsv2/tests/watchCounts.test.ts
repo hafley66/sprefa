@@ -90,12 +90,15 @@ interface BurstCounts {
 }
 
 /** One burst of `fileCount` files, each notified `eventsPerFile` times. */
-async function burst(port: number, fileCount: number, eventsPerFile: number): Promise<BurstCounts> {
+/** Ports are ephemeral: every server here binds 0 and the receipt reads back
+ *  `served.port`. Four hardcoded numbers here were four collisions waiting for a
+ *  second lane (bug hostdecode_hardcoded_port_collision). */
+async function burst(fileCount: number, eventsPerFile: number): Promise<BurstCounts> {
   const source = readFileSync(WATCH_RAIL_DL6, "utf8");
   const root = mkdtempSync(join(tmpdir(), "tsv2-watch-count-"));
   const scheduler = new VirtualTimeScheduler();
   const watchSource = new ScriptedWatchSource(scheduler);
-  const served = await startServed(port, scheduler, ":memory:", {
+  const served = await startServed(0, scheduler, ":memory:", {
     watchRoot: root,
     watchCoalesceMs: COALESCE_MS,
     watchSource,
@@ -131,8 +134,8 @@ async function burst(port: number, fileCount: number, eventsPerFile: number): Pr
 }
 
 test("count: one coalesce window is ONE tick, and one file is ONE row however many events it fired", async () => {
-  const small = await burst(17621, 5, 3);
-  const large = await burst(17622, 50, 3);
+  const small = await burst(5, 3);
+  const large = await burst(50, 3);
 
   assert.equal(small.ticks, 1, `5 files in one window must be 1 tick, got ${small.ticks}`);
   assert.equal(large.ticks, 1, `50 files in one window must be 1 tick, got ${large.ticks}`);
@@ -143,8 +146,8 @@ test("count: one coalesce window is ONE tick, and one file is ONE row however ma
 });
 
 test("count: statements per tick are FLAT from a 5-file burst to a 50-file burst", async () => {
-  const small = await burst(17623, 5, 1);
-  const large = await burst(17624, 50, 1);
+  const small = await burst(5, 1);
+  const large = await burst(50, 1);
 
   assert.equal(small.statementsPerTick.length, 1, "one tick, one span");
   assert.equal(large.statementsPerTick.length, 1, "one tick, one span");
