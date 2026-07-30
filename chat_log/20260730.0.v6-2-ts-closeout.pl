@@ -44,11 +44,31 @@ locked(arch_landing_rule,
        'every completed lane updates its task state and evidence in v6/prolog/ARCH.pl through the coordinator').
 locked(checkpoint_rule,
        'commit completed isolated landings frequently; exclude unrelated dirty files and generated output unless the landing owns them').
+locked(parallel_rule,
+       'run independent compiler, runtime, extraction, parity, benchmark, and audit lanes concurrently when their file ownership does not overlap').
+locked(host_shell_accounting,
+       'every landing reports new registered hosts, local shell declarations, executor bindings, and subprocesses; overreliance on host or shell is recorded as a named note').
+locked(extractor_trait_boundary,
+       'sprefa-extract may grow extraction capabilities freely, but each addition preserves typed Rust inputs, outputs, family contracts, and trait-level seams without weakening its type system').
+locked(json_interop_scope,
+       'official JSON relations and types are a separate additive opt-out module; preparation is lab and plan only until user rules on semantics and any surface').
+locked(rtkq_extraction_target,
+       'RTKQ is an extraction golden and requires multiple advanced ast-grep forms; CST or query result unions may be expressed as ordinary Prolog relations').
+locked(v5_string_match_scope,
+       'V5 string-based match parity is excluded; the spammed string matching surface is deprecated and does not block V6.2').
+locked(norm_parity,
+       'V5 norm(text) is required runtime parity: lowercase ASCII alphanumerics and drop every other character; it uses existing expression-call surface and adds no syntax').
+locked(single_rel_type_system,
+       'there is one rel model and one checker; a rel column naming another rel denotes a generated relational edge whose nested source value is normalized into target rows and integer keys, with no relation-like intermediate type, JSON dictionary, or second type system').
 
 question(scan_relation,
          'whether scan becomes an ordinary registered relation or compile-time relation expansion; keep open until exact-one state, init, and clock gaps are discharged').
 question(match_relation_expression,
          'whether match can be exposed as a relation-valued expression; current left-to-right match remains expansion into ordinary rules').
+question(nested_match_composition,
+         'whether nested match needs any representation beyond generated named intermediate relations and ordinary rule expansion').
+question(scan_match_composition,
+         'whether scan reducers can consume match-derived 0/1/N rows while enforcing exactly one next state without higher-order runtime relation values').
 
 lane(host_surface_cleanup, active,
      'plain RHS host atom becomes internal probe IR; remove canonical RHS question-mark; migrate fixtures and roundtrip tests').
@@ -56,6 +76,12 @@ lane(host_contract_executor, active,
      'target-neutral executor-key host plans plus built-in extraction contracts and TypeScript executor registry').
 lane(v6_2_exit_audit, active,
      'ordered required implementation, parity gates, bugs, and V7 deferrals from ARCH, scoreboard, and golden plans').
+lane(host_shell_extractor_census, active,
+     'read-only accounting of registered hosts, sh declarations, subprocess amplification, sprefa-extract additions, and trait/type boundaries').
+lane(json_interop_lab, active,
+     'actual-world executable lab for an additive opt-out JSON module; no production or surface edits').
+lane(coordinator_integration, active,
+     'merge gates, run Grafana and watcher baselines, port norm, update ARCH and this ledger, commit checkpoints, and push').
 
 task(remove_rhs_question_mark, active,
      'zero executable RHS host probes use question-mark syntax; compiler infers host lowering from the registered contract').
@@ -77,6 +103,18 @@ task(file_watcher_scale_gate, active,
      'file watcher passes cardinality and edit-churn sweeps with bounded subscriptions, events, extraction demands, RSS, database growth, and zero duplicate or stale facts').
 task(http_cli_dogfood, active,
      'bop exercises program load, arrivals, relation query, tick stream, and stats through HTTP; command and route inventories are generated from canonical Prolog facts while handlers remain explicit').
+task(host_shell_census, active,
+     'report every new host contract, shell declaration, executor, and sprefa-extract capability used to close V6.2, including avoidable shell process boundaries').
+task(json_interop_lab, queued,
+     'lab additive opt-out JSON relation/type interoperability against current rel, enum, reference, storage, host, clock, and SQLite semantics; make no production or surface edits').
+task(rtkq_extraction_golden, active,
+     'prove multiple advanced ast-grep query forms through typed sprefa-extract facts, relational unions, exact spans, edits, retractions, and bounded host/process amplification').
+task(norm_runtime_parity, queued,
+     'port V5 norm(text) through existing expression registration, SQLite lowering, TypeScript runtime, type checking, and exact V5 fixtures').
+task(lab_reconciliation, active,
+     'classify every open lab as implemented, canonical-plan, closed, or superseded; leave no unattached experiment directories or unindexed decisions').
+task(scan_match_composition_reconcile, queued,
+     'grade scan, match nesting, named intermediate relations, exact-one reducer output, initialization, clocks, and SQL lowering against current implementation before any syntax ruling').
 task(rust_backend, deferred_v7,
      'emit Rust from the identical checked plan and link sprefa-extract directly').
 
@@ -101,6 +139,72 @@ verification(v5_cache_stress_regression, passed(1)).
 verification(rel_definition_hash_lab, passed(11)).
 verification(generic_scan_instantiation_lab, passed(11)).
 verification(select_scan_cache_lab, passed(executable(12), plan(13))).
+verification(v6_2_exit_audit,
+             baseline(conformance(164),
+                      compiled(103),
+                      identical(101),
+                      wrong(0),
+                      run_errors(2),
+                      unsupported(61))).
+verification(http_cli_dogfood, passed(8)).
+verification(file_watcher_scale_test, passed(1)).
+verification(file_watcher_scale_100,
+             passed(events(480),
+                    subscriptions(1),
+                    ticks(3),
+                    write_amplification(1.185185),
+                    wall_ms(39.198),
+                    rss_bytes(153845760),
+                    sqlite_bytes(40960),
+                    final_rows(90),
+                    wrong_rows(0))).
+verification(file_watcher_scale_1000,
+             passed(events(4800),
+                    subscriptions(1),
+                    ticks(3),
+                    write_amplification(1.185185),
+                    wall_ms(265.241292),
+                    rss_bytes(189202432),
+                    sqlite_bytes(253952),
+                    final_rows(900),
+                    wrong_rows(0))).
+verification(remote_checkpoint, pushed(c759bfcb)).
+verification(host_shell_census,
+             counted(executor_keys(2),
+                     sh_declarations(33),
+                     extract_declarations(14),
+                     extract_fixture_files(5))).
+
+host_executor(shell).
+host_executor(sprefa_extract).
+host_overuse(flagship_callgraph,
+             'two separate --family call subprocesses per path and digest').
+host_overuse(diag_rail,
+             'two separate --family call subprocesses per path and digest').
+host_overuse(flagship_flow,
+             'seven per-path extraction subprocess declarations plus one project resolve declaration').
+extractor_gap(document_sources,
+              'no concrete Markdown, HTML, XML, TOML, YAML, or configuration Source implementation').
+extractor_gap(file_blob_repo_revision,
+              'BlobSource has no implementation; FileSet and ManifestMap are empty; Repo and Rev types are absent').
+
+exit_order(1, host_surface_and_contract).
+exit_order(2, ordered_pre_lowering).
+exit_order(3, relation_reference_boundary).
+exit_order(4, file_revision_blob_span_spine).
+exit_order(5, builtin_extraction_relations).
+exit_order(6, type_plane_and_ingest).
+exit_order(7, clock_proof_facts).
+exit_order(8, parity_and_scale_gates).
+exit_order(9, stability_and_bug_gate).
+
+exit_bug(fork_join_malformed_json).
+exit_bug(log_retraction_run_error_classification).
+exit_bug(reactor_buffertime_wall_clock_flake).
+exit_bug(native_process_store_leak_flake).
+exit_bug(v5_lsp_orphan).
+exit_bug(swipl_gc_abort).
+exit_bug(c7_durable_carry).
 
 next_action(1, 'merge and grade the no-question-mark host surface lane').
 next_action(2, 'make identity columns replace every at-sign salt rider and rerun extraction/host clock goldens').

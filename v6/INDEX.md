@@ -50,7 +50,7 @@
 | [prolog/LANG.md](prolog/LANG.md) | 95 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
 | [prolog/compile/PIPELINE.md](prolog/compile/PIPELINE.md) | 153 | The tsv2 compiler pipeline, stage by stage |
 | [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 380 | TSV2 Phase C scoreboard |
-| [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 243 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
+| [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 245 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
 | [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 115 | TICK MODEL: the semiring/grading semantics behind the clock checker |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
 | [prolog/labs/ghcacher_tick_golden/README.md](prolog/labs/ghcacher_tick_golden/README.md) | 46 | Ghcacher clock golden |
@@ -758,9 +758,9 @@
 137:### Core grammar and input aliases
 179:### Legacy surface: parsed, then refused
 190:### World term lowering rows
-208:## Round-trip design note (why decl lines are exact, not fallback-merged)
-223:## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
-234:## What `dl_view/*.dl6` is
+210:## Round-trip design note (why decl lines are exact, not fallback-merged)
+225:## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
+236:## What `dl_view/*.dl6` is
 ```
 
 ### prolog/compile/TICK-MODEL.md
