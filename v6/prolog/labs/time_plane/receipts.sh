@@ -8,7 +8,7 @@
 #
 # Four legs:
 #
-#   1. reference-engine baselines (0_receipts.pl, 13 receipts) -- what the
+#   1. reference-engine baselines (0_receipts.pl, 15 receipts) -- what the
 #      SHIPPED engine does, unmodified.
 #   2. the PROTOTYPE leg: retention_minus.patch is applied to the real
 #      engine.pl and the real 1_incremental.ts, the whole battery is re-run,
@@ -155,7 +155,7 @@ two_door() {
 
 echo "── leg 1: reference-engine baselines (unmodified engine) ────────────────"
 if swipl -q -l "$HERE/0_receipts.pl" -g go -g halt; then
-  ok "0_receipts.pl (13 receipts)"
+  ok "0_receipts.pl (15 receipts)"
 else
   bad "0_receipts.pl"
 fi
