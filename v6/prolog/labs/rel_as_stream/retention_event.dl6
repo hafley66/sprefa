@@ -1,0 +1,5 @@
+rel ev(ordinal: int, payload: text) log keep(count(2)).
+rel live(ordinal: int, payload: text) .
+rel evicted(ordinal: int, payload: text) log keep(all).
+live(Ordinal, Payload) <- ev(Ordinal, Payload).
+evicted(Ordinal, Payload) <+ finalize(live(Ordinal, Payload)).
