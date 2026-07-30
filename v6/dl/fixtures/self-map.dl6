@@ -1,0 +1,294 @@
+# self-map.dl6 -- THE SYSTEM DESCRIBING ITSELF, in its own language.
+#
+# Four sources the repo already maintains become rels; ordinary dl6 rules
+# derive the structure worth drawing; v6/tsv2/scripts/self-map.sh reads the
+# derived rows back and renders v6/ARCH-MAP.md with mermaid fences.
+#
+#   watch(glob, path, digest)     the four sources, tracked, digest-addressed
+#     -> source(path, digest)
+#     -> sm_*(path, digest, ...)  ONE swipl one-shot per file, six projections
+#     -> phase / construct / task / task_dep / program_rel / program_edge
+#     -> the derived rels the diagrams are actually drawn from
+#
+# The FOURTH source is THIS FILE. `sm_rel` and `sm_rel_edge` run the compiler's
+# own front end over `self-map.dl6` and report the rel graph it computes, so the
+# dataflow diagram in ARCH-MAP.md is this program's own dataflow, read out of
+# analyze.pl rather than described beside it.
+#
+# ── this is a RAIL, not a fixture ────────────────────────────────────────────
+#
+# It writes a file, so it is not byte-graded against the oracle -- a program
+# with a staged write trades that away, the same call comment-rails.dl6 makes.
+# What it is graded on instead: `just self-map` twice produces byte-identical
+# output, and a fake registry row or a fake ARCH task in a scratch copy changes
+# the rendered diagram (sabotage receipts in the script header).
+#
+# ── ZERO NEW CONSTRUCTS ──────────────────────────────────────────────────────
+#
+# `bind watch` (phase 2), `sh` host + probe (hosts wiring phase 1), colon-typed
+# decls, `not/1` and comparison guards in level bodies (edge-body arc), count
+# and min aggregate heads (expression lift), single-quoted atom constants.
+#
+# ── the rx lowering, per the standing law ────────────────────────────────────
+#
+#   watchSource(root).pipe(                       // RX-B1, the watch bind
+#     bufferTime(coalesceMs),
+#     map(diffAgainstLastDigest),
+#     concatMap(batch => engine.submit(batch)))   // -> source(path, digest)
+#
+#   source$.pipe(                                 // RX-H2, the demand mint
+#     map(mintIdentityAndWitness),                // witness = (path, digest)
+#     distinct(row => row.witnessDigest),         // one swipl per file, not six
+#     mergeMap(runShell),                         // RX-H1
+#     mergeMap(commitEdbArrival))                 // -> the six projections
+#
+#   combineLatest([task$, taskDep$]).pipe(...)    // the delta joins below
+#
+# ── WHERE THE LANGUAGE STOPS, stated because half the value is the finding ───
+#
+# The mermaid TEXT is assembled in the script, not here, and that is a real
+# gap and not a preference: dl6 has no string aggregate. `group_concat` is
+# refused, `concat/1` folds a FIXED list of expressions into one value, and
+# there is no construct that folds N rows into one string. So a rel can hold
+# "one mermaid line per row" at best, and the join into a document is a fold
+# over rows that only the host can do. Everything ABOVE that line -- which
+# nodes exist, which edges exist, which are roots, which are blocked, the
+# counts -- is derived here.
+#
+# The second gap is smaller and also real: a guard over a probe OUTPUT variable
+# is refused (`unsupported_construct(unbound_head_var(_))`, flagship-callgraph
+# documents the minimal repro), so every `record` filter below is spelled as a
+# CONSTANT IN ARGUMENT POSITION rather than a `record == 'task'` guard. That
+# happens to read better here, but it is a workaround, not a choice.
+
+# ── the sources ──────────────────────────────────────────────────────────────
+#
+# One exact-path glob each. `watchRootOf` takes everything before the first
+# magic character, so a glob with no magic watches the file's DIRECTORY and
+# `matchesGlob` narrows back to the one path -- which is what makes an atomic
+# save (write-temp + rename) visible where watching the file inode is not.
+#
+# Tracked files only, because `GlobWatch` boot-enumerates through
+# `git ls-files -- <glob>`; the digest is then read from the WORKING TREE, so
+# an unstaged edit re-fires and an untracked file is invisible. Both halves are
+# the enumerate ruling applied to the watcher, not a new policy.
+bind watch(glob: text, path: text, digest: text).
+
+rel source(path: text, digest: text).
+source(path, digest) <- watch('v6/prolog/compile/registry.pl', path, digest).
+source(path, digest) <- watch('v6/prolog/1_expansion.pl', path, digest).
+source(path, digest) <- watch('v6/prolog/ARCH.pl', path, digest).
+source(path, digest) <- watch('v6/dl/fixtures/self-map.dl6', path, digest).
+
+# ── the fact host, six relational projections over one invocation ────────────
+#
+# All six declarations carry the SAME template, so the served runner groups
+# them: one swipl process per (path, digest), its stdout decoded once per
+# projection. `self_map_facts.pl` emits a heterogeneous JSON-lines stream and
+# each declaration's column set selects its own records -- the key sets are
+# pairwise non-containing, which is the whole reason a named projection can
+# read a mixed stream at all (serve/1_hosts.ts:decodeObjectItems).
+#
+# `{digest}` appears in the template as a `:` no-op argument. It is already a
+# cache-identity input whether or not the command mentions it; writing it makes
+# the command line itself change when the file does, which is what keeps a
+# stale shell-level cache (if one is ever introduced below the host) honest.
+
+sh sm_surface(path: text, digest: text)
+  -> (record: text, functor: text, arity: text, axis: text, status: text) =
+  `: {digest}; swipl -q -l "$SELF_MAP_FACTS" -g main -t halt -- {path}`.
+
+sh sm_phase(path: text, digest: text)
+  -> (record: text, phase_order: int, phase_name: text, expander: text) =
+  `: {digest}; swipl -q -l "$SELF_MAP_FACTS" -g main -t halt -- {path}`.
+
+sh sm_task(path: text, digest: text)
+  -> (record: text, task_name: text, state: text) =
+  `: {digest}; swipl -q -l "$SELF_MAP_FACTS" -g main -t halt -- {path}`.
+
+sh sm_task_dep(path: text, digest: text)
+  -> (record: text, task_name: text, dep_name: text) =
+  `: {digest}; swipl -q -l "$SELF_MAP_FACTS" -g main -t halt -- {path}`.
+
+sh sm_rel(path: text, digest: text)
+  -> (record: text, program: text, rel_name: text, rel_kind: text, origin: text) =
+  `: {digest}; swipl -q -l "$SELF_MAP_FACTS" -g main -t halt -- {path}`.
+
+sh sm_rel_edge(path: text, digest: text)
+  -> (record: text, program: text, from_rel: text, to_rel: text, sign: text, arrow: text) =
+  `: {digest}; swipl -q -l "$SELF_MAP_FACTS" -g main -t halt -- {path}`.
+
+# ═════════════════════════════════════════════════════════════════════════════
+# DIAGRAM 1 -- the expansion phase order (1_expansion.pl:expansion_phase/3)
+# ═════════════════════════════════════════════════════════════════════════════
+
+rel phase(phase_order: int, phase_name: text, expander: text).
+phase(phase_order, phase_name, expander) <-
+  source(path, digest),
+  sm_phase(path, digest, 'phase', phase_order, phase_name, expander).
+
+# A phase whose expander is the atom `unwired` is a DECLARED SLOT: the order is
+# stated, the code is not written. 1_expansion.pl's header says why the row
+# exists anyway (spread is a landed design record awaiting wiring), and the map
+# draws the two kinds differently rather than flattening them.
+rel phase_unwired(phase_order: int, phase_name: text).
+phase_unwired(phase_order, phase_name) <- phase(phase_order, phase_name, 'unwired').
+
+rel phase_wired(phase_order: int, phase_name: text, expander: text).
+phase_wired(phase_order, phase_name, expander) <-
+  phase(phase_order, phase_name, expander), expander != 'unwired'.
+
+# The SUCCESSOR relation, computed rather than assumed: the phase numbers are
+# sparse (10, 20, 30, 40, 45, 50) and a new phase can land between any two, so
+# the arrows in the diagram are `the smallest order strictly greater than mine`
+# and not `my order plus ten`.
+rel phase_later(from_order: int, to_order: int).
+phase_later(from_order, to_order) <-
+  phase(from_order, _, _), phase(to_order, _, _), from_order < to_order.
+
+rel phase_successor(from_order: int, to_order: int).
+phase_successor(from_order, min(to_order)) <- phase_later(from_order, to_order).
+
+rel phase_step(from_name: text, to_name: text).
+phase_step(from_name, to_name) <-
+  phase_successor(from_order, to_order),
+  phase(from_order, from_name, _),
+  phase(to_order, to_name, _).
+
+rel phase_first(phase_order: int, phase_name: text).
+phase_first(phase_order, phase_name) <-
+  phase(phase_order, phase_name, _), not(phase_later(_, phase_order)).
+
+rel phase_last(phase_order: int, phase_name: text).
+phase_last(phase_order, phase_name) <-
+  phase(phase_order, phase_name, _), not(phase_later(phase_order, _)).
+
+# ═════════════════════════════════════════════════════════════════════════════
+# DIAGRAM 2 -- the construct registry by axis (compile/registry.pl:surface/5)
+# ═════════════════════════════════════════════════════════════════════════════
+
+rel construct(functor: text, arity: text, axis: text, status: text).
+construct(functor, arity, axis, status) <-
+  source(path, digest),
+  sm_surface(path, digest, 'surface', functor, arity, axis, status).
+
+rel axis(axis: text).
+axis(axis) <- construct(_, _, axis, _).
+
+rel axis_total(axis: text, constructs: int).
+axis_total(axis, count(functor)) <- construct(functor, _, axis, _).
+
+rel axis_status_total(axis: text, status: text, constructs: int).
+axis_status_total(axis, status, count(functor)) <- construct(functor, _, axis, status).
+
+# An axis every one of whose rows is live is a FINISHED axis; an axis carrying
+# a reserved or refused row is where the surface is still moving. The antijoin
+# is the whole classification and it is one rule.
+rel axis_non_live(axis: text).
+axis_non_live(axis) <- construct(_, _, axis, status), status != 'live'.
+
+rel axis_all_live(axis: text).
+axis_all_live(axis) <- axis(axis), not(axis_non_live(axis)).
+
+# ═════════════════════════════════════════════════════════════════════════════
+# DIAGRAM 3 -- the ARCH build DAG's open frontier (ARCH.pl:task/3)
+# ═════════════════════════════════════════════════════════════════════════════
+
+rel task(task_name: text, state: text).
+task(task_name, state) <-
+  source(path, digest), sm_task(path, digest, 'task', task_name, state).
+
+rel task_dep(task_name: text, dep_name: text).
+task_dep(task_name, dep_name) <-
+  source(path, digest), sm_task_dep(path, digest, 'task_dep', task_name, dep_name).
+
+rel task_done(task_name: text).
+task_done(task_name) <- task(task_name, 'done').
+
+rel task_open(task_name: text, state: text).
+task_open(task_name, state) <- task(task_name, state), state != 'done'.
+
+# The frontier question, which is the only reason to draw 166 tasks at all:
+# an OPEN task with an unfinished dependency is BLOCKED and the diagram should
+# show what by; an open task whose every dependency is done is READY and the
+# diagram should show it as a starting point.
+rel task_blocker(task_name: text, dep_name: text).
+task_blocker(task_name, dep_name) <-
+  task_open(task_name, _), task_dep(task_name, dep_name), not(task_done(dep_name)).
+
+rel task_blocked(task_name: text, state: text).
+task_blocked(task_name, state) <- task_open(task_name, state), task_blocker(task_name, _).
+
+rel task_ready(task_name: text, state: text).
+task_ready(task_name, state) <- task_open(task_name, state), not(task_blocker(task_name, _)).
+
+# The drawn subgraph: every dependency edge that touches an open task, in
+# either direction. A done task appears only when something open still waits
+# behind it, which is exactly the context a frontier picture owes.
+rel frontier_edge(dep_name: text, task_name: text).
+frontier_edge(dep_name, task_name) <- task_open(task_name, _), task_dep(task_name, dep_name).
+
+rel frontier_node(task_name: text, state: text).
+frontier_node(task_name, state) <- frontier_edge(_, task_name), task(task_name, state).
+frontier_node(task_name, state) <- frontier_edge(task_name, _), task(task_name, state).
+
+rel state_total(state: text, tasks: int).
+state_total(state, count(task_name)) <- task(task_name, state).
+
+# CONTRADICTION DETECTOR, and it caught one on the rail's first run:
+# `task/3` is discontiguous in ARCH.pl and a task's row is appended when its
+# state changes rather than rewritten, so a name can carry two states at once.
+# `go` does not check this -- it checks the dependency graph is acyclic and
+# total, which a duplicated row does not break. One task with two states is
+# two rows here, so counting states per name is the whole test.
+rel task_state_count(task_name: text, states: int).
+task_state_count(task_name, count(state)) <- task(task_name, state).
+
+rel task_state_conflict(task_name: text, state: text).
+task_state_conflict(task_name, state) <-
+  task(task_name, state), task_state_count(task_name, states), states > 1.
+
+# ═════════════════════════════════════════════════════════════════════════════
+# DIAGRAM 4 -- a compiled program's rel dataflow (analyze.pl, over THIS file)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# `origin` is the analyzer's own partition of the refs: `world` = headed by no
+# rule (a host answer, a bind row, or a posted EDB row), `level` = headed by a
+# `<-` rule, `edge` = headed by a `<+` rule. The `__host_demand_*` and
+# `__host_response_*` rels are the host pre-pass's own output, so the diagram
+# shows the demand/answer round trip the surface text hides.
+
+rel program_rel(program: text, rel_name: text, rel_kind: text, origin: text).
+program_rel(program, rel_name, rel_kind, origin) <-
+  source(path, digest),
+  sm_rel(path, digest, 'rel', program, rel_name, rel_kind, origin).
+
+rel program_edge(program: text, from_rel: text, to_rel: text, sign: text, arrow: text).
+program_edge(program, from_rel, to_rel, sign, arrow) <-
+  source(path, digest),
+  sm_rel_edge(path, digest, 'rel_edge', program, from_rel, to_rel, sign, arrow).
+
+# A rel nothing reads is a SINK: it is either an answer the outside world is
+# meant to read, or it is dead. The map cannot tell those apart and does not
+# pretend to; it draws the set and lets the reader decide.
+rel program_sink(program: text, rel_name: text).
+program_sink(program, rel_name) <-
+  program_rel(program, rel_name, _, _), not(program_edge(program, rel_name, _, _, _)).
+
+rel program_fan_in(program: text, rel_name: text, writers: int).
+program_fan_in(program, to_rel, count(from_rel)) <-
+  program_edge(program, from_rel, to_rel, _, _).
+
+rel program_fan_out(program: text, rel_name: text, readers: int).
+program_fan_out(program, from_rel, count(to_rel)) <-
+  program_edge(program, from_rel, to_rel, _, _).
+
+# The negated edges are worth their own rel because they are the reason this
+# program has strata at all: `not/1` is what forces one rule to run after
+# another rather than beside it.
+rel program_negated_edge(program: text, from_rel: text, to_rel: text).
+program_negated_edge(program, from_rel, to_rel) <-
+  program_edge(program, from_rel, to_rel, 'neg', _).
+
+? task_ready(task_name, state).
+? program_sink(program, rel_name).
