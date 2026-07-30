@@ -326,6 +326,18 @@ extractor_addition(ast_pattern_query,
 host_overuse(grafana_v6_crawl,
              'green correctness gate exposes 40.26 files per second under the per-witness extraction subprocess boundary; batching or the V7 direct Rust link remains required').
 
+user_ruling(receipt_folding,
+            'every passing receipt must be folded into production; exceptions require an indexed user decision or a named production supersession').
+fold_order([phase5_bool_float,
+            clock_checker_proof_payoff,
+            rel_definition_hash_lab,
+            file_span_redesign,
+            comment_rail_wiring,
+            mode_scope_proof_views,
+            flow_parity_residue]).
+fold_blocker(scan_surface_composition_lab, indexed_surface_decision).
+fold_blocker(json_interop_lab, indexed_optional_module_policy).
+
 host_executor(shell).
 host_executor(sprefa_extract).
 host_overuse(flagship_callgraph,
