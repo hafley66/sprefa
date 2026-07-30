@@ -1,0 +1,39 @@
+# 4-crash.dl6 -- can a WRITE ride the durable-witness story?
+#
+# The host appends one line to $LAB_TARGET, prints its answer, and then sleeps.
+# The disk effect is therefore COMMITTED long before the answer can land. A
+# `kill -9` inside the sleep leaves:
+#
+#   * the demand row       durable  (ordinary rel storage)
+#   * `__host_witness`     'pending' (claimed BEFORE the spawn, 1_hosts.ts
+#                                     WitnessCache.claim)
+#   * the response rows    absent
+#   * the FILE             already appended
+#
+# On restart `WitnessCache.clearDeadLocks` deletes every 'pending' row and the
+# boot replay re-runs the demand. That is exactly right for a READ (an idempotent
+# extraction re-runs and lands the same rows) and it is the whole question for a
+# WRITE.
+#
+# rx lowering of the shipped claim/settle pair:
+#
+#   claim$(w).pipe(
+#     concatMap(() => spawn(cmd)),
+#     concatMap(stdout => submit(rowsOf(stdout))),
+#     concatMap(() => settle$(w, 'done')))
+#
+# The `spawn` is between claim and settle, and only `settle` is durable, so the
+# window is real and is not narrowable by ordering: a durable record written
+# BEFORE the spawn cannot say the effect happened, and one written after cannot
+# be reached if the process dies.
+
+rel want_append(id: text, line: text).
+
+sh do_append(id: text, line: text) -> (wrote: int) =
+  `: {id}; python3 "$LAB_ZONE" append "$LAB_TARGET" '{line}'; sleep "${LAB_SLEEP:-0}"`.
+
+rel appended(id: text, wrote: int).
+appended(id, wrote) <- want_append(id, line), do_append(id, line, wrote).
+
+? want_append(id, line).
+? appended(id, wrote).

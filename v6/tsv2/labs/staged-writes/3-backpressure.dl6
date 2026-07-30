@@ -1,0 +1,32 @@
+# 3-backpressure.dl6 -- does a tick advance while an effect is in flight?
+#
+# `job` is world-fed. Pushing a job mints a host demand whose command sleeps.
+# The question the receipt answers is entirely about TIMING, so the program is
+# as small as it can be: push job A (slow), push job B while A is still
+# sleeping, and read the tick numbers and the wall clock off both POSTs.
+#
+# rx lowering of what ships today:
+#
+#   arrivals$.pipe(concatMap(batch => tick(batch)))       // the tick lane
+#   demand$.pipe(concatMap(d => spawn(d)), map(commit))   // the effect lane
+#
+# TWO LANES, joined only by `demand$` being derived from the tick lane and
+# `commit` re-entering it. Nothing in the tick lane waits on the effect lane;
+# `carryPending` drains on the engine's own state, never on an outstanding
+# child. The do-not-advance-until-answered rule is a THIRD relationship between
+# these two lanes that does not exist:
+#
+#   arrivals$.pipe(concatMap(batch =>
+#     tick(batch).pipe(concatMap(deltas =>
+#       effectsFor(deltas).pipe(toArray(), map(() => deltas))))))
+
+rel job(id: text, secs: text).
+
+sh slow(id: text, secs: text) -> (ok: text) =
+  `: {id}; sleep {secs}; echo ok`.
+
+rel answered(id: text, ok: text).
+answered(id, ok) <- job(id, secs), slow(id, secs, ok).
+
+? job(id, secs).
+? answered(id, ok).

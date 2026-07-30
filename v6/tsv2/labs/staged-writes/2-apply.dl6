@@ -1,0 +1,67 @@
+# 2-apply.dl6 -- 1-stage.dl6 plus the SECOND EXPLICIT DEMAND that applies it.
+#
+# `armed` is an ordinary world-fed relation. With no `armed` row the program is
+# 1-stage.dl6 exactly: the diff sits in `edit_add`/`edit_del` and the tree is
+# untouched. Pushing one `armed(zone)` row is the human's "yes" -- and it is a
+# row, so it is reviewable, retractable, and it appears in the tick log like
+# everything else.
+#
+#   POST /arrivals {"batch":[{"rel":"armed","sign":"add","row":["fnlist"]}]}
+#
+# rx lowering:
+#
+#   const apply$ = armed$.pipe(
+#     withLatestFrom(editAdd$),
+#     concatMap(([zone, edits]) => from(edits).pipe(
+#       concatMap(edit => run(`zone.py put ...`)))));
+#
+# THE HONEST LIMIT THIS PROGRAM MEASURES, and it is the lab's central finding:
+# a host's input is ONE ROW, and a write's payload is a RELATION. There is no
+# string aggregate in the registry (count/sum/min/max/avg only), so the N lines
+# of a zone cannot be folded into one column and handed to one command. The
+# only shape that compiles is ONE INVOCATION PER LINE, below -- N spawns,
+# serialized by the runner's `concatMap`, each one a separate read-modify-write
+# of the same file, with the ORDER decided by delta order rather than by the
+# rules. `ordinal` is in the row and the file still ends up correct here only
+# because `zone.py put` addresses by ordinal instead of appending.
+
+rel file(path: text, digest: text).
+
+sh zone_now(path: text, digest: text) -> (zone: text, slot: int, line_text: text) =
+  `: {digest}; python3 "$LAB_ZONE" body {path}`.
+
+rel have(path: text, zone: text, ordinal: int, text: text).
+have(path, zone, slot, line_text) <-
+  file(path, digest), zone_now(path, digest, zone, slot, line_text).
+
+sh gen_fns(path: text, digest: text) -> (slot: int, line_text: text) =
+  `: {digest}; python3 "$LAB_ZONE" fns {path}`.
+
+rel want(path: text, zone: text, ordinal: int, text: text).
+want(path, 'fnlist', slot, line_text) <-
+  file(path, digest), gen_fns(path, digest, slot, line_text).
+
+rel edit_add(path: text, zone: text, ordinal: int, text: text).
+edit_add(path, zone, ordinal, text) <-
+  want(path, zone, ordinal, text), not(have(path, zone, ordinal, text)).
+
+# ── the apply arm ───────────────────────────────────────────────────────────
+# One row = one line = one child process = one file rewrite.
+rel armed(zone: text).
+
+# NOTE the column is `slot`, not `ordinal`. A host input OR output column
+# named `ordinal` is silently shadowed by the runtime's own response-rel
+# ordinal column (serve/1_hosts.ts `project`, which tests `column ===
+# "ordinal"` BEFORE consulting the demand's inputs). The write still runs;
+# only the answer comes back wrong, so the failure is invisible on disk.
+sh put_line(path: text, zone: text, slot: int, text: text) -> (wrote: int) =
+  `python3 "$LAB_ZONE" put {path} {zone} {slot} '{text}'`.
+
+rel applied(path: text, zone: text, ordinal: int, wrote: int).
+applied(path, zone, ordinal, wrote) <-
+  armed(zone),
+  edit_add(path, zone, ordinal, text),
+  put_line(path, zone, ordinal, text, wrote).
+
+? edit_add(path, zone, ordinal, text).
+? applied(path, zone, ordinal, wrote).

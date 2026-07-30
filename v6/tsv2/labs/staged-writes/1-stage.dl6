@@ -1,0 +1,55 @@
+# 1-stage.dl6 -- THE STAGED DIFF, AS ROWS. Read-only; nothing here writes.
+#
+# Read it left to right, top down: a file arrives, the marker pair is located,
+# the generator says what the region SHOULD hold, and the two sets are
+# subtracted. `edit_add` and `edit_del` ARE the dry run. No mode flag, no
+# --fix, no second code path: the diff is a relation, and applying it is a
+# separate demand (2-apply.dl6).
+#
+# rx lowering, per the every-snippet-carries-its-lowering law:
+#
+#   const have$ = file$.pipe(mergeMap(f => zoneNow(f)));      // host, cached
+#   const want$ = file$.pipe(mergeMap(f => generator(f)));    // host, cached
+#   const add$  = combineLatest([want$, have$]).pipe(
+#                   map(([want, have]) => differenceWith(want, have, isEqual)));
+#   const del$  = combineLatest([have$, want$]).pipe(
+#                   map(([have, want]) => differenceWith(have, want, isEqual)));
+#
+# `not(...)` over a plain relation atom is the NOT EXISTS the emitter writes,
+# which is `differenceWith` at the set level. Both directions are needed
+# because a diff is antisymmetric and the language has no single operator for
+# it.
+
+rel file(path: text, digest: text).
+
+# WHAT IS THERE. One row per line currently inside a `BEGIN:`/`END:` pair.
+# The digest is an identity input the template ignores; `: {digest};` is the
+# no-op reference `validate_template/3` requires so that changing the file
+# content mints a fresh witness.
+sh zone_now(path: text, digest: text) -> (zone: text, slot: int, line_text: text) =
+  `: {digest}; python3 "$LAB_ZONE" body {path}`.
+
+rel have(path: text, zone: text, ordinal: int, text: text).
+have(path, zone, slot, line_text) <-
+  file(path, digest), zone_now(path, digest, zone, slot, line_text).
+
+# WHAT SHOULD BE THERE. The generator under test: one line per `fn` in the
+# file. Any generator has this shape -- a relation of (ordinal, text).
+sh gen_fns(path: text, digest: text) -> (slot: int, line_text: text) =
+  `: {digest}; python3 "$LAB_ZONE" fns {path}`.
+
+rel want(path: text, zone: text, ordinal: int, text: text).
+want(path, 'fnlist', slot, line_text) <-
+  file(path, digest), gen_fns(path, digest, slot, line_text).
+
+# THE DIFF.
+rel edit_add(path: text, zone: text, ordinal: int, text: text).
+edit_add(path, zone, ordinal, text) <-
+  want(path, zone, ordinal, text), not(have(path, zone, ordinal, text)).
+
+rel edit_del(path: text, zone: text, ordinal: int, text: text).
+edit_del(path, zone, ordinal, text) <-
+  have(path, zone, ordinal, text), not(want(path, zone, ordinal, text)).
+
+? edit_add(path, zone, ordinal, text).
+? edit_del(path, zone, ordinal, text).

@@ -1,0 +1,27 @@
+# 6-ordinal.dl6 -- FAIL-FIRST RECEIPT for a defect this lab found.
+#
+# `ordinal` is the name the served runtime gives its own multi-row response
+# column (serve/1_hosts.ts, the phase-2 fix for hosts whose answer is more than
+# one row). `project` fills a response row column by column and tests
+#
+#     if (column === "witness_digest") return witnessDigest;
+#     if (column === "ordinal") return ordinal;
+#     const input = demand.inputs.get(column);
+#
+# so a host that DECLARES a column named `ordinal`, in either direction, has it
+# silently replaced by the runtime's row counter. Nothing refuses the program,
+# nothing traces it. The host below answers 7 and 8; the rows come back 0 and 1.
+#
+# It is a write-plane hazard specifically because a write host's answer is the
+# only thing that says the write happened: the disk is already changed, and the
+# row that reports it is wrong.
+
+rel seed(id: text).
+
+sh two_rows(id: text) -> (ordinal: int, payload: text) =
+  `: {id}; python3 "$LAB_ZONE" ordinals /dev/null`.
+
+rel got(id: text, ordinal: int, payload: text).
+got(id, ordinal, payload) <- seed(id), two_rows(id, ordinal, payload).
+
+? got(id, ordinal, payload).
