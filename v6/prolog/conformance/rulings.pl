@@ -402,3 +402,23 @@ ruling(bool_column_type, two_valued_column_type, user,
 % the same arc, not assumed.
 ruling(numeric_precision, approved_phase5_design, user,
        'user 2026-07-29: "and yes to precision numbers"').
+
+% 2026-07-30. The json key hole marker. CARD-KEY-HOLE-SPELLING is
+% ruled DOLLAR: a key-position hole is written `$name`, matching the
+% value-position hole, so `{ $key: $value }` reads uniformly on both
+% planes. This unblocks 4 of the 5 constructs the recovery doc graded
+% "needs new surface"; the lowering was already proven to be
+% json_each(key,value) with zero new SQL (json_syntax lab L3).
+ruling(json_key_hole_marker, dollar, user,
+       'user 2026-07-30: "a key hole is $ for the lulz"').
+
+% 2026-07-30. The match arm token pair minted by 9cadb419 (|-> and
+% |+>) is RATIFIED, and the authorship question is settled: the user
+% asked for them. Reason of record: left-to-right reading order --
+% guards first, then the arrow, so an arm reads in the direction the
+% data flows. Standing intent attached: rel programs should look
+% uniform and be able to express flow ACROSS TIME. The finding
+% match_arm_new_tokens_unruled is closed by this row; the 23 migrated
+% .dl6 fixtures stand.
+ruling(match_arm_tokens, ratified_ltr_pair, user,
+       'user 2026-07-30: "i was the one that wanted |-> so we had ltr reading nature, i want these programs with rels looking sexy and uniform and able to express flow across times"').
